@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "config.h"
 #include "anf.h"
 #include "arena.h"
 #include "ckpt.h"
@@ -130,8 +131,8 @@ static bool repl_eval(Globals *g, const char *src, Value *out, int *new_count,
     } else if (eval_anf_run_in(anf, tmp, a, out, errmsg, g->gc) != 0) {
         return false;
     }
-    const char *nn[256];
-    Value nv[256];
+    const char *nn[YAC_MAX_GLOBALS];
+    Value nv[YAC_MAX_GLOBALS];
     int nc = 0;
     collect_globals(anf, g->count, tmp, nn, nv, &nc);
     for (int i = 0; i < nc; i++) globals_add(g, nn[i], nv[i]);
@@ -140,7 +141,7 @@ static bool repl_eval(Globals *g, const char *src, Value *out, int *new_count,
 }
 
 static int repl_loop(Globals *g) {
-    char line[8192];
+    char line[YAC_REPL_LINE_MAX];
     for (;;) {
         printf("yac> ");
         fflush(stdout);
@@ -287,8 +288,8 @@ int main(int argc, char **argv) {
 
     Res r;
     memset(&r, 0, sizeof(r));
-    arena_init(&r.a, 1 << 20);
-    gc_init(&r.gc, 1 << 20);
+    arena_init(&r.a, YAC_ARENA_BLOCK_SIZE);
+    gc_init(&r.gc, YAC_GC_THRESHOLD);
     const char *th = getenv("YAC_GC_THRESHOLD");
     if (th && *th) r.gc.threshold = (size_t)strtoul(th, NULL, 10);
     r.gc.enabled = !no_gc;

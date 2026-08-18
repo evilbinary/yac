@@ -1,3 +1,4 @@
+#include "config.h"
 #include "value.h"
 
 #include <stdio.h>
