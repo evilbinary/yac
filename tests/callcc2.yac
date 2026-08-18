@@ -1,0 +1,4 @@
+-- early exit: throw to an escaped continuation unwinds the recursion
+let exit = callcc(fun (k) -> k) in
+let f(n) = if n > 100 then throw exit 999 else f(n + 1) in
+f(0)

@@ -16,6 +16,7 @@ typedef enum {
     V_STR,
     V_UNIT,
     V_FUN,
+    V_CONT, /* continuation closure (CPS machine) */
     V_PRIM,
 } ValTag;
 
@@ -25,7 +26,7 @@ typedef struct Str {
 } Str;
 
 typedef struct Closure {
-    Anf *body;
+    void *body;   /* Anf* in eval_anf, CExp* in eval_cps */
     char **params;
     int nparams;
     Binding *env; /* captured lexical environment */
@@ -67,6 +68,7 @@ Value v_bool(bool b);
 Value v_str(Arena *a, const char *s);
 Value v_unit(void);
 Value v_fun(Closure *c);
+Value v_cont(Closure *c);
 Value v_prim(const Prim *p);
 
 const Prim *prim_lookup(const char *name);

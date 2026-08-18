@@ -27,6 +27,23 @@ actual=$($BIN tests/tco.yac);       check "tco"               "0" "$actual"
 actual=$($BIN tests/closure.yac);   check "lexical closure"   "2" "$actual"
 actual=$($BIN tests/float.yac);     check "float arithmetic"  "1" "$actual"
 
+# CPS parity: every ordinary program must produce the same result
+actual=$($BIN --cps tests/fact.yac);     check "cps factorial"        "3628800" "$actual"
+actual=$($BIN --cps tests/fib.yac);      check "cps fibonacci"        "832040" "$actual"
+actual=$($BIN --cps tests/higher.yac);   check "cps higher-order"     "7" "$actual"
+actual=$($BIN --cps tests/types.yac | tr -d '\r'); check "cps types"  $'hello\n3.5\ntrue\n()\n42' "$actual"
+actual=$($BIN --cps tests/tco.yac);      check "cps tco"              "0" "$actual"
+actual=$($BIN --cps tests/closure.yac);  check "cps lexical closure"  "2" "$actual"
+actual=$($BIN --cps tests/float.yac);    check "cps float arithmetic" "1" "$actual"
+
+# --both cross-check on ordinary programs
+out=$($BIN --both tests/fact.yac); rc=$?
+if [ $rc -eq 0 ] && [ "$out" = "3628800" ]; then
+    pass=$((pass + 1)); echo "PASS: --both matches on factorial"
+else
+    fail=$((fail + 1)); echo "FAIL: --both on factorial (rc=$rc, out=$out)"
+fi
+
 out=$($BIN tests/unbound.yac 2>&1); rc=$?
 if [ $rc -ne 0 ] && echo "$out" | grep -q "unbound variable 'y'"; then
     pass=$((pass + 1)); echo "PASS: unbound variable detected"
@@ -40,6 +57,38 @@ if [ $rc -ne 0 ] && echo "$out" | grep -q "CPS mode"; then
     pass=$((pass + 1)); echo "PASS: callcc rejected by ANF machine"
 else
     fail=$((fail + 1)); echo "FAIL: callcc should be rejected by ANF machine (rc=$rc)"
+    echo "  $out"
+fi
+
+out=$($BIN --cps tests/callcc.yac 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | tr -d '\r' | grep -q "^42$"; then
+    pass=$((pass + 1)); echo "PASS: callcc runs under CPS -> 42"
+else
+    fail=$((fail + 1)); echo "FAIL: callcc under CPS should print 42 (rc=$rc)"
+    echo "  $out"
+fi
+
+out=$($BIN --cps tests/callcc2.yac 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | tr -d '\r' | grep -q "^999$"; then
+    pass=$((pass + 1)); echo "PASS: callcc early exit -> 999"
+else
+    fail=$((fail + 1)); echo "FAIL: callcc early exit should print 999 (rc=$rc)"
+    echo "  $out"
+fi
+
+out=$($BIN --cps tests/callcc3.yac 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | tr -d '\r' | grep -q "^42$"; then
+    pass=$((pass + 1)); echo "PASS: callcc capture + use -> 42"
+else
+    fail=$((fail + 1)); echo "FAIL: callcc capture + use should print 42 (rc=$rc)"
+    echo "  $out"
+fi
+
+out=$($BIN --cps tests/callcc4.yac 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | tr -d '\r' | grep -q "^999$"; then
+    pass=$((pass + 1)); echo "PASS: callcc inside function -> 999"
+else
+    fail=$((fail + 1)); echo "FAIL: callcc inside function should print 999 (rc=$rc)"
     echo "  $out"
 fi
 

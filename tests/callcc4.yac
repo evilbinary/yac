@@ -1,0 +1,6 @@
+-- callcc inside a function: escape jumps out of the caller's context
+let find(n) =
+  let k = callcc(fun (k) -> k) in
+  if n > 5 then throw k 999 else n
+in
+find(100)

@@ -1,3 +1,3 @@
--- callcc must be rejected by the ANF interpreter
+-- callcc must be rejected by the ANF interpreter, but must run under CPS
 let k = callcc(fun (k) -> k) in
 throw k 42

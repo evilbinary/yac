@@ -43,6 +43,12 @@ Value v_fun(Closure *c) {
     return v;
 }
 
+Value v_cont(Closure *c) {
+    Value v = {V_CONT, {0}};
+    v.u.clo = c;
+    return v;
+}
+
 Value v_prim(const Prim *p) {
     Value v = {V_PRIM, {0}};
     v.u.prim = p;
@@ -261,6 +267,7 @@ char *value_to_string(Arena *a, Value v) {
         return v.u.s->data;
     case V_UNIT: snprintf(buf, sizeof(buf), "()"); break;
     case V_FUN: snprintf(buf, sizeof(buf), "<fun>"); break;
+    case V_CONT: snprintf(buf, sizeof(buf), "<cont>"); break;
     case V_PRIM: snprintf(buf, sizeof(buf), "<prim:%s>", v.u.prim->name); break;
     }
     if (a) return arena_strdup(a, buf);
