@@ -154,18 +154,23 @@ static Anf *norm_tail(const Ast *e, const char *vname, Anf *k, NrmCtx *c, Scope 
     case A_APP: {
         int nargs = e->u.app.nargs;
         if (nargs == 0) return norm_tail(e->u.app.fn, vname, k, c, scope);
-        char *headf = fresh(c);
-        char **argf = (char **)arena_alloc(c->a, (size_t)nargs * sizeof(char *));
+        Atom hat;
+        bool h_atom = atomize(e->u.app.fn, &hat, c, scope);
+        char *headf = h_atom ? NULL : fresh(c);
         Atom *args = (Atom *)arena_alloc(c->a, (size_t)nargs * sizeof(Atom));
-        for (int i = 0; i < nargs; i++) {
-            argf[i] = fresh(c);
-            args[i] = atom_var(argf[i]);
-        }
-        Anf *acc = anf_tail_call(c->a, atom_var(headf), args, nargs);
+        Anf *acc = anf_tail_call(c->a, h_atom ? hat : atom_var(headf), args, nargs);
         for (int i = nargs - 1; i >= 0; i--) {
-            acc = norm(e->u.app.args[i], argf[i], acc, c, scope);
+            Atom a;
+            if (atomize(e->u.app.args[i], &a, c, scope)) {
+                args[i] = a;
+            } else {
+                char *af = fresh(c);
+                args[i] = atom_var(af);
+                acc = norm(e->u.app.args[i], af, acc, c, scope);
+            }
         }
-        return norm(e->u.app.fn, headf, acc, c, scope);
+        if (!h_atom) return norm(e->u.app.fn, headf, acc, c, scope);
+        return acc;
     }
     case A_IF: {
         Atom cond;
@@ -253,19 +258,23 @@ static Anf *norm(const Ast *e, const char *vname, Anf *k, NrmCtx *c, Scope *scop
     case A_APP: {
         int nargs = e->u.app.nargs;
         if (nargs == 0) return norm(e->u.app.fn, vname, k, c, scope);
-        char *headf = fresh(c);
-        char **argf = (char **)arena_alloc(c->a, (size_t)nargs * sizeof(char *));
+        Atom hat;
+        bool h_atom = atomize(e->u.app.fn, &hat, c, scope);
+        char *headf = h_atom ? NULL : fresh(c);
         Atom *args = (Atom *)arena_alloc(c->a, (size_t)nargs * sizeof(Atom));
-        for (int i = 0; i < nargs; i++) {
-            argf[i] = fresh(c);
-            args[i] = atom_var(argf[i]);
-        }
-        Anf *call = anf_let_call(c->a, vname, atom_var(headf), args, nargs, k);
-        Anf *acc = call;
+        Anf *acc = anf_let_call(c->a, vname, h_atom ? hat : atom_var(headf), args, nargs, k);
         for (int i = nargs - 1; i >= 0; i--) {
-            acc = norm(e->u.app.args[i], argf[i], acc, c, scope);
+            Atom a;
+            if (atomize(e->u.app.args[i], &a, c, scope)) {
+                args[i] = a;
+            } else {
+                char *af = fresh(c);
+                args[i] = atom_var(af);
+                acc = norm(e->u.app.args[i], af, acc, c, scope);
+            }
         }
-        return norm(e->u.app.fn, headf, acc, c, scope);
+        if (!h_atom) return norm(e->u.app.fn, headf, acc, c, scope);
+        return acc;
     }
     case A_IF: {
         Atom cond;

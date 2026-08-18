@@ -103,6 +103,10 @@ ValArr *gc_new_valarr(Gc *g, int n) {
     ValArr *va = (ValArr *)gc_alloc_raw(g, G_VALARR,
                                         sizeof(ValArr) + (size_t)n * sizeof(Value));
     va->n = n;
+    /* zero the slots: a GC may run while the machine is still filling them
+     * (arg evaluation can allocate), and uninitialized Values must not be
+     * mistaken for pointers during mark. */
+    memset(va->data, 0, (size_t)n * sizeof(Value));
     return va;
 }
 
@@ -122,7 +126,8 @@ void gc_pop_root(Gc *g) {
 }
 
 void gc_push_value(Gc *g, Value v) {
-    if (v.tag == V_FUN || v.tag == V_CONT) gc_push_root(g, (GObj *)v.u.clo);
+    GObj *o = (v.tag == V_FUN || v.tag == V_CONT) ? (GObj *)v.u.clo : NULL;
+    gc_push_root(g, o); /* always push (NULL for immediates) to keep balance */
 }
 
 void gc_set_env(Gc *g, Binding *env) {
@@ -169,6 +174,8 @@ void gc_collect(Gc *g) {
     g->live_objs = nobjs;
     g->total_objs = nobjs;
     g->allocated = 0;
+    if (getenv("YAC_GC_DBG"))
+        fprintf(stderr, "gc: live=%zu objs=%zu\n", live, nobjs);
     if (g->max_objs && nobjs > g->max_objs) runaway(g);
 }
 

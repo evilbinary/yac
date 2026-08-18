@@ -211,21 +211,21 @@ static Value prim_print(Value *args, int nargs, PrimCtx *ctx) {
 }
 
 static const Prim PRIMS[] = {
-    {"+", 2, prim_add},
-    {"-", 2, prim_sub},
-    {"*", 2, prim_mul},
-    {"/", 2, prim_div},
-    {"%", 2, prim_mod},
-    {"==", 2, prim_eq},
-    {"!=", 2, prim_ne},
-    {"<", 2, prim_lt},
-    {"<=", 2, prim_le},
-    {">", 2, prim_gt},
-    {">=", 2, prim_ge},
-    {"and", 2, prim_and},
-    {"or", 2, prim_or},
-    {"not", 1, prim_not},
-    {"print", 1, prim_print},
+    {"+", 2, true, prim_add},
+    {"-", 2, true, prim_sub},
+    {"*", 2, true, prim_mul},
+    {"/", 2, true, prim_div},
+    {"%", 2, true, prim_mod},
+    {"==", 2, true, prim_eq},
+    {"!=", 2, true, prim_ne},
+    {"<", 2, true, prim_lt},
+    {"<=", 2, true, prim_le},
+    {">", 2, true, prim_gt},
+    {">=", 2, true, prim_ge},
+    {"and", 2, true, prim_and},
+    {"or", 2, true, prim_or},
+    {"not", 1, true, prim_not},
+    {"print", 1, false, prim_print},
 };
 
 const Prim *prim_lookup(const char *name) {

@@ -48,6 +48,7 @@ typedef struct Value (*PrimFn)(struct Value *args, int nargs, PrimCtx *ctx);
 struct Prim {
     const char *name;
     int arity; /* -1 = variadic */
+    bool pure; /* safe to fold at compile time (no side effects) */
     PrimFn fn;
 };
 

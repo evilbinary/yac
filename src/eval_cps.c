@@ -201,9 +201,9 @@ int eval_cps_run(const CExp *prog, Arena *a, Value *result, char **errmsg, Gc *g
         case CE_THROW: {
             Value k = eval_val(&code->u.throw_.k, env, &st);
             if (st.errored) goto err;
+            gc_push_value(gc, k); /* k must be rooted before v is evaluated */
             Value v = eval_val(&code->u.throw_.v, env, &st);
             if (st.errored) goto err;
-            gc_push_value(gc, k);
             gc_push_value(gc, v);
             apply_cont(k, v, &env, &code, &st);
             if (st.errored) goto err;

@@ -84,6 +84,13 @@ struct CExp {
 /* Convert an ANF program into CPS. Returns false and sets *errmsg on error. */
 bool anf_to_cps(const Anf *anf, Arena *a, CExp **out, char **errmsg);
 
+/* Peephole simplifications over CPS IR (semantics-preserving):
+ *  - constant folding of pure primitive calls with literal arguments,
+ *  - eta-reduction:  kappa(x). call k x  ==>  k
+ *                    lambda(x*,k). call f x* k  ==>  f
+ * Returns a freshly built (arena) expression. */
+CExp *cps_simplify(const CExp *prog, Arena *a);
+
 void cps_dump(const CExp *node, int depth);
 
 #endif

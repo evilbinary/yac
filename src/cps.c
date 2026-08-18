@@ -227,6 +227,162 @@ bool anf_to_cps(const Anf *anf, Arena *a, CExp **out, char **errmsg) {
     return true;
 }
 
+/* ---- simplification (--opt) ---- */
+
+typedef struct CE { const char *name; Value v; const struct CE *next; } CE;
+
+typedef struct { Arena *a; } OptCtx;
+
+static const CE *ce_push(OptCtx *c, const CE *prev, const char *name, Value v) {
+    CE *e = (CE *)arena_alloc(c->a, sizeof(CE));
+    e->name = name;
+    e->v = v;
+    e->next = prev;
+    return e;
+}
+
+static bool ce_find(const CE *ce, const char *name, Value *out) {
+    for (; ce; ce = ce->next)
+        if (strcmp(ce->name, name) == 0) { *out = ce->v; return true; }
+    return false;
+}
+
+/* const env with the given parameter names removed (shadowing) */
+static const CE *ce_without(OptCtx *c, const CE *ce, char *const *params, int n) {
+    const CE *out = NULL;
+    for (; ce; ce = ce->next) {
+        int shadowed = 0;
+        for (int i = 0; i < n; i++)
+            if (strcmp(ce->name, params[i]) == 0) { shadowed = 1; break; }
+        if (!shadowed) out = ce_push(c, out, ce->name, ce->v);
+    }
+    return out;
+}
+
+static CExp *opt(const CExp *node, const CE *ce, OptCtx *c);
+
+static CVal opt_cval(CVal v, const char *letname, const CE *ce, OptCtx *c) {
+    switch (v.kind) {
+    case CV_FUN: {
+        /* eta-reduce: lambda(x*, k). call f x* k  ==>  f */
+        const char *target = NULL;
+        int np = v.u.fun.nparams;
+        const CExp *b = v.u.fun.body;
+        if (np >= 1 && b && b->kind == CE_CALL && b->u.call.nargs == np &&
+            b->u.call.head.kind == CV_VAR) {
+            const char *f = b->u.call.head.u.var.name;
+            const char *k = v.u.fun.params[np - 1];
+            int ok = (letname == NULL || strcmp(f, letname) != 0) &&
+                     strcmp(f, k) != 0;
+            for (int i = 0; ok && i < np; i++)
+                if (strcmp(f, v.u.fun.params[i]) == 0) ok = 0;
+            for (int i = 0; ok && i < np; i++) {
+                CVal a = b->u.call.args[i];
+                if (a.kind != CV_VAR || strcmp(a.u.var.name, v.u.fun.params[i]) != 0) ok = 0;
+            }
+            if (ok) target = f;
+        }
+        if (target) return cv_var(target);
+        const CE *inner = ce_without(c, ce, v.u.fun.params, np);
+        v.u.fun.body = opt(v.u.fun.body, inner, c);
+        return v;
+    }
+    case CV_CONT: {
+        /* eta-reduce: kappa(x). call k x  ==>  k */
+        const char *target = NULL;
+        const CExp *b = v.u.cont.body;
+        if (b && b->kind == CE_CALL && b->u.call.nargs == 1 &&
+            b->u.call.head.kind == CV_VAR) {
+            const char *k = b->u.call.head.u.var.name;
+            CVal a0 = b->u.call.args[0];
+            if (a0.kind == CV_VAR && strcmp(a0.u.var.name, v.u.cont.param) == 0 &&
+                strcmp(k, v.u.cont.param) != 0 &&
+                (letname == NULL || strcmp(k, letname) != 0)) {
+                target = k;
+            }
+        }
+        if (target) return cv_var(target);
+        const CE *inner = ce_without(c, ce, (char *[]){ (char *)v.u.cont.param }, 1);
+        v.u.cont.body = opt(v.u.cont.body, inner, c);
+        return v;
+    }
+    default:
+        return v;
+    }
+}
+
+/* Fold  call <pure prim> a* cont  ==>  call cont (result)  when every
+ * argument a is a literal (or a known constant via the const env). */
+static CExp *fold_call(CExp *call, const CE *ce, OptCtx *c) {
+    CVal *args = call->u.call.args;
+    int n = call->u.call.nargs;
+    if (n < 1) return call;
+    const Prim *p = NULL;
+    if (call->u.call.head.kind == CV_PRIM) {
+        p = prim_lookup(call->u.call.head.u.prim.name);
+    } else if (call->u.call.head.kind == CV_VAR) {
+        /* the converter emits primitives as variables; resolve by name */
+        p = prim_lookup(call->u.call.head.u.var.name);
+    }
+    if (!p || !p->pure) return call;
+    int na = n - 1;
+    if (p->arity >= 0 && p->arity != na) return call;
+    if (na > 8) return call;
+    Value lits[8];
+    for (int i = 0; i < na; i++) {
+        if (args[i].kind == CV_LIT) lits[i] = args[i].u.lit;
+        else if (args[i].kind == CV_VAR && ce_find(ce, args[i].u.var.name, &lits[i])) { /* ok */ }
+        else return call;
+    }
+    PrimCtx pctx = {false, ""};
+    Value r = p->fn(lits, na, &pctx);
+    if (pctx.errored) return call; /* e.g. division by zero: keep it dynamic */
+    CVal *nargs = (CVal *)arena_alloc(c->a, sizeof(CVal));
+    nargs[0] = cv_lit(r);
+    return ce_call(c->a, args[n - 1], nargs, 1, call->line);
+}
+
+static CExp *opt(const CExp *node, const CE *ce, OptCtx *c) {
+    switch (node->kind) {
+    case CE_LET: {
+        CVal v = opt_cval(node->u.let.val, node->u.let.name, ce, c);
+        const CE *ce2 = ce;
+        if (v.kind == CV_LIT) ce2 = ce_push(c, ce, node->u.let.name, v.u.lit);
+        CExp *body = opt(node->u.let.body, ce2, c);
+        return ce_let(c->a, node->u.let.name, v, body);
+    }
+    case CE_CALL: {
+        CVal head = opt_cval(node->u.call.head, NULL, ce, c);
+        CVal *args = (CVal *)arena_alloc(c->a, (size_t)node->u.call.nargs * sizeof(CVal));
+        for (int i = 0; i < node->u.call.nargs; i++)
+            args[i] = opt_cval(node->u.call.args[i], NULL, ce, c);
+        CExp *nc = ce_call(c->a, head, args, node->u.call.nargs, node->line);
+        return fold_call(nc, ce, c);
+    }
+    case CE_THROW: {
+        CVal k = opt_cval(node->u.throw_.k, NULL, ce, c);
+        CVal v = opt_cval(node->u.throw_.v, NULL, ce, c);
+        return ce_throw(c->a, k, v, node->line);
+    }
+    case CE_IF: {
+        CVal cond = opt_cval(node->u.if_.cond, NULL, ce, c);
+        CExp *t = opt(node->u.if_.then, ce, c);
+        CExp *e = opt(node->u.if_.els, ce, c);
+        return ce_if(c->a, cond, t, e);
+    }
+    case CE_HALT: {
+        CVal v = opt_cval(node->u.halt.v, NULL, ce, c);
+        return ce_halt(c->a, v);
+    }
+    }
+    return NULL; /* unreachable */
+}
+
+CExp *cps_simplify(const CExp *prog, Arena *a) {
+    OptCtx c = {a};
+    return opt(prog, NULL, &c);
+}
+
 /* ---- dump ---- */
 
 static void print_cval(const CVal *v, int depth) {

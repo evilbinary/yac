@@ -40,6 +40,7 @@ static void usage(const char *prog) {
             "  --both           run both interpreters and compare\n"
             "  --uncps          run ANF->CPS->ANF (un-CPS round trip) and execute\n"
             "  --dump-uncps     print the un-CPS'd ANF and exit\n"
+            "  --opt            simplify the CPS IR (constant folding, eta)\n"
             "  --ast            dump the parsed AST and exit\n"
             "  --no-gc          disable garbage collection (arena-style growth)\n"
             "  --limit-nodes N  abort when live objects exceed N (0 = unlimited)\n",
@@ -64,7 +65,7 @@ static void cleanup(Res *r) {
 int main(int argc, char **argv) {
     bool dump_ast = false, dump_anf = false, dump_cps = false;
     bool cps_mode = false, both = false, uncps_mode = false, dump_uncps = false;
-    bool no_gc = false;
+    bool no_gc = false, do_opt = false;
     size_t limit_nodes = 0;
     const char *file = NULL;
 
@@ -76,6 +77,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--both") == 0) both = true;
         else if (strcmp(argv[i], "--uncps") == 0) uncps_mode = true;
         else if (strcmp(argv[i], "--dump-uncps") == 0) dump_uncps = true;
+        else if (strcmp(argv[i], "--opt") == 0) do_opt = true;
         else if (strcmp(argv[i], "--no-gc") == 0) no_gc = true;
         else if (strcmp(argv[i], "--limit-nodes") == 0) {
             if (i + 1 >= argc) {
@@ -109,6 +111,8 @@ int main(int argc, char **argv) {
     }
     arena_init(&r.a, 1 << 20);
     gc_init(&r.gc, 1 << 20);
+    const char *th = getenv("YAC_GC_THRESHOLD");
+    if (th && *th) r.gc.threshold = (size_t)strtoul(th, NULL, 10);
     r.gc.enabled = !no_gc;
     r.gc.max_objs = limit_nodes;
 
@@ -154,6 +158,7 @@ int main(int argc, char **argv) {
             cleanup(&r);
             return 1;
         }
+        if (do_opt) cps = cps_simplify(cps, &r.a);
         if (dump_cps) {
             cps_dump(cps, 0);
             cleanup(&r);
