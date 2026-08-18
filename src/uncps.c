@@ -22,6 +22,7 @@ typedef enum { CT_APP, CT_RETURN, CT_HALT } ContKind;
 typedef struct Cont {
     ContKind kind;
     const char *param; /* CT_APP: continuation-bound name */
+    int rslot;         /* CT_APP: its slot in the host frame */
     const CExp *body;  /* CT_APP: continuation body (CPS) */
 } Cont;
 
@@ -70,7 +71,7 @@ static Anf *uncps(const CExp *C, const Kenv *kenv, Uc *u);
 static bool cv_atom(const CVal *v, Uc *u, Atom *out) {
     switch (v->kind) {
     case CV_VAR:
-        *out = atom_var(v->u.var.name);
+        *out = atom_var_ds(v->u.var.name, v->u.var.depth, v->u.var.slot);
         return true;
     case CV_LIT:
         *out = atom_lit(v->u.lit);
@@ -85,10 +86,10 @@ static bool cv_atom(const CVal *v, Uc *u, Atom *out) {
         char **up = (char **)arena_alloc(u->a, (size_t)(np - 1) * sizeof(char *));
         for (int i = 0; i < np - 1; i++) up[i] = params[i];
         /* lambda bodies may not capture outer continuations: fresh kenv */
-        Kenv *k2 = kenv_push(u->a, NULL, kname, (Cont){CT_RETURN, NULL, NULL});
+        Kenv *k2 = kenv_push(u->a, NULL, kname, (Cont){CT_RETURN, NULL, 0, NULL});
         Anf *body = uncps(v->u.fun.body, k2, u);
         if (u->error) return false;
-        *out = atom_lam(up, np - 1, body);
+        *out = atom_lam(up, np - 1, v->u.fun.nslots, body);
         return true;
     }
     case CV_CONT:
@@ -106,7 +107,7 @@ static Anf *cont_apply(Uc *u, Cont cont, const Atom *val, const Kenv *kenv) {
     case CT_HALT:
         return anf_ret(u->a, *val);
     case CT_APP:
-        return anf_let(u->a, cont.param, *val, uncps(cont.body, kenv, u));
+        return anf_let(u->a, cont.param, cont.rslot, *val, uncps(cont.body, kenv, u));
     }
     uerr(u, "internal: bad continuation template");
     return NULL;
@@ -120,7 +121,7 @@ static Anf *cont_apply_call(Uc *u, Cont cont, const Atom *head, const Atom *args
     case CT_HALT:
         return anf_tail_call(u->a, *head, (Atom *)args, nargs);
     case CT_APP:
-        return anf_let_call(u->a, cont.param, *head, (Atom *)args, nargs,
+        return anf_let_call(u->a, cont.param, cont.rslot, *head, (Atom *)args, nargs,
                             uncps(cont.body, kenv, u));
     }
     uerr(u, "internal: bad continuation template");
@@ -151,7 +152,7 @@ static Anf *uncps(const CExp *C, const Kenv *kenv, Uc *u) {
     case CE_LET: {
         const CVal *val = &C->u.let.val;
         if (val->kind == CV_CONT) {
-            Cont cont = {CT_APP, val->u.cont.param, val->u.cont.body};
+            Cont cont = {CT_APP, val->u.cont.param, val->u.cont.rslot, val->u.cont.body};
             Kenv *k2 = kenv_push(u->a, kenv, C->u.let.name, cont);
             return uncps(C->u.let.body, k2, u);
         }
@@ -164,11 +165,11 @@ static Anf *uncps(const CExp *C, const Kenv *kenv, Uc *u) {
             }
             Atom at;
             if (!cv_atom(val, u, &at)) return NULL;
-            return anf_let(u->a, C->u.let.name, at, uncps(C->u.let.body, kenv, u));
+            return anf_let(u->a, C->u.let.name, C->u.let.slot, at, uncps(C->u.let.body, kenv, u));
         }
         Atom at;
         if (!cv_atom(val, u, &at)) return NULL;
-        return anf_let(u->a, C->u.let.name, at, uncps(C->u.let.body, kenv, u));
+        return anf_let(u->a, C->u.let.name, C->u.let.slot, at, uncps(C->u.let.body, kenv, u));
     }
 
     case CE_CALL: {
@@ -184,7 +185,7 @@ static Anf *uncps(const CExp *C, const Kenv *kenv, Uc *u) {
             }
             Atom val;
             if (!cv_atom(&args[0], u, &val)) return NULL;
-            Cont cont = {CT_APP, head.u.cont.param, head.u.cont.body};
+            Cont cont = {CT_APP, head.u.cont.param, head.u.cont.rslot, head.u.cont.body};
             return cont_apply(u, cont, &val, kenv);
         }
 
@@ -218,7 +219,7 @@ static Anf *uncps(const CExp *C, const Kenv *kenv, Uc *u) {
 
         CVal *last = &args[nargs - 1];
         if (last->kind == CV_CONT) {
-            Cont cont = {CT_APP, last->u.cont.param, last->u.cont.body};
+            Cont cont = {CT_APP, last->u.cont.param, last->u.cont.rslot, last->u.cont.body};
             return cont_apply_call(u, cont, &head_at, aargs, nargs - 1, kenv);
         }
         if (last->kind == CV_VAR) {
@@ -264,21 +265,54 @@ static Anf *uncps(const CExp *C, const Kenv *kenv, Uc *u) {
     return NULL;
 }
 
-bool cps_to_anf(const CExp *prog, Arena *a, Anf **out, char **errmsg) {
+/* Compute the top-level frame size of an un-CPS'd ANF: the highest slot bound
+ * at the top level, without descending into lambda bodies. */
+static void scan_top_nslots(const Anf *n, int *max) {
+    if (!n) return;
+    switch (n->kind) {
+    case N_LET:
+        if (n->u.let.slot + 1 > *max) *max = n->u.let.slot + 1;
+        scan_top_nslots(n->u.let.body, max);
+        break;
+    case N_LET_CALL:
+        if (n->u.call.slot + 1 > *max) *max = n->u.call.slot + 1;
+        scan_top_nslots(n->u.call.body, max);
+        break;
+    case N_IF:
+        scan_top_nslots(n->u.if_.then, max);
+        scan_top_nslots(n->u.if_.els, max);
+        break;
+    case N_LET_CALLCC:
+        if (n->u.callcc.slot + 1 > *max) *max = n->u.callcc.slot + 1;
+        scan_top_nslots(n->u.callcc.body, max);
+        break;
+    default:
+        break;
+    }
+}
+
+bool cps_to_anf(const CExp *prog, Arena *a, Anf **out, int *top_nslots,
+                char **errmsg) {
     Uc u = {a, NULL};
     if (prog->kind != CE_LET || prog->u.let.val.kind != CV_CONT) {
         uerr(&u, "internal: bad CPS program shape (expected top-level continuation let)");
         *out = NULL;
+        if (top_nslots) *top_nslots = 0;
         if (errmsg) *errmsg = u.error;
         return false;
     }
-    Cont halt = {CT_HALT, NULL, NULL};
+    Cont halt = {CT_HALT, NULL, 0, NULL};
     Kenv *k0 = kenv_push(a, NULL, prog->u.let.name, halt);
     Anf *res = uncps(prog->u.let.body, k0, &u);
     if (u.error) {
         *out = NULL;
+        if (top_nslots) *top_nslots = 0;
         if (errmsg) *errmsg = u.error;
         return false;
+    }
+    if (top_nslots) {
+        *top_nslots = 0;
+        scan_top_nslots(res, top_nslots);
     }
     *out = res;
     return true;

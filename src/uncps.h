@@ -12,7 +12,9 @@
  * continuation stored or passed as a value, continuations used only in
  * tail/application position. On any violation it fails with an error message.
  * When it succeeds, the resulting ANF is semantically equivalent to the
- * original ANF the CPS was produced from. */
-bool cps_to_anf(const CExp *prog, Arena *a, Anf **out, char **errmsg);
+ * original ANF the CPS was produced from; *top_nslots is the top-level frame
+ * size. */
+bool cps_to_anf(const CExp *prog, Arena *a, Anf **out, int *top_nslots,
+                char **errmsg);
 
 #endif

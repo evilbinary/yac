@@ -9,6 +9,8 @@ typedef struct {
     Arena *a;
     int fresh;
     char *error;
+    int frames[64]; /* per-lambda-nesting-level slot counters */
+    int depth;      /* current lambda nesting level */
 } CpsCtx;
 
 static char *cfresh(CpsCtx *c) {
@@ -29,11 +31,17 @@ static void cerror(CpsCtx *c, const char *fmt, ...) {
 
 /* ---- CVal constructors ---- */
 
-static CVal cv_var(const char *name) {
+static CVal cv_var_ds(const char *name, int depth, int slot) {
     CVal v;
     v.kind = CV_VAR;
     v.u.var.name = name;
+    v.u.var.depth = depth;
+    v.u.var.slot = slot;
     return v;
+}
+
+static CVal cv_var(const char *name) {
+    return cv_var_ds(name, 0, -1);
 }
 
 static CVal cv_lit(Value lit) {
@@ -43,19 +51,22 @@ static CVal cv_lit(Value lit) {
     return v;
 }
 
-static CVal cv_fun(char **params, int nparams, CExp *body) {
+static CVal cv_fun(char **params, int nparams, int nslots, int kslot, CExp *body) {
     CVal v;
     v.kind = CV_FUN;
     v.u.fun.params = params;
     v.u.fun.nparams = nparams;
+    v.u.fun.nslots = nslots;
+    v.u.fun.kslot = kslot;
     v.u.fun.body = body;
     return v;
 }
 
-static CVal cv_cont(const char *param, CExp *body) {
+static CVal cv_cont(const char *param, int rslot, CExp *body) {
     CVal v;
     v.kind = CV_CONT;
     v.u.cont.param = param;
+    v.u.cont.rslot = rslot;
     v.u.cont.body = body;
     return v;
 }
@@ -70,9 +81,10 @@ static CExp *ce_node(Arena *a, CExpKind kind, int line) {
     return n;
 }
 
-static CExp *ce_let(Arena *a, const char *name, CVal val, CExp *body) {
+static CExp *ce_let(Arena *a, const char *name, int slot, CVal val, CExp *body) {
     CExp *n = ce_node(a, CE_LET, 0);
     n->u.let.name = name;
+    n->u.let.slot = slot;
     n->u.let.val = val;
     n->u.let.body = body;
     return n;
@@ -112,22 +124,30 @@ static CExp *ce_halt(Arena *a, CVal v) {
 static CVal conv_atom(const Atom *atom, CpsCtx *c);
 static CExp *conv_ce(const Anf *node, CVal kcont, CpsCtx *c);
 
-/* The continuation for a lambda: a fresh variable bound in the closure.
- * kcont flows through tail calls untouched, giving TCO in CPS. */
+/* The continuation for a lambda: a fresh variable bound in the closure, kept
+ * in a slot after the ANF locals. kcont flows through tail calls untouched,
+ * giving TCO in CPS. */
 static CVal conv_lambda(const Atom *lam, CpsCtx *c) {
     char *k = cfresh(c);
     char **params = (char **)arena_alloc(c->a,
         (size_t)(lam->u.lam.nparams + 1) * sizeof(char *));
     for (int i = 0; i < lam->u.lam.nparams; i++) params[i] = lam->u.lam.params[i];
     params[lam->u.lam.nparams] = k;
-    CExp *body = conv_ce(lam->u.lam.body, cv_var(k), c);
-    return cv_fun(params, lam->u.lam.nparams + 1, body);
+    c->depth++;
+    c->frames[c->depth] = lam->u.lam.nslots + 1; /* +1 for the k slot */
+    int kslot = lam->u.lam.nslots;
+    CExp *body = conv_ce(lam->u.lam.body, cv_var_ds(k, 0, kslot), c);
+    int nslots = c->frames[c->depth];
+    c->depth--;
+    return cv_fun(params, lam->u.lam.nparams + 1, nslots, kslot, body);
 }
 
 static CVal conv_atom(const Atom *atom, CpsCtx *c) {
     switch (atom->kind) {
     case AT_VAR:
-        return cv_var(atom->u.var.name);
+        if (atom->u.var.slot < 0)
+            return cv_var_ds(atom->u.var.name, 0, -1); /* primitive */
+        return cv_var_ds(atom->u.var.name, atom->u.var.depth, atom->u.var.slot);
     case AT_LIT:
         return cv_lit(atom->u.lit);
     case AT_LAM:
@@ -149,17 +169,22 @@ static CVal *conv_args(const Atom *args, int nargs, CVal cont,
 static CExp *conv_ce(const Anf *node, CVal kcont, CpsCtx *c) {
     switch (node->kind) {
     case N_LET:
-        return ce_let(c->a, node->u.let.name,
+        return ce_let(c->a, node->u.let.name, node->u.let.slot,
                       conv_atom(&node->u.let.atom, c),
                       conv_ce(node->u.let.body, kcont, c));
 
     case N_LET_CALL: {
         /* let name = call(head, args) in body
-         *  == call head args (kappa(r). let name = r in conv(body, kcont)) */
+         *  == call head args (kappa(r). let name = r in conv(body, kcont))
+         * The continuation's param r lives in a slot (rslot) of the host
+         * frame; applying the continuation writes the value there and keeps
+         * the current frame. */
         char *r = cfresh(c);
-        CExp *cont_body = ce_let(c->a, node->u.call.name, cv_var(r),
+        int rslot = c->frames[c->depth]++;
+        CExp *cont_body = ce_let(c->a, node->u.call.name, node->u.call.slot,
+                                 cv_var_ds(r, 0, rslot),
                                  conv_ce(node->u.call.body, kcont, c));
-        CVal cont = cv_cont(r, cont_body);
+        CVal cont = cv_cont(r, rslot, cont_body);
         CVal *args = conv_args(node->u.call.args, node->u.call.nargs, cont, c);
         return ce_call(c->a, conv_atom(&node->u.call.head, c), args,
                        node->u.call.nargs + 1, node->line);
@@ -192,11 +217,14 @@ static CExp *conv_ce(const Anf *node, CVal kcont, CpsCtx *c) {
          *         cont = kappa(r). let name = r in conv(body, kcont) */
         char *ck = cfresh(c);
         char *cr = cfresh(c);
-        CExp *capture = ce_throw(c->a, kcont, cv_var(ck), node->line);
-        CVal k = cv_cont(ck, capture);
-        CExp *rest = ce_let(c->a, node->u.callcc.name, cv_var(cr),
+        int kslot = c->frames[c->depth]++;
+        int cslot = c->frames[c->depth]++;
+        CExp *capture = ce_throw(c->a, kcont, cv_var_ds(ck, 0, kslot), node->line);
+        CVal k = cv_cont(ck, kslot, capture);
+        CExp *rest = ce_let(c->a, node->u.callcc.name, node->u.callcc.slot,
+                            cv_var_ds(cr, 0, cslot),
                             conv_ce(node->u.callcc.body, kcont, c));
-        CVal cont = cv_cont(cr, rest);
+        CVal cont = cv_cont(cr, cslot, rest);
         CVal *args = (CVal *)arena_alloc(c->a, 2 * sizeof(CVal));
         args[0] = k;
         args[1] = cont;
@@ -212,18 +240,24 @@ static CExp *conv_ce(const Anf *node, CVal kcont, CpsCtx *c) {
     return NULL;
 }
 
-bool anf_to_cps(const Anf *anf, Arena *a, CExp **out, char **errmsg) {
-    CpsCtx c = {a, 0, NULL};
+bool anf_to_cps(const Anf *anf, int anf_top_nslots, Arena *a, CExp **out,
+                int *top_nslots, char **errmsg) {
+    CpsCtx c = {a, 0, NULL, {0}, 0};
+    c.frames[0] = anf_top_nslots;
     char *top = cfresh(&c);      /* name bound to the halt continuation */
+    int top_slot = c.frames[0]++;
     char *p = cfresh(&c);        /* halt continuation's parameter */
-    CVal halt = cv_cont(p, ce_halt(a, cv_var(p)));
-    CExp *body = conv_ce(anf, cv_var(top), &c);
+    int pslot = c.frames[0]++;
+    CVal halt = cv_cont(p, pslot, ce_halt(a, cv_var_ds(p, 0, pslot)));
+    CExp *body = conv_ce(anf, cv_var_ds(top, 0, top_slot), &c);
     if (c.error) {
         *out = NULL;
+        if (top_nslots) *top_nslots = 0;
         if (errmsg) *errmsg = c.error;
         return false;
     }
-    *out = ce_let(a, top, halt, body);
+    if (top_nslots) *top_nslots = c.frames[0];
+    *out = ce_let(a, top, top_slot, halt, body);
     return true;
 }
 
@@ -282,13 +316,19 @@ static CVal opt_cval(CVal v, const char *letname, const CE *ce, OptCtx *c) {
             }
             if (ok) target = f;
         }
-        if (target) return cv_var(target);
+        if (target) {
+            /* move the reference out of the lambda frame (depth - 1) */
+            int df = b->u.call.head.u.var.depth;
+            int sf = b->u.call.head.u.var.slot;
+            return cv_var_ds(target, df - 1, sf);
+        }
         const CE *inner = ce_without(c, ce, v.u.fun.params, np);
         v.u.fun.body = opt(v.u.fun.body, inner, c);
         return v;
     }
     case CV_CONT: {
-        /* eta-reduce: kappa(x). call k x  ==>  k */
+        /* eta-reduce: kappa(x). call k x  ==>  k
+         * (continuations add no frame, so k's address is unchanged) */
         const char *target = NULL;
         const CExp *b = v.u.cont.body;
         if (b && b->kind == CE_CALL && b->u.call.nargs == 1 &&
@@ -301,7 +341,7 @@ static CVal opt_cval(CVal v, const char *letname, const CE *ce, OptCtx *c) {
                 target = k;
             }
         }
-        if (target) return cv_var(target);
+        if (target) return b->u.call.head;
         const CE *inner = ce_without(c, ce, (char *[]){ (char *)v.u.cont.param }, 1);
         v.u.cont.body = opt(v.u.cont.body, inner, c);
         return v;
@@ -349,7 +389,7 @@ static CExp *opt(const CExp *node, const CE *ce, OptCtx *c) {
         const CE *ce2 = ce;
         if (v.kind == CV_LIT) ce2 = ce_push(c, ce, node->u.let.name, v.u.lit);
         CExp *body = opt(node->u.let.body, ce2, c);
-        return ce_let(c->a, node->u.let.name, v, body);
+        return ce_let(c->a, node->u.let.name, node->u.let.slot, v, body);
     }
     case CE_CALL: {
         CVal head = opt_cval(node->u.call.head, NULL, ce, c);
@@ -388,7 +428,7 @@ CExp *cps_simplify(const CExp *prog, Arena *a) {
 static void print_cval(const CVal *v, int depth) {
     for (int i = 0; i < depth; i++) printf("  ");
     switch (v->kind) {
-    case CV_VAR: printf("var %s\n", v->u.var.name); break;
+    case CV_VAR: printf("var %s(%d,%d)\n", v->u.var.name, v->u.var.depth, v->u.var.slot); break;
     case CV_PRIM: printf("prim %s\n", v->u.prim.name); break;
     case CV_LIT: {
         char *s = value_to_string(NULL, v->u.lit);
@@ -396,7 +436,7 @@ static void print_cval(const CVal *v, int depth) {
         break;
     }
     case CV_FUN: {
-        printf("fun (");
+        printf("fun %d (", v->u.fun.nslots);
         for (int i = 0; i < v->u.fun.nparams; i++) {
             printf("%s%s", i ? ", " : "", v->u.fun.params[i]);
         }
@@ -405,7 +445,7 @@ static void print_cval(const CVal *v, int depth) {
         break;
     }
     case CV_CONT: {
-        printf("cont (%s)\n", v->u.cont.param);
+        printf("cont (%s, slot %d)\n", v->u.cont.param, v->u.cont.rslot);
         cps_dump(v->u.cont.body, depth + 1);
         break;
     }
@@ -417,7 +457,7 @@ void cps_dump(const CExp *node, int depth) {
     for (int i = 0; i < depth; i++) printf("  ");
     switch (node->kind) {
     case CE_LET:
-        printf("let %s =\n", node->u.let.name);
+        printf("let %s(%d) =\n", node->u.let.name, node->u.let.slot);
         print_cval(&node->u.let.val, depth + 1);
         cps_dump(node->u.let.body, depth + 1);
         break;

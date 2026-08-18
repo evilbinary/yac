@@ -9,6 +9,8 @@
 
 typedef struct Binding Binding;
 typedef struct Anf Anf;
+typedef struct Frame Frame;
+typedef struct Closure Closure;
 
 typedef enum {
     V_INT,
@@ -25,16 +27,6 @@ typedef struct Str {
     int len;
     char *data; /* NUL-terminated */
 } Str;
-
-typedef struct Closure {
-    GObj hdr;      /* GC heap header */
-    void *body;    /* Anf* in eval_anf, CExp* in eval_cps */
-    char **params; /* V_FUN: IR params (continuation param is last);
-                      V_CONT: unused (see cont_name) */
-    int nparams;
-    Binding *env;  /* captured lexical environment */
-    const char *cont_name; /* V_CONT: the single parameter name; NULL for V_FUN */
-} Closure;
 
 typedef struct Prim Prim;
 typedef struct PrimCtx {
@@ -63,6 +55,29 @@ typedef struct Value {
         const Prim *prim;
     } u;
 } Value;
+
+/* Flat environment frame: a function activation's slots. Variable references
+ * (depth, slot) resolve by walking `depth` parent pointers from the current
+ * frame, then indexing slots[slot]. */
+struct Frame {
+    GObj hdr;            /* GC heap header */
+    struct Frame *parent; /* enclosing frame */
+    int nslots;
+    Value slots[];       /* nslots entries */
+};
+
+struct Closure {
+    GObj hdr;       /* GC heap header */
+    void *body;     /* Anf* in eval_anf, CExp* in eval_cps */
+    char **params;  /* V_FUN: IR params (continuation param is last);
+                       V_CONT: unused (see cont_name) */
+    int nparams;
+    int nslots;     /* V_FUN: activation frame size (params + locals) */
+    int kslot;      /* V_FUN: slot of the continuation param in the frame */
+    Frame *frame;   /* captured lexical frame */
+    const char *cont_name; /* V_CONT: the single parameter name; NULL for V_FUN */
+    int rslot;      /* V_CONT: slot of the param in the captured frame */
+};
 
 extern const Value VALUE_NULL;
 

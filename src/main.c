@@ -138,8 +138,9 @@ int main(int argc, char **argv) {
     }
 
     Anf *anf = NULL;
+    int top_nslots = 0;
     char *errmsg = NULL;
-    if (!ast_to_anf(pr.program, &r.a, &anf, &errmsg)) {
+    if (!ast_to_anf(pr.program, &r.a, &anf, &top_nslots, &errmsg)) {
         fprintf(stderr, "error: %s\n", errmsg);
         cleanup(&r);
         return 1;
@@ -152,8 +153,9 @@ int main(int argc, char **argv) {
     }
 
     CExp *cps = NULL;
+    int cps_top = 0;
     if (cps_mode || both || dump_cps || uncps_mode || dump_uncps) {
-        if (!anf_to_cps(anf, &r.a, &cps, &errmsg)) {
+        if (!anf_to_cps(anf, top_nslots, &r.a, &cps, &cps_top, &errmsg)) {
             fprintf(stderr, "error: %s\n", errmsg);
             cleanup(&r);
             return 1;
@@ -168,7 +170,8 @@ int main(int argc, char **argv) {
 
     if (uncps_mode || dump_uncps) {
         Anf *anf2 = NULL;
-        if (!cps_to_anf(cps, &r.a, &anf2, &errmsg)) {
+        int top2 = 0;
+        if (!cps_to_anf(cps, &r.a, &anf2, &top2, &errmsg)) {
             fprintf(stderr, "error: %s\n", errmsg);
             cleanup(&r);
             return 1;
@@ -179,7 +182,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         Value result;
-        if (eval_anf_run(anf2, &r.a, &result, &errmsg, &r.gc) != 0) {
+        if (eval_anf_run(anf2, top2, &r.a, &result, &errmsg, &r.gc) != 0) {
             fprintf(stderr, "runtime error: %s\n", errmsg);
             cleanup(&r);
             return 1;
@@ -193,9 +196,9 @@ int main(int argc, char **argv) {
     if (both) {
         Value r1, r2;
         char *e1 = NULL, *e2 = NULL;
-        int rc1 = eval_anf_run(anf, &r.a, &r1, &e1, &r.gc);
+        int rc1 = eval_anf_run(anf, top_nslots, &r.a, &r1, &e1, &r.gc);
         if (rc1 == 0) gc_push_value(&r.gc, r1); /* protect r1 while the CPS machine collects */
-        int rc2 = eval_cps_run(cps, &r.a, &r2, &e2, &r.gc);
+        int rc2 = eval_cps_run(cps, cps_top, &r.a, &r2, &e2, &r.gc);
         if (rc1 == 0) gc_pop_root(&r.gc);
         if (rc1 != 0 || rc2 != 0) {
             fprintf(stderr, "runtime error: %s%s%s\n",
@@ -218,7 +221,7 @@ int main(int argc, char **argv) {
 
     if (cps_mode) {
         Value result;
-        if (eval_cps_run(cps, &r.a, &result, &errmsg, &r.gc) != 0) {
+        if (eval_cps_run(cps, cps_top, &r.a, &result, &errmsg, &r.gc) != 0) {
             fprintf(stderr, "runtime error: %s\n", errmsg);
             cleanup(&r);
             return 1;
@@ -230,7 +233,7 @@ int main(int argc, char **argv) {
     }
 
     Value result;
-    if (eval_anf_run(anf, &r.a, &result, &errmsg, &r.gc) != 0) {
+    if (eval_anf_run(anf, top_nslots, &r.a, &result, &errmsg, &r.gc) != 0) {
         fprintf(stderr, "runtime error: %s\n", errmsg);
         cleanup(&r);
         return 1;

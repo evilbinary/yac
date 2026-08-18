@@ -4,8 +4,13 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "env.h"
 #include "gc.h"
+
+/* Direct-style machine over flat environment frames. The machine state is
+ * (code, current frame, continuation-frame stack). A variable reference
+ * (depth, slot) resolves by walking `depth` parent pointers from the current
+ * frame, then indexing slots[slot]. A non-tail call pushes a CFrame; a tail
+ * call just allocates a fresh frame and jumps (C stack never grows). */
 
 typedef struct {
     Gc *gc;
@@ -25,15 +30,21 @@ static void fail(Est *st, const char *fmt, ...) {
     st->errored = true;
 }
 
-static Value eval_atom(const Atom *atom, Binding *env, Est *st) {
+static Value *frame_slot(Frame *env, int depth, int slot) {
+    for (int i = 0; i < depth; i++) env = env->parent;
+    return &env->slots[slot];
+}
+
+static Value eval_atom(const Atom *atom, Frame *env, Est *st) {
     switch (atom->kind) {
     case AT_VAR: {
-        Value v;
-        if (!env_lookup(env, atom->u.var.name, &v)) {
+        if (atom->u.var.slot < 0) {
+            const Prim *p = prim_lookup(atom->u.var.name);
+            if (p) return v_prim(p);
             fail(st, "unbound variable '%s'", atom->u.var.name);
             return VALUE_NULL;
         }
-        return v;
+        return *frame_slot(env, atom->u.var.depth, atom->u.var.slot);
     }
     case AT_LIT:
         return atom->u.lit;
@@ -42,31 +53,16 @@ static Value eval_atom(const Atom *atom, Binding *env, Est *st) {
         clo->body = atom->u.lam.body;
         clo->params = atom->u.lam.params;
         clo->nparams = atom->u.lam.nparams;
-        clo->env = env;
+        clo->nslots = atom->u.lam.nslots;
+        clo->kslot = -1;
+        clo->frame = env;
         clo->cont_name = NULL;
+        clo->rslot = -1;
         return v_fun(clo);
     }
     }
     fail(st, "internal: bad atom");
     return VALUE_NULL;
-}
-
-static Binding *bind_params(Gc *gc, const Closure *clo, Value *args) {
-    Binding *env = clo->env;
-    for (int i = 0; i < clo->nparams; i++) {
-        env = env_bind(gc, env, clo->params[i], args[i]);
-    }
-    return env;
-}
-
-static Binding *bind_prims(Gc *gc) {
-    Binding *env = NULL;
-    int n;
-    const Prim *prims = prim_table(&n);
-    for (int i = 0; i < n; i++) {
-        env = env_bind(gc, env, prims[i].name, v_prim(&prims[i]));
-    }
-    return env;
 }
 
 static void apply_prim(Value head, Value *args, int nargs, Value *out, Est *st) {
@@ -80,42 +76,45 @@ static void apply_prim(Value head, Value *args, int nargs, Value *out, Est *st) 
     if (ctx.errored) fail(st, "%s", ctx.errmsg);
 }
 
-/* Pop the current top frame; bind `v` to its name and resume its rest.
- * Returns 1 at the top level (program done). `v` must be rooted by caller. */
-static int tail_return(Value v, Frame **frame, Binding **env, const Anf **node,
+/* Allocate the callee's frame, bind args into its param slots, and jump. */
+static void enter_call(Gc *gc, const Closure *clo, Value *args, int nargs,
+                       Frame **env) {
+    Frame *nf = gc_new_frame(gc, clo->nslots);
+    nf->parent = clo->frame;
+    for (int i = 0; i < nargs; i++) nf->slots[i] = args[i];
+    *env = nf;
+    gc_set_env(gc, nf);
+}
+
+/* Pop the current continuation frame; bind `v` to its slot in the caller's
+ * frame and resume its rest. Returns 1 at the top level (program done). */
+static int tail_return(Value v, CFrame **cframe, Frame **env, const Anf **node,
                        Gc *gc) {
-    if (!*frame) return 1;
-    Frame *f = *frame;
-    *frame = f->prev;
-    *env = env_bind(gc, f->env, f->name, v);
+    if (!*cframe) return 1;
+    CFrame *f = *cframe;
+    *cframe = f->prev;
+    gc_set_frame(gc, (GObj *)*cframe);
+    *env = f->env;
+    gc_set_env(gc, f->env);
+    f->env->slots[f->slot] = v;
     *node = f->rest;
-    gc_set_frame(gc, (GObj *)*frame);
     return 0;
 }
 
-int eval_anf_run(const Anf *prog, Arena *a, Value *result, char **errmsg, Gc *gc) {
+int eval_anf_run(const Anf *prog, int top_nslots, Arena *a, Value *result,
+                 char **errmsg, Gc *gc) {
     Est st = {gc, a, errmsg, false};
     const Anf *node = prog;
-    Binding *env = bind_prims(gc);
-    Frame *frame = NULL;
+    Frame *env = gc_new_frame(gc, top_nslots);
+    gc_set_env(gc, env);
+    CFrame *cframe = NULL;
 
     for (;;) {
         switch (node->kind) {
         case N_LET: {
             Value v = eval_atom(&node->u.let.atom, env, &st);
             if (st.errored) goto err;
-            gc_push_value(gc, v);
-            if (node->u.let.atom.kind == AT_LAM) {
-                /* recursive binding: closure captures the new env which
-                 * already contains the binding (bind-then-fill) */
-                Binding *b = env_bind(gc, env, node->u.let.name, v);
-                v.u.clo->env = b;
-                b->value = v;
-                env = b;
-            } else {
-                env = env_bind(gc, env, node->u.let.name, v);
-            }
-            gc_pop_root(gc);
+            env->slots[node->u.let.slot] = v;
             node = node->u.let.body;
             break;
         }
@@ -137,20 +136,20 @@ int eval_anf_run(const Anf *prog, Arena *a, Value *result, char **errmsg, Gc *gc
                          node->line, 0, clo->nparams, node->u.call.nargs);
                     goto err;
                 }
-                Frame *f = (Frame *)gc_alloc(gc, G_FRAME, sizeof(Frame));
-                f->prev = frame;
-                f->name = node->u.call.name;
+                CFrame *f = (CFrame *)gc_alloc(gc, G_FRAME, sizeof(CFrame));
+                f->prev = cframe;
+                f->slot = node->u.call.slot;
                 f->rest = node->u.call.body;
                 f->env = env;
-                frame = f;
+                cframe = f;
                 gc_set_frame(gc, (GObj *)f);
-                env = bind_params(gc, clo, args);
+                enter_call(gc, clo, args, node->u.call.nargs, &env);
                 node = clo->body;
             } else if (head.tag == V_PRIM) {
                 Value v;
                 apply_prim(head, args, node->u.call.nargs, &v, &st);
                 if (st.errored) goto err;
-                env = env_bind(gc, env, node->u.call.name, v);
+                env->slots[node->u.call.slot] = v;
                 node = node->u.call.body;
             } else {
                 fail(&st, "%d:%d: cannot apply a non-function value", node->line, 0);
@@ -188,14 +187,14 @@ int eval_anf_run(const Anf *prog, Arena *a, Value *result, char **errmsg, Gc *gc
                          node->line, 0, clo->nparams, node->u.tailcall.nargs);
                     goto err;
                 }
-                env = bind_params(gc, clo, args);
+                enter_call(gc, clo, args, node->u.tailcall.nargs, &env);
                 node = clo->body;
             } else if (head.tag == V_PRIM) {
                 Value v;
                 apply_prim(head, args, node->u.tailcall.nargs, &v, &st);
                 if (st.errored) goto err;
                 gc_push_value(gc, v);
-                if (tail_return(v, &frame, &env, &node, gc)) {
+                if (tail_return(v, &cframe, &env, &node, gc)) {
                     *result = v;
                     return 0;
                 }
@@ -212,7 +211,7 @@ int eval_anf_run(const Anf *prog, Arena *a, Value *result, char **errmsg, Gc *gc
             Value v = eval_atom(&node->u.ret, env, &st);
             if (st.errored) goto err;
             gc_push_value(gc, v);
-            if (tail_return(v, &frame, &env, &node, gc)) {
+            if (tail_return(v, &cframe, &env, &node, gc)) {
                 *result = v;
                 return 0;
             }

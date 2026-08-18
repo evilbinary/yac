@@ -9,11 +9,11 @@
  * `mark` is set during the mark phase. */
 
 typedef enum {
-    G_STR,    /* Str        */
-    G_BIND,   /* Binding    */
-    G_CLO,    /* Closure    */
-    G_FRAME,  /* Frame (ANF continuation stack) */
-    G_VALARR, /* Value array (call arguments)   */
+    G_STR,    /* Str (literals; currently arena-resident) */
+    G_ENVFRAME, /* Frame: flat environment frame (slots)  */
+    G_CLO,    /* Closure */
+    G_FRAME,  /* ANF continuation frame */
+    G_VALARR, /* Value array (call arguments) */
 } GKind;
 
 typedef struct GObj {

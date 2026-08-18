@@ -4,13 +4,14 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "env.h"
 #include "gc.h"
 
-/* CPS trampoline: the machine state is just (code, env). There is no frame
- * stack -- continuations are first-class closures, so a call either binds the
- * callee's parameters and continues (tail jump) or hands the result to an
- * explicit continuation value. The C stack never grows. */
+/* CPS trampoline over flat environment frames. The machine state is just
+ * (code, current frame). A call either allocates the callee's frame and
+ * jumps (tail position) or hands the result to an explicit continuation
+ * value. Continuations are applied without allocating a frame: the value is
+ * written into the continuation's rslot in its captured frame, and control
+ * switches to that frame. The C stack never grows. */
 
 typedef struct {
     Gc *gc;
@@ -30,22 +31,9 @@ static void fail(Cst *st, const char *fmt, ...) {
     st->errored = true;
 }
 
-static Binding *bind_prims(Gc *gc) {
-    Binding *env = NULL;
-    int n;
-    const Prim *prims = prim_table(&n);
-    for (int i = 0; i < n; i++) {
-        env = env_bind(gc, env, prims[i].name, v_prim(&prims[i]));
-    }
-    return env;
-}
-
-static Binding *bind_params(Gc *gc, const Closure *clo, Value *args) {
-    Binding *env = clo->env;
-    for (int i = 0; i < clo->nparams; i++) {
-        env = env_bind(gc, env, clo->params[i], args[i]);
-    }
-    return env;
+static Value *frame_slot(Frame *env, int depth, int slot) {
+    for (int i = 0; i < depth; i++) env = env->parent;
+    return &env->slots[slot];
 }
 
 static void apply_prim(Value head, Value *args, int nargs, Value *out, Cst *st) {
@@ -61,15 +49,16 @@ static void apply_prim(Value head, Value *args, int nargs, Value *out, Cst *st) 
 
 /* ---- eval_val: values only (no calls) ---- */
 
-static Value eval_val(const CVal *v, Binding *env, Cst *st) {
+static Value eval_val(const CVal *v, Frame *env, Cst *st) {
     switch (v->kind) {
     case CV_VAR: {
-        Value r;
-        if (!env_lookup(env, v->u.var.name, &r)) {
+        if (v->u.var.slot < 0) {
+            const Prim *p = prim_lookup(v->u.var.name);
+            if (p) return v_prim(p);
             fail(st, "unbound variable '%s'", v->u.var.name);
             return VALUE_NULL;
         }
-        return r;
+        return *frame_slot(env, v->u.var.depth, v->u.var.slot);
     }
     case CV_LIT:
         return v->u.lit;
@@ -86,8 +75,11 @@ static Value eval_val(const CVal *v, Binding *env, Cst *st) {
         clo->body = v->u.fun.body;
         clo->params = v->u.fun.params;
         clo->nparams = v->u.fun.nparams;
-        clo->env = env;
+        clo->nslots = v->u.fun.nslots;
+        clo->kslot = v->u.fun.kslot;
+        clo->frame = env;
         clo->cont_name = NULL;
+        clo->rslot = -1;
         return v_fun(clo);
     }
     case CV_CONT: {
@@ -95,8 +87,10 @@ static Value eval_val(const CVal *v, Binding *env, Cst *st) {
         clo->body = v->u.cont.body;
         clo->params = NULL;
         clo->nparams = 1;
-        clo->env = env;
+        clo->nslots = 1;
+        clo->frame = env;
         clo->cont_name = v->u.cont.param;
+        clo->rslot = v->u.cont.rslot;
         return v_cont(clo);
     }
     }
@@ -106,21 +100,25 @@ static Value eval_val(const CVal *v, Binding *env, Cst *st) {
 
 /* ---- apply_cont: jump to a continuation with a value ----
  * The continuation `k` and value `v` must be rooted by the caller. */
-static void apply_cont(Value k, Value v, Binding **env, const CExp **code,
+static void apply_cont(Value k, Value v, Frame **env, const CExp **code,
                        Cst *st) {
     if (k.tag != V_CONT) {
         fail(st, "expected a continuation, got a non-continuation value");
         return;
     }
     Closure *clo = k.u.clo;
-    *env = env_bind(st->gc, clo->env, clo->cont_name, v);
+    *env = clo->frame;
+    gc_set_env(st->gc, clo->frame);
+    clo->frame->slots[clo->rslot] = v;
     *code = clo->body;
 }
 
-int eval_cps_run(const CExp *prog, Arena *a, Value *result, char **errmsg, Gc *gc) {
+int eval_cps_run(const CExp *prog, int top_nslots, Arena *a, Value *result,
+                 char **errmsg, Gc *gc) {
     Cst st = {gc, a, errmsg, false};
     const CExp *code = prog;
-    Binding *env = bind_prims(gc);
+    Frame *env = gc_new_frame(gc, top_nslots);
+    gc_set_env(gc, env);
 
     for (;;) {
         switch (code->kind) {
@@ -128,18 +126,7 @@ int eval_cps_run(const CExp *prog, Arena *a, Value *result, char **errmsg, Gc *g
             Value v = eval_val(&code->u.let.val, env, &st);
             if (st.errored) goto err;
             gc_push_value(gc, v);
-            if (code->u.let.val.kind == CV_FUN || code->u.let.val.kind == CV_CONT) {
-                /* literal closure: recursive binding -- the closure captures
-                 * the env containing the binding (bind-then-fill). Aliases
-                 * (CV_VAR etc.) must NOT re-patch, or the shared closure's
-                 * env would drift to an ever-deeper chain. */
-                Binding *b = env_bind(gc, env, code->u.let.name, v);
-                v.u.clo->env = b;
-                b->value = v;
-                env = b;
-            } else {
-                env = env_bind(gc, env, code->u.let.name, v);
-            }
+            env->slots[code->u.let.slot] = v;
             gc_pop_root(gc);
             code = code->u.let.body;
             break;
@@ -162,7 +149,12 @@ int eval_cps_run(const CExp *prog, Arena *a, Value *result, char **errmsg, Gc *g
                          code->line, 0, clo->nparams, code->u.call.nargs);
                     goto err;
                 }
-                env = bind_params(gc, clo, args);
+                Frame *nf = gc_new_frame(gc, clo->nslots);
+                nf->parent = clo->frame;
+                for (int i = 0; i < code->u.call.nargs - 1; i++) nf->slots[i] = args[i];
+                nf->slots[clo->kslot] = args[code->u.call.nargs - 1];
+                env = nf;
+                gc_set_env(gc, nf);
                 code = clo->body;
             } else if (head.tag == V_PRIM) {
                 if (code->u.call.nargs < 1) {
@@ -191,7 +183,8 @@ int eval_cps_run(const CExp *prog, Arena *a, Value *result, char **errmsg, Gc *g
                 if (st.errored) goto err;
                 gc_pop_root(gc); /* args[0] */
             } else {
-                fail(&st, "%d:%d: cannot apply a non-function value", code->line, 0);
+                fail(&st, "%d:%d: cannot apply a non-function value (tag=%d)",
+                     code->line, 0, head.tag);
                 goto err;
             }
             gc_pop_root(gc); /* args array */

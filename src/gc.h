@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "env.h"
 #include "gcobj.h"
 #include "value.h"
 
@@ -24,7 +23,7 @@ typedef struct Gc {
     size_t total_objs;    /* objects on the all-list right now */
     size_t max_objs;      /* 0 = unlimited; else abort when exceeded */
     bool enabled;         /* false = never collect (arena-style growth) */
-    Binding *envroot;     /* root: the machine's current environment */
+    Frame *envroot;       /* root: the machine's current frame */
     GObj *frameroot;      /* root: the ANF machine's current frame chain */
     GObj **roots;         /* root stack: in-flight values/objects */
     int nroots;
@@ -50,11 +49,11 @@ void *gc_alloc(Gc *g, GKind kind, size_t size);
 void gc_push_root(Gc *g, GObj *o);
 void gc_pop_root(Gc *g);
 void gc_push_value(Gc *g, Value v); /* push the GC pointer inside a Value, if any */
-void gc_set_env(Gc *g, Binding *env);
+void gc_set_env(Gc *g, Frame *env);
 void gc_set_frame(Gc *g, GObj *frame);
 
 /* Typed allocations. */
-Binding *gc_new_binding(Gc *g, const char *name, Value v, Binding *prev);
+Frame *gc_new_frame(Gc *g, int nslots);
 Closure *gc_new_closure(Gc *g);
 ValArr *gc_new_valarr(Gc *g, int n);
 

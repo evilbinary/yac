@@ -33,19 +33,19 @@ static void mark_obj(Gc *g, GObj *o) {
     switch (o->kind) {
     case G_STR:
         break; /* string data is arena-resident (literals only) */
-    case G_BIND: {
-        Binding *b = (Binding *)o;
-        mark_value(g, b->value);
-        mark_obj(g, (GObj *)b->prev);
+    case G_ENVFRAME: {
+        Frame *f = (Frame *)o;
+        mark_obj(g, (GObj *)f->parent);
+        for (int i = 0; i < f->nslots; i++) mark_value(g, f->slots[i]);
         break;
     }
     case G_CLO: {
         Closure *c = (Closure *)o;
-        mark_obj(g, (GObj *)c->env);
+        mark_obj(g, (GObj *)c->frame);
         break;
     }
     case G_FRAME: {
-        Frame *f = (Frame *)o;
+        CFrame *f = (CFrame *)o;
         mark_obj(g, (GObj *)f->prev);
         mark_obj(g, (GObj *)f->env);
         break;
@@ -87,12 +87,14 @@ void *gc_alloc(Gc *g, GKind kind, size_t size) {
     return gc_alloc_raw(g, kind, size);
 }
 
-Binding *gc_new_binding(Gc *g, const char *name, Value v, Binding *prev) {
-    Binding *b = (Binding *)gc_alloc_raw(g, G_BIND, sizeof(Binding));
-    b->name = name;
-    b->value = v;
-    b->prev = prev;
-    return b;
+Frame *gc_new_frame(Gc *g, int nslots) {
+    Frame *f = (Frame *)gc_alloc_raw(g, G_ENVFRAME,
+                                     sizeof(Frame) + (size_t)nslots * sizeof(Value));
+    f->parent = NULL;
+    f->nslots = nslots;
+    /* zero the slots so an unfilled recursive binding / early mark is safe */
+    memset(f->slots, 0, (size_t)nslots * sizeof(Value));
+    return f;
 }
 
 Closure *gc_new_closure(Gc *g) {
@@ -130,7 +132,7 @@ void gc_push_value(Gc *g, Value v) {
     gc_push_root(g, o); /* always push (NULL for immediates) to keep balance */
 }
 
-void gc_set_env(Gc *g, Binding *env) {
+void gc_set_env(Gc *g, Frame *env) {
     g->envroot = env;
 }
 
