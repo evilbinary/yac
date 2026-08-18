@@ -31,6 +31,140 @@ static char *read_file(const char *path) {
     return buf;
 }
 
+/* ---- REPL ---- */
+
+typedef struct {
+    const char **names;
+    Value *vals;
+    int count;
+    int cap;
+    Arena *a;
+    Gc *gc;
+    bool cps;
+} Globals;
+
+static void globals_add(Globals *g, const char *name, Value v) {
+    if (g->count >= g->cap) {
+        g->cap = g->cap ? g->cap * 2 : 16;
+        g->names = (const char **)realloc(g->names, (size_t)g->cap * sizeof(char *));
+        g->vals = (Value *)realloc(g->vals, (size_t)g->cap * sizeof(Value));
+    }
+    g->names[g->count] = arena_strdup(g->a, name);
+    g->vals[g->count] = v;
+    gc_push_value(g->gc, v); /* keep the global alive across collections */
+    g->count++;
+}
+
+/* Walk the top-level let chain of an ANF program; every binding with a slot
+ * >= from_slot and a non-temporary name is a new global. */
+static void collect_globals(const Anf *n, int from_slot, const Frame *tmp,
+                            const char **names, Value *vals, int *count) {
+    for (;;) {
+        if (!n) return;
+        switch (n->kind) {
+        case N_LET:
+            if (n->u.let.slot >= from_slot && n->u.let.name[0] != '#') {
+                names[*count] = n->u.let.name;
+                vals[*count] = tmp->slots[n->u.let.slot];
+                (*count)++;
+            }
+            n = n->u.let.body;
+            break;
+        case N_LET_CALL:
+            if (n->u.call.slot >= from_slot && n->u.call.name[0] != '#') {
+                names[*count] = n->u.call.name;
+                vals[*count] = tmp->slots[n->u.call.slot];
+                (*count)++;
+            }
+            n = n->u.call.body;
+            break;
+        case N_LET_CALLCC:
+            if (n->u.callcc.slot >= from_slot && n->u.callcc.name[0] != '#') {
+                names[*count] = n->u.callcc.name;
+                vals[*count] = tmp->slots[n->u.callcc.slot];
+                (*count)++;
+            }
+            n = n->u.callcc.body;
+            break;
+        default:
+            return;
+        }
+    }
+}
+
+/* parse + normalize + evaluate `src` against the persistent globals.
+ * Returns true and sets *out; *new_count is the number of globals added. */
+static bool repl_eval(Globals *g, const char *src, Value *out, int *new_count,
+                      char **errmsg) {
+    Arena *a = g->a;
+    LexResult lx = lex_program(src, a);
+    if (lx.error) {
+        *errmsg = lx.error;
+        free(lx.toks);
+        return false;
+    }
+    ParseResult pr = parse_program(lx.toks, lx.n, a);
+    free(lx.toks);
+    if (pr.error) {
+        *errmsg = pr.error;
+        return false;
+    }
+    Anf *anf = NULL;
+    int top = 0;
+    if (!ast_to_anf_prelude(pr.program, a, &anf, &top, errmsg, g->names, g->count)) {
+        return false;
+    }
+    Frame *tmp = NULL;
+    CExp *cps = NULL;
+    int ctop = 0;
+    if (g->cps) {
+        if (!anf_to_cps(anf, top, a, &cps, &ctop, errmsg)) return false;
+        tmp = gc_new_frame(g->gc, ctop);
+    } else {
+        tmp = gc_new_frame(g->gc, top);
+    }
+    for (int i = 0; i < g->count; i++) tmp->slots[i] = g->vals[i];
+    if (g->cps) {
+        if (eval_cps_run_in(cps, tmp, a, out, errmsg, g->gc) != 0) return false;
+    } else if (eval_anf_run_in(anf, tmp, a, out, errmsg, g->gc) != 0) {
+        return false;
+    }
+    const char *nn[256];
+    Value nv[256];
+    int nc = 0;
+    collect_globals(anf, g->count, tmp, nn, nv, &nc);
+    for (int i = 0; i < nc; i++) globals_add(g, nn[i], nv[i]);
+    if (new_count) *new_count = nc;
+    return true;
+}
+
+static int repl_loop(Globals *g) {
+    char line[8192];
+    for (;;) {
+        printf("yac> ");
+        fflush(stdout);
+        if (!fgets(line, sizeof(line), stdin)) break;
+        line[strcspn(line, "\r\n")] = '\0';
+        if (line[0] == '\0') continue;
+        if (strcmp(line, ":q") == 0 || strcmp(line, ":quit") == 0) break;
+        char *errmsg = NULL;
+        Value result;
+        int nc = 0;
+        if (repl_eval(g, line, &result, &nc, &errmsg)) {
+            if (nc > 0) {
+                char *s = value_to_string(g->a, g->vals[g->count - 1]);
+                printf("%s = %s\n", g->names[g->count - 1], s);
+            } else {
+                char *s = value_to_string(g->a, result);
+                printf("%s\n", s);
+            }
+        } else {
+            printf("error: %s\n", errmsg);
+        }
+    }
+    return 0;
+}
+
 static void usage(const char *prog) {
     fprintf(stderr,
             "usage: %s [options] file.yac\n"
@@ -46,7 +180,8 @@ static void usage(const char *prog) {
             "  --no-gc          disable garbage collection (arena-style growth)\n"
             "  --limit-nodes N  abort when live objects exceed N (0 = unlimited)\n"
             "  --dump-rt FILE   serialize the compiled runtime (ANF) to FILE\n"
-            "  --load-rt FILE   load a runtime FILE instead of parsing source\n",
+            "  --load-rt FILE   load a runtime FILE instead of parsing source\n"
+            "  --repl           interactive loop with persistent globals\n",
             prog);
 }
 
@@ -68,7 +203,7 @@ static void cleanup(Res *r) {
 int main(int argc, char **argv) {
     bool dump_ast = false, dump_anf = false, dump_cps = false;
     bool cps_mode = false, both = false, uncps_mode = false, dump_uncps = false;
-    bool no_gc = false, do_opt = false;
+    bool no_gc = false, do_opt = false, repl_mode = false;
     const char *dump_rt = NULL, *load_rt = NULL;
     size_t limit_nodes = 0;
     const char *file = NULL;
@@ -83,6 +218,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--dump-uncps") == 0) dump_uncps = true;
         else if (strcmp(argv[i], "--opt") == 0) do_opt = true;
         else if (strcmp(argv[i], "--no-gc") == 0) no_gc = true;
+        else if (strcmp(argv[i], "--repl") == 0) repl_mode = true;
         else if (strcmp(argv[i], "--dump-rt") == 0 || strcmp(argv[i], "--load-rt") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "%s requires a file\n", argv[i]);
@@ -109,7 +245,7 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
-    if (!file && !load_rt) {
+    if (!file && !load_rt && !repl_mode) {
         usage(argv[0]);
         return 2;
     }
@@ -122,6 +258,32 @@ int main(int argc, char **argv) {
     if (th && *th) r.gc.threshold = (size_t)strtoul(th, NULL, 10);
     r.gc.enabled = !no_gc;
     r.gc.max_objs = limit_nodes;
+
+    if (repl_mode) {
+        Globals g = {NULL, NULL, 0, 0, &r.a, &r.gc, cps_mode};
+        if (file) {
+            char *src = read_file(file);
+            if (src) {
+                char *errmsg2 = NULL;
+                Value result;
+                int nc = 0;
+                if (repl_eval(&g, src, &result, &nc, &errmsg2)) {
+                    char *s = value_to_string(&r.a, result);
+                    printf("%s\n", s);
+                } else {
+                    fprintf(stderr, "error: %s\n", errmsg2);
+                }
+                free(src);
+            } else {
+                fprintf(stderr, "cannot read file: %s\n", file);
+            }
+        }
+        repl_loop(&g);
+        free(g.names);
+        free(g.vals);
+        cleanup(&r);
+        return 0;
+    }
 
     Anf *anf = NULL;
     int top_nslots = 0;

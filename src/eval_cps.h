@@ -13,4 +13,8 @@ struct Gc;
 int eval_cps_run(const CExp *prog, int top_nslots, Arena *a, Value *result,
                  char **errmsg, struct Gc *gc);
 
+/* Run a CPS program starting from a caller-provided top-level frame. */
+int eval_cps_run_in(const CExp *prog, struct Frame *top, Arena *a,
+                    Value *result, char **errmsg, struct Gc *gc);
+
 #endif

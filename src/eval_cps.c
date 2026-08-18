@@ -113,11 +113,11 @@ static void apply_cont(Value k, Value v, Frame **env, const CExp **code,
     *code = clo->body;
 }
 
-int eval_cps_run(const CExp *prog, int top_nslots, Arena *a, Value *result,
-                 char **errmsg, Gc *gc) {
+int eval_cps_run_in(const CExp *prog, Frame *env0, Arena *a, Value *result,
+                    char **errmsg, Gc *gc) {
     Cst st = {gc, a, errmsg, false};
     const CExp *code = prog;
-    Frame *env = gc_new_frame(gc, top_nslots);
+    Frame *env = env0;
     gc_set_env(gc, env);
 
     for (;;) {
@@ -223,4 +223,10 @@ int eval_cps_run(const CExp *prog, int top_nslots, Arena *a, Value *result,
 
 err:
     return 1;
+}
+
+int eval_cps_run(const CExp *prog, int top_nslots, Arena *a, Value *result,
+                 char **errmsg, Gc *gc) {
+    Frame *top = gc_new_frame(gc, top_nslots);
+    return eval_cps_run_in(prog, top, a, result, errmsg, gc);
 }

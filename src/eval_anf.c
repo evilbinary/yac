@@ -101,11 +101,11 @@ static int tail_return(Value v, CFrame **cframe, Frame **env, const Anf **node,
     return 0;
 }
 
-int eval_anf_run(const Anf *prog, int top_nslots, Arena *a, Value *result,
-                 char **errmsg, Gc *gc) {
+int eval_anf_run_in(const Anf *prog, Frame *env0, Arena *a, Value *result,
+                    char **errmsg, Gc *gc) {
     Est st = {gc, a, errmsg, false};
     const Anf *node = prog;
-    Frame *env = gc_new_frame(gc, top_nslots);
+    Frame *env = env0;
     gc_set_env(gc, env);
     CFrame *cframe = NULL;
 
@@ -229,4 +229,10 @@ int eval_anf_run(const Anf *prog, int top_nslots, Arena *a, Value *result,
 
 err:
     return 1;
+}
+
+int eval_anf_run(const Anf *prog, int top_nslots, Arena *a, Value *result,
+                 char **errmsg, Gc *gc) {
+    Frame *top = gc_new_frame(gc, top_nslots);
+    return eval_anf_run_in(prog, top, a, result, errmsg, gc);
 }

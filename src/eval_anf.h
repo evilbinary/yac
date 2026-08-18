@@ -25,4 +25,9 @@ struct Gc;
 int eval_anf_run(const Anf *prog, int top_nslots, Arena *a, Value *result,
                  char **errmsg, struct Gc *gc);
 
+/* Run an ANF program starting from a caller-provided top-level frame (used by
+ * the REPL to keep global bindings across inputs). */
+int eval_anf_run_in(const Anf *prog, struct Frame *top, Arena *a, Value *result,
+                    char **errmsg, struct Gc *gc);
+
 #endif

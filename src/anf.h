@@ -103,6 +103,12 @@ struct Anf {
 bool ast_to_anf(const Ast *prog, Arena *a, Anf **out, int *top_nslots,
                 char **errmsg);
 
+/* Like ast_to_anf, but `pre_names` (length pre_n) are pre-bound globals
+ * occupying top-frame slots 0..pre_n-1; new top-level bindings continue after
+ * them. Used by the REPL to keep definitions across inputs. */
+bool ast_to_anf_prelude(const Ast *prog, Arena *a, Anf **out, int *top_nslots,
+                        char **errmsg, const char *const *pre_names, int pre_n);
+
 /* IR constructors (used by the CPS->ANF un-conversion too) */
 Atom atom_var(const char *name);
 Atom atom_var_ds(const char *name, int depth, int slot);

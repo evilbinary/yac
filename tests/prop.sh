@@ -40,6 +40,18 @@ while [ $i -lt $N ]; do
         echo "  cps(rc=$r2) out=[$o2] err=[$e2]"
         echo "  opt(rc=$r3) out=[$o3] err=[$e3]"
     fi
+    # dump-rt / load-rt round trip must reproduce the same result
+    $BIN --dump-rt "$tmp/p.yacrt" "$tmp/p.yac" 2>/dev/null
+    o4=$($BIN --load-rt "$tmp/p.yacrt" 2>/dev/null); r4=$?
+    e4=$($BIN --load-rt "$tmp/p.yacrt" 2>&1 1>/dev/null)
+    if [ "$o1" = "$o4" ] && [ "$e1" = "$e4" ] && [ $r1 -eq $r4 ]; then
+        pass=$((pass + 1))
+    else
+        fail=$((fail + 1))
+        echo "FAIL(rt) seed=$seed"
+        echo "  direct(rc=$r1) out=[$o1] err=[$e1]"
+        echo "  loaded(rc=$r4) out=[$o4] err=[$e4]"
+    fi
 done
 
 # callcc programs: only the CPS machine runs them; they must terminate

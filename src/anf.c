@@ -513,13 +513,14 @@ static bool atomize(const Ast *e, Atom *out, NrmCtx *c, Scope *scope) {
     }
 }
 
-bool ast_to_anf(const Ast *prog, Arena *a, Anf **out, int *top_nslots,
-                char **errmsg) {
+static bool ast_to_anf_impl(const Ast *prog, Arena *a, Anf **out, int *top_nslots,
+                            char **errmsg, const char *const *pre_names, int pre_n) {
     NrmCtx c = {a, 0, NULL, 0, NULL, 0};
     c.capframes = 16;
     c.frameslots = (int *)malloc((size_t)c.capframes * sizeof(int));
-    c.frameslots[0] = 0;
+    c.frameslots[0] = pre_n;
     Scope *scope = NULL;
+    for (int i = 0; i < pre_n; i++) scope = scope_push(&c, scope, pre_names[i], 0, i);
     char *result = fresh_bind(&c, &scope);
     int rslot = current_slot(&c, scope, result);
     Anf *anf = norm_tail(prog, result, anf_ret(a, atom_var_ds(result, 0, rslot)), &c, scope);
@@ -532,6 +533,16 @@ bool ast_to_anf(const Ast *prog, Arena *a, Anf **out, int *top_nslots,
     if (top_nslots) *top_nslots = c.frameslots[0];
     *out = anf;
     return true;
+}
+
+bool ast_to_anf(const Ast *prog, Arena *a, Anf **out, int *top_nslots,
+                char **errmsg) {
+    return ast_to_anf_impl(prog, a, out, top_nslots, errmsg, NULL, 0);
+}
+
+bool ast_to_anf_prelude(const Ast *prog, Arena *a, Anf **out, int *top_nslots,
+                        char **errmsg, const char *const *pre_names, int pre_n) {
+    return ast_to_anf_impl(prog, a, out, top_nslots, errmsg, pre_names, pre_n);
 }
 
 /* ---- dump ---- */
