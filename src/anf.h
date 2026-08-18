@@ -1,0 +1,95 @@
+#ifndef YAC_ANF_H
+#define YAC_ANF_H
+
+#include <stdbool.h>
+
+#include "arena.h"
+#include "ast.h"
+#include "value.h"
+
+/* A-Normal Form core IR.
+ *
+ * Every non-atomic computation is bound by a let; evaluation order is
+ * explicit in the syntax. `call` includes user functions AND primitives
+ * (the head atom may resolve to either at run time).
+ */
+
+typedef enum {
+    N_LET,        /* let name = Atom in body          */
+    N_LET_CALL,   /* let name = call(Atom, Atom*) in body */
+    N_IF,         /* if Atom then b1 else b2          */
+    N_TAIL_CALL,  /* call(Atom, Atom*)  (tail)        */
+    N_RETURN,     /* return Atom                      */
+    N_LET_CALLCC, /* let name = callcc(Atom) in body  -- rejected by ANF machine */
+    N_TAIL_THROW, /* throw Atom Atom                  -- rejected by ANF machine */
+} AnfKind;
+
+typedef enum {
+    AT_VAR, /* variable reference (resolved at run time) */
+    AT_LIT, /* literal value                            */
+    AT_LAM, /* lambda: params + ANF body                */
+} AtomKind;
+
+typedef struct Anf Anf;
+
+typedef struct Atom {
+    AtomKind kind;
+    union {
+        struct {
+            const char *name;
+        } var;
+        Value lit;
+        struct {
+            char **params;
+            int nparams;
+            Anf *body;
+        } lam;
+    } u;
+} Atom;
+
+struct Anf {
+    AnfKind kind;
+    int line;
+    union {
+        struct {
+            const char *name;
+            Atom atom;
+            Anf *body;
+        } let;
+        struct {
+            const char *name;
+            Atom head;
+            Atom *args;
+            int nargs;
+            Anf *body;
+        } call;
+        struct {
+            Atom cond;
+            Anf *then;
+            Anf *els;
+        } if_;
+        struct {
+            Atom head;
+            Atom *args;
+            int nargs;
+        } tailcall;
+        Atom ret;
+        struct {
+            const char *name;
+            Atom atom;
+            Anf *body;
+        } callcc;
+        struct {
+            Atom k;
+            Atom v;
+        } tailthrow;
+    } u;
+};
+
+/* Normalize a whole program AST into ANF. Returns false and sets *errmsg on
+ * error (e.g. unbound variable). */
+bool ast_to_anf(const Ast *prog, Arena *a, Anf **out, char **errmsg);
+
+void anf_dump(const Anf *node, int depth);
+
+#endif

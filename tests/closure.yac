@@ -1,0 +1,5 @@
+-- lexical scoping: f must capture the outer x=1, not the later x=100
+let x = 1 in
+let f(n) = x + n in
+let x = 100 in
+f(1)

@@ -1,0 +1,6 @@
+-- string + float + bool + unit round trip
+print "hello"
+print 3.5
+print true
+print ()
+if 1 < 2 then 42 else 0

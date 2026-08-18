@@ -1,0 +1,5 @@
+-- tail-recursive countdown: exercises TCO (10^7 calls, must not overflow the C stack)
+let loop(n) =
+  if n == 0 then 0 else loop(n - 1)
+in
+loop(10000000)

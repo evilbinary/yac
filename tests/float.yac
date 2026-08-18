@@ -1,0 +1,5 @@
+-- float arithmetic + comparison + booleans
+let pi = 3.14159 in
+let r = 2.0 in
+let area = pi * r * r in
+if area > 12.0 and not(area < 12.0) then 1 else 0

@@ -1,0 +1,8 @@
+-- fibonacci with acc
+let fib(n) =
+  let go(a, b, i) =
+    if i == 0 then a else go(b, a + b, i - 1)
+  in
+  go(0, 1, n)
+in
+fib(30)
