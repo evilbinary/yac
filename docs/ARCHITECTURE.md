@@ -11,9 +11,8 @@ src/
   anf.c/h         AST → ANF 归一化（原子子表达式直接使用，减少冗余 let）
   cps.c/h         ANF → CPS，cps_simplify（--opt 常量折叠/eta 归约）
   uncps.c/h       CPS → ANF（受限，可失败）
-  value.c/h       Value/Closure/Prim 与原语实现
-  env.c/h         环境
-  eval_anf.c/h    ANF 解释器（帧栈 + 蹦床，拒绝 callcc）
+  value.c/h       Value/Closure/Prim 与原语实现（含扁平环境帧 Frame）
+  eval_anf.c/h    ANF 解释器（帧 + 续延帧栈 + 蹦床，拒绝 callcc）
   eval_cps.c/h    CPS 解释器（纯蹦床，支持 callcc/throw）
   gc.c/h          mark-sweep GC（运行时对象 + 值根栈）
   gcobj.h         GC 对象头
@@ -79,14 +78,15 @@ usage: yac [options] file.yac
 
 ## 性能基线
 
-10⁷ 次尾递归（`tests/tco.yac`）：
+10⁷ 次尾递归（`tests/tco.yac`），扁平环境快照（M4）：
 
 | 模式 | 耗时 |
 |---|---|
-| ANF | 13.0s |
-| CPS | 19.3s |
-| CPS `--opt` | 19.0s |
-| un-CPS | 13.7s |
+| ANF | 4.5s |
+| CPS | 6.7s |
+| un-CPS | 4.5s |
+
+相比链表环境（M3）约 **3 倍加速**（查找 O(1) 下标、每次函数调用只分配一个帧、`let` 直写槽位）。
 
 ## 里程碑
 
@@ -96,4 +96,4 @@ usage: yac [options] file.yac
 | M2 | ANF→CPS、CPS 解释器、`callcc`/`throw` | ✅ |
 | M3 | mark-sweep GC、un-CPS、`--dump-*` | ✅ |
 | M4 | 属性测试、CPS 化简（`--opt`）、文档 | ✅ |
-| M4 | 扁平环境快照（性能优化） | ⏳ |
+| M4 | 扁平环境快照（性能优化） | ✅ |

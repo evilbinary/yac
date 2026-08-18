@@ -7,7 +7,6 @@
 #include "arena.h"
 #include "gcobj.h"
 
-typedef struct Binding Binding;
 typedef struct Anf Anf;
 typedef struct Frame Frame;
 typedef struct Closure Closure;

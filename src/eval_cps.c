@@ -183,8 +183,7 @@ int eval_cps_run(const CExp *prog, int top_nslots, Arena *a, Value *result,
                 if (st.errored) goto err;
                 gc_pop_root(gc); /* args[0] */
             } else {
-                fail(&st, "%d:%d: cannot apply a non-function value (tag=%d)",
-                     code->line, 0, head.tag);
+                fail(&st, "%d:%d: cannot apply a non-function value", code->line, 0);
                 goto err;
             }
             gc_pop_root(gc); /* args array */

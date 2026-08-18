@@ -12,7 +12,7 @@
 - CBV、n 元函数、词法作用域、递归 `let`、真 TCO（10⁷ 尾调用不爆栈）
 - 整数/浮点/布尔/字符串/`()`，原语 `+ - * / % == != < <= > >= and or not print`
 - `callcc` / `throw`（CPS 机器）
-- mark-sweep GC（`--no-gc` / `--limit-nodes` 调试）
+- mark-sweep GC + **扁平环境帧**（`(depth,slot)` 下标寻址，`let` 直写槽位）
 - ANF ↔ CPS 双向转换、受限 un-CPS、CPS 化简（`--opt`）
 
 ## 构建与测试
