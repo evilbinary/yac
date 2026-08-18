@@ -19,8 +19,15 @@ $(BUILD)/%.o: src/%.c $(wildcard src/*.h) | $(BUILD)
 test: $(BIN)
 	sh tests/run_tests.sh
 
+prop: $(BIN)
+	sh tests/prop.sh
+
+$(BUILD)/genyac: tools/genyac.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $<
+
 clean:
 	rm -f $(BIN)
 	rm -rf $(BUILD)
+	rm -f src/*.o
 
-.PHONY: all clean test
+.PHONY: all clean test prop

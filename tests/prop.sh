@@ -27,7 +27,10 @@ while [ $i -lt $N ]; do
     e1=$($BIN "$tmp/p.yac" 2>&1 1>/dev/null)
     o2=$($BIN --cps "$tmp/p.yac" 2>/dev/null); r2=$?
     e2=$($BIN --cps "$tmp/p.yac" 2>&1 1>/dev/null)
-    if [ "$o1" = "$o2" ] && [ "$e1" = "$e2" ] && [ $r1 -eq $r2 ]; then
+    o3=$($BIN --opt --cps "$tmp/p.yac" 2>/dev/null); r3=$?
+    e3=$($BIN --opt --cps "$tmp/p.yac" 2>&1 1>/dev/null)
+    if [ "$o1" = "$o2" ] && [ "$e1" = "$e2" ] && [ $r1 -eq $r2 ] &&
+       [ "$o2" = "$o3" ] && [ "$e2" = "$e3" ] && [ $r2 -eq $r3 ]; then
         pass=$((pass + 1))
     else
         fail=$((fail + 1))
@@ -35,6 +38,7 @@ while [ $i -lt $N ]; do
         echo "  src: $(cat "$tmp/p.yac")"
         echo "  anf(rc=$r1) out=[$o1] err=[$e1]"
         echo "  cps(rc=$r2) out=[$o2] err=[$e2]"
+        echo "  opt(rc=$r3) out=[$o3] err=[$e3]"
     fi
 done
 
