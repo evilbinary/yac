@@ -28,7 +28,7 @@ typedef struct Cont {
 typedef struct Kenv {
     const char *name;
     Cont cont;
-    struct Kenv *prev;
+    const struct Kenv *prev;
 } Kenv;
 
 typedef struct {

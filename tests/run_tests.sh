@@ -107,6 +107,24 @@ else
     echo "  $out"
 fi
 
+# GC: the garbage-allocating loop must complete under a live-object limit...
+out=$($BIN --limit-nodes 50000 tests/gc.yac 2>&1); rc=$?
+if [ $rc -eq 0 ] && [ "$out" = "0" ]; then
+    pass=$((pass + 1)); echo "PASS: GC reclaims garbage (loop completes under limit)"
+else
+    fail=$((fail + 1)); echo "FAIL: GC should reclaim garbage under limit (rc=$rc, out=$out)"
+    echo "  $out"
+fi
+
+# ...but without GC the same program must trip the limit.
+out=$($BIN --no-gc --limit-nodes 50000 tests/gc.yac 2>&1); rc=$?
+if [ $rc -ne 0 ] && echo "$out" | grep -q "runaway"; then
+    pass=$((pass + 1)); echo "PASS: --no-gc grows and trips --limit-nodes"
+else
+    fail=$((fail + 1)); echo "FAIL: --no-gc should trip --limit-nodes (rc=$rc)"
+    echo "  $out"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]

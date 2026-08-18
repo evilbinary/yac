@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "arena.h"
+#include "gcobj.h"
 
 typedef struct Binding Binding;
 typedef struct Anf Anf;
@@ -26,10 +27,13 @@ typedef struct Str {
 } Str;
 
 typedef struct Closure {
-    void *body;   /* Anf* in eval_anf, CExp* in eval_cps */
-    char **params;
+    GObj hdr;      /* GC heap header */
+    void *body;    /* Anf* in eval_anf, CExp* in eval_cps */
+    char **params; /* V_FUN: IR params (continuation param is last);
+                      V_CONT: unused (see cont_name) */
     int nparams;
-    Binding *env; /* captured lexical environment */
+    Binding *env;  /* captured lexical environment */
+    const char *cont_name; /* V_CONT: the single parameter name; NULL for V_FUN */
 } Closure;
 
 typedef struct Prim Prim;

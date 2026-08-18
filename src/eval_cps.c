@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "env.h"
+#include "gc.h"
 
 /* CPS trampoline: the machine state is just (code, env). There is no frame
  * stack -- continuations are first-class closures, so a call either binds the
@@ -12,6 +13,7 @@
  * explicit continuation value. The C stack never grows. */
 
 typedef struct {
+    Gc *gc;
     Arena *a;
     char **errmsg;
     bool errored;
@@ -28,20 +30,20 @@ static void fail(Cst *st, const char *fmt, ...) {
     st->errored = true;
 }
 
-static Binding *bind_prims(Arena *a) {
+static Binding *bind_prims(Gc *gc) {
     Binding *env = NULL;
     int n;
     const Prim *prims = prim_table(&n);
     for (int i = 0; i < n; i++) {
-        env = env_bind(a, env, prims[i].name, v_prim(&prims[i]));
+        env = env_bind(gc, env, prims[i].name, v_prim(&prims[i]));
     }
     return env;
 }
 
-static Binding *bind_params(Arena *a, const Closure *clo, Value *args) {
+static Binding *bind_params(Gc *gc, const Closure *clo, Value *args) {
     Binding *env = clo->env;
     for (int i = 0; i < clo->nparams; i++) {
-        env = env_bind(a, env, clo->params[i], args[i]);
+        env = env_bind(gc, env, clo->params[i], args[i]);
     }
     return env;
 }
@@ -80,21 +82,21 @@ static Value eval_val(const CVal *v, Binding *env, Cst *st) {
         return v_prim(p);
     }
     case CV_FUN: {
-        Closure *clo = (Closure *)arena_alloc(st->a, sizeof(Closure));
+        Closure *clo = gc_new_closure(st->gc);
         clo->body = v->u.fun.body;
         clo->params = v->u.fun.params;
         clo->nparams = v->u.fun.nparams;
         clo->env = env;
+        clo->cont_name = NULL;
         return v_fun(clo);
     }
     case CV_CONT: {
-        Closure *clo = (Closure *)arena_alloc(st->a, sizeof(Closure));
-        char **params = (char **)arena_alloc(st->a, sizeof(char *));
-        params[0] = (char *)v->u.cont.param;
+        Closure *clo = gc_new_closure(st->gc);
         clo->body = v->u.cont.body;
-        clo->params = params;
+        clo->params = NULL;
         clo->nparams = 1;
         clo->env = env;
+        clo->cont_name = v->u.cont.param;
         return v_cont(clo);
     }
     }
@@ -102,8 +104,8 @@ static Value eval_val(const CVal *v, Binding *env, Cst *st) {
     return VALUE_NULL;
 }
 
-/* ---- apply_cont: jump to a continuation with a value ---- */
-
+/* ---- apply_cont: jump to a continuation with a value ----
+ * The continuation `k` and value `v` must be rooted by the caller. */
 static void apply_cont(Value k, Value v, Binding **env, const CExp **code,
                        Cst *st) {
     if (k.tag != V_CONT) {
@@ -111,37 +113,44 @@ static void apply_cont(Value k, Value v, Binding **env, const CExp **code,
         return;
     }
     Closure *clo = k.u.clo;
-    *env = bind_params(st->a, clo, &v);
+    *env = env_bind(st->gc, clo->env, clo->cont_name, v);
     *code = clo->body;
 }
 
-int eval_cps_run(const CExp *prog, Arena *a, Value *result, char **errmsg) {
-    Cst st = {a, errmsg, false};
+int eval_cps_run(const CExp *prog, Arena *a, Value *result, char **errmsg, Gc *gc) {
+    Cst st = {gc, a, errmsg, false};
     const CExp *code = prog;
-    Binding *env = bind_prims(a);
+    Binding *env = bind_prims(gc);
 
     for (;;) {
         switch (code->kind) {
         case CE_LET: {
             Value v = eval_val(&code->u.let.val, env, &st);
             if (st.errored) goto err;
-            Binding *b = env_bind(a, env, code->u.let.name, v);
+            gc_push_value(gc, v);
             if (code->u.let.val.kind == CV_FUN || code->u.let.val.kind == CV_CONT) {
                 /* literal closure: recursive binding -- the closure captures
                  * the env containing the binding (bind-then-fill). Aliases
                  * (CV_VAR etc.) must NOT re-patch, or the shared closure's
                  * env would drift to an ever-deeper chain. */
+                Binding *b = env_bind(gc, env, code->u.let.name, v);
                 v.u.clo->env = b;
                 b->value = v;
+                env = b;
+            } else {
+                env = env_bind(gc, env, code->u.let.name, v);
             }
-            env = b;
+            gc_pop_root(gc);
             code = code->u.let.body;
             break;
         }
         case CE_CALL: {
             Value head = eval_val(&code->u.call.head, env, &st);
             if (st.errored) goto err;
-            Value *args = (Value *)arena_alloc(a, (size_t)code->u.call.nargs * sizeof(Value));
+            gc_push_value(gc, head);
+            ValArr *va = gc_new_valarr(gc, code->u.call.nargs);
+            gc_push_root(gc, (GObj *)va);
+            Value *args = va->data;
             for (int i = 0; i < code->u.call.nargs; i++) {
                 args[i] = eval_val(&code->u.call.args[i], env, &st);
                 if (st.errored) goto err;
@@ -153,7 +162,7 @@ int eval_cps_run(const CExp *prog, Arena *a, Value *result, char **errmsg) {
                          code->line, 0, clo->nparams, code->u.call.nargs);
                     goto err;
                 }
-                env = bind_params(a, clo, args);
+                env = bind_params(gc, clo, args);
                 code = clo->body;
             } else if (head.tag == V_PRIM) {
                 if (code->u.call.nargs < 1) {
@@ -164,21 +173,29 @@ int eval_cps_run(const CExp *prog, Arena *a, Value *result, char **errmsg) {
                 Value v;
                 apply_prim(head, args, code->u.call.nargs - 1, &v, &st);
                 if (st.errored) goto err;
-                apply_cont(args[code->u.call.nargs - 1], v, &env, &code, &st);
+                gc_push_value(gc, v);
+                Value cont = args[code->u.call.nargs - 1];
+                gc_push_value(gc, cont);
+                apply_cont(cont, v, &env, &code, &st);
                 if (st.errored) goto err;
+                gc_pop_root(gc); /* cont */
+                gc_pop_root(gc); /* v */
             } else if (head.tag == V_CONT) {
-                /* a continuation applied to a value: jump */
                 if (code->u.call.nargs != 1) {
                     fail(&st, "%d:%d: continuation applied to %d value(s), expected 1",
                          code->line, 0, code->u.call.nargs);
                     goto err;
                 }
+                gc_push_value(gc, args[0]);
                 apply_cont(head, args[0], &env, &code, &st);
                 if (st.errored) goto err;
+                gc_pop_root(gc); /* args[0] */
             } else {
                 fail(&st, "%d:%d: cannot apply a non-function value", code->line, 0);
                 goto err;
             }
+            gc_pop_root(gc); /* args array */
+            gc_pop_root(gc); /* head */
             break;
         }
         case CE_THROW: {
@@ -186,8 +203,12 @@ int eval_cps_run(const CExp *prog, Arena *a, Value *result, char **errmsg) {
             if (st.errored) goto err;
             Value v = eval_val(&code->u.throw_.v, env, &st);
             if (st.errored) goto err;
+            gc_push_value(gc, k);
+            gc_push_value(gc, v);
             apply_cont(k, v, &env, &code, &st);
             if (st.errored) goto err;
+            gc_pop_root(gc); /* v */
+            gc_pop_root(gc); /* k */
             break;
         }
         case CE_IF: {

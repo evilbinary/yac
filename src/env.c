@@ -2,11 +2,11 @@
 
 #include <string.h>
 
-Binding *env_bind(Arena *a, Binding *env, const char *name, Value v) {
-    Binding *b = (Binding *)arena_alloc(a, sizeof(Binding));
-    b->name = name;
-    b->value = v;
-    b->prev = env;
+#include "gc.h"
+
+Binding *env_bind(struct Gc *g, Binding *env, const char *name, Value v) {
+    Binding *b = gc_new_binding(g, name, v, env);
+    gc_set_env(g, b); /* keep the growing chain rooted */
     return b;
 }
 

@@ -1,0 +1,6 @@
+-- stresses the GC: allocates a throwaway closure each iteration (200k times);
+-- with GC enabled live objects stay bounded, with --no-gc they accumulate.
+let loop(n) =
+  if n == 0 then 0 else let f = fun (x) -> x + 1 in loop(n - 1)
+in
+loop(200000)

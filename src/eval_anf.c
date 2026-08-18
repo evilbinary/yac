@@ -5,18 +5,10 @@
 #include <string.h>
 
 #include "env.h"
-
-/* Return-frame stack: the direct-style machine's explicit continuation.
- * A non-tail call pushes a frame {bind name, continue rest}; a tail call
- * (N_TAIL_CALL) never pushes, so deep tail recursion stays on the heap. */
-typedef struct Frame {
-    struct Frame *prev;
-    const char *name; /* bind the returned value to this name */
-    const Anf *rest;  /* continue evaluating here */
-    Binding *env;     /* environment at the continuation point */
-} Frame;
+#include "gc.h"
 
 typedef struct {
+    Gc *gc;
     Arena *a;
     char **errmsg;
     bool errored;
@@ -46,11 +38,12 @@ static Value eval_atom(const Atom *atom, Binding *env, Est *st) {
     case AT_LIT:
         return atom->u.lit;
     case AT_LAM: {
-        Closure *clo = (Closure *)arena_alloc(st->a, sizeof(Closure));
+        Closure *clo = gc_new_closure(st->gc);
         clo->body = atom->u.lam.body;
         clo->params = atom->u.lam.params;
         clo->nparams = atom->u.lam.nparams;
         clo->env = env;
+        clo->cont_name = NULL;
         return v_fun(clo);
     }
     }
@@ -58,20 +51,20 @@ static Value eval_atom(const Atom *atom, Binding *env, Est *st) {
     return VALUE_NULL;
 }
 
-static Binding *bind_params(Arena *a, const Closure *clo, Value *args) {
+static Binding *bind_params(Gc *gc, const Closure *clo, Value *args) {
     Binding *env = clo->env;
     for (int i = 0; i < clo->nparams; i++) {
-        env = env_bind(a, env, clo->params[i], args[i]);
+        env = env_bind(gc, env, clo->params[i], args[i]);
     }
     return env;
 }
 
-static Binding *bind_prims(Arena *a) {
+static Binding *bind_prims(Gc *gc) {
     Binding *env = NULL;
     int n;
     const Prim *prims = prim_table(&n);
     for (int i = 0; i < n; i++) {
-        env = env_bind(a, env, prims[i].name, v_prim(&prims[i]));
+        env = env_bind(gc, env, prims[i].name, v_prim(&prims[i]));
     }
     return env;
 }
@@ -87,19 +80,23 @@ static void apply_prim(Value head, Value *args, int nargs, Value *out, Est *st) 
     if (ctx.errored) fail(st, "%s", ctx.errmsg);
 }
 
-static int tail_return(Value v, Frame **frame, Binding **env, const Anf **node, Arena *a) {
-    if (!*frame) return 1; /* top level: done */
+/* Pop the current top frame; bind `v` to its name and resume its rest.
+ * Returns 1 at the top level (program done). `v` must be rooted by caller. */
+static int tail_return(Value v, Frame **frame, Binding **env, const Anf **node,
+                       Gc *gc) {
+    if (!*frame) return 1;
     Frame *f = *frame;
     *frame = f->prev;
-    *env = env_bind(a, f->env, f->name, v);
+    *env = env_bind(gc, f->env, f->name, v);
     *node = f->rest;
+    gc_set_frame(gc, (GObj *)*frame);
     return 0;
 }
 
-int eval_anf_run(const Anf *prog, Arena *a, Value *result, char **errmsg) {
-    Est st = {a, errmsg, false};
+int eval_anf_run(const Anf *prog, Arena *a, Value *result, char **errmsg, Gc *gc) {
+    Est st = {gc, a, errmsg, false};
     const Anf *node = prog;
-    Binding *env = bind_prims(a);
+    Binding *env = bind_prims(gc);
     Frame *frame = NULL;
 
     for (;;) {
@@ -107,23 +104,28 @@ int eval_anf_run(const Anf *prog, Arena *a, Value *result, char **errmsg) {
         case N_LET: {
             Value v = eval_atom(&node->u.let.atom, env, &st);
             if (st.errored) goto err;
+            gc_push_value(gc, v);
             if (node->u.let.atom.kind == AT_LAM) {
                 /* recursive binding: closure captures the new env which
                  * already contains the binding (bind-then-fill) */
-                Binding *b = env_bind(a, env, node->u.let.name, v);
+                Binding *b = env_bind(gc, env, node->u.let.name, v);
                 v.u.clo->env = b;
                 b->value = v;
                 env = b;
             } else {
-                env = env_bind(a, env, node->u.let.name, v);
+                env = env_bind(gc, env, node->u.let.name, v);
             }
+            gc_pop_root(gc);
             node = node->u.let.body;
             break;
         }
         case N_LET_CALL: {
             Value head = eval_atom(&node->u.call.head, env, &st);
             if (st.errored) goto err;
-            Value *args = (Value *)arena_alloc(a, (size_t)node->u.call.nargs * sizeof(Value));
+            gc_push_value(gc, head);
+            ValArr *va = gc_new_valarr(gc, node->u.call.nargs);
+            gc_push_root(gc, (GObj *)va);
+            Value *args = va->data;
             for (int i = 0; i < node->u.call.nargs; i++) {
                 args[i] = eval_atom(&node->u.call.args[i], env, &st);
                 if (st.errored) goto err;
@@ -135,24 +137,27 @@ int eval_anf_run(const Anf *prog, Arena *a, Value *result, char **errmsg) {
                          node->line, 0, clo->nparams, node->u.call.nargs);
                     goto err;
                 }
-                Frame *f = (Frame *)arena_alloc(a, sizeof(Frame));
+                Frame *f = (Frame *)gc_alloc(gc, G_FRAME, sizeof(Frame));
                 f->prev = frame;
                 f->name = node->u.call.name;
                 f->rest = node->u.call.body;
                 f->env = env;
                 frame = f;
-                env = bind_params(a, clo, args);
+                gc_set_frame(gc, (GObj *)f);
+                env = bind_params(gc, clo, args);
                 node = clo->body;
             } else if (head.tag == V_PRIM) {
                 Value v;
                 apply_prim(head, args, node->u.call.nargs, &v, &st);
                 if (st.errored) goto err;
-                env = env_bind(a, env, node->u.call.name, v);
+                env = env_bind(gc, env, node->u.call.name, v);
                 node = node->u.call.body;
             } else {
                 fail(&st, "%d:%d: cannot apply a non-function value", node->line, 0);
                 goto err;
             }
+            gc_pop_root(gc); /* args array */
+            gc_pop_root(gc); /* head */
             break;
         }
         case N_IF: {
@@ -168,7 +173,10 @@ int eval_anf_run(const Anf *prog, Arena *a, Value *result, char **errmsg) {
         case N_TAIL_CALL: {
             Value head = eval_atom(&node->u.tailcall.head, env, &st);
             if (st.errored) goto err;
-            Value *args = (Value *)arena_alloc(a, (size_t)node->u.tailcall.nargs * sizeof(Value));
+            gc_push_value(gc, head);
+            ValArr *va = gc_new_valarr(gc, node->u.tailcall.nargs);
+            gc_push_root(gc, (GObj *)va);
+            Value *args = va->data;
             for (int i = 0; i < node->u.tailcall.nargs; i++) {
                 args[i] = eval_atom(&node->u.tailcall.args[i], env, &st);
                 if (st.errored) goto err;
@@ -180,29 +188,35 @@ int eval_anf_run(const Anf *prog, Arena *a, Value *result, char **errmsg) {
                          node->line, 0, clo->nparams, node->u.tailcall.nargs);
                     goto err;
                 }
-                env = bind_params(a, clo, args);
+                env = bind_params(gc, clo, args);
                 node = clo->body;
             } else if (head.tag == V_PRIM) {
                 Value v;
                 apply_prim(head, args, node->u.tailcall.nargs, &v, &st);
                 if (st.errored) goto err;
-                if (tail_return(v, &frame, &env, &node, a)) {
+                gc_push_value(gc, v);
+                if (tail_return(v, &frame, &env, &node, gc)) {
                     *result = v;
                     return 0;
                 }
+                gc_pop_root(gc);
             } else {
                 fail(&st, "%d:%d: cannot apply a non-function value", node->line, 0);
                 goto err;
             }
+            gc_pop_root(gc); /* args array */
+            gc_pop_root(gc); /* head */
             break;
         }
         case N_RETURN: {
             Value v = eval_atom(&node->u.ret, env, &st);
             if (st.errored) goto err;
-            if (tail_return(v, &frame, &env, &node, a)) {
+            gc_push_value(gc, v);
+            if (tail_return(v, &frame, &env, &node, gc)) {
                 *result = v;
                 return 0;
             }
+            gc_pop_root(gc);
             break;
         }
         case N_LET_CALLCC:
