@@ -120,14 +120,33 @@ void anf_write(const Anf *node, FILE *f) {
 
 /* ---- reader ---- */
 
-typedef struct {
+struct Rd {
     const char *p;
     const char *end;
     Arena *a;
     char *err;
-} Rd;
+};
 
-static void rd_err(Rd *r, const char *fmt, ...) {
+Rd *rd_open(const char *data, size_t len, Arena *a) {
+    Rd *r = (Rd *)arena_alloc(a, sizeof(Rd));
+    r->p = data;
+    r->end = data + len;
+    r->a = a;
+    r->err = NULL;
+    return r;
+}
+
+void rd_close(Rd *r) { (void)r; }
+
+const char *rd_error(Rd *r) { return r->err; }
+
+void rd_set_error(Rd *r, const char *msg) {
+    if (!r->err) r->err = arena_strdup(r->a, msg);
+}
+
+Arena *rd_arena(Rd *r) { return r->a; }
+
+static void rd_fail(Rd *r, const char *fmt, ...) {
     if (r->err) return;
     char buf[256];
     va_list ap;
@@ -141,12 +160,12 @@ static void rd_ws(Rd *r) {
     while (r->p < r->end && isspace((unsigned char)*r->p)) r->p++;
 }
 
-static int rd_peek(Rd *r) {
+int rd_peek(Rd *r) {
     rd_ws(r);
     return r->p < r->end ? *r->p : 0;
 }
 
-static char *rd_word(Rd *r) {
+char *rd_word(Rd *r) {
     rd_ws(r);
     const char *s = r->p;
     while (r->p < r->end && !isspace((unsigned char)*r->p) &&
@@ -160,10 +179,10 @@ static char *rd_word(Rd *r) {
     return w;
 }
 
-static char *rd_name(Rd *r) {
+char *rd_name(Rd *r) {
     rd_ws(r);
     if (r->p >= r->end || *r->p != '"') {
-        rd_err(r, "runtime file: expected a quoted name");
+        rd_fail(r, "runtime file: expected a quoted name");
         return "";
     }
     r->p++;
@@ -185,12 +204,12 @@ static char *rd_name(Rd *r) {
     return buf;
 }
 
-static void rd_expect(Rd *r, char c) {
+void rd_expect(Rd *r, char c) {
     rd_ws(r);
     if (r->p < r->end && *r->p == c) {
         r->p++;
     } else {
-        rd_err(r, "runtime file: expected '%c'", c);
+        rd_fail(r, "runtime file: expected '%c'", c);
     }
 }
 
@@ -201,13 +220,13 @@ static Value rd_lit(Rd *r) {
     if (strcmp(tag, "b") == 0) return v_bool(atoi(rd_word(r)) != 0);
     if (strcmp(tag, "u") == 0) return v_unit();
     if (strcmp(tag, "s") == 0) return v_str(r->a, rd_name(r));
-    rd_err(r, "runtime file: bad literal tag '%s'", tag);
+    rd_fail(r, "runtime file: bad literal tag '%s'", tag);
     return VALUE_NULL;
 }
 
 static Anf *rd_node(Rd *r);
 
-static bool rd_atom(Rd *r, Atom *out) {
+bool rd_atom(Rd *r, Atom *out) {
     char *kw = rd_word(r);
     if (strcmp(kw, "var") == 0) {
         char *name = rd_name(r);
@@ -239,7 +258,7 @@ static bool rd_atom(Rd *r, Atom *out) {
         *out = atom_lam(params, n, nslots, body);
         return true;
     }
-    rd_err(r, "runtime file: bad atom '%s'", kw);
+    rd_fail(r, "runtime file: bad atom '%s'", kw);
     return false;
 }
 
@@ -318,11 +337,26 @@ static Anf *rd_node(Rd *r) {
         if (!rd_atom(r, &k) || !rd_atom(r, &v)) return NULL;
         n = anf_tail_throw(r->a, k, v);
     } else {
-        rd_err(r, "runtime file: bad node '%s'", kw);
+        rd_fail(r, "runtime file: bad node '%s'", kw);
         return NULL;
     }
     rd_expect(r, ')');
     return n;
+}
+
+bool anf_read(Rd *r, Anf **out, int *top_nslots) {
+    rd_expect(r, '(');
+    char *kw = rd_word(r);
+    if (rd_error(r) || strcmp(kw, "rt") != 0) {
+        if (!rd_error(r)) rd_fail(r, "runtime file: expected (rt ...) header");
+        return false;
+    }
+    int top = atoi(rd_word(r));
+    Anf *node = rd_node(r);
+    if (rd_error(r)) return false;
+    *out = node;
+    if (top_nslots) *top_nslots = top;
+    return true;
 }
 
 bool anf_read_file(const char *path, Arena *a, Anf **out, int *top_nslots,
@@ -347,7 +381,6 @@ bool anf_read_file(const char *path, Arena *a, Anf **out, int *top_nslots,
         buf[got] = '\0';
         fclose(f);
     } else {
-        /* read stdin fully */
         size_t cap = 4096, len = 0;
         buf = (char *)malloc(cap);
         int c;
@@ -363,23 +396,11 @@ bool anf_read_file(const char *path, Arena *a, Anf **out, int *top_nslots,
         n = (long)len;
     }
 
-    Rd r = {buf, buf + n, a, NULL};
-    rd_expect(&r, '(');
-    char *kw = rd_word(&r);
-    if (r.err || strcmp(kw, "rt") != 0) {
-        if (!r.err) rd_err(&r, "runtime file: expected (rt ...) header");
-        free(buf);
-        if (errmsg) *errmsg = r.err;
-        return false;
-    }
-    int top = atoi(rd_word(&r));
-    Anf *node = rd_node(&r);
+    Rd *r = rd_open(buf, (size_t)n, a);
+    bool ok = anf_read(r, out, top_nslots);
+    const char *err = rd_error(r);
+    rd_close(r);
     free(buf);
-    if (r.err) {
-        if (errmsg) *errmsg = r.err;
-        return false;
-    }
-    *out = node;
-    if (top_nslots) *top_nslots = top;
-    return true;
+    if (!ok && errmsg) *errmsg = (char *)err;
+    return ok;
 }

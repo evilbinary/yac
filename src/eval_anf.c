@@ -2,6 +2,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "gc.h"
@@ -101,15 +102,23 @@ static int tail_return(Value v, CFrame **cframe, Frame **env, const Anf **node,
     return 0;
 }
 
-int eval_anf_run_in(const Anf *prog, Frame *env0, Arena *a, Value *result,
-                    char **errmsg, Gc *gc) {
+int (*yac_ckpt_hook)(const AnfState *st, long step) = NULL;
+
+static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
+                         CFrame *cframe0, long start_step, Arena *a,
+                         Value *result, char **errmsg, Gc *gc) {
     Est st = {gc, a, errmsg, false};
-    const Anf *node = prog;
     Frame *env = env0;
     gc_set_env(gc, env);
-    CFrame *cframe = NULL;
+    CFrame *cframe = cframe0;
+    long step = start_step;
 
     for (;;) {
+        if (yac_ckpt_hook) {
+            AnfState as = {root, node, env, cframe};
+            if (yac_ckpt_hook(&as, step)) return 2; /* paused for checkpoint */
+        }
+        step++;
         switch (node->kind) {
         case N_LET: {
             Value v = eval_atom(&node->u.let.atom, env, &st);
@@ -229,6 +238,17 @@ int eval_anf_run_in(const Anf *prog, Frame *env0, Arena *a, Value *result,
 
 err:
     return 1;
+}
+
+int eval_anf_run_in(const Anf *prog, Frame *env0, Arena *a, Value *result,
+                    char **errmsg, Gc *gc) {
+    return eval_anf_core(prog, prog, env0, NULL, 0, a, result, errmsg, gc);
+}
+
+int eval_anf_resume(const Anf *root, const Anf *node, Frame *env,
+                    CFrame *cframe, long step, Arena *a, Value *result,
+                    char **errmsg, Gc *gc) {
+    return eval_anf_core(root, node, env, cframe, step, a, result, errmsg, gc);
 }
 
 int eval_anf_run(const Anf *prog, int top_nslots, Arena *a, Value *result,

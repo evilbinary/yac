@@ -53,12 +53,23 @@ usage: yac [options] file.yac
   --ast            dump the parsed AST and exit
   --no-gc          disable garbage collection (arena-style growth)
   --limit-nodes N  abort when live objects exceed N (0 = unlimited)
+  --dump-rt FILE   serialize the compiled runtime (ANF) to FILE
+  --load-rt FILE   load a runtime FILE instead of parsing source
+  --repl           interactive loop with persistent globals (--cps for callcc)
+  --checkpoint-at N  dump the machine state at step N and pause
+  --resume FILE    load a checkpoint and continue execution
 ```
 
 调试钩子（环境变量）：
 
 - `YAC_GC_THRESHOLD=N` — 覆盖 GC 触发阈值（字节），用于压测 GC。
 - `YAC_GC_DBG=1` — 每次回收打印存活对象数。
+
+## 运行时持久化
+
+- **编译产物**（`--dump-rt` / `--load-rt`）：把 ANF IR + 顶层帧布局序列化成文本（`src/rtio.c`），加载后直接运行，跳过词法/语法/归一化。属性测试覆盖往返一致性。
+- **REPL**（`--repl`）：交互式循环，顶层绑定持久化到全局帧；`--cps` 模式支持 `callcc`/`throw`。
+- **执行中间快照**（`--checkpoint-at N` / `--resume`，ANF 机器）：在第 N 步把 IR 树、帧栈、续延帧栈、可达闭包全部序列化（`src/ckpt.c`，对象指针图按 ID 重建），之后从该点恢复继续执行到完成。
 
 ## 测试
 

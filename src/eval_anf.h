@@ -30,4 +30,24 @@ int eval_anf_run(const Anf *prog, int top_nslots, Arena *a, Value *result,
 int eval_anf_run_in(const Anf *prog, struct Frame *top, Arena *a, Value *result,
                     char **errmsg, struct Gc *gc);
 
+/* The machine state at a checkpoint: the IR root, the current node, the
+ * current frame, and the continuation-frame stack. */
+typedef struct AnfState {
+    const Anf *root;
+    const Anf *node;
+    struct Frame *env;
+    struct CFrame *cframe;
+} AnfState;
+
+/* Checkpoint hook: if set, called at the start of every trampoline step with
+ * the current state and the step counter. Return nonzero to pause the machine
+ * (eval returns 2) after dumping the state. */
+extern int (*yac_ckpt_hook)(const AnfState *st, long step);
+
+/* Resume a paused machine from a checkpoint. Returns 0 on completion, 2 if
+ * paused again, nonzero on error. */
+int eval_anf_resume(const Anf *root, const Anf *node, struct Frame *env,
+                    struct CFrame *cframe, long step, Arena *a, Value *result,
+                    char **errmsg, struct Gc *gc);
+
 #endif

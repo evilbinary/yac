@@ -4,6 +4,7 @@
 
 #include "anf.h"
 #include "arena.h"
+#include "ckpt.h"
 #include "cps.h"
 #include "eval_anf.h"
 #include "eval_cps.h"
@@ -165,6 +166,24 @@ static int repl_loop(Globals *g) {
     return 0;
 }
 
+/* ---- checkpoints ---- */
+
+static long ckpt_target = -1;
+static const char *ckpt_path = NULL;
+
+static int ckpt_hook(const AnfState *st, long step) {
+    if (step == ckpt_target) {
+        const char *p = ckpt_path ? ckpt_path : "yac.ckpt";
+        if (ckpt_dump(st, step, p) != 0) {
+            fprintf(stderr, "checkpoint dump failed\n");
+        } else {
+            fprintf(stderr, "checkpointed at step %ld -> %s\n", step, p);
+        }
+        return 1; /* pause */
+    }
+    return 0;
+}
+
 static void usage(const char *prog) {
     fprintf(stderr,
             "usage: %s [options] file.yac\n"
@@ -181,7 +200,9 @@ static void usage(const char *prog) {
             "  --limit-nodes N  abort when live objects exceed N (0 = unlimited)\n"
             "  --dump-rt FILE   serialize the compiled runtime (ANF) to FILE\n"
             "  --load-rt FILE   load a runtime FILE instead of parsing source\n"
-            "  --repl           interactive loop with persistent globals\n",
+            "  --repl           interactive loop with persistent globals\n"
+            "  --checkpoint-at N  dump the machine state at step N and pause\n"
+            "  --resume FILE    load a checkpoint and continue execution\n",
             prog);
 }
 
@@ -204,7 +225,7 @@ int main(int argc, char **argv) {
     bool dump_ast = false, dump_anf = false, dump_cps = false;
     bool cps_mode = false, both = false, uncps_mode = false, dump_uncps = false;
     bool no_gc = false, do_opt = false, repl_mode = false;
-    const char *dump_rt = NULL, *load_rt = NULL;
+    const char *dump_rt = NULL, *load_rt = NULL, *resume_path = NULL;
     size_t limit_nodes = 0;
     const char *file = NULL;
 
@@ -219,6 +240,20 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--opt") == 0) do_opt = true;
         else if (strcmp(argv[i], "--no-gc") == 0) no_gc = true;
         else if (strcmp(argv[i], "--repl") == 0) repl_mode = true;
+        else if (strcmp(argv[i], "--checkpoint-at") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "--checkpoint-at requires a number\n");
+                return 2;
+            }
+            ckpt_target = strtol(argv[++i], NULL, 10);
+        }
+        else if (strcmp(argv[i], "--resume") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "--resume requires a file\n");
+                return 2;
+            }
+            resume_path = argv[++i];
+        }
         else if (strcmp(argv[i], "--dump-rt") == 0 || strcmp(argv[i], "--load-rt") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "%s requires a file\n", argv[i]);
@@ -245,7 +280,7 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
-    if (!file && !load_rt && !repl_mode) {
+    if (!file && !load_rt && !repl_mode && !resume_path) {
         usage(argv[0]);
         return 2;
     }
@@ -281,6 +316,33 @@ int main(int argc, char **argv) {
         repl_loop(&g);
         free(g.names);
         free(g.vals);
+        cleanup(&r);
+        return 0;
+    }
+
+    if (resume_path) {
+        const Anf *root = NULL, *node = NULL;
+        Frame *env = NULL;
+        CFrame *cframe = NULL;
+        long step = 0;
+        char *ckpt_err = NULL;
+        if (!ckpt_resume(resume_path, &r.a, &r.gc, &root, &node, &env, &cframe,
+                         &step, &ckpt_err)) {
+            fprintf(stderr, "error: %s\n", ckpt_err);
+            cleanup(&r);
+            return 1;
+        }
+        Value result;
+        char *res_err = NULL;
+        int rc = eval_anf_resume(root, node, env, cframe, step, &r.a, &result,
+                                 &res_err, &r.gc);
+        if (rc != 0) {
+            fprintf(stderr, "runtime error: %s\n", res_err);
+            cleanup(&r);
+            return 1;
+        }
+        char *out = value_to_string(&r.a, result);
+        printf("%s\n", out);
         cleanup(&r);
         return 0;
     }
@@ -433,7 +495,19 @@ int main(int argc, char **argv) {
     }
 
     Value result;
-    if (eval_anf_run(anf, top_nslots, &r.a, &result, &errmsg, &r.gc) != 0) {
+    int rc;
+    if (ckpt_target >= 0) {
+        yac_ckpt_hook = ckpt_hook;
+        rc = eval_anf_run(anf, top_nslots, &r.a, &result, &errmsg, &r.gc);
+        yac_ckpt_hook = NULL;
+    } else {
+        rc = eval_anf_run(anf, top_nslots, &r.a, &result, &errmsg, &r.gc);
+    }
+    if (rc == 2) {
+        cleanup(&r);
+        return 0;
+    }
+    if (rc != 0) {
         fprintf(stderr, "runtime error: %s\n", errmsg);
         cleanup(&r);
         return 1;

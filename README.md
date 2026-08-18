@@ -10,10 +10,11 @@
 ## 特性
 
 - CBV、n 元函数、词法作用域、递归 `let`、真 TCO（10⁷ 尾调用不爆栈）
-- 整数/浮点/布尔/字符串/`()`，原语 `+ - * / % == != < <= > >= and or not print`
+- 整数/浮点/布尔/字符串/`()`，原语 `+ - * / % == != < <= > >= and or not print`，**支持 UTF-8 中文标识符**
 - `callcc` / `throw`（CPS 机器）
 - mark-sweep GC + **扁平环境帧**（`(depth,slot)` 下标寻址，`let` 直写槽位）
 - ANF ↔ CPS 双向转换、受限 un-CPS、CPS 化简（`--opt`）
+- 运行时持久化：编译产物 dump/load、执行中间快照（checkpoint/resume）、REPL
 
 ## 构建与测试
 
@@ -31,6 +32,11 @@ yac --cps file.yac        # 走 CPS 解释器
 yac --both file.yac       # 两个解释器各跑一遍并比对
 yac --dump-anf file.yac   # dump ANF / --dump-cps / --dump-uncps
 yac --opt --cps file.yac  # CPS 化简（常量折叠/eta 归约）
+yac --repl                # 交互式 REPL（持久全局，--cps 支持 callcc）
+yac --dump-rt f.yacrt file.yac   # 序列化编译产物（ANF）到文件
+yac --load-rt f.yacrt            # 直接加载运行，跳过解析
+yac --checkpoint-at 100 file.yac # 在第 100 步保存运行时快照并暂停
+yac --resume yac.ckpt            # 从快照恢复执行
 ```
 
 ## 示例

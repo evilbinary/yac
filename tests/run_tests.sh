@@ -127,6 +127,22 @@ else
     echo "  $out"
 fi
 
+# checkpoint / resume round trip: pause mid-run and continue from there
+tmp=$(mktemp -d 2>/dev/null || echo build/ckpt_tmp)
+mkdir -p "$tmp"
+out=$($BIN --checkpoint-at 50 tests/fact.yac >/dev/null 2>&1); rc=$?
+if [ $rc -eq 0 ] && [ -f yac.ckpt ]; then
+    out=$($BIN --resume yac.ckpt 2>&1); rc=$?
+    rm -f yac.ckpt
+    if [ $rc -eq 0 ] && [ "$out" = "3628800" ]; then
+        pass=$((pass + 1)); echo "PASS: checkpoint/resume reproduces factorial"
+    else
+        fail=$((fail + 1)); echo "FAIL: resume should finish with 3628800 (rc=$rc, out=$out)"
+    fi
+else
+    fail=$((fail + 1)); echo "FAIL: checkpoint dump did not happen (rc=$rc)"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]

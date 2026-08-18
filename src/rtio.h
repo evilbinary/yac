@@ -17,4 +17,22 @@ void anf_write(const Anf *node, FILE *f);
 bool anf_read_file(const char *path, Arena *a, Anf **out, int *top_nslots,
                    char **errmsg);
 
+/* ---- low-level token reader (shared with the checkpoint format) ---- */
+
+typedef struct Rd Rd;
+
+Rd *rd_open(const char *data, size_t len, Arena *a);
+void rd_close(Rd *r);
+const char *rd_error(Rd *r);
+void rd_set_error(Rd *r, const char *msg);
+Arena *rd_arena(Rd *r);
+char *rd_word(Rd *r);
+char *rd_name(Rd *r);
+void rd_expect(Rd *r, char c);
+int rd_peek(Rd *r);
+bool rd_atom(Rd *r, Atom *out);
+
+/* Read "(rt <top_nslots> <node>)" from the reader. */
+bool anf_read(Rd *r, Anf **out, int *top_nslots);
+
 #endif

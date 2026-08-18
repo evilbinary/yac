@@ -119,9 +119,15 @@ LexResult lex_program(const char *src, Arena *a) {
         t.line = tline;
         t.col = tcol;
 
-        if (isalpha((unsigned char)c) || c == '_') {
+        /* identifiers: ASCII letters/digits/_ plus any non-ASCII byte, so
+         * UTF-8 names (e.g. Chinese identifiers) are accepted */
+        if (isalpha((unsigned char)c) || c == '_' || (unsigned char)c >= 0x80) {
             size_t start = lx.pos;
-            while (isalnum((unsigned char)src[lx.pos]) || src[lx.pos] == '_') { lx.pos++; lx.col++; }
+            while (isalnum((unsigned char)src[lx.pos]) || src[lx.pos] == '_' ||
+                   (unsigned char)src[lx.pos] >= 0x80) {
+                lx.pos++;
+                lx.col++;
+            }
             size_t len = lx.pos - start;
             char *word = (char *)arena_alloc(a, len + 1);
             memcpy(word, src + start, len);
