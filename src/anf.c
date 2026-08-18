@@ -49,21 +49,21 @@ static void nerr(NrmCtx *c, const char *fmt, ...) {
 
 /* ---- IR constructors ---- */
 
-static Atom atom_var(const char *name) {
+Atom atom_var(const char *name) {
     Atom at;
     at.kind = AT_VAR;
     at.u.var.name = name;
     return at;
 }
 
-static Atom atom_lit(Value v) {
+Atom atom_lit(Value v) {
     Atom at;
     at.kind = AT_LIT;
     at.u.lit = v;
     return at;
 }
 
-static Atom atom_lam(char **params, int nparams, Anf *body) {
+Atom atom_lam(char **params, int nparams, Anf *body) {
     Atom at;
     at.kind = AT_LAM;
     at.u.lam.params = params;
@@ -80,13 +80,13 @@ static Anf *anf_node(Arena *a, AnfKind kind, int line) {
     return n;
 }
 
-static Anf *anf_ret(Arena *a, Atom atom) {
+Anf *anf_ret(Arena *a, Atom atom) {
     Anf *n = anf_node(a, N_RETURN, 0);
     n->u.ret = atom;
     return n;
 }
 
-static Anf *anf_let(Arena *a, const char *name, Atom atom, Anf *body) {
+Anf *anf_let(Arena *a, const char *name, Atom atom, Anf *body) {
     Anf *n = anf_node(a, N_LET, 0);
     n->u.let.name = name;
     n->u.let.atom = atom;
@@ -94,7 +94,7 @@ static Anf *anf_let(Arena *a, const char *name, Atom atom, Anf *body) {
     return n;
 }
 
-static Anf *anf_let_call(Arena *a, const char *name, Atom head, Atom *args, int nargs, Anf *body) {
+Anf *anf_let_call(Arena *a, const char *name, Atom head, Atom *args, int nargs, Anf *body) {
     Anf *n = anf_node(a, N_LET_CALL, 0);
     n->u.call.name = name;
     n->u.call.head = head;
@@ -104,7 +104,7 @@ static Anf *anf_let_call(Arena *a, const char *name, Atom head, Atom *args, int 
     return n;
 }
 
-static Anf *anf_if(Arena *a, Atom cond, Anf *then, Anf *els) {
+Anf *anf_if(Arena *a, Atom cond, Anf *then, Anf *els) {
     Anf *n = anf_node(a, N_IF, 0);
     n->u.if_.cond = cond;
     n->u.if_.then = then;
@@ -112,7 +112,7 @@ static Anf *anf_if(Arena *a, Atom cond, Anf *then, Anf *els) {
     return n;
 }
 
-static Anf *anf_tail_call(Arena *a, Atom head, Atom *args, int nargs) {
+Anf *anf_tail_call(Arena *a, Atom head, Atom *args, int nargs) {
     Anf *n = anf_node(a, N_TAIL_CALL, 0);
     n->u.tailcall.head = head;
     n->u.tailcall.args = args;
@@ -120,7 +120,7 @@ static Anf *anf_tail_call(Arena *a, Atom head, Atom *args, int nargs) {
     return n;
 }
 
-static Anf *anf_let_callcc(Arena *a, const char *name, Atom atom, Anf *body) {
+Anf *anf_let_callcc(Arena *a, const char *name, Atom atom, Anf *body) {
     Anf *n = anf_node(a, N_LET_CALLCC, 0);
     n->u.callcc.name = name;
     n->u.callcc.atom = atom;

@@ -9,6 +9,7 @@
 #include "eval_cps.h"
 #include "lexer.h"
 #include "parser.h"
+#include "uncps.h"
 #include "value.h"
 
 static char *read_file(const char *path) {
@@ -36,12 +37,14 @@ static void usage(const char *prog) {
             "  --dump-anf    print the ANF and exit\n"
             "  --dump-cps    print ANF->CPS and exit\n"
             "  --both        run both interpreters and compare\n"
+            "  --uncps       run ANF->CPS->ANF (un-CPS round trip) and execute\n"
+            "  --dump-uncps  print the un-CPS'd ANF and exit\n"
             "  --ast         dump the parsed AST and exit\n",
             prog);
 }
 
 int main(int argc, char **argv) {
-    bool dump_ast = false, dump_anf = false, dump_cps = false, cps_mode = false, both = false;
+    bool dump_ast = false, dump_anf = false, dump_cps = false, cps_mode = false, both = false, uncps_mode = false, dump_uncps = false;
     const char *file = NULL;
 
     for (int i = 1; i < argc; i++) {
@@ -50,6 +53,8 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--dump-cps") == 0) dump_cps = true;
         else if (strcmp(argv[i], "--cps") == 0) cps_mode = true;
         else if (strcmp(argv[i], "--both") == 0) both = true;
+        else if (strcmp(argv[i], "--uncps") == 0) uncps_mode = true;
+        else if (strcmp(argv[i], "--dump-uncps") == 0) dump_uncps = true;
         else if (argv[i][0] == '-') {
             fprintf(stderr, "unknown option: %s\n", argv[i]);
             usage(argv[0]);
@@ -120,7 +125,7 @@ int main(int argc, char **argv) {
     }
 
     CExp *cps = NULL;
-    if (cps_mode || both || dump_cps) {
+    if (cps_mode || both || dump_cps || uncps_mode || dump_uncps) {
         if (!anf_to_cps(anf, &a, &cps, &errmsg)) {
             fprintf(stderr, "error: %s\n", errmsg);
             free(lx.toks);
@@ -135,6 +140,38 @@ int main(int argc, char **argv) {
             arena_free_all(&a);
             return 0;
         }
+    }
+
+    if (uncps_mode || dump_uncps) {
+        Anf *anf2 = NULL;
+        if (!cps_to_anf(cps, &a, &anf2, &errmsg)) {
+            fprintf(stderr, "error: %s\n", errmsg);
+            free(lx.toks);
+            free(src);
+            arena_free_all(&a);
+            return 1;
+        }
+        if (dump_uncps) {
+            anf_dump(anf2, 0);
+            free(lx.toks);
+            free(src);
+            arena_free_all(&a);
+            return 0;
+        }
+        Value result;
+        if (eval_anf_run(anf2, &a, &result, &errmsg) != 0) {
+            fprintf(stderr, "runtime error: %s\n", errmsg);
+            free(lx.toks);
+            free(src);
+            arena_free_all(&a);
+            return 1;
+        }
+        char *out = value_to_string(&a, result);
+        printf("%s\n", out);
+        free(lx.toks);
+        free(src);
+        arena_free_all(&a);
+        return 0;
     }
 
     if (both) {

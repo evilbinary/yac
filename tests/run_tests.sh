@@ -44,6 +44,21 @@ else
     fail=$((fail + 1)); echo "FAIL: --both on factorial (rc=$rc, out=$out)"
 fi
 
+# un-CPS round trip: ANF->CPS->ANF must reproduce the same result
+actual=$($BIN --uncps tests/fact.yac);   check "uncps factorial"      "3628800" "$actual"
+actual=$($BIN --uncps tests/fib.yac);    check "uncps fibonacci"      "832040" "$actual"
+actual=$($BIN --uncps tests/higher.yac); check "uncps higher-order"   "7" "$actual"
+actual=$($BIN --uncps tests/closure.yac); check "uncps lexical closure" "2" "$actual"
+actual=$($BIN --uncps tests/tco.yac);    check "uncps tco"            "0" "$actual"
+
+out=$($BIN --uncps tests/callcc.yac 2>&1); rc=$?
+if [ $rc -ne 0 ] && echo "$out" | grep -q "cannot un-CPS"; then
+    pass=$((pass + 1)); echo "PASS: callcc rejected by un-CPS"
+else
+    fail=$((fail + 1)); echo "FAIL: callcc should be rejected by un-CPS (rc=$rc)"
+    echo "  $out"
+fi
+
 out=$($BIN tests/unbound.yac 2>&1); rc=$?
 if [ $rc -ne 0 ] && echo "$out" | grep -q "unbound variable 'y'"; then
     pass=$((pass + 1)); echo "PASS: unbound variable detected"

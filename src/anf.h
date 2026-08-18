@@ -90,6 +90,16 @@ struct Anf {
  * error (e.g. unbound variable). */
 bool ast_to_anf(const Ast *prog, Arena *a, Anf **out, char **errmsg);
 
+/* IR constructors (used by the CPS->ANF un-conversion too) */
+Atom atom_var(const char *name);
+Atom atom_lit(Value v);
+Atom atom_lam(char **params, int nparams, Anf *body);
+Anf *anf_let(Arena *a, const char *name, Atom atom, Anf *body);
+Anf *anf_let_call(Arena *a, const char *name, Atom head, Atom *args, int nargs, Anf *body);
+Anf *anf_if(Arena *a, Atom cond, Anf *then, Anf *els);
+Anf *anf_tail_call(Arena *a, Atom head, Atom *args, int nargs);
+Anf *anf_ret(Arena *a, Atom atom);
+
 void anf_dump(const Anf *node, int depth);
 
 #endif
