@@ -10,6 +10,7 @@
 #include "gc.h"
 #include "lexer.h"
 #include "parser.h"
+#include "rtio.h"
 #include "uncps.h"
 #include "value.h"
 
@@ -43,7 +44,9 @@ static void usage(const char *prog) {
             "  --opt            simplify the CPS IR (constant folding, eta)\n"
             "  --ast            dump the parsed AST and exit\n"
             "  --no-gc          disable garbage collection (arena-style growth)\n"
-            "  --limit-nodes N  abort when live objects exceed N (0 = unlimited)\n",
+            "  --limit-nodes N  abort when live objects exceed N (0 = unlimited)\n"
+            "  --dump-rt FILE   serialize the compiled runtime (ANF) to FILE\n"
+            "  --load-rt FILE   load a runtime FILE instead of parsing source\n",
             prog);
 }
 
@@ -66,6 +69,7 @@ int main(int argc, char **argv) {
     bool dump_ast = false, dump_anf = false, dump_cps = false;
     bool cps_mode = false, both = false, uncps_mode = false, dump_uncps = false;
     bool no_gc = false, do_opt = false;
+    const char *dump_rt = NULL, *load_rt = NULL;
     size_t limit_nodes = 0;
     const char *file = NULL;
 
@@ -79,6 +83,14 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--dump-uncps") == 0) dump_uncps = true;
         else if (strcmp(argv[i], "--opt") == 0) do_opt = true;
         else if (strcmp(argv[i], "--no-gc") == 0) no_gc = true;
+        else if (strcmp(argv[i], "--dump-rt") == 0 || strcmp(argv[i], "--load-rt") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "%s requires a file\n", argv[i]);
+                return 2;
+            }
+            if (argv[i][2] == 'd') dump_rt = argv[++i];
+            else load_rt = argv[++i];
+        }
         else if (strcmp(argv[i], "--limit-nodes") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "--limit-nodes requires a number\n");
@@ -97,18 +109,13 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
-    if (!file) {
+    if (!file && !load_rt) {
         usage(argv[0]);
         return 2;
     }
 
     Res r;
     memset(&r, 0, sizeof(r));
-    r.src = read_file(file);
-    if (!r.src) {
-        fprintf(stderr, "cannot read file: %s\n", file);
-        return 2;
-    }
     arena_init(&r.a, 1 << 20);
     gc_init(&r.gc, 1 << 20);
     const char *th = getenv("YAC_GC_THRESHOLD");
@@ -116,34 +123,65 @@ int main(int argc, char **argv) {
     r.gc.enabled = !no_gc;
     r.gc.max_objs = limit_nodes;
 
-    r.lx = lex_program(r.src, &r.a);
-    r.have_lx = true;
-    if (r.lx.error) {
-        fprintf(stderr, "%s\n", r.lx.error);
-        cleanup(&r);
-        return 1;
-    }
-
-    ParseResult pr = parse_program(r.lx.toks, r.lx.n, &r.a);
-    if (pr.error) {
-        fprintf(stderr, "%s\n", pr.error);
-        cleanup(&r);
-        return 1;
-    }
-
-    if (dump_ast) {
-        ast_dump(pr.program, 0);
-        cleanup(&r);
-        return 0;
-    }
-
     Anf *anf = NULL;
     int top_nslots = 0;
     char *errmsg = NULL;
-    if (!ast_to_anf(pr.program, &r.a, &anf, &top_nslots, &errmsg)) {
-        fprintf(stderr, "error: %s\n", errmsg);
+
+    if (load_rt) {
+        /* load a serialized runtime instead of parsing source */
+        if (!anf_read_file(load_rt, &r.a, &anf, &top_nslots, &errmsg)) {
+            fprintf(stderr, "error: %s\n", errmsg);
+            cleanup(&r);
+            return 1;
+        }
+    } else {
+        r.src = read_file(file);
+        if (!r.src) {
+            fprintf(stderr, "cannot read file: %s\n", file);
+            cleanup(&r);
+            return 2;
+        }
+        r.lx = lex_program(r.src, &r.a);
+        r.have_lx = true;
+        if (r.lx.error) {
+            fprintf(stderr, "%s\n", r.lx.error);
+            cleanup(&r);
+            return 1;
+        }
+
+        ParseResult pr = parse_program(r.lx.toks, r.lx.n, &r.a);
+        if (pr.error) {
+            fprintf(stderr, "%s\n", pr.error);
+            cleanup(&r);
+            return 1;
+        }
+
+        if (dump_ast) {
+            ast_dump(pr.program, 0);
+            cleanup(&r);
+            return 0;
+        }
+
+        if (!ast_to_anf(pr.program, &r.a, &anf, &top_nslots, &errmsg)) {
+            fprintf(stderr, "error: %s\n", errmsg);
+            cleanup(&r);
+            return 1;
+        }
+    }
+
+    if (dump_rt) {
+        FILE *f = fopen(dump_rt, "w");
+        if (!f) {
+            fprintf(stderr, "cannot write runtime file: %s\n", dump_rt);
+            cleanup(&r);
+            return 1;
+        }
+        fprintf(f, "(rt %d ", top_nslots);
+        anf_write(anf, f);
+        fputs(")\n", f);
+        fclose(f);
         cleanup(&r);
-        return 1;
+        return 0;
     }
 
     if (dump_anf) {

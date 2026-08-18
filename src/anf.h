@@ -113,6 +113,8 @@ Anf *anf_let_call(Arena *a, const char *name, int slot, Atom head, Atom *args, i
 Anf *anf_if(Arena *a, Atom cond, Anf *then, Anf *els);
 Anf *anf_tail_call(Arena *a, Atom head, Atom *args, int nargs);
 Anf *anf_ret(Arena *a, Atom atom);
+Anf *anf_let_callcc(Arena *a, const char *name, int slot, Atom atom, Anf *body);
+Anf *anf_tail_throw(Arena *a, Atom k, Atom v);
 
 void anf_dump(const Anf *node, int depth);
 

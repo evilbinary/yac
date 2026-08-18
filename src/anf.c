@@ -182,7 +182,7 @@ Anf *anf_tail_call(Arena *a, Atom head, Atom *args, int nargs) {
     return n;
 }
 
-static Anf *anf_let_callcc(Arena *a, const char *name, int slot, Atom atom, Anf *body) {
+Anf *anf_let_callcc(Arena *a, const char *name, int slot, Atom atom, Anf *body) {
     Anf *n = anf_node(a, N_LET_CALLCC, 0);
     n->u.callcc.name = name;
     n->u.callcc.slot = slot;
@@ -191,7 +191,7 @@ static Anf *anf_let_callcc(Arena *a, const char *name, int slot, Atom atom, Anf 
     return n;
 }
 
-static Anf *anf_tail_throw(Arena *a, Atom k, Atom v) {
+Anf *anf_tail_throw(Arena *a, Atom k, Atom v) {
     Anf *n = anf_node(a, N_TAIL_THROW, 0);
     n->u.tailthrow.k = k;
     n->u.tailthrow.v = v;
