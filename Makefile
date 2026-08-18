@@ -17,7 +17,7 @@ $(BUILD)/%.o: src/%.c $(wildcard src/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 test: $(BIN)
-	./tests/run_tests.sh
+	sh tests/run_tests.sh
 
 clean:
 	rm -f $(BIN)

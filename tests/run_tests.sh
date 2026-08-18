@@ -7,7 +7,7 @@ pass=0
 fail=0
 
 check() {
-    local desc="$1" expected="$2" actual="$3"
+    desc="$1"; expected="$2"; actual="$3"
     if [ "$actual" = "$expected" ]; then
         pass=$((pass + 1))
         echo "PASS: $desc"
@@ -19,10 +19,12 @@ check() {
     fi
 }
 
+types_out=$(printf 'hello\n3.5\ntrue\n()\n42')
+
 actual=$($BIN tests/fact.yac);      check "factorial"         "3628800" "$actual"
 actual=$($BIN tests/fib.yac);       check "fibonacci"         "832040" "$actual"
 actual=$($BIN tests/higher.yac);    check "higher-order"      "7" "$actual"
-actual=$($BIN tests/types.yac | tr -d '\r');  check "types"             $'hello\n3.5\ntrue\n()\n42' "$actual"
+actual=$($BIN tests/types.yac | tr -d '\r');  check "types"             "$types_out" "$actual"
 actual=$($BIN tests/tco.yac);       check "tco"               "0" "$actual"
 actual=$($BIN tests/closure.yac);   check "lexical closure"   "2" "$actual"
 actual=$($BIN tests/float.yac);     check "float arithmetic"  "1" "$actual"
@@ -31,7 +33,7 @@ actual=$($BIN tests/float.yac);     check "float arithmetic"  "1" "$actual"
 actual=$($BIN --cps tests/fact.yac);     check "cps factorial"        "3628800" "$actual"
 actual=$($BIN --cps tests/fib.yac);      check "cps fibonacci"        "832040" "$actual"
 actual=$($BIN --cps tests/higher.yac);   check "cps higher-order"     "7" "$actual"
-actual=$($BIN --cps tests/types.yac | tr -d '\r'); check "cps types"  $'hello\n3.5\ntrue\n()\n42' "$actual"
+actual=$($BIN --cps tests/types.yac | tr -d '\r'); check "cps types"  "$types_out" "$actual"
 actual=$($BIN --cps tests/tco.yac);      check "cps tco"              "0" "$actual"
 actual=$($BIN --cps tests/closure.yac);  check "cps lexical closure"  "2" "$actual"
 actual=$($BIN --cps tests/float.yac);    check "cps float arithmetic" "1" "$actual"
