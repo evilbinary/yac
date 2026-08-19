@@ -23,6 +23,14 @@ static void write_lit(Value v, FILE *f) {
     case V_BOOL: fprintf(f, "b %d", v.u.b ? 1 : 0); break;
     case V_UNIT: fputs("u", f); break;
     case V_STR: fputs("s ", f); put_name(f, v.u.s->data); break;
+    case V_LIST:
+        fputs("l {", f);
+        for (int i = 0; i < v.u.l->len; i++) {
+            fputc(' ', f);
+            write_lit(v.u.l->items[i], f);
+        }
+        fputs(" }", f);
+        break;
     default: fprintf(f, "i 0"); break; /* functions/continuations are not IR literals */
     }
 }
@@ -220,6 +228,22 @@ static Value rd_lit(Rd *r) {
     if (strcmp(tag, "b") == 0) return v_bool(atoi(rd_word(r)) != 0);
     if (strcmp(tag, "u") == 0) return v_unit();
     if (strcmp(tag, "s") == 0) return v_str(r->a, rd_name(r));
+    if (strcmp(tag, "l") == 0) {
+        rd_expect(r, '{');
+        Value *items = NULL;
+        int n = 0, cap = 0;
+        while (rd_peek(r) != '}') {
+            if (n >= cap) {
+                cap = cap ? cap * 2 : 4;
+                Value *np = (Value *)arena_alloc(r->a, (size_t)cap * sizeof(Value));
+                memcpy(np, items, (size_t)n * sizeof(Value));
+                items = np;
+            }
+            items[n++] = rd_lit(r);
+        }
+        rd_expect(r, '}');
+        return v_list_arena(r->a, items, n);
+    }
     rd_fail(r, "runtime file: bad literal tag '%s'", tag);
     return VALUE_NULL;
 }

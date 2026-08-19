@@ -19,6 +19,7 @@ typedef enum {
     A_VAR,
     A_APP, A_FUN, A_IF, A_LET,
     A_BINOP, A_NOT, A_PRINT, A_CALLCC, A_THROW,
+    A_LIST,
 } AstKind;
 
 struct Ast {
@@ -37,6 +38,7 @@ struct Ast {
         struct { int op; Ast *lhs, *rhs; } bin;
         Ast *operand;
         struct { Ast *k, *v; } thr;
+        struct { Ast **items; int n; } list;
     } u;
 };
 

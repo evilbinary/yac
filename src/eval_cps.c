@@ -18,7 +18,13 @@ typedef struct {
     Arena *a;
     char **errmsg;
     bool errored;
+    Frame *env; /* current frame (rooted across nested primitive calls) */
 } Cst;
+
+static bool call_value(void *ud, Value head, Value *args, int nargs,
+                       Value *out, char *errmsg, size_t errsz);
+int eval_cps_run_in(const CExp *prog, Frame *env0, Arena *a,
+                    Value *result, char **errmsg, Gc *gc);
 
 static void fail(Cst *st, const char *fmt, ...) {
     if (st->errored) return;
@@ -42,9 +48,72 @@ static void apply_prim(Value head, Value *args, int nargs, Value *out, Cst *st) 
         fail(st, "primitive '%s' expects %d argument(s), got %d", p->name, p->arity, nargs);
         return;
     }
-    PrimCtx ctx = {false, ""};
+    PrimCtx ctx = {false, "", st->gc, call_value, st};
     *out = p->fn(args, nargs, &ctx);
     if (ctx.errored) fail(st, "%s", ctx.errmsg);
+}
+
+/* Run a user function as a sub-computation in CPS. A CPS function takes an
+ * extra continuation parameter (the last closure param); we pass a fresh
+ * "return" continuation whose body halts the nested run with the value. */
+static bool call_value(void *ud, Value head, Value *args, int nargs,
+                       Value *out, char *errmsg, size_t errsz) {
+    Cst *st = (Cst *)ud;
+    (void)errmsg;
+    (void)errsz;
+    if (head.tag == V_PRIM) {
+        apply_prim(head, args, nargs, out, st);
+        if (st->errored) return false;
+        gc_push_value(st->gc, *out); /* root while the caller copies it */
+        gc_pop_root(st->gc);
+        return true;
+    }
+    if (head.tag != V_FUN) {
+        fail(st, "cannot apply a non-function value");
+        return false;
+    }
+    Closure *clo = head.u.clo;
+    if (clo->nparams != nargs + 1) {
+        fail(st, "function expects %d argument(s), got %d", clo->nparams - 1, nargs);
+        return false;
+    }
+    /* halt continuation: kappa(#r). halt #r, with #r in slot 0 of a fresh
+     * frame; the nested run ends when the function applies it */
+    CExp *halt = (CExp *)arena_alloc(st->a, sizeof(CExp));
+    halt->kind = CE_HALT;
+    halt->line = 0;
+    halt->u.halt.v.kind = CV_VAR;
+    halt->u.halt.v.u.var.name = "#r";
+    halt->u.halt.v.u.var.depth = 0;
+    halt->u.halt.v.u.var.slot = 0;
+    Closure *k = gc_new_closure(st->gc);
+    k->body = halt;
+    k->params = NULL;
+    k->nparams = 1;
+    k->nslots = 1;
+    k->kslot = -1;
+    k->frame = gc_new_frame(st->gc, 1);
+    k->cont_name = "#r";
+    k->rslot = 0;
+
+    gc_push_root(st->gc, (GObj *)st->env);
+    gc_push_value(st->gc, v_cont(k));
+    Frame *nf = gc_new_frame(st->gc, clo->nslots);
+    nf->parent = clo->frame;
+    for (int i = 0; i < nargs; i++) nf->slots[i] = args[i];
+    nf->slots[clo->kslot] = v_cont(k);
+    int rc = eval_cps_run_in(clo->body, nf, st->a, out, st->errmsg, st->gc);
+    if (rc != 0) {
+        gc_pop_root(st->gc); /* k */
+        gc_pop_root(st->gc); /* env */
+        return false;
+    }
+    gc_push_value(st->gc, *out); /* keep the result alive until the caller pops it */
+    gc_pop_root(st->gc);         /* *out */
+    gc_pop_root(st->gc);         /* k */
+    gc_pop_root(st->gc);         /* env */
+    gc_set_env(st->gc, st->env); /* restore the caller's root */
+    return true;
 }
 
 /* ---- eval_val: values only (no calls) ---- */
@@ -115,7 +184,7 @@ static void apply_cont(Value k, Value v, Frame **env, const CExp **code,
 
 int eval_cps_run_in(const CExp *prog, Frame *env0, Arena *a, Value *result,
                     char **errmsg, Gc *gc) {
-    Cst st = {gc, a, errmsg, false};
+    Cst st = {gc, a, errmsg, false, env0};
     const CExp *code = prog;
     Frame *env = env0;
     gc_set_env(gc, env);
@@ -163,6 +232,7 @@ int eval_cps_run_in(const CExp *prog, Frame *env0, Arena *a, Value *result,
                     goto err;
                 }
                 Value v;
+                st.env = env;
                 apply_prim(head, args, code->u.call.nargs - 1, &v, &st);
                 if (st.errored) goto err;
                 gc_push_value(gc, v);

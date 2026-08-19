@@ -95,6 +95,7 @@ static bool atom_start(TokKind k) {
     case TK_IDENT:
     case TK_LPAREN:
     case TK_KW_FUN:
+    case TK_LBRACKET:
         return true;
     default:
         return false;
@@ -204,6 +205,48 @@ static Ast *parse_atom(Parser *p) {
         free(params);
         Ast *n = mk_fun(p, parr, nparams, body, t->line, t->col);
         return n;
+    }
+    case TK_LBRACKET: {
+        advance(p);
+        Ast **items = NULL;
+        int n = 0, cap = 0;
+        while (!at(p, TK_RBRACKET)) {
+            Ast *e = parse_expr(p);
+            if (!e) {
+                free(items);
+                return NULL;
+            }
+            if (n == cap) {
+                cap = cap ? cap * 2 : 4;
+                items = (Ast **)realloc(items, (size_t)cap * sizeof(Ast *));
+            }
+            items[n++] = e;
+            if (!eat(p, TK_COMMA)) break;
+        }
+        if (!eat(p, TK_RBRACKET)) {
+            p_err(p, "expected ']' to close list literal");
+            free(items);
+            return NULL;
+        }
+        Ast **arr = (Ast **)arena_alloc(p->a, (size_t)n * sizeof(Ast *));
+        memcpy(arr, items, (size_t)n * sizeof(Ast *));
+        free(items);
+        /* desugar [e1, ..., en]  ==>  cons(e1, cons(e2, ... cons(en, []))) */
+        Ast *cur = mk(p, A_LIST, t->line, t->col);
+        cur->u.list.n = 0;
+        for (int i = n - 1; i >= 0; i--) {
+            Ast *app = mk(p, A_APP, t->line, t->col);
+            Ast *head = mk(p, A_VAR, t->line, t->col);
+            head->u.name = (char *)"cons";
+            Ast **args = (Ast **)arena_alloc(p->a, 2 * sizeof(Ast *));
+            args[0] = arr[i];
+            args[1] = cur;
+            app->u.app.fn = head;
+            app->u.app.args = args;
+            app->u.app.nargs = 2;
+            cur = app;
+        }
+        return cur;
     }
     default:
         p_err(p, "expected an expression");

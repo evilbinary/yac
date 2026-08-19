@@ -26,6 +26,8 @@ const char *tok_kind_name(TokKind k) {
     case TK_KW_OR: return "'or'";
     case TK_LPAREN: return "'('";
     case TK_RPAREN: return "')'";
+    case TK_LBRACKET: return "'['";
+    case TK_RBRACKET: return "']'";
     case TK_COMMA: return "','";
     case TK_SEMI: return "';'";
     case TK_EQ: return "'='";
@@ -206,6 +208,8 @@ LexResult lex_program(const char *src, Arena *a) {
             tok_push(&toks, &n, &cap, t);
         } else if (c == '(') { lx.pos++; lx.col++; t.kind = TK_LPAREN; tok_push(&toks, &n, &cap, t); }
         else if (c == ')') { lx.pos++; lx.col++; t.kind = TK_RPAREN; tok_push(&toks, &n, &cap, t); }
+        else if (c == '[') { lx.pos++; lx.col++; t.kind = TK_LBRACKET; tok_push(&toks, &n, &cap, t); }
+        else if (c == ']') { lx.pos++; lx.col++; t.kind = TK_RBRACKET; tok_push(&toks, &n, &cap, t); }
         else if (c == ',') { lx.pos++; lx.col++; t.kind = TK_COMMA; tok_push(&toks, &n, &cap, t); }
         else if (c == ';') { lx.pos++; lx.col++; t.kind = TK_SEMI; tok_push(&toks, &n, &cap, t); }
         else if (c == '=' && src[lx.pos + 1] == '=') { lx.pos += 2; lx.col += 2; t.kind = TK_EQEQ; tok_push(&toks, &n, &cap, t); }

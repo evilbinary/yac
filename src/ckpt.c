@@ -73,6 +73,20 @@ static bool add_cframe(Ctx *c, CFrame *f) {
     return true;
 }
 
+/* Find closures reachable from a value (lists included); returns true if any
+ * new closure was added to the table. */
+static bool collect_clos(Ctx *c, Value v) {
+    if (v.tag == V_FUN || v.tag == V_CONT) return add_clo(c, v.u.clo);
+    if (v.tag == V_LIST) {
+        List *l = v.u.l;
+        bool changed = false;
+        for (int i = 0; i < l->len; i++)
+            if (collect_clos(c, l->items[i])) changed = true;
+        return changed;
+    }
+    return false;
+}
+
 static void collect(Ctx *c, const AnfState *st) {
     add_frame(c, st->env);
     for (CFrame *f = st->cframe; f; f = f->prev) {
@@ -86,8 +100,7 @@ static void collect(Ctx *c, const AnfState *st) {
             Frame *f = c->frames[i].ptr;
             if (add_frame(c, f->parent)) changed = true;
             for (int s = 0; s < f->nslots; s++)
-                if (f->slots[s].tag == V_FUN || f->slots[s].tag == V_CONT)
-                    if (add_clo(c, f->slots[s].u.clo)) changed = true;
+                if (collect_clos(c, f->slots[s])) changed = true;
         }
         for (int i = 0; i < c->nclos; i++)
             if (add_frame(c, c->clos[i].ptr->frame)) changed = true;
@@ -192,6 +205,14 @@ static void write_value(FILE *f, Ctx *c, Value v) {
     case V_FUN:
     case V_CONT: fprintf(f, "c %ld", clo_id(c, v.u.clo)); break;
     case V_PRIM: fputs("p ", f); put_name(f, v.u.prim->name); break;
+    case V_LIST:
+        fputs("l {", f);
+        for (int i = 0; i < v.u.l->len; i++) {
+            fputc(' ', f);
+            write_value(f, c, v.u.l->items[i]);
+        }
+        fputs(" }", f);
+        break;
     }
 }
 
@@ -266,36 +287,76 @@ int ckpt_dump(const AnfState *st, long step, const char *path) {
 
 /* ---- reader ---- */
 
-typedef struct { Value v; long cref; bool ref; } PV;
+/* A parsed value. Leaf values are either immediate (v, ref=false) or a
+ * closure reference (ref=true, resolved against the closure table after all
+ * closures are allocated). List values carry a tree of child PVs; the actual
+ * List value is materialized when refs can be resolved. */
+typedef struct PV {
+    Value v;
+    long cref;
+    bool ref;
+    int nkids;
+    struct PV *kids; /* list items */
+} PV;
 
 typedef struct {
     long id, parent;
     int nslots;
-    PV *vals; /* cref only meaningful when ref */
+    PV *vals; /* one per slot */
 } TFrame;
 
 typedef struct { long id, prev; int slot; long nodeidx; long envf; } TCFrame;
 
 typedef struct { long id, bodyidx; long fid; int np, nslots, kslot; char **params; } TClo;
 
-static bool rd_value(Rd *r, Value *out, long *cref, bool *ref) {
+static bool rd_value(Rd *r, PV *pv) {
+    memset(pv, 0, sizeof(*pv));
     char *tag = rd_word(r);
-    if (strcmp(tag, "i") == 0) { *out = v_int(strtoll(rd_word(r), NULL, 10)); *ref = false; return true; }
-    if (strcmp(tag, "f") == 0) { *out = v_float(strtod(rd_word(r), NULL)); *ref = false; return true; }
-    if (strcmp(tag, "b") == 0) { *out = v_bool(atoi(rd_word(r)) != 0); *ref = false; return true; }
-    if (strcmp(tag, "u") == 0) { *out = v_unit(); *ref = false; return true; }
-    if (strcmp(tag, "s") == 0) { *out = v_str(rd_arena(r), rd_name(r)); *ref = false; return true; }
-    if (strcmp(tag, "c") == 0) { *cref = strtol(rd_word(r), NULL, 10); *ref = true; return true; }
+    if (strcmp(tag, "i") == 0) { pv->v = v_int(strtoll(rd_word(r), NULL, 10)); return true; }
+    if (strcmp(tag, "f") == 0) { pv->v = v_float(strtod(rd_word(r), NULL)); return true; }
+    if (strcmp(tag, "b") == 0) { pv->v = v_bool(atoi(rd_word(r)) != 0); return true; }
+    if (strcmp(tag, "u") == 0) { pv->v = v_unit(); return true; }
+    if (strcmp(tag, "s") == 0) { pv->v = v_str(rd_arena(r), rd_name(r)); return true; }
+    if (strcmp(tag, "c") == 0) { pv->cref = strtol(rd_word(r), NULL, 10); pv->ref = true; return true; }
     if (strcmp(tag, "p") == 0) {
         const Prim *p = prim_lookup(rd_name(r));
-        *out = p ? v_prim(p) : VALUE_NULL;
-        *ref = false;
+        pv->v = p ? v_prim(p) : VALUE_NULL;
+        return true;
+    }
+    if (strcmp(tag, "l") == 0) {
+        rd_expect(r, '{');
+        PV *kids = NULL;
+        int n = 0, cap = 0;
+        while (rd_peek(r) != '}') {
+            if (n >= cap) {
+                cap = cap ? cap * 2 : 4;
+                PV *nk = (PV *)arena_alloc(rd_arena(r), (size_t)cap * sizeof(PV));
+                memcpy(nk, kids, (size_t)n * sizeof(PV));
+                kids = nk;
+            }
+            if (!rd_value(r, &kids[n++])) return false;
+        }
+        rd_expect(r, '}');
+        pv->nkids = n;
+        pv->kids = kids;
         return true;
     }
     char b[256];
     snprintf(b, sizeof(b), "bad checkpoint value '%s'", tag);
     rd_set_error(r, b);
     return false;
+}
+
+/* Materialize a parsed value tree into a real Value, resolving closure
+ * references against the allocated closure table. */
+static Value pv_value(Arena *a, PV *pv, Closure **karr) {
+    if (pv->ref) return v_fun(karr[pv->cref]);
+    if (pv->nkids) {
+        Value *items = (Value *)arena_alloc(a, (size_t)pv->nkids * sizeof(Value));
+        for (int i = 0; i < pv->nkids; i++) items[i] = pv_value(a, &pv->kids[i], karr);
+        return v_list_arena(a, items, pv->nkids);
+    }
+    return pv->v;
 }
 
 bool ckpt_resume(const char *path, Arena *a, Gc *gc, const Anf **root,
@@ -351,7 +412,7 @@ bool ckpt_resume(const char *path, Arena *a, Gc *gc, const Anf **root,
         t->parent = strtol(rd_word(r), NULL, 10);
         t->nslots = atoi(rd_word(r));
         t->vals = (PV *)calloc((size_t)t->nslots, sizeof(PV));
-        for (int i = 0; i < t->nslots; i++) rd_value(r, &t->vals[i].v, &t->vals[i].cref, &t->vals[i].ref);
+        for (int i = 0; i < t->nslots; i++) rd_value(r, &t->vals[i]);
         rd_expect(r, ')');
     }
     rd_expect(r, ')');
@@ -441,10 +502,8 @@ bool ckpt_resume(const char *path, Arena *a, Gc *gc, const Anf **root,
     for (int i = 0; i < ntf; i++) {
         Frame *fr = farr[i];
         fr->parent = tfs[i].parent >= 0 ? farr[tfs[i].parent] : NULL;
-        for (int s = 0; s < tfs[i].nslots; s++) {
-            if (tfs[i].vals[s].ref) fr->slots[s] = v_fun(karr[tfs[i].vals[s].cref]);
-            else fr->slots[s] = tfs[i].vals[s].v;
-        }
+        for (int s = 0; s < tfs[i].nslots; s++)
+            fr->slots[s] = pv_value(a, &tfs[i].vals[s], karr);
         free(tfs[i].vals);
     }
 

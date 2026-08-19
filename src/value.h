@@ -10,6 +10,8 @@
 typedef struct Anf Anf;
 typedef struct Frame Frame;
 typedef struct Closure Closure;
+typedef struct Gc Gc;
+typedef struct List List;
 
 typedef enum {
     V_INT,
@@ -20,6 +22,7 @@ typedef enum {
     V_FUN,
     V_CONT, /* continuation closure (CPS machine) */
     V_PRIM,
+    V_LIST,
 } ValTag;
 
 typedef struct Str {
@@ -28,22 +31,36 @@ typedef struct Str {
 } Str;
 
 typedef struct Prim Prim;
-typedef struct PrimCtx {
+typedef struct PrimCtx PrimCtx;
+typedef struct Value Value;
+
+/* Invoke a user function value (used by higher-order primitives such as
+ * map/filter/fold). Implemented by the evaluator that calls the primitive;
+ * `ud` is the machine's private state. Returns false and sets errmsg on
+ * error (the evaluator may already have recorded a more precise error). */
+typedef bool (*PrimCallFn)(void *ud, Value head, Value *args, int nargs,
+                           Value *out, char *errmsg, size_t errsz);
+
+struct PrimCtx {
     bool errored;
     char errmsg[256];
-} PrimCtx;
+    Gc *gc;          /* allocator for primitives that build heap values */
+    PrimCallFn call; /* invoke a function value (map/filter/fold) */
+    void *ud;        /* machine state handed to call */
+};
 
 /* primitive callback: computes from args; reports errors via PrimCtx */
-typedef struct Value (*PrimFn)(struct Value *args, int nargs, PrimCtx *ctx);
+typedef Value (*PrimFn)(Value *args, int nargs, PrimCtx *ctx);
 
 struct Prim {
     const char *name;
     int arity; /* -1 = variadic */
     bool pure; /* safe to fold at compile time (no side effects) */
+    bool needs_gc; /* allocates GC objects; not foldable, needs ctx->gc */
     PrimFn fn;
 };
 
-typedef struct Value {
+struct Value {
     ValTag tag;
     union {
         int64_t i;
@@ -52,8 +69,9 @@ typedef struct Value {
         Str *s;
         Closure *clo;
         const Prim *prim;
+        List *l;
     } u;
-} Value;
+};
 
 /* Flat environment frame: a function activation's slots. Variable references
  * (depth, slot) resolve by walking `depth` parent pointers from the current
@@ -78,6 +96,15 @@ struct Closure {
     int rslot;      /* V_CONT: slot of the param in the captured frame */
 };
 
+/* Immutable list value: a GC- or arena-resident array of Values. GC lists
+ * are allocated via gc_new_list() (gc.h); arena lists are used for literals
+ * and for values deserialized from checkpoints/runtime files. */
+struct List {
+    GObj hdr;
+    int len;
+    Value items[]; /* flexible array of len Values */
+};
+
 extern const Value VALUE_NULL;
 
 /* constructors */
@@ -89,6 +116,8 @@ Value v_unit(void);
 Value v_fun(Closure *c);
 Value v_cont(Closure *c);
 Value v_prim(const Prim *p);
+Value v_list(List *l);
+Value v_list_arena(Arena *a, const Value *items, int n);
 
 const Prim *prim_lookup(const char *name);
 const Prim *prim_table(int *count);

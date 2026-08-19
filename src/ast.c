@@ -86,5 +86,9 @@ void ast_dump(const Ast *n, int depth) {
     case A_PRINT: printf("print\n"); ast_dump(n->u.operand, depth + 1); break;
     case A_CALLCC: printf("callcc\n"); ast_dump(n->u.operand, depth + 1); break;
     case A_THROW: printf("throw\n"); ast_dump(n->u.thr.k, depth + 1); ast_dump(n->u.thr.v, depth + 1); break;
+    case A_LIST:
+        printf("list\n");
+        for (int i = 0; i < n->u.list.n; i++) ast_dump(n->u.list.items[i], depth + 1);
+        break;
     }
 }

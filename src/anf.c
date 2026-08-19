@@ -477,6 +477,16 @@ static bool atomize(const Ast *e, Atom *out, NrmCtx *c, Scope *scope) {
     case A_STR:
         *out = atom_lit(v_str(c->a, e->u.sval));
         return true;
+    case A_LIST:
+        /* non-empty lists are desugared into cons calls by the parser; only
+         * the empty literal reaches normalization */
+        if (e->u.list.n == 0) {
+            *out = atom_lit(v_list_arena(c->a, NULL, 0));
+            return true;
+        }
+        nerr(c, "%d:%d: internal: non-empty list literal reached normalization",
+             e->line, e->col);
+        return false;
     case A_VAR: {
         if (!in_scope(c, scope, e->u.name) && !prim_lookup(e->u.name)) {
             nerr(c, "%d:%d: unbound variable '%s'", e->line, e->col, e->u.name);

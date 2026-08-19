@@ -25,6 +25,7 @@ static void mark_obj(Gc *g, GObj *o);
 
 static void mark_value(Gc *g, Value v) {
     if (v.tag == V_FUN || v.tag == V_CONT) mark_obj(g, (GObj *)v.u.clo);
+    else if (v.tag == V_LIST) mark_obj(g, (GObj *)v.u.l);
 }
 
 static void mark_obj(Gc *g, GObj *o) {
@@ -53,6 +54,11 @@ static void mark_obj(Gc *g, GObj *o) {
     case G_VALARR: {
         ValArr *va = (ValArr *)o;
         for (int i = 0; i < va->n; i++) mark_value(g, va->data[i]);
+        break;
+    }
+    case G_LIST: {
+        List *l = (List *)o;
+        for (int i = 0; i < l->len; i++) mark_value(g, l->items[i]);
         break;
     }
     }
@@ -112,6 +118,14 @@ ValArr *gc_new_valarr(Gc *g, int n) {
     return va;
 }
 
+List *gc_new_list(Gc *g, int n) {
+    List *l = (List *)gc_alloc_raw(g, G_LIST,
+                                    sizeof(List) + (size_t)n * sizeof(Value));
+    l->len = n;
+    memset(l->items, 0, (size_t)n * sizeof(Value));
+    return l;
+}
+
 /* ---- roots ---- */
 
 void gc_push_root(Gc *g, GObj *o) {
@@ -128,7 +142,8 @@ void gc_pop_root(Gc *g) {
 }
 
 void gc_push_value(Gc *g, Value v) {
-    GObj *o = (v.tag == V_FUN || v.tag == V_CONT) ? (GObj *)v.u.clo : NULL;
+    GObj *o = (v.tag == V_FUN || v.tag == V_CONT) ? (GObj *)v.u.clo
+              : (v.tag == V_LIST) ? (GObj *)v.u.l : NULL;
     gc_push_root(g, o); /* always push (NULL for immediates) to keep balance */
 }
 
@@ -177,7 +192,7 @@ void gc_collect(Gc *g) {
     g->total_objs = nobjs;
     g->allocated = 0;
     if (getenv("YAC_GC_DBG"))
-        fprintf(stderr, "gc: live=%zu objs=%zu\n", live, nobjs);
+        fprintf(stderr, "gc: live=%zu objs=%zu roots=%zu\n", live, nobjs, g->nroots);
     if (g->max_objs && nobjs > g->max_objs) runaway(g);
 }
 

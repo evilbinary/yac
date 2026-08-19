@@ -56,6 +56,7 @@ void gc_set_frame(Gc *g, GObj *frame);
 Frame *gc_new_frame(Gc *g, int nslots);
 Closure *gc_new_closure(Gc *g);
 ValArr *gc_new_valarr(Gc *g, int n);
+List *gc_new_list(Gc *g, int n);
 
 void gc_collect(Gc *g);
 

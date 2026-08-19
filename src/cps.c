@@ -364,7 +364,7 @@ static CExp *fold_call(CExp *call, const CE *ce, OptCtx *c) {
         /* the converter emits primitives as variables; resolve by name */
         p = prim_lookup(call->u.call.head.u.var.name);
     }
-    if (!p || !p->pure) return call;
+    if (!p || !p->pure || p->needs_gc) return call; /* needs_gc: cannot fold at compile time */
     int na = n - 1;
     if (p->arity >= 0 && p->arity != na) return call;
     if (na > 8) return call;
@@ -374,7 +374,7 @@ static CExp *fold_call(CExp *call, const CE *ce, OptCtx *c) {
         else if (args[i].kind == CV_VAR && ce_find(ce, args[i].u.var.name, &lits[i])) { /* ok */ }
         else return call;
     }
-    PrimCtx pctx = {false, ""};
+    PrimCtx pctx = {false, "", NULL, NULL, NULL};
     Value r = p->fn(lits, na, &pctx);
     if (pctx.errored) return call; /* e.g. division by zero: keep it dynamic */
     CVal *nargs = (CVal *)arena_alloc(c->a, sizeof(CVal));

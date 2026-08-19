@@ -14,6 +14,7 @@ typedef enum {
     G_CLO,    /* Closure */
     G_FRAME,  /* ANF continuation frame */
     G_VALARR, /* Value array (call arguments) */
+    G_LIST,   /* List: immutable list value (items) */
 } GKind;
 
 typedef struct GObj {

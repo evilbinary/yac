@@ -18,6 +18,8 @@ typedef struct {
     Arena *a;
     char **errmsg;
     bool errored;
+    Frame *env;    /* current frame (rooted across nested primitive calls) */
+    CFrame *cframe; /* current continuation stack (rooted likewise) */
 } Est;
 
 static void fail(Est *st, const char *fmt, ...) {
@@ -35,6 +37,12 @@ static Value *frame_slot(Frame *env, int depth, int slot) {
     for (int i = 0; i < depth; i++) env = env->parent;
     return &env->slots[slot];
 }
+
+static bool call_value(void *ud, Value head, Value *args, int nargs,
+                       Value *out, char *errmsg, size_t errsz);
+static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
+                         CFrame *cframe0, long start_step, Arena *a,
+                         Value *result, char **errmsg, Gc *gc);
 
 static Value eval_atom(const Atom *atom, Frame *env, Est *st) {
     switch (atom->kind) {
@@ -72,9 +80,56 @@ static void apply_prim(Value head, Value *args, int nargs, Value *out, Est *st) 
         fail(st, "primitive '%s' expects %d argument(s), got %d", p->name, p->arity, nargs);
         return;
     }
-    PrimCtx ctx = {false, ""};
+    PrimCtx ctx = {false, "", st->gc, call_value, st};
     *out = p->fn(args, nargs, &ctx);
     if (ctx.errored) fail(st, "%s", ctx.errmsg);
+}
+
+/* Run a user function to completion as a sub-computation (used by the
+ * higher-order list primitives). The caller's machine state is rooted for the
+ * duration of the nested run; the nested machine returns the value of the
+ * function's final (tail) return. On success the result is left ROOTED (the
+ * caller pops it once it has copied the value into a rooted location). */
+static bool call_value(void *ud, Value head, Value *args, int nargs,
+                       Value *out, char *errmsg, size_t errsz) {
+    Est *st = (Est *)ud;
+    (void)errmsg;
+    (void)errsz;
+    if (head.tag == V_PRIM) {
+        apply_prim(head, args, nargs, out, st);
+        if (st->errored) return false;
+        gc_push_value(st->gc, *out); /* root while the caller copies it */
+        gc_pop_root(st->gc);
+        return true;
+    }
+    if (head.tag != V_FUN) {
+        fail(st, "cannot apply a non-function value");
+        return false;
+    }
+    Closure *clo = head.u.clo;
+    if (clo->nparams != nargs) {
+        fail(st, "function expects %d argument(s), got %d", clo->nparams, nargs);
+        return false;
+    }
+    gc_push_root(st->gc, (GObj *)st->env);
+    gc_push_root(st->gc, (GObj *)st->cframe);
+    Frame *nf = gc_new_frame(st->gc, clo->nslots);
+    nf->parent = clo->frame;
+    for (int i = 0; i < nargs; i++) nf->slots[i] = args[i];
+    int rc = eval_anf_core(clo->body, clo->body, nf, NULL, 0, st->a, out,
+                           st->errmsg, st->gc);
+    if (rc != 0) {
+        gc_pop_root(st->gc); /* cframe */
+        gc_pop_root(st->gc); /* env */
+        return false;
+    }
+    gc_push_value(st->gc, *out);     /* keep the result alive until the caller pops it */
+    gc_pop_root(st->gc);             /* *out (top of stack) */
+    gc_pop_root(st->gc);             /* cframe */
+    gc_pop_root(st->gc);             /* env */
+    gc_set_env(st->gc, st->env);     /* restore the caller's roots */
+    gc_set_frame(st->gc, (GObj *)st->cframe);
+    return true;
 }
 
 /* Allocate the callee's frame, bind args into its param slots, and jump. */
@@ -107,7 +162,7 @@ int (*yac_ckpt_hook)(const AnfState *st, long step) = NULL;
 static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
                          CFrame *cframe0, long start_step, Arena *a,
                          Value *result, char **errmsg, Gc *gc) {
-    Est st = {gc, a, errmsg, false};
+    Est st = {gc, a, errmsg, false, env0, cframe0};
     Frame *env = env0;
     gc_set_env(gc, env);
     CFrame *cframe = cframe0;
@@ -156,8 +211,12 @@ static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
                 node = clo->body;
             } else if (head.tag == V_PRIM) {
                 Value v;
+                st.env = env;
+                st.cframe = cframe;
                 apply_prim(head, args, node->u.call.nargs, &v, &st);
                 if (st.errored) goto err;
+                gc_set_env(gc, env);
+                gc_set_frame(gc, (GObj *)cframe);
                 env->slots[node->u.call.slot] = v;
                 node = node->u.call.body;
             } else {
@@ -200,11 +259,18 @@ static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
                 node = clo->body;
             } else if (head.tag == V_PRIM) {
                 Value v;
+                st.env = env;
+                st.cframe = cframe;
                 apply_prim(head, args, node->u.tailcall.nargs, &v, &st);
                 if (st.errored) goto err;
+                gc_set_env(gc, env);
+                gc_set_frame(gc, (GObj *)cframe);
                 gc_push_value(gc, v);
                 if (tail_return(v, &cframe, &env, &node, gc)) {
                     *result = v;
+                    gc_pop_root(gc); /* v */
+                    gc_pop_root(gc); /* args array */
+                    gc_pop_root(gc); /* head */
                     return 0;
                 }
                 gc_pop_root(gc);
@@ -222,6 +288,7 @@ static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
             gc_push_value(gc, v);
             if (tail_return(v, &cframe, &env, &node, gc)) {
                 *result = v;
+                gc_pop_root(gc); /* balance: value escapes through `result` */
                 return 0;
             }
             gc_pop_root(gc);

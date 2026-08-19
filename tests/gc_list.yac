@@ -1,0 +1,8 @@
+-- stresses the GC with list allocation: each iteration builds and discards a
+-- fresh list (and closures via map); with GC enabled live objects stay
+-- bounded, with --no-gc they accumulate.
+let step(ls) = map(fun (x) -> x + 1, ls)
+let loop(n, acc) =
+  if n == 0 then acc else loop(n - 1, step(acc))
+in
+loop(200000, [1, 2])

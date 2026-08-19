@@ -29,6 +29,9 @@ actual=$($BIN tests/tco.yac);       check "tco"               "0" "$actual"
 actual=$($BIN tests/closure.yac);   check "lexical closure"   "2" "$actual"
 actual=$($BIN tests/float.yac);     check "float arithmetic"  "1" "$actual"
 
+list_out=$(printf '3\n20\n[0, 1, 2]\n[1, 2, 3]\n[2, 4, 6]\n[2, 3]\n10\n2\n[1, [2, 3], x]\n[]\ntrue\n42')
+actual=$($BIN tests/list.yac | tr -d '\r');  check "list primitives" "$list_out" "$actual"
+
 # CPS parity: every ordinary program must produce the same result
 actual=$($BIN --cps tests/fact.yac);     check "cps factorial"        "3628800" "$actual"
 actual=$($BIN --cps tests/fib.yac);      check "cps fibonacci"        "832040" "$actual"
@@ -37,6 +40,7 @@ actual=$($BIN --cps tests/types.yac | tr -d '\r'); check "cps types"  "$types_ou
 actual=$($BIN --cps tests/tco.yac);      check "cps tco"              "0" "$actual"
 actual=$($BIN --cps tests/closure.yac);  check "cps lexical closure"  "2" "$actual"
 actual=$($BIN --cps tests/float.yac);    check "cps float arithmetic" "1" "$actual"
+actual=$($BIN --cps tests/list.yac | tr -d '\r'); check "cps list primitives" "$list_out" "$actual"
 
 # --both cross-check on ordinary programs
 out=$($BIN --both tests/fact.yac); rc=$?
@@ -52,6 +56,7 @@ actual=$($BIN --uncps tests/fib.yac);    check "uncps fibonacci"      "832040" "
 actual=$($BIN --uncps tests/higher.yac); check "uncps higher-order"   "7" "$actual"
 actual=$($BIN --uncps tests/closure.yac); check "uncps lexical closure" "2" "$actual"
 actual=$($BIN --uncps tests/tco.yac);    check "uncps tco"            "0" "$actual"
+actual=$($BIN --uncps tests/list.yac | tr -d '\r'); check "uncps list primitives" "$list_out" "$actual"
 
 out=$($BIN --uncps tests/callcc.yac 2>&1); rc=$?
 if [ $rc -ne 0 ] && echo "$out" | grep -q "cannot un-CPS"; then
@@ -124,6 +129,32 @@ if [ $rc -ne 0 ] && echo "$out" | grep -q "runaway"; then
     pass=$((pass + 1)); echo "PASS: --no-gc grows and trips --limit-nodes"
 else
     fail=$((fail + 1)); echo "FAIL: --no-gc should trip --limit-nodes (rc=$rc)"
+    echo "  $out"
+fi
+
+# GC with list allocation: fresh lists + map closures each iteration must be reclaimed...
+out=$($BIN --limit-nodes 50000 tests/gc_list.yac 2>&1); rc=$?
+if [ $rc -eq 0 ] && [ "$out" = "[200001, 200002]" ]; then
+    pass=$((pass + 1)); echo "PASS: GC reclaims list garbage (loop completes under limit)"
+else
+    fail=$((fail + 1)); echo "FAIL: GC should reclaim list garbage (rc=$rc, out=$out)"
+    echo "  $out"
+fi
+
+out=$($BIN --cps --limit-nodes 50000 tests/gc_list.yac 2>&1); rc=$?
+if [ $rc -eq 0 ] && [ "$out" = "[200001, 200002]" ]; then
+    pass=$((pass + 1)); echo "PASS: CPS GC reclaims list garbage (loop completes under limit)"
+else
+    fail=$((fail + 1)); echo "FAIL: CPS GC should reclaim list garbage (rc=$rc, out=$out)"
+    echo "  $out"
+fi
+
+# ...but without GC the list-allocating loop must trip the limit.
+out=$($BIN --no-gc --limit-nodes 50000 tests/gc_list.yac 2>&1); rc=$?
+if [ $rc -ne 0 ] && echo "$out" | grep -q "runaway"; then
+    pass=$((pass + 1)); echo "PASS: --no-gc list growth trips --limit-nodes"
+else
+    fail=$((fail + 1)); echo "FAIL: --no-gc list loop should trip --limit-nodes (rc=$rc)"
     echo "  $out"
 fi
 
