@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bignum.h"
 #include "rtio.h"
 
 /* ---- reachable-object collection ---- */
@@ -198,6 +199,13 @@ static void put_name(FILE *f, const char *s) {
 static void write_value(FILE *f, Ctx *c, Value v) {
     switch (v.tag) {
     case V_INT: fprintf(f, "i %lld", (long long)v.u.i); break;
+    case V_BIG: {
+        char *t = bignum_to_string(v.u.big);
+        fputs("z ", f);
+        fputs(t, f);
+        free(t);
+        break;
+    }
     case V_FLOAT: fprintf(f, "f %.17g", v.u.f); break;
     case V_BOOL: fprintf(f, "b %d", v.u.b ? 1 : 0); break;
     case V_UNIT: fputs("u", f); break;
@@ -313,6 +321,11 @@ static bool rd_value(Rd *r, PV *pv) {
     memset(pv, 0, sizeof(*pv));
     char *tag = rd_word(r);
     if (strcmp(tag, "i") == 0) { pv->v = v_int(strtoll(rd_word(r), NULL, 10)); return true; }
+    if (strcmp(tag, "z") == 0) {
+        Bignum *bg = bignum_from_dec_arena(rd_arena(r), rd_word(r));
+        pv->v = bg ? v_big(bg) : VALUE_NULL;
+        return true;
+    }
     if (strcmp(tag, "f") == 0) { pv->v = v_float(strtod(rd_word(r), NULL)); return true; }
     if (strcmp(tag, "b") == 0) { pv->v = v_bool(atoi(rd_word(r)) != 0); return true; }
     if (strcmp(tag, "u") == 0) { pv->v = v_unit(); return true; }

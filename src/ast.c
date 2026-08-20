@@ -49,6 +49,7 @@ void ast_dump(const Ast *n, int depth) {
     indent(depth);
     switch (n->kind) {
     case A_INT: printf("int %lld\n", (long long)n->u.ival); break;
+    case A_BIG: printf("big %s\n", n->u.sval); break;
     case A_FLOAT: printf("float %g\n", n->u.fval); break;
     case A_STR: printf("str \"%s\"\n", n->u.sval); break;
     case A_BOOL: printf("bool %s\n", n->u.bval ? "true" : "false"); break;

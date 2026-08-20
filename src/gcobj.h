@@ -15,6 +15,7 @@ typedef enum {
     G_FRAME,  /* ANF continuation frame */
     G_VALARR, /* Value array (call arguments) */
     G_LIST,   /* List: immutable list value (items) */
+    G_BIGNUM, /* Bignum: arbitrary-precision integer (digits[]) */
 } GKind;
 
 typedef struct GObj {

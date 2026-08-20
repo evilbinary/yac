@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bignum.h"
+
 /* ---- writer ---- */
 
 static void put_name(FILE *f, const char *s) {
@@ -19,6 +21,13 @@ static void put_name(FILE *f, const char *s) {
 static void write_lit(Value v, FILE *f) {
     switch (v.tag) {
     case V_INT: fprintf(f, "i %lld", (long long)v.u.i); break;
+    case V_BIG: {
+        char *t = bignum_to_string(v.u.big);
+        fputs("z ", f);
+        fputs(t, f);
+        free(t);
+        break;
+    }
     case V_FLOAT: fprintf(f, "f %.17g", v.u.f); break;
     case V_BOOL: fprintf(f, "b %d", v.u.b ? 1 : 0); break;
     case V_UNIT: fputs("u", f); break;
@@ -224,6 +233,10 @@ void rd_expect(Rd *r, char c) {
 static Value rd_lit(Rd *r) {
     char *tag = rd_word(r);
     if (strcmp(tag, "i") == 0) return v_int(strtoll(rd_word(r), NULL, 10));
+    if (strcmp(tag, "z") == 0) {
+        Bignum *bg = bignum_from_dec_arena(r->a, rd_word(r));
+        return bg ? v_big(bg) : VALUE_NULL;
+    }
     if (strcmp(tag, "f") == 0) return v_float(strtod(rd_word(r), NULL));
     if (strcmp(tag, "b") == 0) return v_bool(atoi(rd_word(r)) != 0);
     if (strcmp(tag, "u") == 0) return v_unit();

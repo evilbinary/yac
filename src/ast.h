@@ -15,7 +15,7 @@ enum {
 };
 
 typedef enum {
-    A_INT, A_FLOAT, A_STR, A_BOOL, A_UNIT,
+    A_INT, A_BIG, A_FLOAT, A_STR, A_BOOL, A_UNIT,
     A_VAR,
     A_APP, A_FUN, A_IF, A_LET,
     A_BINOP, A_NOT, A_PRINT, A_CALLCC, A_THROW,

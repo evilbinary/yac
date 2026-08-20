@@ -146,6 +146,11 @@ static Ast *parse_atom(Parser *p) {
     switch (t->kind) {
     case TK_INT: {
         advance(p);
+        if (t->big) {
+            Ast *n = mk(p, A_BIG, t->line, t->col);
+            n->u.sval = (char *)t->text;
+            return n;
+        }
         Ast *n = mk(p, A_INT, t->line, t->col);
         n->u.ival = t->ival;
         return n;

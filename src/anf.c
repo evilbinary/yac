@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bignum.h"
+
 /* Lexical scope entry: a name lives at (frame, slot) where `frame` is the
  * frame id at the time it was bound; a reference from the current frame
  * resolves with depth = curframe - frame. */
@@ -465,6 +467,11 @@ static bool atomize(const Ast *e, Atom *out, NrmCtx *c, Scope *scope) {
     case A_INT:
         *out = atom_lit(v_int(e->u.ival));
         return true;
+    case A_BIG: {
+        Bignum *bg = bignum_from_dec_arena(c->a, e->u.sval);
+        *out = bg ? atom_lit(v_big(bg)) : atom_lit(v_int(0));
+        return true;
+    }
     case A_FLOAT:
         *out = atom_lit(v_float(e->u.fval));
         return true;

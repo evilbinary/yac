@@ -1,6 +1,7 @@
 #include "lexer.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -158,6 +159,18 @@ LexResult lex_program(const char *src, Arena *a) {
                 buf[len] = '\0';
                 t.kind = TK_INT;
                 t.ival = strtoll(buf, NULL, 10);
+                /* a literal that overflows int64 becomes a bignum literal;
+                 * keep the full digit text (arena-owned) */
+                errno = 0;
+                strtoll(buf, NULL, 10);
+                if (errno == ERANGE) {
+                    t.big = true;
+                    char *full = (char *)arena_alloc(a, len + 1);
+                    memcpy(full, src + start, len);
+                    full[len] = '\0';
+                    t.text = full;
+                    t.ival = 0;
+                }
             }
             tok_push(&toks, &n, &cap, t);
         } else if (c == '"') {

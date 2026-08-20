@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bignum.h"
 #include "gc.h"
 
 const Value VALUE_NULL = {V_INT, {0}};
@@ -73,6 +74,12 @@ Value v_list_arena(Arena *a, const Value *items, int n) {
     return v_list(l);
 }
 
+Value v_big(Bignum *b) {
+    Value v = {V_BIG, {0}};
+    v.u.big = b;
+    return v;
+}
+
 /* ---- numeric / comparison helpers ---- */
 
 static bool num_pair(Value a, Value b, double *x, double *y, bool *both_int) {
@@ -94,17 +101,53 @@ static void bad_operands(PrimCtx *ctx, const char *op) {
     snprintf(ctx->errmsg, sizeof(ctx->errmsg), "operator '%s' applied to non-numeric operand", op);
 }
 
+/* Does `a` need bignum treatment (it is already a bignum)? */
+static bool is_big(Value a) { return a.tag == V_BIG; }
+
+/* Convert a numeric operand to a bignum (widening ints). Caller must root
+ * the result if a GC can run before it is used. */
+static Bignum *to_bignum(Gc *gc, Value a) {
+    return a.tag == V_BIG ? a.u.big : bignum_from_i64(gc, a.u.i);
+}
+
+/* The result of a bignum operation: narrow back to int64 when it fits. */
+static Value from_bignum(Bignum *r) {
+    int64_t i;
+    return bignum_to_i64(r, &i) ? v_int(i) : v_big(r);
+}
+
 /* ---- primitives ---- */
 
 static Value prim_add(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
     Value a = args[0], b = args[1];
+    if (is_big(a) || is_big(b)) {
+        Bignum *ba = to_bignum(ctx->gc, a);
+        gc_push_root(ctx->gc, (GObj *)ba);
+        Bignum *bb = to_bignum(ctx->gc, b);
+        gc_push_root(ctx->gc, (GObj *)bb);
+        Bignum *r = bignum_add(ctx->gc, ba, bb);
+        gc_pop_root(ctx->gc);
+        gc_pop_root(ctx->gc);
+        return from_bignum(r);
+    }
     bool bi;
     double x, y;
     if (!num_pair(a, b, &x, &y, &bi)) { bad_operands(ctx, "+"); return VALUE_NULL; }
     if (bi) {
-        if (a.u.i > 0 && b.u.i > 0 && a.u.i > INT64_MAX - b.u.i) { ctx->errored = true; strcpy(ctx->errmsg, "integer overflow"); return VALUE_NULL; }
-        return v_int(a.u.i + b.u.i);
+        /* overflow detection via __int128 */
+        __int128 s = (__int128)a.u.i + b.u.i;
+        if (s > INT64_MAX || s < INT64_MIN) {
+            Bignum *ba = bignum_from_i64(ctx->gc, a.u.i);
+            gc_push_root(ctx->gc, (GObj *)ba);
+            Bignum *bb = bignum_from_i64(ctx->gc, b.u.i);
+            gc_push_root(ctx->gc, (GObj *)bb);
+            Bignum *r = bignum_add(ctx->gc, ba, bb);
+            gc_pop_root(ctx->gc);
+            gc_pop_root(ctx->gc);
+            return from_bignum(r);
+        }
+        return v_int((int64_t)s);
     }
     return v_float(x + y);
 }
@@ -112,24 +155,84 @@ static Value prim_add(Value *args, int nargs, PrimCtx *ctx) {
 static Value prim_sub(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
     Value a = args[0], b = args[1];
+    if (is_big(a) || is_big(b)) {
+        Bignum *ba = to_bignum(ctx->gc, a);
+        gc_push_root(ctx->gc, (GObj *)ba);
+        Bignum *bb = to_bignum(ctx->gc, b);
+        gc_push_root(ctx->gc, (GObj *)bb);
+        Bignum *r = bignum_sub(ctx->gc, ba, bb);
+        gc_pop_root(ctx->gc);
+        gc_pop_root(ctx->gc);
+        return from_bignum(r);
+    }
     bool bi;
     double x, y;
     if (!num_pair(a, b, &x, &y, &bi)) { bad_operands(ctx, "-"); return VALUE_NULL; }
-    return bi ? v_int(a.u.i - b.u.i) : v_float(x - y);
+    if (bi) {
+        __int128 s = (__int128)a.u.i - b.u.i;
+        if (s > INT64_MAX || s < INT64_MIN) {
+            Bignum *ba = bignum_from_i64(ctx->gc, a.u.i);
+            gc_push_root(ctx->gc, (GObj *)ba);
+            Bignum *bb = bignum_from_i64(ctx->gc, b.u.i);
+            gc_push_root(ctx->gc, (GObj *)bb);
+            Bignum *r = bignum_sub(ctx->gc, ba, bb);
+            gc_pop_root(ctx->gc);
+            gc_pop_root(ctx->gc);
+            return from_bignum(r);
+        }
+        return v_int((int64_t)s);
+    }
+    return v_float(x - y);
 }
 
 static Value prim_mul(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
     Value a = args[0], b = args[1];
+    if (is_big(a) || is_big(b)) {
+        Bignum *ba = to_bignum(ctx->gc, a);
+        gc_push_root(ctx->gc, (GObj *)ba);
+        Bignum *bb = to_bignum(ctx->gc, b);
+        gc_push_root(ctx->gc, (GObj *)bb);
+        Bignum *r = bignum_mul(ctx->gc, ba, bb);
+        gc_pop_root(ctx->gc);
+        gc_pop_root(ctx->gc);
+        return from_bignum(r);
+    }
     bool bi;
     double x, y;
     if (!num_pair(a, b, &x, &y, &bi)) { bad_operands(ctx, "*"); return VALUE_NULL; }
-    return bi ? v_int(a.u.i * b.u.i) : v_float(x * y);
+    if (bi) {
+        __int128 s = (__int128)a.u.i * b.u.i;
+        if (s > INT64_MAX || s < INT64_MIN) {
+            Bignum *ba = bignum_from_i64(ctx->gc, a.u.i);
+            gc_push_root(ctx->gc, (GObj *)ba);
+            Bignum *bb = bignum_from_i64(ctx->gc, b.u.i);
+            gc_push_root(ctx->gc, (GObj *)bb);
+            Bignum *r = bignum_mul(ctx->gc, ba, bb);
+            gc_pop_root(ctx->gc);
+            gc_pop_root(ctx->gc);
+            return from_bignum(r);
+        }
+        return v_int((int64_t)s);
+    }
+    return v_float(x * y);
 }
 
 static Value prim_div(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
     Value a = args[0], b = args[1];
+    if (is_big(a) || is_big(b)) {
+        Bignum *ba = to_bignum(ctx->gc, a);
+        gc_push_root(ctx->gc, (GObj *)ba);
+        Bignum *bb = to_bignum(ctx->gc, b);
+        gc_push_root(ctx->gc, (GObj *)bb);
+        bool ok;
+        Bignum *r = bignum_div(ctx->gc, ba, bb, &ok);
+        gc_pop_root(ctx->gc);
+        gc_pop_root(ctx->gc);
+        if (!ok) { ctx->errored = true; strcpy(ctx->errmsg, "division by zero"); return VALUE_NULL; }
+        return from_bignum(r);
+    }
     bool bi;
     double x, y;
     if (!num_pair(a, b, &x, &y, &bi)) { bad_operands(ctx, "/"); return VALUE_NULL; }
@@ -144,6 +247,18 @@ static Value prim_div(Value *args, int nargs, PrimCtx *ctx) {
 static Value prim_mod(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
     Value a = args[0], b = args[1];
+    if (is_big(a) || is_big(b)) {
+        Bignum *ba = to_bignum(ctx->gc, a);
+        gc_push_root(ctx->gc, (GObj *)ba);
+        Bignum *bb = to_bignum(ctx->gc, b);
+        gc_push_root(ctx->gc, (GObj *)bb);
+        bool ok;
+        Bignum *r = bignum_mod(ctx->gc, ba, bb, &ok);
+        gc_pop_root(ctx->gc);
+        gc_pop_root(ctx->gc);
+        if (!ok) { ctx->errored = true; strcpy(ctx->errmsg, "division by zero"); return VALUE_NULL; }
+        return from_bignum(r);
+    }
     if (a.tag != V_INT || b.tag != V_INT) {
         ctx->errored = true;
         snprintf(ctx->errmsg, sizeof(ctx->errmsg), "operator '%%' requires integer operands");
@@ -165,40 +280,42 @@ static Value prim_ne(Value *args, int nargs, PrimCtx *ctx) {
     return v_bool(!value_equal(args[0], args[1]));
 }
 
-static Value prim_lt(Value *args, int nargs, PrimCtx *ctx) {
-    (void)nargs;
-    Value a = args[0], b = args[1];
+/* Compare two numeric values (int/float/bignum); -1/0/+1. */
+static int num_cmp(Value a, Value b, PrimCtx *ctx, const char *op) {
+    if (is_big(a) || is_big(b)) {
+        if (is_big(a) && is_big(b)) return bignum_cmp(a.u.big, b.u.big);
+        if (is_big(a) && b.tag == V_INT) return bignum_cmp_i64(a.u.big, b.u.i);
+        if (a.tag == V_INT && is_big(b)) return -bignum_cmp_i64(b.u.big, a.u.i);
+        /* bignum vs float: widen bignum to double */
+        double x = is_big(a) ? bignum_to_double(a.u.big) : (double)a.u.i;
+        double y = is_big(b) ? bignum_to_double(b.u.big) : (double)b.u.i;
+        return x < y ? -1 : x > y ? 1 : 0;
+    }
     bool bi;
     double x, y;
-    if (!num_pair(a, b, &x, &y, &bi)) { bad_operands(ctx, "<"); return VALUE_NULL; }
-    return v_bool(bi ? a.u.i < b.u.i : x < y);
+    if (!num_pair(a, b, &x, &y, &bi)) { bad_operands(ctx, op); return 0; }
+    if (bi) return a.u.i < b.u.i ? -1 : a.u.i > b.u.i ? 1 : 0;
+    return x < y ? -1 : x > y ? 1 : 0;
+}
+
+static Value prim_lt(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    return v_bool(num_cmp(args[0], args[1], ctx, "<") < 0);
 }
 
 static Value prim_le(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
-    Value a = args[0], b = args[1];
-    bool bi;
-    double x, y;
-    if (!num_pair(a, b, &x, &y, &bi)) { bad_operands(ctx, "<="); return VALUE_NULL; }
-    return v_bool(bi ? a.u.i <= b.u.i : x <= y);
+    return v_bool(num_cmp(args[0], args[1], ctx, "<=") <= 0);
 }
 
 static Value prim_gt(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
-    Value a = args[0], b = args[1];
-    bool bi;
-    double x, y;
-    if (!num_pair(a, b, &x, &y, &bi)) { bad_operands(ctx, ">"); return VALUE_NULL; }
-    return v_bool(bi ? a.u.i > b.u.i : x > y);
+    return v_bool(num_cmp(args[0], args[1], ctx, ">") > 0);
 }
 
 static Value prim_ge(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
-    Value a = args[0], b = args[1];
-    bool bi;
-    double x, y;
-    if (!num_pair(a, b, &x, &y, &bi)) { bad_operands(ctx, ">="); return VALUE_NULL; }
-    return v_bool(bi ? a.u.i >= b.u.i : x >= y);
+    return v_bool(num_cmp(args[0], args[1], ctx, ">=") >= 0);
 }
 
 static Value prim_and(Value *args, int nargs, PrimCtx *ctx) {
@@ -438,11 +555,11 @@ static Value prim_foldr(Value *args, int nargs, PrimCtx *ctx) {
 }
 
 static const Prim PRIMS[] = {
-    {"+", 2, true, false, prim_add},
-    {"-", 2, true, false, prim_sub},
-    {"*", 2, true, false, prim_mul},
-    {"/", 2, true, false, prim_div},
-    {"%", 2, true, false, prim_mod},
+    {"+", 2, true, true, prim_add},
+    {"-", 2, true, true, prim_sub},
+    {"*", 2, true, true, prim_mul},
+    {"/", 2, true, true, prim_div},
+    {"%", 2, true, true, prim_mod},
     {"==", 2, true, false, prim_eq},
     {"!=", 2, true, false, prim_ne},
     {"<", 2, true, false, prim_lt},
@@ -481,6 +598,11 @@ bool value_truthy(Value v) {
 }
 
 bool value_equal(Value a, Value b) {
+    if (a.tag == V_BIG || b.tag == V_BIG) {
+        /* numeric equality across int/float/bignum */
+        PrimCtx tmp = {0};
+        return num_cmp(a, b, &tmp, "==") == 0;
+    }
     if (a.tag == V_INT && b.tag == V_INT) return a.u.i == b.u.i;
     if (a.tag == V_INT && b.tag == V_FLOAT) return (double)a.u.i == b.u.f;
     if (a.tag == V_FLOAT && b.tag == V_INT) return a.u.f == (double)b.u.i;
@@ -521,6 +643,12 @@ static void v_to_sb(SB *s, Value v) {
     char buf[64];
     switch (v.tag) {
     case V_INT: snprintf(buf, sizeof(buf), "%lld", (long long)v.u.i); sb_puts(s, buf); break;
+    case V_BIG: {
+        char *t = bignum_to_string(v.u.big);
+        sb_puts(s, t);
+        free(t);
+        break;
+    }
     case V_FLOAT: snprintf(buf, sizeof(buf), "%g", v.u.f); sb_puts(s, buf); break;
     case V_BOOL: sb_puts(s, v.u.b ? "true" : "false"); break;
     case V_STR: sb_puts(s, v.u.s->data); break;

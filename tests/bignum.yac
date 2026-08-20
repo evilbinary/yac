@@ -1,0 +1,72 @@
+let fact(n) = if n <= 1 then 1 else n * fact(n - 1)
+
+/* arithmetic overflow promotes to arbitrary-precision integers */
+print fact(32)
+print ""
+print fact(100)
+print ""
+print fact(200)
+print ""
+print fact(20)
+print ""
+print fact(30) / fact(20)
+print ""
+print fact(30) - fact(29)
+print ""
+print fact(30) % 1000
+print ""
+
+/* overflow inside mixed expressions */
+print 9223372036854775807 + 1
+print ""
+print 0 - 9223372036854775808
+print ""
+print 18446744073709551616 * 3
+print ""
+print 0 - (fact(50) * 2)
+print ""
+print fact(50) / 7
+print ""
+print fact(50) % 7
+print ""
+
+/* big integer literals are parsed as bignums */
+print 18446744073709551616
+print ""
+print 1000000000000000000000000000000000000000000
+print ""
+print 123456789012345678901234567890 * 3
+print ""
+
+/* comparisons and equality across int64 and bignum */
+print fact(50) > fact(49)
+print ""
+print fact(50) == fact(50)
+print ""
+print fact(50) > 9223372036854775807
+print ""
+print fact(20) == 2432902008176640000
+print ""
+print fact(30) < 1000000000000000000000
+print ""
+print (0 - fact(30)) < 0
+print ""
+print fact(60) != 0 - fact(60)
+print ""
+print fact(40) >= fact(40)
+print ""
+print fact(40) > fact(40)
+print ""
+
+/* bignum in lists and higher-order functions */
+let xs = [1, 2, 3]
+let square(x) = x * x
+print map(square, xs)
+print ""
+let biglist = [100000000000000000000000000000000000000000000000000000000000000000, 7]
+print nth(biglist, 0)
+print ""
+print nth(biglist, 1)
+print ""
+print len(biglist)
+print ""

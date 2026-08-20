@@ -12,6 +12,7 @@ typedef struct Frame Frame;
 typedef struct Closure Closure;
 typedef struct Gc Gc;
 typedef struct List List;
+typedef struct Bignum Bignum;
 
 typedef enum {
     V_INT,
@@ -23,6 +24,7 @@ typedef enum {
     V_CONT, /* continuation closure (CPS machine) */
     V_PRIM,
     V_LIST,
+    V_BIG,  /* Bignum: arbitrary-precision integer */
 } ValTag;
 
 typedef struct Str {
@@ -70,6 +72,7 @@ struct Value {
         Closure *clo;
         const Prim *prim;
         List *l;
+        Bignum *big;
     } u;
 };
 
@@ -105,6 +108,16 @@ struct List {
     Value items[]; /* flexible array of len Values */
 };
 
+/* Arbitrary-precision signed integer: base-2^32 little-endian digits.
+ * sign is -1, 0, or +1; a zero value has sign 0 and ndigits 1 (digit 0).
+ * GC-resident (allocated via gc_new_bignum in gc.h). */
+typedef struct Bignum {
+    GObj hdr;
+    int sign;
+    int ndigits;
+    uint32_t digits[]; /* little-endian base-2^32 magnitude digits */
+} Bignum;
+
 extern const Value VALUE_NULL;
 
 /* constructors */
@@ -118,6 +131,7 @@ Value v_cont(Closure *c);
 Value v_prim(const Prim *p);
 Value v_list(List *l);
 Value v_list_arena(Arena *a, const Value *items, int n);
+Value v_big(Bignum *b);
 
 const Prim *prim_lookup(const char *name);
 const Prim *prim_table(int *count);

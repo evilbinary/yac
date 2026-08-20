@@ -20,9 +20,10 @@ typedef enum {
 typedef struct Token {
     TokKind kind;
     int line, col;
-    const char *text; /* identifier or string value (arena-owned) */
+    const char *text; /* identifier, string value, or raw big-int text (arena-owned) */
     int64_t ival;
     double fval;
+    bool big; /* TK_INT literal does not fit in int64; text holds the digits */
 } Token;
 
 typedef struct LexResult {

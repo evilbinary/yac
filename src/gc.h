@@ -57,6 +57,7 @@ Frame *gc_new_frame(Gc *g, int nslots);
 Closure *gc_new_closure(Gc *g);
 ValArr *gc_new_valarr(Gc *g, int n);
 List *gc_new_list(Gc *g, int n);
+Bignum *gc_new_bignum(Gc *g, int ndigits);
 
 void gc_collect(Gc *g);
 
