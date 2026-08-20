@@ -1,0 +1,124 @@
+/* encode_x64.yac — x86-64 instruction encoding (M3 backend, step 2).
+ *
+ * Emits instruction bytes into a growable bytes buffer. Register numbers
+ * (x86-64):
+ *   rax=0 rcx=1 rdx=2 rbx=3 rsp=4 rbp=5 rsi=6 rdi=7 r8=8 ... r15=15
+ * Stack frame: rbp = frame base; locals/params at [rbp+disp8].
+ *
+ * Every emit_* function appends to the buffer and returns 0 (or the new
+ * buffer for chaining). All literals are decimal (no hex in yac).
+ */
+
+/* ---- small helpers ---- */
+
+/* append a byte */
+let e8(b, v) = bytes_append(b, band(v, 255))
+/* append imm32 little-endian */
+let e32(b, v) =
+  let _ = e8(b, band(v, 255)) in
+  let _ = e8(b, band(bshr(v, 8), 255)) in
+  let _ = e8(b, band(bshr(v, 16), 255)) in
+  let _ = e8(b, band(bshr(v, 24), 255)) in
+  b
+/* append imm64 little-endian */
+let e64(b, v) =
+  let _ = e32(b, band(v, 4294967295)) in
+  let _ = e32(b, bshr(v, 32)) in
+  b
+
+/* ---- modrm/sib helpers ---- */
+
+/* modrm byte: mod(2) reg(3) rm(3) */
+let modrm(mod_, reg, rm) = bor(bor(bshl(mod_, 6), bshl(reg, 3)), rm)
+
+/* ---- register moves ---- */
+
+/* mov r64, imm32 sign-extended (48 c7 /0 id32). Works for any register. */
+let mov_r64_imm(b, rd, imm) =
+  let _ = e8(b, 72) in       /* REX.W */
+  let _ = e8(b, 199) in      /* c7 */
+  let _ = e8(b, modrm(3, 0, rd)) in  /* /0, rm=rd */
+  e32(b, imm)
+
+/* mov rax, imm32 zero-extended (b8 id32, no REX) — 5 bytes, for small ints */
+let mov_eax_imm(b, imm) =
+  let _ = e8(b, 184) in      /* b8 */
+  e32(b, imm)
+
+/* mov r64, r64 (48 89 /r  or  48 8b /r) */
+let mov_r64_r64(b, dst, src) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in      /* 89 /r */
+  e8(b, modrm(3, src, dst))
+
+/* mov r64, [rbp+disp8]  (48 8b 45 id8) — load local */
+let mov_r64_mem_rbp(b, reg, disp8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in      /* 8b /r */
+  let _ = e8(b, modrm(1, reg, 5)) in  /* mod=01 rm=rbp */
+  e8(b, band(disp8, 255))
+
+/* mov [rbp+disp8], r64  (48 89 45 id8) — store local */
+let mov_mem_rbp_r64(b, disp8, reg) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in      /* 89 /r */
+  let _ = e8(b, modrm(1, reg, 5)) in
+  e8(b, band(disp8, 255))
+
+/* ---- stack frame ---- */
+
+/* push rbp */
+let push_rbp(b) = e8(b, 85)
+/* pop rbp */
+let pop_rbp(b) = e8(b, 93)
+/* mov rbp, rsp (48 89 e5) */
+let mov_rbp_rsp(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  e8(b, 229)
+/* sub rsp, imm8 (48 83 ec id8) */
+let sub_rsp_imm8(b, imm8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 131) in
+  let _ = e8(b, 236) in      /* 83 /5 -> sub */
+  e8(b, band(imm8, 255))
+/* add rsp, imm8 (48 83 c4 id8) */
+let add_rsp_imm8(b, imm8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 131) in
+  let _ = e8(b, 196) in      /* 83 /4 -> add */
+  e8(b, band(imm8, 255))
+/* ret */
+let ret(b) = e8(b, 195)
+
+/* ---- arithmetic: rax = rax op [rbp+disp8] ---- */
+
+/* add rax, [rbp+disp8]  (48 03 45 id8) */
+let add_rax_mem_rbp(b, disp8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 3) in
+  let _ = e8(b, modrm(1, 0, 5)) in
+  e8(b, band(disp8, 255))
+/* sub rax, [rbp+disp8]  (48 2b 45 id8) */
+let sub_rax_mem_rbp(b, disp8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 43) in
+  let _ = e8(b, modrm(1, 0, 5)) in
+  e8(b, band(disp8, 255))
+/* imul rax, [rbp+disp8]  (48 0f af 45 id8) */
+let imul_rax_mem_rbp(b, disp8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 15) in
+  let _ = e8(b, 175) in
+  let _ = e8(b, modrm(1, 0, 5)) in
+  e8(b, band(disp8, 255))
+
+/* ---- syscall (0f 05) ---- */
+let syscall(b) =
+  let _ = e8(b, 15) in
+  e8(b, 5)
+
+/* call rel32 (e8 id32) — placeholder offset 0; patched later */
+let call_rel32(b, off) =
+  let _ = e8(b, 232) in
+  e32(b, off)
