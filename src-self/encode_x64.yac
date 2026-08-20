@@ -149,6 +149,44 @@ let setcc_r8(b, cc) =
   let _ = e8(b, bor(144, cc)) in  /* 90+cc */
   e8(b, 192)
 
+/* push r64 (50+rd) */
+let push_r64(b, rd) = e8(b, bor(80, rd))
+/* pop r64 (58+rd) */
+let pop_r64(b, rd) = e8(b, bor(88, rd))
+
+/* cmp rdi, imm8 (48 83 ff id8) — 3-byte form for rdi */
+let cmp_rdi_imm8(b, imm8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 131) in
+  let _ = e8(b, 255) in   /* /7 rm=rdi */
+  e8(b, band(imm8, 255))
+
+/* lea rdi, [rdi + disp8]  (48 8d 7f id8) */
+let lea_rdi_rdi_disp8(b, disp8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 141) in   /* 8d */
+  let _ = e8(b, 127) in   /* mod=01 reg=rdi rm=rdi */
+  e8(b, band(disp8, 255))
+
+/* imul rax, rdi  (48 0f af c7) */
+let imul_rax_rdi(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 15) in
+  let _ = e8(b, 175) in
+  let _ = e8(b, 199) in
+
+/* mov rdi, rax  (48 89 c7) */
+let mov_rdi_rax(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  e8(b, 199)
+
+/* mov rax, rdi  (48 89 f8) */
+let mov_rax_rdi(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  e8(b, 248)
+
 /* ---- branches ---- */
 
 /* jcc rel8: 7x id8 */
