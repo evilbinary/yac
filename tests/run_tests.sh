@@ -27,7 +27,8 @@ actual=$($BIN tests/higher.yac);    check "higher-order"      "7" "$actual"
 actual=$($BIN tests/types.yac | tr -d '\r');  check "types"             "$types_out" "$actual"
 actual=$($BIN tests/tco.yac);       check "tco"               "0" "$actual"
 actual=$($BIN tests/closure.yac);   check "lexical closure"   "2" "$actual"
-actual=$($BIN tests/float.yac);     check "float arithmetic"  "1" "$actual"
+float_out=$(printf '1e+10\n\n0.0025\n\n100000\n\n1.5e-300\n\n3000\n\n103\n\n3.5\n\ntrue\n\ntrue\n\n\n')
+actual=$($BIN tests/float.yac);     check "float arithmetic"  "$float_out" "$actual"
 
 list_out=$(printf '3\n20\n[0, 1, 2]\n[1, 2, 3]\n[2, 4, 6]\n[2, 3]\n10\n2\n[1, [2, 3], x]\n[]\ntrue\n42')
 actual=$($BIN tests/list.yac | tr -d '\r');  check "list primitives" "$list_out" "$actual"
@@ -42,7 +43,7 @@ actual=$($BIN --cps tests/higher.yac);   check "cps higher-order"     "7" "$actu
 actual=$($BIN --cps tests/types.yac | tr -d '\r'); check "cps types"  "$types_out" "$actual"
 actual=$($BIN --cps tests/tco.yac);      check "cps tco"              "0" "$actual"
 actual=$($BIN --cps tests/closure.yac);  check "cps lexical closure"  "2" "$actual"
-actual=$($BIN --cps tests/float.yac);    check "cps float arithmetic" "1" "$actual"
+actual=$($BIN --cps tests/float.yac);    check "cps float arithmetic" "$float_out" "$actual"
 actual=$($BIN --cps tests/list.yac | tr -d '\r'); check "cps list primitives" "$list_out" "$actual"
 actual=$($BIN --cps tests/bignum.yac | tr -d '\r'); check "cps bignum arithmetic" "$bignum_out" "$actual"
 

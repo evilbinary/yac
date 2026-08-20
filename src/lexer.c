@@ -141,37 +141,45 @@ LexResult lex_program(const char *src, Arena *a) {
         } else if (isdigit((unsigned char)c)) {
             size_t start = lx.pos;
             while (isdigit((unsigned char)src[lx.pos])) { lx.pos++; lx.col++; }
+            bool is_float = false;
             if (src[lx.pos] == '.' && isdigit((unsigned char)src[lx.pos + 1])) {
+                is_float = true;
                 lx.pos++; lx.col++;
                 while (isdigit((unsigned char)src[lx.pos])) { lx.pos++; lx.col++; }
-                char buf[64];
-                size_t len = lx.pos - start;
-                if (len >= sizeof(buf)) len = sizeof(buf) - 1;
-                memcpy(buf, src + start, len);
-                buf[len] = '\0';
+            }
+            /* scientific notation: 1e10, 2.5e-3, 1E+5 */
+            if ((src[lx.pos] == 'e' || src[lx.pos] == 'E')) {
+                size_t save = lx.pos;
+                lx.pos++; lx.col++;
+                if (src[lx.pos] == '+' || src[lx.pos] == '-') { lx.pos++; lx.col++; }
+                if (isdigit((unsigned char)src[lx.pos])) {
+                    is_float = true;
+                    while (isdigit((unsigned char)src[lx.pos])) { lx.pos++; lx.col++; }
+                } else {
+                    lx.pos = save; /* not an exponent; leave it for the caller */
+                }
+            }
+            size_t len = lx.pos - start;
+            char *num = (char *)malloc(len + 1);
+            memcpy(num, src + start, len);
+            num[len] = '\0';
+            if (is_float) {
                 t.kind = TK_FLOAT;
-                t.fval = strtod(buf, NULL);
+                t.fval = strtod(num, NULL);
             } else {
-                char buf[64];
-                size_t len = lx.pos - start;
-                if (len >= sizeof(buf)) len = sizeof(buf) - 1;
-                memcpy(buf, src + start, len);
-                buf[len] = '\0';
                 t.kind = TK_INT;
-                t.ival = strtoll(buf, NULL, 10);
+                t.ival = strtoll(num, NULL, 10);
                 /* a literal that overflows int64 becomes a bignum literal;
                  * keep the full digit text (arena-owned) */
                 errno = 0;
-                strtoll(buf, NULL, 10);
+                strtoll(num, NULL, 10);
                 if (errno == ERANGE) {
                     t.big = true;
-                    char *full = (char *)arena_alloc(a, len + 1);
-                    memcpy(full, src + start, len);
-                    full[len] = '\0';
-                    t.text = full;
+                    t.text = arena_strdup(a, num);
                     t.ival = 0;
                 }
             }
+            free(num);
             tok_push(&toks, &n, &cap, t);
         } else if (c == '"') {
             lx.pos++; lx.col++;

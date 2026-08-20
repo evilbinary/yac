@@ -3,3 +3,22 @@ let pi = 3.14159 in
 let r = 2.0 in
 let area = pi * r * r in
 if area > 12.0 and not(area < 12.0) then 1 else 0
+-- scientific notation literals
+print 1e10
+print ""
+print 2.5e-3
+print ""
+print 1E5
+print ""
+print 1.5e-300
+print ""
+print 2e3 * 1.5
+print ""
+print 1e2 + 3
+print ""
+print 7 / 2e0
+print ""
+print 1e10 > 9999999999
+print ""
+print 3e0 == 3.0
+print ""
