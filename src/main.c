@@ -13,6 +13,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "rtio.h"
+#include "scheme.h"
 #include "uncps.h"
 #include "value.h"
 
@@ -43,6 +44,7 @@ typedef struct {
     Arena *a;
     Gc *gc;
     bool cps;
+    bool scheme;
 } Globals;
 
 static void globals_add(Globals *g, const char *name, Value v) {
@@ -97,47 +99,60 @@ static void collect_globals(const Anf *n, int from_slot, const Frame *tmp,
 /* parse + normalize + evaluate `src` against the persistent globals.
  * Returns true and sets *out; *new_count is the number of globals added. */
 static bool repl_eval(Globals *g, const char *src, Value *out, int *new_count,
-                      char **errmsg) {
+                      char **errmsg, bool scheme_mode) {
     Arena *a = g->a;
+    char *yac_src = NULL;
+    if (scheme_mode) {
+        yac_src = scheme_to_yac(src, errmsg);
+        if (!yac_src) return false;
+        src = yac_src;
+    }
     LexResult lx = lex_program(src, a);
     if (lx.error) {
         *errmsg = lx.error;
         free(lx.toks);
+        free(yac_src);
         return false;
     }
     ParseResult pr = parse_program(lx.toks, lx.n, a);
     free(lx.toks);
     if (pr.error) {
         *errmsg = pr.error;
+        free(yac_src);
         return false;
     }
     Anf *anf = NULL;
     int top = 0;
     if (!ast_to_anf_prelude(pr.program, a, &anf, &top, errmsg, g->names, g->count)) {
+        free(yac_src);
         return false;
     }
     Frame *tmp = NULL;
     CExp *cps = NULL;
     int ctop = 0;
     if (g->cps) {
-        if (!anf_to_cps(anf, top, a, &cps, &ctop, errmsg)) return false;
+        if (!anf_to_cps(anf, top, a, &cps, &ctop, errmsg)) { free(yac_src); return false; }
         tmp = gc_new_frame(g->gc, ctop);
     } else {
         tmp = gc_new_frame(g->gc, top);
     }
     for (int i = 0; i < g->count; i++) tmp->slots[i] = g->vals[i];
+    bool ok = true;
     if (g->cps) {
-        if (eval_cps_run_in(cps, tmp, a, out, errmsg, g->gc) != 0) return false;
+        if (eval_cps_run_in(cps, tmp, a, out, errmsg, g->gc) != 0) ok = false;
     } else if (eval_anf_run_in(anf, tmp, a, out, errmsg, g->gc) != 0) {
-        return false;
+        ok = false;
     }
-    const char *nn[YAC_MAX_GLOBALS];
-    Value nv[YAC_MAX_GLOBALS];
-    int nc = 0;
-    collect_globals(anf, g->count, tmp, nn, nv, &nc);
-    for (int i = 0; i < nc; i++) globals_add(g, nn[i], nv[i]);
-    if (new_count) *new_count = nc;
-    return true;
+    if (ok) {
+        const char *nn[YAC_MAX_GLOBALS];
+        Value nv[YAC_MAX_GLOBALS];
+        int nc = 0;
+        collect_globals(anf, g->count, tmp, nn, nv, &nc);
+        for (int i = 0; i < nc; i++) globals_add(g, nn[i], nv[i]);
+        if (new_count) *new_count = nc;
+    }
+    free(yac_src);
+    return ok;
 }
 
 static int repl_loop(Globals *g) {
@@ -152,7 +167,7 @@ static int repl_loop(Globals *g) {
         char *errmsg = NULL;
         Value result;
         int nc = 0;
-        if (repl_eval(g, line, &result, &nc, &errmsg)) {
+        if (repl_eval(g, line, &result, &nc, &errmsg, g->scheme)) {
             if (nc > 0) {
                 char *s = value_to_string(g->a, g->vals[g->count - 1]);
                 printf("%s = %s\n", g->names[g->count - 1], s);
@@ -202,6 +217,8 @@ static void usage(const char *prog) {
             "  --dump-rt FILE   serialize the compiled runtime (ANF) to FILE\n"
             "  --load-rt FILE   load a runtime FILE instead of parsing source\n"
             "  --repl           interactive loop with persistent globals\n"
+            "  --scheme         translate a Scheme subset file to yac, then run it\n"
+            "                   (combine with --repl for a Scheme REPL)\n"
             "  --checkpoint-at N  dump the machine state at step N and pause\n"
             "  --resume FILE    load a checkpoint and continue execution\n",
             prog);
@@ -225,7 +242,7 @@ static void cleanup(Res *r) {
 int main(int argc, char **argv) {
     bool dump_ast = false, dump_anf = false, dump_cps = false;
     bool cps_mode = false, both = false, uncps_mode = false, dump_uncps = false;
-    bool no_gc = false, do_opt = false, repl_mode = false;
+    bool no_gc = false, do_opt = false, repl_mode = false, scheme_mode = false;
     const char *dump_rt = NULL, *load_rt = NULL, *resume_path = NULL;
     size_t limit_nodes = 0;
     const char *file = NULL;
@@ -241,6 +258,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--opt") == 0) do_opt = true;
         else if (strcmp(argv[i], "--no-gc") == 0) no_gc = true;
         else if (strcmp(argv[i], "--repl") == 0) repl_mode = true;
+        else if (strcmp(argv[i], "--scheme") == 0) scheme_mode = true;
         else if (strcmp(argv[i], "--checkpoint-at") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "--checkpoint-at requires a number\n");
@@ -296,14 +314,14 @@ int main(int argc, char **argv) {
     r.gc.max_objs = limit_nodes;
 
     if (repl_mode) {
-        Globals g = {NULL, NULL, 0, 0, &r.a, &r.gc, cps_mode};
+        Globals g = {NULL, NULL, 0, 0, &r.a, &r.gc, cps_mode, scheme_mode};
         if (file) {
             char *src = read_file(file);
             if (src) {
                 char *errmsg2 = NULL;
                 Value result;
                 int nc = 0;
-                if (repl_eval(&g, src, &result, &nc, &errmsg2)) {
+                if (repl_eval(&g, src, &result, &nc, &errmsg2, scheme_mode)) {
                     char *s = value_to_string(&r.a, result);
                     printf("%s\n", s);
                 } else {
@@ -365,6 +383,18 @@ int main(int argc, char **argv) {
             fprintf(stderr, "cannot read file: %s\n", file);
             cleanup(&r);
             return 2;
+        }
+        if (scheme_mode) {
+            char *errmsg2 = NULL;
+            char *yac_src = scheme_to_yac(r.src, &errmsg2);
+            if (!yac_src) {
+                fprintf(stderr, "error: %s\n", errmsg2);
+                free(errmsg2);
+                cleanup(&r);
+                return 1;
+            }
+            free(r.src);
+            r.src = yac_src;
         }
         r.lx = lex_program(r.src, &r.a);
         r.have_lx = true;

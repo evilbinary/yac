@@ -297,6 +297,30 @@ static Value prim_nth(Value *args, int nargs, PrimCtx *ctx) {
     return l->items[i];
 }
 
+/* drop(l, n): the list without the first n elements; clamped */
+static Value prim_drop(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_LIST) {
+        ctx->errored = true;
+        snprintf(ctx->errmsg, sizeof(ctx->errmsg),
+                 "drop: first argument must be a list");
+        return VALUE_NULL;
+    }
+    if (args[1].tag != V_INT) {
+        ctx->errored = true;
+        snprintf(ctx->errmsg, sizeof(ctx->errmsg),
+                 "drop: count must be an integer");
+        return VALUE_NULL;
+    }
+    List *l = args[0].u.l;
+    long long n = args[1].u.i;
+    if (n <= 0) return args[0];
+    if (n >= l->len) return v_list(gc_new_list(ctx->gc, 0));
+    List *out = gc_new_list(ctx->gc, l->len - (int)n);
+    memcpy(out->items, l->items + n, (size_t)out->len * sizeof(Value));
+    return v_list(out);
+}
+
 static Value prim_map(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
     if (args[1].tag != V_LIST) {
@@ -433,6 +457,7 @@ static const Prim PRIMS[] = {
     {"append", 2, true, true, prim_append},
     {"len", 1, true, false, prim_len},
     {"nth", 2, true, false, prim_nth},
+    {"drop", 2, true, true, prim_drop},
     {"map", 2, true, true, prim_map},
     {"filter", 2, true, true, prim_filter},
     {"foldl", 3, true, true, prim_foldl},
