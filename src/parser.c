@@ -380,6 +380,7 @@ static Ast *parse_unary(Parser *p) {
 
 static Ast *parse_mul(Parser *p) {
     Ast *l = parse_unary(p);
+    if (!l) return NULL;
     while (at(p, TK_STAR) || at(p, TK_SLASH) || at(p, TK_PERCENT)) {
         const Token *t = advance(p);
         Ast *r = parse_unary(p);
@@ -391,6 +392,7 @@ static Ast *parse_mul(Parser *p) {
 
 static Ast *parse_add(Parser *p) {
     Ast *l = parse_mul(p);
+    if (!l) return NULL;
     while (at(p, TK_PLUS) || at(p, TK_MINUS)) {
         const Token *t = advance(p);
         Ast *r = parse_mul(p);
@@ -414,6 +416,7 @@ static int cmp_op(TokKind k) {
 
 static Ast *parse_cmp(Parser *p) {
     Ast *l = parse_add(p);
+    if (!l) return NULL;
     while (at(p, TK_EQEQ) || at(p, TK_NEQ) || at(p, TK_LT) || at(p, TK_LE) || at(p, TK_GT) || at(p, TK_GE)) {
         const Token *t = advance(p);
         Ast *r = parse_add(p);
@@ -424,6 +427,7 @@ static Ast *parse_cmp(Parser *p) {
 
 static Ast *parse_and(Parser *p) {
     Ast *l = parse_cmp(p);
+    if (!l) return NULL;
     while (at(p, TK_KW_AND)) {
         const Token *t = advance(p);
         Ast *r = parse_cmp(p);
@@ -434,6 +438,7 @@ static Ast *parse_and(Parser *p) {
 
 static Ast *parse_or(Parser *p) {
     Ast *l = parse_and(p);
+    if (!l) return NULL;
     while (at(p, TK_KW_OR)) {
         const Token *t = advance(p);
         Ast *r = parse_and(p);
