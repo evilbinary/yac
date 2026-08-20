@@ -113,6 +113,57 @@ let imul_rax_mem_rbp(b, disp8) =
   let _ = e8(b, modrm(1, 0, 5)) in
   e8(b, band(disp8, 255))
 
+/* cmp rax, [rbp+disp8]  (48 3b 45 id8) — sets flags; do not keep result */
+let cmp_rax_mem_rbp(b, disp8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 59) in       /* 3b /r */
+  let _ = e8(b, modrm(1, 0, 5)) in
+  e8(b, band(disp8, 255))
+
+/* idiv rax by [rbp+disp8] (48 f7 7d id8); requires sign-extended rdx
+ * (use cqo first: 48 99). Quotient in rax, remainder in rdx. */
+let cqo(b) =
+  let _ = e8(b, 72) in
+  e8(b, 153)                /* 99 */
+let idiv_rax_mem_rbp(b, disp8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 247) in     /* f7 /7 */
+  let _ = e8(b, modrm(1, 7, 5)) in
+  e8(b, band(disp8, 255))
+
+/* xor rax, rax (48 31 c0) — zero */
+let xor_rax_rax(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 49) in
+  e8(b, 192)
+
+/* movzx eax, al (0f b6 c0) — zero-extend setcc result */
+let movzx_eax_al(b) =
+  let _ = e8(b, 15) in
+  let _ = e8(b, 182) in
+  e8(b, 192)
+
+/* setcc r8 (0f 9x c0) with cc byte; then movzx eax,al */
+let setcc_r8(b, cc) =
+  let _ = e8(b, 15) in
+  let _ = e8(b, bor(144, cc)) in  /* 90+cc */
+  e8(b, 192)
+
+/* ---- branches ---- */
+
+/* jcc rel8: 7x id8 */
+let jcc_rel8(b, cc, off) =
+  let _ = e8(b, bor(112, cc)) in
+  e8(b, band(off, 255))
+/* jmp rel32: e9 id32 */
+let jmp_rel32(b, off) =
+  let _ = e8(b, 233) in
+  e32(b, off)
+/* jmp rel8: eb id8 */
+let jmp_rel8(b, off) =
+  let _ = e8(b, 235) in
+  e8(b, band(off, 255))
+
 /* ---- syscall (0f 05) ---- */
 let syscall(b) =
   let _ = e8(b, 15) in
