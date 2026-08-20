@@ -221,6 +221,15 @@ else
     fail=$((fail + 1)); echo "FAIL: self-hosted lexer suite ($lexfail failures)"
 fi
 
+# self-hosted compiler front-end: the yac-written parser must build the AST
+sh tests/selfhost_parser.sh
+pfail=$?
+if [ $pfail -eq 0 ]; then
+    pass=$((pass + 1)); echo "PASS: self-hosted parser suite"
+else
+    fail=$((fail + 1)); echo "FAIL: self-hosted parser suite ($pfail failures)"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]

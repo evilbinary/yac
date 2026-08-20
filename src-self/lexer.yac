@@ -128,9 +128,9 @@ let lex(s, i, line, acc) =
   else if is_space(sat(s, i)) then
     let sp = skip_sp(s, i, line) in
     lex(s, nth(sp, 0), nth(sp, 1), acc)
-  else if sat(s, i) == 45 and not at_end(s, i + 1) and sat(s, i + 1) == 45 then
+  else if sat(s, i) == 45 and (if at_end(s, i + 1) then false else sat(s, i + 1) == 45) then
     lex(s, skip_line_cm(s, i + 2), line, acc)
-  else if sat(s, i) == 47 and not at_end(s, i + 1) and sat(s, i + 1) == 42 then
+  else if sat(s, i) == 47 and (if at_end(s, i + 1) then false else sat(s, i + 1) == 42) then
     let e = skip_block_cm(s, i + 2, line) in
     if e == 0 then cons(mk_tok("eof", "unterminated-comment", line), acc)
     else lex(s, e, line, acc)

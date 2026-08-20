@@ -1,0 +1,219 @@
+/* parser.yac — recursive-descent parser for the self-hosted compiler.
+ *
+ * Input: token list from lexer.yac (each token = [kind, text, line]).
+ * Output: AST as nested Lists.
+ *
+ * Architecture: yac has no mutual recursion / forward refs across top-level
+ * lets, so the parser is ONE self-recursive top-level function `parse_expr`
+ * with all auxiliary parsers defined as nested local functions inside it
+ * (they may reference parse_expr, which is in scope). Each returns
+ * [ast, nextIndex].
+ *
+ * AST shapes:
+ *   ["int", text] ["float", text] ["str", text] ["bool","true"|"false"]
+ *   ["unit"] ["var", name]
+ *   ["call", fn, [args...]]
+ *   ["fun", [params...], body]
+ *   ["if", cond, then, else]
+ *   ["let", name, bound, body]
+ *   ["binop", op, lhs, rhs]   op: + - * / % == != < <= > >= and or
+ *   ["not", x] ["print", x] ["list", [items...]]
+ *   ["error", msg]
+ */
+
+let reverse(xs) = foldl(fun (a, x) -> cons(x, a), [], xs)
+let ERR = ["error", "parse"]
+let is_err(a) = nth(a, 0) == "error"
+
+let parse_expr(toks, i, min_prec) =
+  /* ---- token access ---- */
+  let tk_at(j) = if j >= len(toks) then ["eof", "", 0] else nth(toks, j) in
+  let kk(j) = nth(tk_at(j), 0) in
+  let tt(j) = nth(tk_at(j), 1) in
+  let is_punct(j) = kk(j) == "lparen" or kk(j) == "rparen" or kk(j) == "lbrk" or
+                    kk(j) == "rbrk" or kk(j) == "lbrace" or kk(j) == "rbrace" or
+                    kk(j) == "comma" or kk(j) == "semi" or kk(j) == "punct" in
+  let is_kw(j, t) = kk(j) == "kw" and tt(j) == t in
+  let is_op(j, t) = kk(j) == "op" and tt(j) == t in
+
+  /* ---- precedence ---- */
+  let prec_of(op) =
+    if op == "or" then 1
+    else if op == "and" then 2
+    else if op == "==" or op == "!=" then 3
+    else if op == "<" or op == "<=" or op == ">" or op == ">=" then 4
+    else if op == "+" or op == "-" then 5
+    else if op == "*" or op == "/" or op == "%" then 6
+    else 0 in
+  let is_binop_tok(j) = (kk(j) == "op" or kk(j) == "kw") and prec_of(tt(j)) > 0 in
+
+  /* ---- parse a comma-separated argument list inside parens, after '(' ---- */
+  let parse_arglist(j, acc) =
+    if kk(j) == "rparen" then [reverse(acc), j + 1]
+    else
+      let r = parse_expr(toks, j, 0) in
+      if is_err(nth(r, 0)) then [acc, j]
+      else if kk(nth(r, 1)) == "comma" then
+        parse_arglist(nth(r, 1) + 1, cons(nth(r, 0), acc))
+      else if kk(nth(r, 1)) == "rparen" then
+        [reverse(cons(nth(r, 0), acc)), nth(r, 1) + 1]
+      else [reverse(cons(nth(r, 0), acc)), nth(r, 1)] in
+
+  /* ---- parse lambda params: ( ident, ident, ... ) -> ; j is at first ident
+   * after '('. Returns [params, indexAfterRparen]. ---- */
+  let parse_params(j, acc) =
+    if kk(j) == "ident" then
+      if kk(j + 1) == "comma" then parse_params(j + 2, cons(tt(j), acc))
+      else if kk(j + 1) == "rparen" then [reverse(cons(tt(j), acc)), j + 2]
+      else [reverse(cons(tt(j), acc)), j + 1]
+    else [acc, j] in
+
+  /* ---- parse list literal items after '[' ---- */
+  let parse_listitems(j, acc) =
+    if kk(j) == "rbrk" then [reverse(acc), j + 1]
+    else
+      let r = parse_expr(toks, j, 0) in
+      if is_err(nth(r, 0)) then [acc, j]
+      else if kk(nth(r, 1)) == "comma" then
+        parse_listitems(nth(r, 1) + 1, cons(nth(r, 0), acc))
+      else if kk(nth(r, 1)) == "rbrk" then
+        [reverse(cons(nth(r, 0), acc)), nth(r, 1) + 1]
+      else [reverse(cons(nth(r, 0), acc)), nth(r, 1)] in
+
+  /* ---- primary / atom ---- */
+  let parse_primary(j) =
+    if kk(j) == "num" then [["int", tt(j)], j + 1]
+    else if kk(j) == "str" then [["str", tt(j)], j + 1]
+    else if kk(j) == "ident" then [["var", tt(j)], j + 1]
+    else if is_kw(j, "true") then [["bool", "true"], j + 1]
+    else if is_kw(j, "false") then [["bool", "false"], j + 1]
+    else if kk(j) == "lbrk" then
+      let r = parse_listitems(j + 1, []) in
+      [["list", nth(r, 0)], nth(r, 1)]
+    else if is_kw(j, "not") then
+      let r = parse_expr(toks, j + 1, 0) in
+      [["not", nth(r, 0)], nth(r, 1)]
+    else if is_kw(j, "print") then
+      let r = parse_expr(toks, j + 1, 0) in
+      [["print", nth(r, 0)], nth(r, 1)]
+    else if is_kw(j, "fun") then
+      /* fun ( params ) -> body */
+      if kk(j + 1) == "lparen" then
+        let pr = parse_params(j + 2, []) in
+        let after = nth(pr, 1) in
+        if is_op(after, "->") then
+          let r = parse_expr(toks, after + 1, 0) in
+          [["fun", nth(pr, 0), nth(r, 0)], nth(r, 1)]
+        else [ERR, j]
+      else [ERR, j]
+    else if kk(j) == "lparen" then
+      /* ( params ) -> body  OR  ( expr )  OR  fn(expr, ...) */
+      if kk(j + 1) == "ident" and kk(j + 2) == "comma" then
+        let pr = parse_params(j + 1, []) in
+        let after = nth(pr, 1) in
+        if is_op(after, "->") then
+          let r = parse_expr(toks, after + 1, 0) in
+          [["fun", nth(pr, 0), nth(r, 0)], nth(r, 1)]
+        else [ERR, j]
+      else
+        let r = parse_expr(toks, j + 1, 0) in
+        if is_err(nth(r, 0)) then [ERR, j]
+        else [nth(r, 0), nth(r, 1) + 1]
+    else [ERR, j] in
+
+  /* ---- application: head followed by ( args ) or space-separated args ---- */
+  let parse_app(j, head) =
+    if kk(j) == "lparen" then
+      /* fn( a, b, c ) */
+      let r = parse_arglist(j + 1, []) in
+      [["call", head, nth(r, 0)], nth(r, 1)]
+    else if kk(j) == "ident" or kk(j) == "num" or kk(j) == "str" or
+            kk(j) == "lparen" or kk(j) == "lbrk" or is_kw(j, "fun") then
+      /* fn arg  (single space-separated argument) */
+      let r = parse_expr(toks, j, 0) in
+      if is_err(nth(r, 0)) then [head, j]
+      else [["call", head, [nth(r, 0)]], nth(r, 1)]
+    else [head, j] in
+
+  /* ---- if ---- */
+  let parse_if(j) =
+    let cr = parse_expr(toks, j, 0) in
+    let cond = nth(cr, 0) in
+    let k = nth(cr, 1) in
+    if is_kw(k, "then") then
+      let tr = parse_expr(toks, k + 1, 0) in
+      let thena = nth(tr, 0) in
+      let m = nth(tr, 1) in
+      if is_kw(m, "else") then
+        let er = parse_expr(toks, m + 1, 0) in
+        [["if", cond, thena, nth(er, 0)], nth(er, 1)]
+      else [ERR, m]
+    else [ERR, k] in
+
+  /* ---- let (supports both `let x = e` and `let f(ps) = e`) ---- */
+  let parse_let(j) =
+    if kk(j) == "ident" then
+      let name = tt(j) in
+      let after_name = j + 1 in
+      let has_params = kk(after_name) == "lparen" in
+      let params_res =
+        if has_params then parse_params(after_name + 1, []) else [[], after_name] in
+      let params = nth(params_res, 0) in
+      let after_params = nth(params_res, 1) in
+      if is_op(after_params, "=") then
+        let br = parse_expr(toks, after_params + 1, 0) in
+        let bound0 = nth(br, 0) in
+        let k = nth(br, 1) in
+        let bound1 =
+          if len(params) > 0 then ["fun", params, bound0] else bound0 in
+        if is_kw(k, "in") then
+          let bodyr = parse_expr(toks, k + 1, 0) in
+          [["let", name, bound1, nth(bodyr, 0)], nth(bodyr, 1)]
+        else [["let", name, bound1, ["unit"]], k]
+      else [ERR, j]
+    else [ERR, j] in
+
+  /* ---- binary operator loop (left-assoc, precedence climbing) ---- */
+  let parse_binloop(j, lhs, minp) =
+    if is_binop_tok(j) then
+      let op = tt(j) in
+      let p = prec_of(op) in
+      if p >= minp then
+        let rr = parse_expr(toks, j + 1, p + 1) in
+        if is_err(nth(rr, 0)) then [ERR, j]
+        else parse_binloop(nth(rr, 1), ["binop", op, lhs, nth(rr, 0)], minp)
+      else [lhs, j]
+    else [lhs, j] in
+
+  /* ---- main dispatch ---- */
+  if is_kw(i, "let") then parse_let(i + 1)
+  else if is_kw(i, "if") then parse_if(i + 1)
+  else if is_op(i, "-") then
+    /* unary minus: -x  ==  (0 - x); operand binds tightest (min_prec high),
+     * then continue with trailing binary operators */
+    let ur = parse_expr(toks, i + 1, 7) in
+    if is_err(nth(ur, 0)) then [ERR, i]
+    else
+      let un = ["binop", "-", ["int", "0"], nth(ur, 0)] in
+      parse_binloop(nth(ur, 1), un, min_prec)
+  else
+    let pr = parse_primary(i) in
+    if is_err(nth(pr, 0)) then [ERR, i]
+    else
+      let appr = parse_app(nth(pr, 1), nth(pr, 0)) in
+      if is_err(nth(appr, 0)) then [ERR, i]
+      else parse_binloop(nth(appr, 1), nth(appr, 0), min_prec)
+
+/* ---- program: sequence of top-level items ---- */
+let parse_program(toks, i, acc) =
+  if i >= len(toks) then reverse(acc)
+  else if nth(nth(toks, i), 0) == "eof" then reverse(acc)
+  else
+    let r = parse_expr(toks, i, 0) in
+    if is_err(nth(r, 0)) then cons(["error", "syntax"], acc)
+    else
+      let rawj = nth(r, 1) in
+      let j2 = if rawj < len(toks) then
+                 if nth(nth(toks, rawj), 0) == "semi" then rawj + 1 else rawj
+               else rawj in
+      parse_program(toks, j2, cons(nth(r, 0), acc))
