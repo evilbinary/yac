@@ -94,17 +94,31 @@ let anf = ["tailcall", ["var","fact"], [["int",5]]]
 
 ### 5.2 模块划分（全部 .yac）
 
+**已实现**：
+
+| 文件 | 职责 | 状态 |
+|---|---|---|
+| `src-self/lexer.yac` | 字符流 → token 流（空白/注释/标识符/数字含科学计数法/字符串/操作符） | ✅ |
+| `src-self/parser.yac` | token 流 → AST（递归下降 + 优先级爬升） | ✅ |
+| `src-self/anf.yac` | AST → ANF（`[bindings, tailExpr]`，求值顺序显式） | ✅ |
+| `src-self/elf.yac` | 机器码 → 最小 x86-64 ELF64 可执行文件 | ✅ |
+| `src-self/driver_{lex,parse,anf,elf}.yac` | 各阶段测试驱动 | ✅ |
+
+**规划中**：
+
 | 文件 | 职责 |
 |---|---|
-| `src-self/lexer.yac` | 字符流 → token 流（跳过空白/注释，识别标识符/数字/字符串/操作符） |
-| `src-self/parser.yac` | token 流 → AST（递归下降，优先级攀爬） |
-| `src-self/desugar.yac` | AST → ANF（`let` 归一化、求值顺序、TCO 化、常量折叠） |
-| `src-self/lower.yac` | ANF → LIR（指令选择：load/store/arith/分支/调用/tail-jump） |
-| `src-self/regalloc.yac` | LIR → 寄存器分配（线性扫描，M1；图着色，M4） |
+| `src-self/encode_x64.yac` | x86-64 指令 → 字节流（mov/add/sub/imul/cmp/jcc/syscall 等） |
+| `src-self/lower.yac` | ANF → LIR（指令选择） |
+| `src-self/regalloc.yac` | LIR → 寄存器/栈槽分配 |
 | `src-self/emit-<arch>.yac` | LIR → 目标机器码字节流（每架构一个） |
-| `src-self/link.yac` | 符号表、重定位、节区布局 → ELF |
+| `src-self/link.yac` | 符号、重定位、入口 `_start` → ELF |
 | `src-self/driver.yac` | `main`：`--emit` 选项、调用管线、错误报告 |
 | `src-self/rt.asm`（非 yac） | 运行时最小层（见 §7） |
+
+> **架构约束**：yac 无相互递归/前向引用，故每个解析器/转换器实现为一个
+> 顶层**自递归函数** + 其内部的**嵌套闭包 helper**（闭包可引用外层函数）。
+> 这是本项目反复使用、验证可行的模式。
 
 ## 6. 编译器后端（纯 yac 实现）
 
@@ -122,14 +136,16 @@ op 集合：`mov/add/sub/mul/div/and/or/xor/cmp/ldr/str/call/jmp/bcc/faddr/enter
 ### 6.2 后端流程
 
 ```
-ANF → lower（指令选择，把 (depth,slot) 展开成帧偏移 load/store）
-    → regalloc（把 LIR 虚寄存器映射到物理寄存器 / 栈槽）
-    → emit-<arch>（每指令一个字节编码函数）
-    → link（解析原语符号 malloc/print/gc 等 → 重定位 → ELF）
+ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 load/store）
+    → regalloc（M3 用栈槽 [rbp+off]，临时值走 rax；后续再引物理寄存器）
+    → emit-<arch>（每指令一个字节编码函数，编码库 encode_x64.yac）
+    → link（入口 _start → elf.yac 打包 ELF）
 ```
 
-- **尾调用**：统一生成 trampoline 循环（`jmp` 回分派点），保证 O(1) 栈，`tco` 语义与 C 版一致。
-- **调用约定**：yac 内部函数遵循目标 C ABI → 生成的代码可直接 `call` 原语和运行时函数，FFI 免费。
+- **M3 简化**：值为栈槽（`[rbp+off]`），临时值走 `rax`，函数用 rbp 栈帧，
+  返回 rax。无需寄存器分配（正确性优先，后续再优化）。
+- **尾调用**：统一生成 trampoline 循环，保证 O(1) 栈，`tco` 语义与 C 版一致。
+- **print/exit**：M3 先用 syscall `write` / `exit`；后续接入 rt。
 
 ### 6.3 分架构支持
 
@@ -173,14 +189,45 @@ ANF → lower（指令选择，把 (depth,slot) 展开成帧偏移 load/store）
 
 ## 10. 里程碑
 
+### 10.1 当前进度（已提交）
+
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| M1 | yac 语言补缺：字符串/字节缓冲/位运算/文件 IO/argv/exit/int_to_str 原语（进 `PRIMS`） | ✅ 完成 |
+| M2 | 前端：`lexer.yac` `parser.yac` `anf.yac`（用 List 表示 IR） | ✅ 完成 |
+| M3.1 | ELF 打包器 `elf.yac`（最小 x86-64 ELF64，exit(42) 跑通） | ✅ 完成 |
+| M3.2 | x86-64 指令编码库 + LIR 生成 + 代码发射 | 🔄 进行中 |
+
+**已落地文件**：`src-self/{lexer,parser,anf,elf,driver_*}.yac`；测试套件
+`tests/selfhost_{lexer,parser,anf,elf}.sh`（共 47 项，全绿，`make test`）。
+GitHub 推送已通过 SSH 远程 + 代理 `http://127.0.0.1:10809` 解决。
+
+### 10.2 计划（按用户确定的路线图）
+
+> 顺序：M3 → M4 → M5 → M6 → 之后再完善 callcc / scheme。
+
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| M1 | yac 语言补缺：字符串/字节缓冲/位运算/文件 IO 原语（进 `PRIMS`） | 解释器能写这些代码 |
-| M2 | 前端：`lexer.yac` `parser.yac` `anf.yac`（用 List 表示 IR） | 与 C 版 ANF dump 一致 |
-| M3 | x86-64 后端：`lower/regalloc/emit/link`，生成 ELF，跑通 fact | `yc` 编译 fact → 输出 120 |
+| M3 | x86-64 后端：**先做整数子集端到端**（整数算术/比较/if/尾递归函数 → 可运行 ELF，输出与解释器一致）。闭包/GC/字符串/列表/全原语作为 M3 后续子步骤补齐 | `yc` 编译 fact → 输出 120 |
 | M4 | 自举：`yc.yac` 编译 `yc.yac` → 原生 `yc`，L4/L5 同构验证 | 自举成功 |
 | M5 | arm64 / riscv64 后端 + `--arch` 交叉编译（qemu 验证） | 三架构同源跑通 |
 | M6 | rt yac 化 + GC 栈图；迁移全测试到原生 `yc` | 弃用 C 解释器（完全自举） |
+| M7 | 完善 callcc / CPS（ANF→CPS 转换、续延原生实现）与 scheme 前端 | callcc / scheme 测试通过 |
+
+### 10.3 M3 分解（整数子集优先）
+
+完整 x86-64 后端（闭包/GC/字符串/列表/全部原语）工程量大，故 M3 拆为子步骤：
+
+- **M3.1**（已完成）：ELF 打包器 `elf.yac`。
+- **M3.2**（进行中）：x86-64 指令编码库 `encode_x64.yac` + LIR + 代码发射。
+  - 值表示：栈槽（`[rbp+off]`），临时值走 rax，无需寄存器分配（正确性优先）。
+  - 函数：rbp 栈帧，prologue/epilogue，返回 rax。
+  - 调用约定：简单（参数压栈、返回 rax）；尾调用用循环避免爆栈。
+  - 指令集：`mov/add/sub/imul/idiv/cmp/setcc/jcc/call/ret/syscall`。
+  - `print` 用 syscall `write`；`exit` 用 syscall `exit`。
+- **M3.3**：`lower.yac`（ANF → LIR）+ `link.yac`（符号/重定位/入口 `_start`）。
+- **M3.4**：端到端——`yc` 编译整数程序 → ELF → 运行，输出与 C 解释器逐字节一致（fact/fib）。
+- **M3.5**：闭包/GC/字符串/列表/全原语逐步补齐（value 表示、GC 栈图、堆分配 rt）。
 
 ## 11. 风险与对策
 
@@ -194,4 +241,18 @@ ANF → lower（指令选择，把 (depth,slot) 展开成帧偏移 load/store）
 
 ## 12. 一句话总结
 
-用 yac 写一个能编译 yac 自身的编译器：**前端（lexer/parser/ANF）与后端（LIR/regalloc/emit/ELF）全部用 yac 实现**，运行时保留极小的机器码层，按 L0→L6 阶梯自举，用差分测试与 L4/L5 同构验证保证正确性，最终脱离 C 解释器。
+用 yac 写一个能编译 yac 自身的编译器：**前端（lexer/parser/ANF）与后端（LIR/regalloc/emit/ELF）全部用 yac 实现**，运行时保留极小的机器码层，按 M1→M6 阶梯自举，用差分测试与 L4/L5 同构验证保证正确性，最终脱离 C 解释器。callcc/CPS 与 scheme 作为 M7 在完全自举后再完善。
+
+## 13. 已解决问题记录
+
+| 问题 | 解法 |
+|---|---|
+| yac 无相互递归/前向引用 | 单自递归顶层函数 + 内部嵌套闭包 helper |
+| yac `let` 是 letrec | 避免 `let x = ...x...` 自遮蔽（换变量名），否则死循环 |
+| yac `and`/`or` 非短路 | 用 `if` 保护边界检查，避免 `str_ref` 越界 |
+| yac 无 `++`/`int_to_str` | 用 `append`；M1 新增 `int_to_str` 原语 |
+| 顶层多项被当连续实参 | 顶层表达式间用 `;` 分隔（与 C 版 `parse_program` 一致） |
+| 零参调用 `f()` 解析为 `f(unit)` | `argc`/`bytes_new` 按 arity 1 处理，忽略 unit 参数 |
+| 十进制无十六进制字面量 | 所有常量用十进制（如 `0x400000`→`4194304`） |
+| ELF 段加载失败 | `p_offset=0`、`p_vaddr=0x400000`（对齐一致），映射整个文件 |
+| GitHub 无法 push | SSH 远程 `git@github.com` + 代理 `http://127.0.0.1:10809` |
