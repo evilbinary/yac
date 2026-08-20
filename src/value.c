@@ -622,6 +622,14 @@ static Value prim_bnot(Value *args, int nargs, PrimCtx *ctx) {
     return v_int(~args[0].u.i);
 }
 
+static Value prim_int_to_str(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_INT) { bad_operands(ctx, "int_to_str"); return VALUE_NULL; }
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%lld", (long long)args[0].u.i);
+    return v_str(ctx->a, buf);
+}
+
 /* ---- lists ---- */
 
 static Value prim_cons(Value *args, int nargs, PrimCtx *ctx) {
@@ -869,6 +877,7 @@ static const Prim PRIMS[] = {
     {"bor", 2, true, false, prim_bor},
     {"bxor", 2, true, false, prim_bxor},
     {"bnot", 1, true, false, prim_bnot},
+    {"int_to_str", 1, true, true, prim_int_to_str},
     {"cons", 2, true, true, prim_cons},
     {"append", 2, true, true, prim_append},
     {"len", 1, true, false, prim_len},

@@ -1,0 +1,107 @@
+/* anf.yac — normalize AST to A-Normal Form (explicit evaluation order).
+ *
+ * Input: AST from parser.yac. Output: ANF as [bindings, tailExpr]:
+ *   bindings: list of statements (kept in order):
+ *     ["let",   temp, atom]                     -- temp = atom
+ *     ["letcall", temp, fnAtom, [argAtoms]]     -- temp = fn(arg...)
+ *     ["letbin",  temp, op, aAtom, bAtom]       -- temp = a op b
+ *     ["letif",   temp, condAtom, thenBindings, elseBindings]
+ *     ["letfun",  temp, [params], bodyBindings] -- temp = fun(params)
+ *   atom:
+ *     ["int",s] ["str",s] ["bool","true"|"false"] ["unit"]
+ *     ["var",name] ["fun",[params],bodyBindings]
+ *   tailExpr: the atom that is the expression's value.
+ *
+ * Every non-atomic computation is bound to a fresh temp, making evaluation
+ * order explicit. Fresh names use a counter threaded through the calls.
+ *
+ * Architecture: yac has no mutual recursion across top-level lets, so anf_expr
+ * is a single top-level self-recursive function; anf_atom (which needs
+ * anf_expr) is a nested local closure inside it.
+ */
+
+let reverse(xs) = foldl(fun (a, x) -> cons(x, a), [], xs)
+
+let anf_expr(ast, counter) =
+  /* fresh temp name + incremented counter */
+  let fresh(c) = [str_cat("t", int_to_str(c)), c + 1] in
+
+  /* atomize a sub-expression: returns [bindings, atom, counter].
+   * If ast is already atomic, bindings is empty; else it binds a fresh temp. */
+  let anf_atom(expr, c) =
+    let k = nth(expr, 0) in
+    if k == "int" then [[], expr, c]
+    else if k == "str" then [[], expr, c]
+    else if k == "bool" then [[], expr, c]
+    else if k == "unit" then [[], expr, c]
+    else if k == "var" then [[], expr, c]
+    else if k == "fun" then
+      /* closure: [fun, [params], body] */
+      let br = anf_expr(nth(expr, 2), c) in
+      let tup = fresh(nth(br, 2)) in
+      [[["letfun", nth(tup, 0), nth(expr, 1), nth(br, 0)]],
+       ["var", nth(tup, 0)], nth(tup, 1)]
+    else
+      /* non-atomic: the normalized expression's tail is already an atom
+       * (its last binding produced the value), so use it directly. */
+      let r = anf_expr(expr, c) in
+      [nth(r, 0), nth(r, 1), nth(r, 2)] in
+
+  let k = nth(ast, 0) in
+  if k == "int" then [[], ast, counter]
+  else if k == "str" then [[], ast, counter]
+  else if k == "bool" then [[], ast, counter]
+  else if k == "unit" then [[], ast, counter]
+  else if k == "var" then [[], ast, counter]
+  else if k == "fun" then
+    /* fun (params) -> body */
+    let br = anf_expr(nth(ast, 2), counter) in
+    let tup = fresh(nth(br, 2)) in
+    [[["letfun", nth(tup, 0), nth(ast, 1), nth(br, 0)]],
+     ["var", nth(tup, 0)], nth(tup, 1)]
+  else if k == "binop" then
+    /* op lhs rhs -> temp = lhs op rhs */
+    let la = anf_atom(nth(ast, 2), counter) in
+    let ra = anf_atom(nth(ast, 3), nth(la, 2)) in
+    let tup = fresh(nth(ra, 2)) in
+    let bindings = append(append(nth(la, 0), nth(ra, 0)),
+                          [["letbin", nth(tup, 0), nth(ast, 1),
+                            nth(la, 1), nth(ra, 1)]]) in
+    [bindings, ["var", nth(tup, 0)], nth(tup, 1)]
+  else if k == "call" then
+    /* call fn args -> temp = fn(arg...). Atomize fn and each arg. */
+    let fa = anf_atom(nth(ast, 1), counter) in
+    let args = nth(ast, 2) in
+    let argloop = fun (i, c, accb, acca) ->
+      if i >= len(args) then [accb, reverse(acca), c]
+      else
+        let aa = anf_atom(nth(args, i), c) in
+        argloop(i + 1, nth(aa, 2), append(nth(aa, 0), accb),
+                cons(nth(aa, 1), acca)) in
+    let arr = argloop(0, nth(fa, 2), [], []) in
+    let tup = fresh(nth(arr, 2)) in
+    let bindings = append(append(nth(fa, 0), nth(arr, 0)),
+                          [["letcall", nth(tup, 0), nth(fa, 1), nth(arr, 1)]]) in
+    [bindings, ["var", nth(tup, 0)], nth(tup, 1)]
+  else if k == "if" then
+    /* if cond then a else b  ->  cond atomized, branches normalized.
+     * Each branch is stored as [branchBindings, branchTail]. */
+    let ca = anf_atom(nth(ast, 1), counter) in
+    let tr = anf_expr(nth(ast, 2), nth(ca, 2)) in
+    let er = anf_expr(nth(ast, 3), nth(tr, 2)) in
+    let tup = fresh(nth(er, 2)) in
+    let bindings = append(nth(ca, 0),
+                          [["letif", nth(tup, 0), nth(ca, 1),
+                            [nth(tr, 0), nth(tr, 1)],
+                            [nth(er, 0), nth(er, 1)]]]) in
+    [bindings, ["var", nth(tup, 0)], nth(tup, 1)]
+  else if k == "let" then
+    /* let name = bound in body */
+    let name = nth(ast, 1) in
+    let br = anf_atom(nth(ast, 2), counter) in
+    let bbindings = nth(br, 0) in
+    let batom = nth(br, 1) in
+    let bodyr = anf_expr(nth(ast, 3), nth(br, 2)) in
+    let bbindings2 = append(bbindings, [["let", name, batom]]) in
+    [append(bbindings2, nth(bodyr, 0)), nth(bodyr, 1), nth(bodyr, 2)]
+  else [["error", "anf"], ["unit"], counter]

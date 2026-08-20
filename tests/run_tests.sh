@@ -230,6 +230,15 @@ else
     fail=$((fail + 1)); echo "FAIL: self-hosted parser suite ($pfail failures)"
 fi
 
+# self-hosted compiler front-end: the yac-written ANF normalizer
+sh tests/selfhost_anf.sh
+afail=$?
+if [ $afail -eq 0 ]; then
+    pass=$((pass + 1)); echo "PASS: self-hosted anf suite"
+else
+    fail=$((fail + 1)); echo "FAIL: self-hosted anf suite ($afail failures)"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]

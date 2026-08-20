@@ -1,0 +1,13 @@
+/* driver_anf.yac — parse + normalize to ANF, dump (M2).
+ * Reads build/anf_tmp/in.yac, prints the full [bindings, tailExpr] result
+ * for each top-level item. Used by tests/selfhost_anf.sh.
+ */
+let src = read_file("build/anf_tmp/in.yac");
+let toks = tokenize(src);
+let prog = parse_program(toks, 0, []);
+let show(n) = if n >= len(prog) then 0 else
+  let r = anf_expr(nth(prog, n), 0) in
+  let _ = print [nth(r, 0), nth(r, 1)] in
+  show(n + 1);
+let _ = show(0);
+0;
