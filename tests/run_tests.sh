@@ -239,6 +239,15 @@ else
     fail=$((fail + 1)); echo "FAIL: self-hosted anf suite ($afail failures)"
 fi
 
+# self-hosted compiler M3: ELF packer produces a runnable executable
+sh tests/selfhost_elf.sh
+efail=$?
+if [ $efail -eq 0 ]; then
+    pass=$((pass + 1)); echo "PASS: self-hosted ELF packer suite"
+else
+    fail=$((fail + 1)); echo "FAIL: self-hosted ELF packer suite ($efail failures)"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]

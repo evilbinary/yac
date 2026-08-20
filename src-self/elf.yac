@@ -1,0 +1,101 @@
+/* elf.yac — package raw code bytes into a minimal x86-64 ELF executable.
+ *
+ * Layout: ELF64 header (64B) + one PT_LOAD program header (56B) + .text.
+ * The whole file is mapped at load_vaddr = 0x400000 (page-aligned, matches
+ * offset 0). Entry point = load_vaddr + text_offset (start of code).
+ *
+ * Output: a bytes buffer that write_file can emit as an executable.
+ *
+ * All integer literals are decimal (yac has no hex literals).
+ */
+
+/* write v as little-endian u16 at offset i */
+let le16(b, v, i) =
+  let _ = bytes_put(b, i + 0, band(v, 255)) in
+  let _ = bytes_put(b, i + 1, band(bshr(v, 8), 255)) in
+  0
+
+/* write v as little-endian u32 at offset i */
+let le32(b, v, i) =
+  let _ = le16(b, band(v, 65535), i) in
+  let _ = le16(b, bshr(v, 16), i + 2) in
+  0
+
+/* write v as little-endian u64 at offset i */
+let le64(b, v, i) =
+  let _ = le32(b, band(v, 4294967295), i) in
+  let _ = le32(b, bshr(v, 32), i + 4) in
+  0
+
+/* magic constants */
+let E_TYPE = 2          /* ET_EXEC */
+let E_MACHINE = 62      /* EM_X86_64 */
+let E_VERSION = 1
+let LOAD_VADDR = 4194304 /* 0x400000 */
+let PH_TYPE_LOAD = 1
+let PH_FLAGS_RX = 5     /* PF_R | PF_X */
+let PAGE = 4096
+
+/* build the ELF64 header (64 bytes) into b at offset 0 */
+let elf_header(b, entry, text_off) =
+  let _ = bytes_put(b, 0, 127) in   /* 0x7f */
+  let _ = bytes_put(b, 1, 69) in    /* 'E' */
+  let _ = bytes_put(b, 2, 76) in    /* 'L' */
+  let _ = bytes_put(b, 3, 70) in    /* 'F' */
+  let _ = bytes_put(b, 4, 2) in     /* ELFCLASS64 */
+  let _ = bytes_put(b, 5, 1) in     /* ELFDATA2LSB */
+  let _ = bytes_put(b, 6, 1) in     /* EV_CURRENT */
+  let _ = bytes_put(b, 7, 0) in
+  let _ = bytes_put(b, 8, 0) in
+  let _ = bytes_put(b, 9, 0) in
+  let _ = bytes_put(b, 10, 0) in
+  let _ = bytes_put(b, 11, 0) in
+  let _ = bytes_put(b, 12, 0) in
+  let _ = bytes_put(b, 13, 0) in
+  let _ = bytes_put(b, 14, 0) in
+  let _ = bytes_put(b, 15, 0) in
+  let _ = le16(b, E_TYPE, 16) in
+  let _ = le16(b, E_MACHINE, 18) in
+  let _ = le32(b, E_VERSION, 20) in
+  let _ = le64(b, entry, 24) in
+  let _ = le64(b, 64, 32) in        /* e_phoff */
+  let _ = le64(b, 0, 40) in         /* e_shoff = 0 */
+  let _ = le32(b, 0, 48) in         /* e_flags */
+  let _ = le16(b, 64, 52) in        /* e_ehsize */
+  let _ = le16(b, 56, 54) in        /* e_phentsize */
+  let _ = le16(b, 1, 56) in         /* e_phnum */
+  let _ = le16(b, 0, 58) in         /* e_shentsize */
+  let _ = le16(b, 0, 60) in         /* e_shnum */
+  let _ = le16(b, 0, 62) in         /* e_shstrndx */
+  0
+
+/* build the single PT_LOAD program header (56 bytes) at offset 64 */
+let elf_phdr(b, file_size) =
+  let _ = le32(b, PH_TYPE_LOAD, 64) in
+  let _ = le32(b, PH_FLAGS_RX, 68) in
+  let _ = le64(b, 0, 72) in         /* p_offset = 0 */
+  let _ = le64(b, LOAD_VADDR, 80) in /* p_vaddr */
+  let _ = le64(b, LOAD_VADDR, 88) in /* p_paddr */
+  let _ = le64(b, file_size, 96) in /* p_filesz */
+  let _ = le64(b, file_size, 104) in /* p_memsz */
+  let _ = le64(b, PAGE, 112) in     /* p_align */
+  0
+
+/* pack code bytes into a full ELF executable (bytes buffer). */
+let pack_elf(code) =
+  let text_off = 120 in              /* 64 ehdr + 56 phdr */
+  let entry = LOAD_VADDR + text_off in
+  let code_len = bytes_len(code) in
+  let file_size = text_off + code_len in
+  let out = bytes_new() in
+  let _ = bytes_put(out, 119, 0) in /* ensure capacity 120+ */
+  let _ = elf_header(out, entry, text_off) in
+  let _ = elf_phdr(out, file_size) in
+  /* copy code bytes after the headers */
+  let copy(i) =
+    if i >= code_len then 0
+    else
+      let _ = bytes_put(out, text_off + i, bytes_ref(code, i)) in
+      copy(i + 1) in
+  let _ = copy(0) in
+  out
