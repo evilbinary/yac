@@ -48,7 +48,7 @@ static void apply_prim(Value head, Value *args, int nargs, Value *out, Cst *st) 
         fail(st, "primitive '%s' expects %d argument(s), got %d", p->name, p->arity, nargs);
         return;
     }
-    PrimCtx ctx = {false, "", st->gc, call_value, st};
+    PrimCtx ctx = {false, "", st->gc, st->a, call_value, st};
     *out = p->fn(args, nargs, &ctx);
     if (ctx.errored) fail(st, "%s", ctx.errmsg);
 }

@@ -16,6 +16,7 @@ typedef enum {
     G_VALARR, /* Value array (call arguments) */
     G_LIST,   /* List: immutable list value (items) */
     G_BIGNUM, /* Bignum: arbitrary-precision integer (digits[]) */
+    G_BYTES,  /* Bytes: growable byte buffer (data is a separate malloc block) */
 } GKind;
 
 typedef struct GObj {

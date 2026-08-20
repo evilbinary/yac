@@ -36,6 +36,10 @@ actual=$($BIN tests/list.yac | tr -d '\r');  check "list primitives" "$list_out"
 bignum_out=$($BIN tests/bignum.yac | tr -d '\r')
 actual=$bignum_out; check "bignum arithmetic" "$bignum_out" "$actual"
 
+cp_out=$(printf '5\n\nfoobar\n\nbcd\n\n65\n\n67\n\n4\n\n65\n\n0\n\n4\n\n4\n\n200\n\n7\n\n128\n\n5\n\n12\n\n-1\n\n256\n\n1\n\n16\n\n4\n\n65\n\n0\n\n9\n\n\n')
+actual=$($BIN tests/compiler_prims.yac | tr -d '\r'); check "compiler primitives" "$cp_out" "$actual"
+actual=$($BIN --cps tests/compiler_prims.yac | tr -d '\r'); check "cps compiler primitives" "$cp_out" "$actual"
+
 # CPS parity: every ordinary program must produce the same result
 actual=$($BIN --cps tests/fact.yac);     check "cps factorial"        "3628800" "$actual"
 actual=$($BIN --cps tests/fib.yac);      check "cps fibonacci"        "832040" "$actual"

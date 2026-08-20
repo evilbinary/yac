@@ -58,6 +58,7 @@ Closure *gc_new_closure(Gc *g);
 ValArr *gc_new_valarr(Gc *g, int n);
 List *gc_new_list(Gc *g, int n);
 Bignum *gc_new_bignum(Gc *g, int ndigits);
+Bytes *gc_new_bytes(Gc *g);
 
 void gc_collect(Gc *g);
 

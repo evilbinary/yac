@@ -240,6 +240,7 @@ static void cleanup(Res *r) {
 }
 
 int main(int argc, char **argv) {
+    yac_set_args(argc, argv);
     bool dump_ast = false, dump_anf = false, dump_cps = false;
     bool cps_mode = false, both = false, uncps_mode = false, dump_uncps = false;
     bool no_gc = false, do_opt = false, repl_mode = false, scheme_mode = false;

@@ -221,6 +221,8 @@ static void write_value(FILE *f, Ctx *c, Value v) {
         }
         fputs(" }", f);
         break;
+    case V_BYTES: /* mutable compiler-internal type; not checkpointable */
+        break;
     }
 }
 

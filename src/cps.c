@@ -374,7 +374,7 @@ static CExp *fold_call(CExp *call, const CE *ce, OptCtx *c) {
         else if (args[i].kind == CV_VAR && ce_find(ce, args[i].u.var.name, &lits[i])) { /* ok */ }
         else return call;
     }
-    PrimCtx pctx = {false, "", NULL, NULL, NULL};
+    PrimCtx pctx = {false, "", NULL, NULL, NULL, NULL};
     Value r = p->fn(lits, na, &pctx);
     if (pctx.errored) return call; /* e.g. division by zero: keep it dynamic */
     CVal *nargs = (CVal *)arena_alloc(c->a, sizeof(CVal));

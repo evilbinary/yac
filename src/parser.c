@@ -206,6 +206,7 @@ static Ast *parse_atom(Parser *p) {
             return NULL;
         }
         Ast *body = parse_expr(p);
+        if (!body) { free(params); return NULL; }
         char **parr = params_to_arena(p, params, nparams);
         free(params);
         Ast *n = mk_fun(p, parr, nparams, body, t->line, t->col);
@@ -221,6 +222,7 @@ static Ast *parse_atom(Parser *p) {
                 free(items);
                 return NULL;
             }
+            if (p->error) { free(items); return NULL; }
             if (n == cap) {
                 cap = cap ? cap * 2 : 4;
                 items = (Ast **)realloc(items, (size_t)cap * sizeof(Ast *));
@@ -346,6 +348,7 @@ static Ast *parse_unary(Parser *p) {
     if (at(p, TK_KW_NOT)) {
         advance(p);
         Ast *op = parse_unary(p);
+        if (!op) return NULL;
         Ast *n = mk(p, A_NOT, t->line, t->col);
         n->u.operand = op;
         return n;
@@ -353,6 +356,7 @@ static Ast *parse_unary(Parser *p) {
     if (at(p, TK_MINUS)) {
         advance(p);
         Ast *op = parse_unary(p);
+        if (!op) return NULL;
         Ast *zero = mk(p, A_INT, t->line, t->col);
         zero->u.ival = 0;
         return mk_bin(p, OP_SUB, zero, op, t->line, t->col);
@@ -360,6 +364,7 @@ static Ast *parse_unary(Parser *p) {
     if (at(p, TK_KW_PRINT)) {
         advance(p);
         Ast *op = parse_expr(p);
+        if (!op) return NULL;
         Ast *n = mk(p, A_PRINT, t->line, t->col);
         n->u.operand = op;
         return n;
@@ -367,6 +372,7 @@ static Ast *parse_unary(Parser *p) {
     if (at(p, TK_KW_CALLCC)) {
         advance(p);
         Ast *op = parse_expr(p);
+        if (!op) return NULL;
         Ast *n = mk(p, A_CALLCC, t->line, t->col);
         n->u.operand = op;
         return n;
@@ -375,6 +381,7 @@ static Ast *parse_unary(Parser *p) {
         advance(p);
         Ast *k = parse_atom(p);
         Ast *v = parse_atom(p);
+        if (!k || !v) return NULL;
         Ast *n = mk(p, A_THROW, t->line, t->col);
         n->u.thr.k = k;
         n->u.thr.v = v;
@@ -389,6 +396,7 @@ static Ast *parse_mul(Parser *p) {
     while (at(p, TK_STAR) || at(p, TK_SLASH) || at(p, TK_PERCENT)) {
         const Token *t = advance(p);
         Ast *r = parse_unary(p);
+        if (!r) return NULL;
         int op = t->kind == TK_STAR ? OP_MUL : t->kind == TK_SLASH ? OP_DIV : OP_MOD;
         l = mk_bin(p, op, l, r, t->line, t->col);
     }
@@ -401,6 +409,7 @@ static Ast *parse_add(Parser *p) {
     while (at(p, TK_PLUS) || at(p, TK_MINUS)) {
         const Token *t = advance(p);
         Ast *r = parse_mul(p);
+        if (!r) return NULL;
         int op = t->kind == TK_PLUS ? OP_ADD : OP_SUB;
         l = mk_bin(p, op, l, r, t->line, t->col);
     }
@@ -425,6 +434,7 @@ static Ast *parse_cmp(Parser *p) {
     while (at(p, TK_EQEQ) || at(p, TK_NEQ) || at(p, TK_LT) || at(p, TK_LE) || at(p, TK_GT) || at(p, TK_GE)) {
         const Token *t = advance(p);
         Ast *r = parse_add(p);
+        if (!r) return NULL;
         l = mk_bin(p, cmp_op(t->kind), l, r, t->line, t->col);
     }
     return l;
@@ -436,6 +446,7 @@ static Ast *parse_and(Parser *p) {
     while (at(p, TK_KW_AND)) {
         const Token *t = advance(p);
         Ast *r = parse_cmp(p);
+        if (!r) return NULL;
         l = mk_bin(p, OP_AND, l, r, t->line, t->col);
     }
     return l;
@@ -447,6 +458,7 @@ static Ast *parse_or(Parser *p) {
     while (at(p, TK_KW_OR)) {
         const Token *t = advance(p);
         Ast *r = parse_and(p);
+        if (!r) return NULL;
         l = mk_bin(p, OP_OR, l, r, t->line, t->col);
     }
     return l;
@@ -457,16 +469,19 @@ static Ast *parse_if(Parser *p) {
     if (at(p, TK_KW_IF)) {
         advance(p);
         Ast *cond = parse_expr(p);
+        if (!cond) return NULL;
         if (!eat(p, TK_KW_THEN)) {
             p_err(p, "expected 'then'");
             return NULL;
         }
         Ast *then = parse_expr(p);
+        if (!then) return NULL;
         if (!eat(p, TK_KW_ELSE)) {
             p_err(p, "expected 'else'");
             return NULL;
         }
         Ast *els = parse_expr(p);
+        if (!els) return NULL;
         Ast *n = mk(p, A_IF, t->line, t->col);
         n->u.if_.cond = cond;
         n->u.if_.then = then;
@@ -493,12 +508,14 @@ static Ast *parse_expr(Parser *p) {
             return NULL;
         }
         Ast *bound = parse_expr(p);
+        if (!bound) { free(params); return NULL; }
         if (!eat(p, TK_KW_IN)) {
             p_err(p, "expected 'in'");
             free(params);
             return NULL;
         }
         Ast *body = parse_expr(p);
+        if (!body) { free(params); return NULL; }
         Ast *b = bound;
         if (nparams > 0) {
             char **parr = params_to_arena(p, params, nparams);

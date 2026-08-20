@@ -13,6 +13,7 @@ typedef struct Closure Closure;
 typedef struct Gc Gc;
 typedef struct List List;
 typedef struct Bignum Bignum;
+typedef struct Bytes Bytes;
 
 typedef enum {
     V_INT,
@@ -25,6 +26,7 @@ typedef enum {
     V_PRIM,
     V_LIST,
     V_BIG,  /* Bignum: arbitrary-precision integer */
+    V_BYTES, /* mutable byte buffer (compiler codegen) */
 } ValTag;
 
 typedef struct Str {
@@ -47,6 +49,7 @@ struct PrimCtx {
     bool errored;
     char errmsg[256];
     Gc *gc;          /* allocator for primitives that build heap values */
+    Arena *a;        /* arena for string/array literals the prim creates */
     PrimCallFn call; /* invoke a function value (map/filter/fold) */
     void *ud;        /* machine state handed to call */
 };
@@ -73,6 +76,7 @@ struct Value {
         const Prim *prim;
         List *l;
         Bignum *big;
+        Bytes *bytes;
     } u;
 };
 
@@ -118,6 +122,16 @@ typedef struct Bignum {
     uint32_t digits[]; /* little-endian base-2^32 magnitude digits */
 } Bignum;
 
+/* Growable byte buffer used for machine-code generation. `data` is a
+ * separate malloc block of `cap` bytes; `len` is the used length.
+ * GC-resident; the data block is freed when the object is collected. */
+typedef struct Bytes {
+    GObj hdr;
+    int len;
+    int cap;
+    unsigned char *data;
+} Bytes;
+
 extern const Value VALUE_NULL;
 
 /* constructors */
@@ -132,10 +146,12 @@ Value v_prim(const Prim *p);
 Value v_list(List *l);
 Value v_list_arena(Arena *a, const Value *items, int n);
 Value v_big(Bignum *b);
+Value v_bytes(Bytes *b);
 
 const Prim *prim_lookup(const char *name);
 const Prim *prim_table(int *count);
 const char *binop_prim_name(int op);
+void yac_set_args(int argc, char **argv);
 
 bool value_truthy(Value v);              /* only for V_BOOL */
 bool value_equal(Value a, Value b);

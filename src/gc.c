@@ -27,6 +27,7 @@ static void mark_value(Gc *g, Value v) {
     if (v.tag == V_FUN || v.tag == V_CONT) mark_obj(g, (GObj *)v.u.clo);
     else if (v.tag == V_LIST) mark_obj(g, (GObj *)v.u.l);
     else if (v.tag == V_BIG) mark_obj(g, (GObj *)v.u.big);
+    else if (v.tag == V_BYTES) mark_obj(g, (GObj *)v.u.bytes);
 }
 
 static void mark_obj(Gc *g, GObj *o) {
@@ -63,7 +64,8 @@ static void mark_obj(Gc *g, GObj *o) {
         break;
     }
     case G_BIGNUM:
-        break; /* digits are inline; no child pointers */
+    case G_BYTES:
+        break; /* payload is inline or a separate raw block; no child pointers */
     }
 }
 
@@ -138,6 +140,14 @@ Bignum *gc_new_bignum(Gc *g, int ndigits) {
     return b;
 }
 
+Bytes *gc_new_bytes(Gc *g) {
+    Bytes *b = (Bytes *)gc_alloc_raw(g, G_BYTES, sizeof(Bytes));
+    b->len = 0;
+    b->cap = 0;
+    b->data = NULL;
+    return b;
+}
+
 /* ---- roots ---- */
 
 void gc_push_root(Gc *g, GObj *o) {
@@ -156,7 +166,8 @@ void gc_pop_root(Gc *g) {
 void gc_push_value(Gc *g, Value v) {
     GObj *o = (v.tag == V_FUN || v.tag == V_CONT) ? (GObj *)v.u.clo
               : (v.tag == V_LIST) ? (GObj *)v.u.l
-              : (v.tag == V_BIG) ? (GObj *)v.u.big : NULL;
+              : (v.tag == V_BIG) ? (GObj *)v.u.big
+              : (v.tag == V_BYTES) ? (GObj *)v.u.bytes : NULL;
     gc_push_root(g, o); /* always push (NULL for immediates) to keep balance */
 }
 
@@ -171,7 +182,8 @@ void gc_set_frame(Gc *g, GObj *frame) {
 /* ---- collection ---- */
 
 static void free_obj(GObj *o) {
-    /* all payloads are contiguous with the header; string data is inline */
+    if (o->kind == G_BYTES) free(((Bytes *)o)->data); /* separate malloc block */
+    /* all other payloads are contiguous with the header */
     free(o);
 }
 

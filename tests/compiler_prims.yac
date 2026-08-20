@@ -1,0 +1,68 @@
+/* M1: compiler-support primitives (strings, byte buffers, bit ops, I/O) */
+
+/* string operations */
+print str_len("hello")
+print ""
+print str_cat("foo", "bar")
+print ""
+print str_slice("abcdef", 1, 3)
+print ""
+print str_ref("ABC", 0)
+print ""
+print str_ref("ABC", 2)
+print ""
+
+/* byte buffers (binary-safe codegen) */
+let b = bytes_new()
+let _ = bytes_append(b, 65)
+let _ = bytes_append(b, 0)
+let _ = bytes_append(b, 1)
+let _ = bytes_append(b, 2)
+print bytes_len(b)
+print ""
+print bytes_ref(b, 0)
+print ""
+print bytes_ref(b, 1)
+print ""
+print str_len(bytes_to_str(b))
+print ""
+
+/* byte buffer mutation at index */
+let c = bytes_new()
+let _ = bytes_put(c, 0, 200)
+let _ = bytes_put(c, 3, 7)
+print bytes_len(c)
+print ""
+print bytes_ref(c, 0)
+print ""
+print bytes_ref(c, 3)
+print ""
+
+/* bit operations */
+print band(255, 128)
+print ""
+print bor(1, 4)
+print ""
+print bxor(15, 3)
+print ""
+print bnot(0)
+print ""
+print bshl(1, 8)
+print ""
+print bshr(256, 8)
+print ""
+print band(bshl(1, 4), 255)
+print ""
+
+/* string <-> bytes round trip with embedded NUL */
+let raw = str_to_bytes("AB")
+let _ = bytes_append(raw, 0)
+let _ = bytes_append(raw, 9)
+print bytes_len(raw)
+print ""
+print bytes_ref(raw, 0)
+print ""
+print bytes_ref(raw, 2)
+print ""
+print bytes_ref(raw, 3)
+print ""
