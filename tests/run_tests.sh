@@ -211,6 +211,16 @@ else
     fail=$((fail + 1)); echo "FAIL: bignum checkpoint dump (rc=$rc)"
 fi
 
+# self-hosted compiler front-end: the yac-written lexer must tokenize
+# correctly (scientific notation, comments, keywords, etc.)
+sh tests/selfhost_lexer.sh
+lexfail=$?
+if [ $lexfail -eq 0 ]; then
+    pass=$((pass + 1)); echo "PASS: self-hosted lexer suite"
+else
+    fail=$((fail + 1)); echo "FAIL: self-hosted lexer suite ($lexfail failures)"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]

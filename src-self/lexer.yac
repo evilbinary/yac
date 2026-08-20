@@ -65,11 +65,29 @@ let scan_ident(s, i, line) =
   let k = if is_kw(w) then "kw" else "ident" in
   [mk_tok(k, w, line), e]
 
-/* scan a number (int or float) starting at pos */
+/* scan a number (int or float) starting at pos. Grammar:
+ *   digits [ . digits ] [ (e|E) [ + | - ] digits ]
+ * The exponent is only part of the number when e/E is followed by a digit
+ * (optionally signed); otherwise e/E begins a separate identifier. */
+let is_exp(c) = c == 101 or c == 69  /* 'e' or 'E' */
 let scan_num(s, i, line) =
   let e = read_run(s, i, fun (c) -> is_digit(c) or c == 46) in
-  let txt = str_slice(s, i, e - i) in
-  [mk_tok("num", txt, line), e]
+  /* yac's and/or are not short-circuit, so guard each sat() with if */
+  let m =
+    if at_end(s, e) then e
+    else if not is_exp(sat(s, e)) then e
+    else if at_end(s, e + 1) then e
+    else if is_digit(sat(s, e + 1)) then
+      read_run(s, e + 1, is_digit)
+    else if sat(s, e + 1) == 43 or sat(s, e + 1) == 45 then
+      /* optional sign: consume only if a digit follows */
+      if at_end(s, e + 2) then e
+      else if is_digit(sat(s, e + 2)) then read_run(s, e + 2, is_digit)
+      else e
+    else e
+  in
+  let txt = str_slice(s, i, m - i) in
+  [mk_tok("num", txt, line), m]
 
 /* scan a string literal starting after the opening quote at pos; returns
  * [tok, nextpos] or [null, 0] on unterminated */
