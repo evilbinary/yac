@@ -1,0 +1,147 @@
+/* lexer.yac — tokenizer for the self-hosted compiler front-end.
+ *
+ * Token: [kind, text, line]
+ *   kind: "ident" | "int" | "str" | "kw" | "op" | "punct" | "eof"
+ *   text:  lexeme string (str for strings is the decoded body)
+ *   line:  1-based line number
+ *
+ * Pure functional: lex(src,pos,line,acc) -> reversed token list.
+ * Exposes:
+ *   tokenize(src) -> token list (last element is ["eof","",line])
+ *   token_kind(t), token_text(t), token_line(t)
+ */
+
+let is_digit(c) = c >= 48 and c <= 57
+let is_alpha(c) = (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95
+let is_alnum(c) = is_digit(c) or is_alpha(c)
+let is_space(c) = c == 32 or c == 9 or c == 10 or c == 13
+let is_opchar(c) = c == 43 or c == 45 or c == 42 or c == 47 or c == 37 or
+                   c == 61 or c == 60 or c == 62 or c == 33
+
+let kw_set = ["let","in","fun","if","then","else","not","print",
+              "callcc","throw","and","or","true","false"]
+let is_kw(w) = foldl(fun (a,k) -> if a then true else w == k, false, kw_set)
+
+let slen(s) = str_len(s)
+let sat(s, i) = str_ref(s, i)
+let at_end(s, i) = i >= str_len(s)
+
+let reverse(xs) = foldl(fun (a,x) -> cons(x, a), [], xs)
+
+/* error sentinel: a token with kind "error" */
+let ERR = ["error", "lex", 0]
+
+/* skip spaces; returns new pos */
+let skip_sp(s, i, line) =
+  if at_end(s, i) then [i, line]
+  else if sat(s, i) == 10 then skip_sp(s, i + 1, line + 1)
+  else if is_space(sat(s, i)) then skip_sp(s, i + 1, line)
+  else [i, line]
+
+/* skip -- line comment */
+let skip_line_cm(s, i) =
+  if at_end(s, i) or sat(s, i) == 10 then i else skip_line_cm(s, i + 1)
+
+/* skip /* ... */ block comment; returns pos (0 on unterminated) */
+let skip_block_cm(s, i, line) =
+  if at_end(s, i) then 0
+  else if sat(s, i) == 42 and not at_end(s, i + 1) and sat(s, i + 1) == 47 then i + 2
+  else if sat(s, i) == 10 then skip_block_cm(s, i + 1, line + 1)
+  else skip_block_cm(s, i + 1, line)
+
+/* read a run of chars satisfying pred (given as a predicate fn on a char) */
+let read_run(s, i, pred) =
+  if at_end(s, i) then i
+  else if pred(sat(s, i)) then read_run(s, i + 1, pred)
+  else i
+
+/* --- token constructors --- */
+let mk_tok(kind, text, line) = [kind, text, line]
+
+/* scan an identifier or keyword starting at pos */
+let scan_ident(s, i, line) =
+  let e = read_run(s, i, is_alnum) in
+  let w = str_slice(s, i, e - i) in
+  let k = if is_kw(w) then "kw" else "ident" in
+  [mk_tok(k, w, line), e]
+
+/* scan a number (int or float) starting at pos */
+let scan_num(s, i, line) =
+  let e = read_run(s, i, fun (c) -> is_digit(c) or c == 46) in
+  let txt = str_slice(s, i, e - i) in
+  [mk_tok("num", txt, line), e]
+
+/* scan a string literal starting after the opening quote at pos; returns
+ * [tok, nextpos] or [null, 0] on unterminated */
+let scan_str(s, i, line, acc, buf) =
+  if at_end(s, i) then [ERR, 0]
+  else
+    let c = sat(s, i) in
+    if c == 34 then
+      let out = bytes_to_str(buf) in
+      [mk_tok("str", out, line), i + 1]
+    else if c == 92 then
+      /* escape: use next char raw (simple lexer; no \x decoding) */
+      if at_end(s, i + 1) then [ERR, 0]
+      else scan_str(s, i + 2, line, acc, buf)
+    else
+      let _ = bytes_append(buf, c) in
+      scan_str(s, i + 1, line, acc, buf)
+
+/* classify a delimiter char */
+let punct_kind(c) =
+  if c == 40 then "lparen"
+  else if c == 41 then "rparen"
+  else if c == 91 then "lbrk"
+  else if c == 93 then "rbrk"
+  else if c == 123 then "lbrace"
+  else if c == 125 then "rbrace"
+  else if c == 44 then "comma"
+  else if c == 59 then "semi"
+  else "punct"
+
+let is_punct(c) = c == 40 or c == 41 or c == 91 or c == 93 or c == 123 or
+                  c == 125 or c == 44 or c == 59
+
+/* main lex loop */
+let lex(s, i, line, acc) =
+  if at_end(s, i) then
+    cons(mk_tok("eof", "", line), acc)
+  else if is_space(sat(s, i)) then
+    let sp = skip_sp(s, i, line) in
+    lex(s, nth(sp, 0), nth(sp, 1), acc)
+  else if sat(s, i) == 45 and not at_end(s, i + 1) and sat(s, i + 1) == 45 then
+    lex(s, skip_line_cm(s, i + 2), line, acc)
+  else if sat(s, i) == 47 and not at_end(s, i + 1) and sat(s, i + 1) == 42 then
+    let e = skip_block_cm(s, i + 2, line) in
+    if e == 0 then cons(mk_tok("eof", "unterminated-comment", line), acc)
+    else lex(s, e, line, acc)
+  else if is_alpha(sat(s, i)) then
+    let r = scan_ident(s, i, line) in
+    lex(s, nth(r, 1), line, cons(nth(r, 0), acc))
+  else if is_digit(sat(s, i)) then
+    let r = scan_num(s, i, line) in
+    lex(s, nth(r, 1), line, cons(nth(r, 0), acc))
+  else if sat(s, i) == 34 then
+    let r = scan_str(s, i + 1, line, 0, bytes_new()) in
+    if nth(nth(r, 0), 0) == "error" then cons(mk_tok("eof", "unterminated-string", line), acc)
+    else lex(s, nth(r, 1), line, cons(nth(r, 0), acc))
+  else if is_opchar(sat(s, i)) then
+    let e = read_run(s, i, is_opchar) in
+    let txt = str_slice(s, i, e - i) in
+    lex(s, e, line, cons(mk_tok("op", txt, line), acc))
+  else if is_punct(sat(s, i)) then
+    let c = sat(s, i) in
+    let txt = str_slice(s, i, 1) in
+    lex(s, i + 1, line, cons(mk_tok(punct_kind(c), txt, line), acc))
+  else
+    /* unknown char: emit as punct so the parser reports it */
+    let txt = str_slice(s, i, 1) in
+    lex(s, i + 1, line, cons(mk_tok("punct", txt, line), acc))
+
+/* public API */
+let tokenize(src) = reverse(lex(src, 0, 1, []))
+
+let token_kind(t) = nth(t, 0)
+let token_text(t) = nth(t, 1)
+let token_line(t) = nth(t, 2)

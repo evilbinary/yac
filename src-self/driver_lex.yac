@@ -1,0 +1,9 @@
+/* driver_lex.yac — run the self-hosted lexer on a file and print tokens */
+let src = read_file("/tmp/s2y/lexin.yac");
+let toks = tokenize(src);
+let show(n) = if n >= len(toks) then 0 else
+  let t = nth(toks, n) in
+  let _ = print str_cat(str_cat(token_kind(t), " "), token_text(t)) in
+  show(n + 1);
+let _ = show(0);
+0;
