@@ -254,3 +254,63 @@ let mov_rsp_rbp(b) =
   let _ = e8(b, 72) in
   let _ = e8(b, 137) in
   e8(b, 236)
+
+/* ---- extra encoders for print_int runtime ---- */
+
+/* cmp rax, imm8 (48 83 f8 id8) */
+let cmp_rax_imm8(b, v) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 131) in
+  let _ = e8(b, 248) in   /* /7 rm=rax */
+  e8(b, band(v, 255))
+/* mov rcx, imm32 (48 c7 c1 id32) */
+let mov_rcx_imm(b, v) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 199) in
+  let _ = e8(b, 193) in
+  e32(b, v)
+/* idiv rcx (48 f7 f9) */
+let idiv_rcx(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 247) in
+  e8(b, 249)
+/* mov [rbp-8], rax (48 89 45 f8) */
+let mov_mem_rbp8_rax(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  let _ = e8(b, 69) in
+  e8(b, 248)
+/* mov rax, [rbp-8] (48 8b 45 f8) */
+let mov_rax_mem_rbp8(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 69) in
+  e8(b, 248)
+/* add rax, imm8 (48 83 c0 id8) */
+let add_rax_imm8(b, v) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 131) in
+  let _ = e8(b, 192) in
+  e8(b, band(v, 255))
+/* mov [rsp], al (88 04 24) */
+let mov_mem_rsp_al(b) =
+  let _ = e8(b, 136) in
+  let _ = e8(b, 4) in
+  e8(b, 36)
+/* mov rsi, rsp (48 89 e6) */
+let mov_rsi_rsp(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  e8(b, 230)
+/* mov rdx, imm8 (48 c7 c2 id32) */
+let mov_rdx_imm(b, v) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 199) in
+  let _ = e8(b, 194) in
+  e32(b, v)
+/* mov rdi, imm8 (48 c7 c7 id32) */
+let mov_rdi_imm(b, v) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 199) in
+  let _ = e8(b, 199) in
+  e32(b, v)
