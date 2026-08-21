@@ -186,68 +186,6 @@ let compile_top(items) =
 
 /* collect vars referenced in an anf body [bindings, tail], excluding names
  * bound inside it. accum is reversed list of names. */
-let collect_anf_vars(anf, accum) =
-  /* collect var names in an atom; a nested fun's free vars are captured here */
-  let atom_vars(atom, acc) =
-    let k = nth(atom, 0) in
-    if k == "var" then cons(nth(atom, 1), acc)
-    else if k == "fun" then collect_anf_vars(nth(atom, 2), acc)
-    else acc in
-  let bindings = nth(anf, 0) in
-  let tail = nth(anf, 1) in
-  let nb = len(bindings) in
-  let step(i, acc) =
-    if i >= nb then atom_vars(tail, acc)
-    else
-      let b = nth(bindings, i) in
-      let k = nth(b, 0) in
-      if k == "let" then
-        let a = nth(b, 2) in
-        step(i + 1, if nth(a, 0) == "var" then acc else atom_vars(a, acc))
-      else if k == "letbin" then
-        let acc2 = atom_vars(nth(b, 3), acc) in
-        step(i + 1, atom_vars(nth(b, 4), acc2))
-      else if k == "letcall" then
-        let acc2 = atom_vars(nth(b, 2), acc) in
-        let args = nth(b, 3) in
-        let loop(j, a) =
-          if j >= len(args) then a
-          else loop(j + 1, atom_vars(nth(args, j), a)) in
-        step(i + 1, loop(0, acc2))
-      else if k == "letif" then
-        let acc2 = atom_vars(nth(b, 2), acc) in
-        let acc3 = collect_anf_vars(nth(b, 3), acc2) in
-        step(i + 1, collect_anf_vars(nth(b, 4), acc3))
-      else if k == "letfun" then
-        step(i + 1, collect_anf_vars(nth(b, 3), acc))
-      else if k == "letprint" then
-        step(i + 1, atom_vars(nth(b, 2), acc))
-      else step(i + 1, acc) in
-  step(0, accum)
-
-/* free vars of a function body given its params: collect all refs, remove
- * params and any name bound inside. Returns ordered unique list. */
-/* collect all names bound inside an anf body (for exclusion). */
-let collect_bound(anf, accum) =
-  let bindings = nth(anf, 0) in
-  let nb = len(bindings) in
-  let step(i, acc) =
-    if i >= nb then acc
-    else
-      let b = nth(bindings, i) in
-      let k = nth(b, 0) in
-      if k == "let" then step(i + 1, cons(nth(b, 1), acc))
-      else if k == "letbin" then step(i + 1, cons(nth(b, 1), acc))
-      else if k == "letcall" then step(i + 1, cons(nth(b, 1), acc))
-      else if k == "letif" then
-        let acc2 = collect_bound(nth(b, 3), acc) in
-        step(i + 1, collect_bound(nth(b, 4), acc2))
-      else if k == "letfun" then step(i + 1, cons(nth(b, 1), acc))
-      else if k == "letprint" then step(i + 1, cons(nth(b, 1), acc))
-      else step(i + 1, acc) in
-  step(0, accum)
-
-/* is name in list? */
 let in_list(name, lst) =
   let rec(l) =
     if len(l) == 0 then false
@@ -257,8 +195,61 @@ let in_list(name, lst) =
 
 /* free vars of a function body given its params: refs minus params minus
  * names bound inside. Returns ordered unique list. */
+
+let collect_anf_vars(anf, accum, shadow) =
+  let atom_vars(atom, acc) =
+    let k = nth(atom, 0) in
+    if k == "var" then
+      if in_list(nth(atom, 1), shadow) then acc
+      else cons(nth(atom, 1), acc)
+    else if k == "fun" then collect_anf_vars(nth(atom, 2), acc, shadow)
+    else acc in
+  let bindings = nth(anf, 0) in
+  let tail = nth(anf, 1) in
+  let nb = len(bindings) in
+  /* step(i, acc, shdw): process binding i; bound name added to shdw after */
+  let step(i, acc, shdw) =
+    if i >= nb then [acc, atom_vars(tail, shdw)]
+    else
+      let b = nth(bindings, i) in
+      let k = nth(b, 0) in
+      let r =
+        if k == "let" then
+          let a = nth(b, 2) in
+          let acc2 = if nth(a, 0) == "var" then acc else atom_vars(a, acc) in
+          [acc2, cons(nth(b, 1), shdw)]
+        else if k == "letbin" then
+          let acc2 = atom_vars(nth(b, 3), acc) in
+          let acc3 = atom_vars(nth(b, 4), acc2) in
+          [acc3, cons(nth(b, 1), shdw)]
+        else if k == "letcall" then
+          let acc2 = atom_vars(nth(b, 2), acc) in
+          let args = nth(b, 3) in
+          let loop(j, a) =
+            if j >= len(args) then a
+            else loop(j + 1, atom_vars(nth(args, j), a)) in
+          [loop(0, acc2), cons(nth(b, 1), shdw)]
+        else if k == "letif" then
+          let acc2 = atom_vars(nth(b, 2), acc) in
+          let rr1 = collect_anf_vars(nth(b, 3), acc2, shdw) in
+          let acc3 = nth(rr1, 0) in
+          let shdw2 = nth(rr1, 1) in
+          let rr2 = collect_anf_vars(nth(b, 4), acc3, shdw2) in
+          [nth(rr2, 0), cons(nth(b, 1), nth(rr2, 1))]
+        else if k == "letfun" then
+          let p = nth(b, 2) in
+          let shdw2 = append(p, shdw) in
+          let rr = collect_anf_vars(nth(b, 3), acc, shdw2) in
+          [nth(rr, 0), cons(nth(b, 1), shdw)]
+        else if k == "letprint" then
+          [atom_vars(nth(b, 2), acc), cons(nth(b, 1), shdw)]
+        else [acc, shdw] in
+      let r0 = nth(r, 0) in
+      let r1 = nth(r, 1) in
+      step(i + 1, r0, r1) in
+  let res = step(0, accum, shadow) in
+  [nth(res, 0), nth(res, 1)]
+
+/* is name in list? */
 let free_vars(fnbody, params) =
-  let all = collect_anf_vars(fnbody, []) in
-  let bound = collect_bound(fnbody, params) in
-  let filtered = filter(fun (nm) -> not in_list(nm, bound), all) in
-  reverse(filtered)
+  reverse(nth(collect_anf_vars(fnbody, [], params), 0))
