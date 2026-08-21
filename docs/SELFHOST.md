@@ -452,3 +452,22 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 - 捕获变量在函数体内引用其参数槽。
 
 **实现顺序**：①lower 计算每个 lambda 的自由变量（捕获集）→ closure capSlots；②函数参数前插捕获参数；③apply 传 env 前缀。④GC（M3.5c）。
+
+### M3.5b 自由变量分析（已完成 + 剩余）
+
+**已完成**：`collect_anf_vars`（嵌套 `atom_vars` 避免相互递归）收集 body 引用；`collect_bound` 收集绑定名；`free_vars = refs - params - bound`。对非嵌套闭包正确：`fun(n)->n+x` → `[x]`。
+
+**剩余（精确遮蔽）**：当前对**嵌套闭包过度捕获**（`fun(n)->fun(m)->n+m` 会误捕 `[m]`）。
+修复：`collect_anf_vars(anf, accum, shadow)` 带**遮蔽集**：
+- 收集 var 时，若 `name ∈ shadow` 则跳过（是绑定引用，非自由）。
+- `letfun` 递归 body：`shadow ∪ params`。
+- `let x = e in body`：e 用当前 shadow（x 是外层），body 用 `shadow ∪ {x}`。
+- `letbin/letcall/letif`：子表达式用当前 shadow（dst 名不遮蔽子表达式）。
+- 顶层调用 shadow 初始 = params。
+
+### 捕获集成（下次）
+1. 精确 free_vars（上述遮蔽）。
+2. lower 编译 letfun 时：函数参数 = [捕获参数..., 用户参数...]（捕获参数是自由变量）。
+3. closure：对象存捕获值；apply 把捕获值作为函数前缀参数传入（rdi.. 前缀，用户参数接后）。
+4. 函数体内捕获变量引用其捕获参数槽。
+5. GC（M3.5c）。
