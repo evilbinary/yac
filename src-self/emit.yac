@@ -1,123 +1,179 @@
 /* emit.yac — translate LIR to x86-64 machine code (M3.2).
  *
- * Single pass. Each LIR instruction appends bytes. For branch/call offsets
- * that are not yet known, we emit a placeholder and record a patch; patches
- * are applied after all code is generated.
+ * Single-pass emission with deferred patch-up. Lengths are computed from the
+ * ACTUAL number of bytes appended (bytes_len before/after), never hand-counted,
+ * so cur always matches reality.
  *
- * Slot k -> frame [rbp - 8*k] (disp8). Temporaries flow through rax.
- * Arg slots load into rdi..r9 (System V order) before a call; result rax
- * stored to dst slot. Entry function result -> exit code via syscall.
+ * - instructions append bytes; cur += bytes appended (real)
+ * - labels record [name, cur]
+ * - jmp/br write placeholder rel32 and record a patch [bytePos, target]
+ *   where bytePos is the start of the rel32 field
+ * After all code, patches are resolved: rel = target - (bytePos+4).
  *
- * A program is ["prog", [fun...], entryName] where each fun is
- * ["fun", name, nparams, [insn...]].
+ * Slot k -> [rbp - 8*k]. Entry (_start) sets rbp, no push/pop.
  *
- * Returns [codeBytes, funOffsets] where funOffsets is [[name, offset]...].
+ * Program: ["prog", [fun...], entryName]; fun = ["fun", name, nparams, [insn...]].
+ * Returns [codeBytes, funOffsets].
  */
 
 let reverse(xs) = foldl(fun (a, x) -> cons(x, a), [], xs)
-
-/* ---- slot addressing: [rbp - 8k], disp8 = (-8k) mod 256 ---- */
 let slot8(k) = band(0 - bshl(k, 3), 255)
-
-/* mov rax, [rbp+off] (load slot k) */
 let emit_load_rax_slot(b, k) = mov_r64_mem_rbp(b, 0, slot8(k))
-/* mov [rbp+off], rax (store slot k) */
 let emit_store_rax_slot(b, k) = mov_mem_rbp_r64(b, slot8(k), 0)
 
-/* append `src` (a bytes) to `dst` (a bytes) */
-let b_append(dst, src) =
-  let copy(i) =
-    if i >= bytes_len(src) then 0
-    else
-      let _ = bytes_append(dst, bytes_ref(src, i)) in
-      copy(i + 1) in
-  let _ = copy(0) in
-  dst
+let cc_of(op) =
+  if op == "<" then 12 else if op == "<=" then 14
+  else if op == ">" then 15 else if op == ">=" then 13
+  else if op == "==" then 4 else 5
 
-/* encode one instruction into b. is_entry: the entry (_start) has no return
- * address, so prologue just sets rbp and reserves space; no push/pop rbp. */
-let emit_insn(b, insn, is_entry) =
+let apply_patch(b, bytePos, target) =
+  let rel = target - (bytePos + 4) in
+  let _ = bytes_put(b, bytePos + 0, band(rel, 255)) in
+  let _ = bytes_put(b, bytePos + 1, band(bshr(rel, 8), 255)) in
+  let _ = bytes_put(b, bytePos + 2, band(bshr(rel, 16), 255)) in
+  let _ = bytes_put(b, bytePos + 3, band(bshr(rel, 24), 255)) in
+  0
+
+/* emit one instruction; st = [bytes, cur, labelsRev, patchesRev]. */
+let emit_insn(st, insn, is_entry) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
   let k = nth(insn, 0) in
-  if k == "prologue" then
-    let nlocals = nth(insn, 1) in
-    if is_entry then
-      let _ = mov_rbp_rsp(b) in
-      let _ = sub_rsp_imm8(b, band(bshl(nlocals, 3), 255)) in
-      0
-    else
-      let _ = push_rbp(b) in
-      let _ = mov_rbp_rsp(b) in
-      let _ = sub_rsp_imm8(b, band(bshl(nlocals, 3), 255)) in
-      0
-  else if k == "mov_imm" then
-    let _ = mov_r64_imm(b, 0, nth(insn, 2)) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    0
-  else if k == "mov" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    0
-  else if k == "binop" then
-    let op = nth(insn, 1) in
-    let dst = nth(insn, 2) in
-    let a = nth(insn, 3) in
-    let bop = nth(insn, 4) in
-    let _ = emit_load_rax_slot(b, a) in
-    let c =
-      if op == "+" then add_rax_mem_rbp(b, slot8(bop))
-      else if op == "-" then sub_rax_mem_rbp(b, slot8(bop))
-      else if op == "*" then imul_rax_mem_rbp(b, slot8(bop))
-      else if op == "/" then
-        let _ = cqo(b) in
-        idiv_rax_mem_rbp(b, slot8(bop))
-      else if op == "%" then
-        let _ = cqo(b) in
-        let _ = idiv_rax_mem_rbp(b, slot8(bop)) in
-        mov_r64_r64(b, 0, 2)   /* rdx (remainder) -> rax */
-      else 0 in
-    let _ = c in
-    let _ = emit_store_rax_slot(b, dst) in
-    0
-  else if k == "ret" then
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    if is_entry then
-      let _ = ret(b) in
-      0
-    else
-      let _ = pop_rbp(b) in
-      let _ = ret(b) in
-      0
-  else if k == "exit" then
-    /* load slot -> rdi; syscall exit(60) */
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = mov_rdi_rax(b) in
-    let _ = mov_r64_imm(b, 0, 60) in  /* rax = 60 */
-    let _ = syscall(b) in
-    0
-  else 0
+  let len0 = bytes_len(b) in
+  let done =
+    if k == "prologue" then
+      let nlocals = nth(insn, 1) in
+      if is_entry then
+        let _ = mov_rbp_rsp(b) in
+        let _ = sub_rsp_imm8(b, band(bshl(nlocals, 3), 255)) in
+        [b, cur, labels, patches]
+      else
+        let _ = push_rbp(b) in
+        let _ = mov_rbp_rsp(b) in
+        let _ = sub_rsp_imm8(b, band(bshl(nlocals, 3), 255)) in
+        [b, cur, labels, patches]
+    else if k == "mov_imm" then
+      let _ = mov_r64_imm(b, 0, nth(insn, 2)) in
+      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+      [b, cur, labels, patches]
+    else if k == "mov" then
+      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+      [b, cur, labels, patches]
+    else if k == "binop" then
+      let op = nth(insn, 1) in
+      let dst = nth(insn, 2) in
+      let a = nth(insn, 3) in
+      let bop = nth(insn, 4) in
+      let _ = emit_load_rax_slot(b, a) in
+      let c =
+        if op == "+" then add_rax_mem_rbp(b, slot8(bop))
+        else if op == "-" then sub_rax_mem_rbp(b, slot8(bop))
+        else if op == "*" then imul_rax_mem_rbp(b, slot8(bop))
+        else if op == "/" then
+          let _ = cqo(b) in
+          idiv_rax_mem_rbp(b, slot8(bop))
+        else if op == "%" then
+          let _ = cqo(b) in
+          let _ = idiv_rax_mem_rbp(b, slot8(bop)) in
+          mov_r64_r64(b, 0, 2)
+        else 0 in
+      let _ = c in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, patches]
+    else if k == "cmp" then
+      let op = nth(insn, 1) in
+      let dst = nth(insn, 2) in
+      let a = nth(insn, 3) in
+      let bop = nth(insn, 4) in
+      let _ = emit_load_rax_slot(b, a) in
+      let _ = cmp_rax_mem_rbp(b, slot8(bop)) in
+      let _ = setcc_r8(b, cc_of(op)) in
+      let _ = movzx_eax_al(b) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, patches]
+    else if k == "label" then
+      let nm = nth(insn, 1) in
+      [b, cur, cons([nm, cur], labels), patches]
+    else if k == "jmp" then
+      /* jmp_rel32: e9 + rel32; rel32 field at len0+1 */
+      let _ = jmp_rel32(b, 0) in
+      [b, cur, labels, cons([len0 + 1, nth(insn, 1)], patches)]
+    else if k == "br" then
+      let cond = nth(insn, 1) in
+      let tl = nth(insn, 2) in
+      let fl = nth(insn, 3) in
+      let _ = emit_load_rax_slot(b, cond) in
+      let _ = test_rax_rax(b) in
+      let _ = jcc_rel32(b, 4, 0) in  /* 0f 84 + rel32 */
+      let _ = jmp_rel32(b, 0) in     /* e9 + rel32 */
+      /* jz rel32 at len0+4+3+2; jmp rel32 at len0+4+3+6+1 */
+      [b, cur, labels,
+       cons([len0 + 9, fl], cons([len0 + 14, tl], patches))]
+    else if k == "ret" then
+      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+      if is_entry then let _ = ret(b) in [b, cur, labels, patches]
+      else
+        let _ = pop_rbp(b) in
+        let _ = ret(b) in
+        [b, cur, labels, patches]
+    else if k == "exit" then
+      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+      let _ = mov_rdi_rax(b) in
+      let _ = mov_r64_imm(b, 0, 60) in
+      let _ = syscall(b) in
+      [b, cur, labels, patches]
+    else [b, cur, labels, patches] in
+  /* update cur by the ACTUAL bytes appended */
+  let newlen = bytes_len(b) in
+  [nth(done, 0), cur + (newlen - len0), nth(done, 2), nth(done, 3)]
 
 /* ---- program emission ---- */
+
+let lookup_name(table, name) =
+  let rec(l) =
+    if len(l) == 0 then 0
+    else if nth(nth(l, 0), 0) == name then nth(nth(l, 0), 1)
+    else rec(drop(l, 1)) in
+  rec(table)
 
 let emit_program(prog) =
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
   let entry = nth(prog, 2) in
   let out = bytes_new() in
-  let offs = [] in
-  let emit_fun(i, acc_offs) =
-    if i >= nfun then acc_offs
+  let glob = [out, 0, [], []] in
+  let funOffsRev = [] in
+  let emit_fun(i, st, fo) =
+    if i >= nfun then [st, fo]
     else
       let f = nth(funs, i) in
       let name = nth(f, 1) in
       let is_entry = name == entry in
-      let fstart = bytes_len(out) in
+      let fstart = nth(st, 1) in
       let insns = nth(f, 3) in
-      let run(j) =
-        if j >= len(insns) then 0
-        else
-          let _ = emit_insn(out, nth(insns, j), is_entry) in
-          run(j + 1) in
-      let _ = run(0) in
-      emit_fun(i + 1, cons([name, fstart], acc_offs)) in
-  let _ = emit_fun(0, []) in
-  [out, reverse(offs)]
+      let run(j, s) =
+        if j >= len(insns) then s
+        else run(j + 1, emit_insn(s, nth(insns, j), is_entry)) in
+      let s1 = run(0, st) in
+      emit_fun(i + 1, s1, cons([name, fstart], fo)) in
+  let r1 = emit_fun(0, glob, []) in
+  let st = nth(r1, 0) in
+  let funOffsRev = nth(r1, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let b = nth(st, 0) in
+  let resolve(ps) =
+    if len(ps) == 0 then 0
+    else
+      let p = nth(ps, 0) in
+      let pos = nth(p, 0) in
+      let tname = nth(p, 1) in
+      let targ1 = lookup_name(labels, tname) in
+      let targ2 = if targ1 == 0 then lookup_name(funOffsRev, tname) else targ1 in
+      let _ = apply_patch(b, pos, targ2) in
+      resolve(drop(ps, 1)) in
+  let _ = resolve(patches) in
+  [b, funOffsRev]

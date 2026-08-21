@@ -189,7 +189,18 @@ let mov_rax_rdi(b) =
 
 /* ---- branches ---- */
 
-/* jcc rel8: 7x id8 */
+/* test rax, rax (48 85 c0) */
+let test_rax_rax(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 133) in
+  e8(b, 192)
+
+/* jcc rel32: 0f 8x id32 (near conditional jump) */
+let jcc_rel32(b, cc, off) =
+  let _ = e8(b, 15) in
+  let _ = e8(b, bor(128, cc)) in
+  e32(b, off)
+/* jcc rel8: 7x id8 (short conditional jump) */
 let jcc_rel8(b, cc, off) =
   let _ = e8(b, bor(112, cc)) in
   e8(b, band(off, 255))

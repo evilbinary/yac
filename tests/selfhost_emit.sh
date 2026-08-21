@@ -57,6 +57,16 @@ run_compile "mod 17%5" "$MOD" "2"
 EXPR='["prog",[["fun","_start",0,[["prologue",5],["mov_imm",1,100],["mov_imm",2,30],["binop","-",3,1,2],["mov_imm",4,2],["mov_imm",5,4],["binop","*",4,4,5],["binop","+",3,3,4],["exit",3]]]],"_start"]'
 run_compile "expr (100-30)+2*4" "$EXPR" "78"
 
+# if/br: 5 < 10 -> L1 (exit 1); false path -> L2 (exit 2)
+IF_TRUE='["prog",[["fun","_start",0,[["prologue",4],["mov_imm",1,5],["mov_imm",2,10],["cmp","<",3,1,2],["br",3,"L1","L2"],["label","L1"],["mov_imm",4,1],["exit",4],["label","L2"],["mov_imm",4,2],["exit",4]]]],"_start"]'
+run_compile "branch 5<10 (true)" "$IF_TRUE" "1"
+
+IF_FALSE='["prog",[["fun","_start",0,[["prologue",4],["mov_imm",1,20],["mov_imm",2,10],["cmp","<",3,1,2],["br",3,"L1","L2"],["label","L1"],["mov_imm",4,1],["exit",4],["label","L2"],["mov_imm",4,2],["exit",4]]]],"_start"]'
+run_compile "branch 20<10 (false)" "$IF_FALSE" "2"
+
+IF_EQ='["prog",[["fun","_start",0,[["prologue",4],["mov_imm",1,7],["mov_imm",2,7],["cmp","==",3,1,2],["br",3,"L1","L2"],["label","L1"],["mov_imm",4,1],["exit",4],["label","L2"],["mov_imm",4,2],["exit",4]]]],"_start"]'
+run_compile "branch 7==7 (true)" "$IF_EQ" "1"
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]
