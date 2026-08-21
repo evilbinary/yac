@@ -18,6 +18,62 @@
 
 let reverse(xs) = foldl(fun (a, x) -> cons(x, a), [], xs)
 let slot8(k) = band(0 - bshl(k, 3), 255)
+
+/* append bytes `src` to bytes `dst` */
+let b_append(dst, src) =
+  let copy(i) =
+    if i >= bytes_len(src) then 0
+    else
+      let _ = bytes_append(dst, bytes_ref(src, i)) in
+      copy(i + 1) in
+  let _ = copy(0) in
+  dst
+
+/* write a single newline via syscall: push '\n'; rsi=rsp; write(1,"\n",1) */
+let emit_newline(b) =
+  let _ = e8(b, 106) in       /* push imm8 */
+  let _ = e8(b, 10) in        /* '\n' */
+  let _ = mov_rsi_rsp(b) in
+  let _ = mov_rdx_imm(b, 1) in
+  let _ = mov_rdi_imm(b, 1) in
+  let _ = mov_r64_imm(b, 0, 1) in
+  let _ = syscall(b) in
+  let _ = e8(b, 72) in        /* add rsp, 8 (48 83 c4 08) */
+  let _ = e8(b, 131) in
+  let _ = e8(b, 196) in
+  let _ = e8(b, 8) in
+  0
+
+/* print_int(n in rdi): recursively print decimal digits to stdout.
+ * Fixed layout; recursive call rel32 is -41 (call to function start). */
+let gen_print_int(d) =
+  let b = bytes_new() in
+  let _ = e8(b, 85) in
+  let _ = mov_rbp_rsp(b) in
+  let _ = sub_rsp_imm8(b, 16) in
+  let _ = mov_rax_rdi(b) in
+  let _ = mov_rcx_imm(b, 10) in
+  let _ = cqo(b) in
+  let _ = idiv_rcx(b) in
+  let _ = mov_mem_rbp8_rdx(b) in
+  let _ = cmp_rax_imm8(b, 0) in
+  let _ = jcc_rel8(b, 4, 8) in    /* je printdigit rel 0x08 */
+  let _ = mov_rdi_rax(b) in
+  let _ = call_rel32(b, -41) in   /* recurse; falls through to printdigit */
+  let _ = mov_rax_mem_rbp8(b) in
+  let _ = add_rax_imm8(b, 48) in
+  let _ = sub_rsp_imm8(b, 8) in
+  let _ = mov_mem_rsp_al(b) in
+  let _ = mov_rsi_rsp(b) in
+  let _ = mov_rdx_imm(b, 1) in
+  let _ = mov_rdi_imm(b, 1) in
+  let _ = mov_r64_imm(b, 0, 1) in
+  let _ = syscall(b) in
+  let _ = add_rsp_imm8(b, 8) in
+  let _ = mov_rsp_rbp(b) in
+  let _ = pop_rbp(b) in
+  let _ = ret(b) in
+  b
 let emit_load_rax_slot(b, k) = mov_r64_mem_rbp(b, 0, slot8(k))
 let emit_store_rax_slot(b, k) = mov_mem_rbp_r64(b, slot8(k), 0)
 
@@ -162,6 +218,14 @@ let emit_insn(st, insn, is_entry) =
       let _ = mov_r64_imm(b, 0, 60) in
       let _ = syscall(b) in
       [b, cur, labels, patches]
+    else if k == "print" then
+      /* print slot: load -> rdi; call print_int; write newline */
+      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+      let _ = mov_rdi_rax(b) in
+      let callstart = bytes_len(b) in
+      let _ = call_rel32(b, 0) in
+      let _ = emit_newline(b) in
+      [b, cur, labels, cons([callstart + 1, "print_int"], patches)]
     else [b, cur, labels, patches] in
   /* update cur by the ACTUAL bytes appended */
   let newlen = bytes_len(b) in
@@ -202,6 +266,11 @@ let emit_program(prog) =
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
   let b = nth(st, 0) in
+  /* append the print_int runtime helper and register its offset */
+  let pi_off = bytes_len(b) in
+  let pi = gen_print_int(0) in
+  let _ = b_append(b, pi) in
+  let funOffsRev2 = cons(["print_int", pi_off], funOffsRev) in
   let resolve(ps) =
     if len(ps) == 0 then 0
     else
@@ -209,8 +278,8 @@ let emit_program(prog) =
       let pos = nth(p, 0) in
       let tname = nth(p, 1) in
       let targ1 = lookup_name(labels, tname) in
-      let targ2 = if targ1 == 0 then lookup_name(funOffsRev, tname) else targ1 in
+      let targ2 = if targ1 == 0 then lookup_name(funOffsRev2, tname) else targ1 in
       let _ = apply_patch(b, pos, targ2) in
       resolve(drop(ps, 1)) in
   let _ = resolve(patches) in
-  [b, funOffsRev]
+  [b, funOffsRev2]

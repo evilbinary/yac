@@ -372,3 +372,16 @@ let sar_rax_1(b) =
 /* shl rax, 1  (48 d1 e0) — tag an int */
 let shl_rax_1(b) =
   let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 224)
+
+/* mov [rbp-8], rdx  (48 89 55 f8) */
+let mov_mem_rbp8_rdx(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  let _ = e8(b, 85) in
+  e8(b, 248)
+/* mov rax, [rbp-16]  (48 8b 45 f0) */
+let mov_rax_mem_rbp16(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 69) in
+  e8(b, 240)
