@@ -124,7 +124,9 @@ let emit_insn(st, insn, is_entry) =
         let _ = storeparams(0) in
         [b, cur, labels, patches]
     else if k == "mov_imm" then
+      /* tag: store n<<1 */
       let _ = mov_r64_imm(b, 0, nth(insn, 2)) in
+      let _ = shl_rax_1(b) in
       let _ = emit_store_rax_slot(b, nth(insn, 1)) in
       [b, cur, labels, patches]
     else if k == "mov" then
@@ -132,24 +134,29 @@ let emit_insn(st, insn, is_entry) =
       let _ = emit_store_rax_slot(b, nth(insn, 1)) in
       [b, cur, labels, patches]
     else if k == "binop" then
+      /* untag both operands, compute, retag */
       let op = nth(insn, 1) in
       let dst = nth(insn, 2) in
       let a = nth(insn, 3) in
       let bop = nth(insn, 4) in
       let _ = emit_load_rax_slot(b, a) in
+      let _ = sar_rax_1(b) in
+      let _ = mov_rbx_mem_rbp(b, slot8(bop)) in
+      let _ = sar_rbx_1(b) in
       let c =
-        if op == "+" then add_rax_mem_rbp(b, slot8(bop))
-        else if op == "-" then sub_rax_mem_rbp(b, slot8(bop))
-        else if op == "*" then imul_rax_mem_rbp(b, slot8(bop))
+        if op == "+" then add_rax_rbx(b)
+        else if op == "-" then sub_rax_rbx(b)
+        else if op == "*" then imul_rax_rbx(b)
         else if op == "/" then
           let _ = cqo(b) in
-          idiv_rax_mem_rbp(b, slot8(bop))
+          idiv_rbx(b)
         else if op == "%" then
           let _ = cqo(b) in
-          let _ = idiv_rax_mem_rbp(b, slot8(bop)) in
+          let _ = idiv_rbx(b) in
           mov_r64_r64(b, 0, 2)
         else 0 in
       let _ = c in
+      let _ = shl_rax_1(b) in
       let _ = emit_store_rax_slot(b, dst) in
       [b, cur, labels, patches]
     else if k == "cmp" then
@@ -158,9 +165,13 @@ let emit_insn(st, insn, is_entry) =
       let a = nth(insn, 3) in
       let bop = nth(insn, 4) in
       let _ = emit_load_rax_slot(b, a) in
-      let _ = cmp_rax_mem_rbp(b, slot8(bop)) in
+      let _ = sar_rax_1(b) in
+      let _ = mov_rbx_mem_rbp(b, slot8(bop)) in
+      let _ = sar_rbx_1(b) in
+      let _ = cmp_rax_rbx(b) in
       let _ = setcc_r8(b, cc_of(op)) in
       let _ = movzx_eax_al(b) in
+      let _ = shl_rax_1(b) in   /* tag the boolean */
       let _ = emit_store_rax_slot(b, dst) in
       [b, cur, labels, patches]
     else if k == "label" then
@@ -214,13 +225,15 @@ let emit_insn(st, insn, is_entry) =
         [b, cur, labels, patches]
     else if k == "exit" then
       let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+      let _ = sar_rax_1(b) in   /* untag */
       let _ = mov_rdi_rax(b) in
       let _ = mov_r64_imm(b, 0, 60) in
       let _ = syscall(b) in
       [b, cur, labels, patches]
     else if k == "print" then
-      /* print slot: load -> rdi; call print_int; write newline */
+      /* print slot: load -> untag -> rdi; call print_int; write newline */
       let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+      let _ = sar_rax_1(b) in
       let _ = mov_rdi_rax(b) in
       let callstart = bytes_len(b) in
       let _ = call_rel32(b, 0) in

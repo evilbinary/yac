@@ -385,3 +385,32 @@ let mov_rax_mem_rbp16(b) =
   let _ = e8(b, 139) in
   let _ = e8(b, 69) in
   e8(b, 240)
+
+/* ---- rbx operand support (for tagged arithmetic) ---- */
+/* mov rbx, [rbp+disp8]  (48 8b 5d id8) */
+let mov_rbx_mem_rbp(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, modrm(1, 3, 5)) in
+  e8(b, band(d, 255))
+/* sar rbx, 1  (48 d1 fb) */
+let sar_rbx_1(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 251)
+/* add rax, rbx  (48 01 d8) */
+let add_rax_rbx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 1) in e8(b, 216)
+/* sub rax, rbx  (48 29 d8) */
+let sub_rax_rbx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 41) in e8(b, 216)
+/* imul rax, rbx  (48 0f af c3) */
+let imul_rax_rbx(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 15) in
+  let _ = e8(b, 175) in
+  e8(b, 195)
+/* idiv rbx  (48 f7 fb) */
+let idiv_rbx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 247) in e8(b, 251)
+/* cmp rax, rbx  (48 39 d8) */
+let cmp_rax_rbx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 57) in e8(b, 216)
