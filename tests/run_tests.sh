@@ -257,6 +257,15 @@ else
     fail=$((fail + 1)); echo "FAIL: self-hosted LIR codegen suite ($emfail failures)"
 fi
 
+# self-hosted compiler M3.3: full source -> ELF end-to-end
+sh tests/selfhost_e2e.sh
+e2efail=$?
+if [ $e2efail -eq 0 ]; then
+    pass=$((pass + 1)); echo "PASS: self-hosted source-to-ELF e2e suite"
+else
+    fail=$((fail + 1)); echo "FAIL: self-hosted source-to-ELF e2e suite ($e2efail failures)"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]
