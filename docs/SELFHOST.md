@@ -196,10 +196,14 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | M1 | yac 语言补缺：字符串/字节缓冲/位运算/文件 IO/argv/exit/int_to_str 原语（进 `PRIMS`） | ✅ 完成 |
 | M2 | 前端：`lexer.yac` `parser.yac` `anf.yac`（用 List 表示 IR） | ✅ 完成 |
 | M3.1 | ELF 打包器 `elf.yac`（最小 x86-64 ELF64，exit(42) 跑通） | ✅ 完成 |
-| M3.2 | x86-64 指令编码库 + LIR 生成 + 代码发射 | 🔄 进行中 |
+| M3.2 | x86-64 指令编码库 `encode_x64.yac` + LIR `lir.yac` + 代码发射 `emit.yac`（算术/比较/if/函数调用/递归） | ✅ 完成 |
+| M3.3 | `lower.yac` ANF→LIR + **源码→ELF 端到端**（递归 fact 跑通） | ✅ 完成 |
+| M3.4 | 多参数调用、print（十进制输出） | 🔄 进行中 |
+| M3.5 | **闭包 + GC**（必需项，见 §10.3） | ⏳ 待开始 |
 
-**已落地文件**：`src-self/{lexer,parser,anf,elf,driver_*}.yac`；测试套件
-`tests/selfhost_{lexer,parser,anf,elf}.sh`（共 47 项，全绿，`make test`）。
+**已落地文件**：`src-self/{lexer,parser,anf,lower,lir,emit,elf,backend,encode_x64,driver_*}.yac`；
+测试套件 `tests/selfhost_{lexer,parser,anf,elf,emit,e2e}.sh`（49 项全绿，`make test`）。
+**M3.3 完成**：源码→ELF 端到端（递归 fact(5)=120 等 9 例）。
 GitHub 推送已通过 SSH 远程 + 代理 `http://127.0.0.1:10809` 解决。
 
 ### 10.2 计划（按用户确定的路线图）
