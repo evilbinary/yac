@@ -428,3 +428,27 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 6. GC（M3.5c）：闭包对象加 `[next][mark]` 头，标记清除。
 
 **调用约定**：函数参数从用户参数 rdi.. 开始（closure 的环境在对象里，函数内通过额外机制解包——建议先只支持无捕获，捕获环境后续加）。
+
+### M3.5b 已完成补充
+
+**无捕获闭包已实现并验证**：
+- `closure` LIR：alloc 对象 `[fnptr][nenv][env...]`，fnptr 用绝对 imm32 patch（`LOAD_VADDR+TEXT_OFF+fnOff`），tag 指针。
+- `apply` LIR：untag 闭包指针，取 fnptr，间接 `call rbx`。
+- 验证：`closure inc; apply inc 5` → 6。
+- **陷阱**：apply 不能对 fnptr 做 `and ~1`（fnptr 是绝对地址，奇偶任意）。
+
+### 捕获环境（下次继续）
+
+**核心难点：函数如何访问闭包捕获的环境。**
+候选方案（需选一）：
+1. **统一函数约定**：所有函数第一参数 `rdi=闭包`，用户参数 rsi..。函数 prologue 从 rdi 解包 env 到帧槽。但需改 `call`（普通调用也传 closure，可传 NULL/忽略）——统一但改动大。
+2. **捕获作前缀参数**：闭包对象存 env 值；apply 把 env 作为函数前缀参数（在用户参数前）传入。函数签名 = [捕获..., 用户...]。需 lower 区分。
+3. **间接环境指针**：函数额外收 rdi=env 指针（指向闭包对象 env 区），函数内经 rdi 索引访问捕获变量。
+
+**推荐方案 2**（改动相对局部）：
+- closure 对象 `[fnptr][nenv][env0..env_{k-1}]`。
+- apply 生成：读对象 env 到 rdi,rsi,...（前缀），用户参数接在后面（rdx,rcx,...）。
+- 函数 LIR 参数列表 = [捕获参数..., 用户参数...]（lower 生成时已知捕获集）。
+- 捕获变量在函数体内引用其参数槽。
+
+**实现顺序**：①lower 计算每个 lambda 的自由变量（捕获集）→ closure capSlots；②函数参数前插捕获参数；③apply 传 env 前缀。④GC（M3.5c）。
