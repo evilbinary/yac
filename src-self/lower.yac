@@ -181,3 +181,52 @@ let compile_top(items) =
                append([["prologue", result_slot, 0]],
                       append(entry_insns, [["exit", result_slot]]))] in
   ["prog", cons(entry, reverse(funs)), "_start"]
+
+/* ---- free-variable analysis (for closures) ---- */
+
+/* collect vars referenced in an anf body [bindings, tail], excluding names
+ * bound inside it. accum is reversed list of names. */
+let collect_anf_vars(anf, accum) =
+  /* collect var names in an atom; a nested fun's free vars are captured here */
+  let atom_vars(atom, acc) =
+    let k = nth(atom, 0) in
+    if k == "var" then cons(nth(atom, 1), acc)
+    else if k == "fun" then collect_anf_vars(nth(atom, 2), acc)
+    else acc in
+  let bindings = nth(anf, 0) in
+  let tail = nth(anf, 1) in
+  let nb = len(bindings) in
+  let step(i, acc) =
+    if i >= nb then atom_vars(tail, acc)
+    else
+      let b = nth(bindings, i) in
+      let k = nth(b, 0) in
+      if k == "let" then
+        let a = nth(b, 2) in
+        step(i + 1, if nth(a, 0) == "var" then acc else atom_vars(a, acc))
+      else if k == "letbin" then
+        let acc2 = atom_vars(nth(b, 3), acc) in
+        step(i + 1, atom_vars(nth(b, 4), acc2))
+      else if k == "letcall" then
+        let acc2 = atom_vars(nth(b, 2), acc) in
+        let args = nth(b, 3) in
+        let loop(j, a) =
+          if j >= len(args) then a
+          else loop(j + 1, atom_vars(nth(args, j), a)) in
+        step(i + 1, loop(0, acc2))
+      else if k == "letif" then
+        let acc2 = atom_vars(nth(b, 2), acc) in
+        let acc3 = collect_anf_vars(nth(b, 3), acc2) in
+        step(i + 1, collect_anf_vars(nth(b, 4), acc3))
+      else if k == "letfun" then
+        step(i + 1, collect_anf_vars(nth(b, 3), acc))
+      else if k == "letprint" then
+        step(i + 1, atom_vars(nth(b, 2), acc))
+      else step(i + 1, acc) in
+  step(0, accum)
+
+/* free vars of a function body given its params: collect all refs, remove
+ * params and any name bound inside. Returns ordered unique list. */
+let free_vars(fnbody, params) =
+  let all = collect_anf_vars(fnbody, []) in
+  reverse(all)
