@@ -1,0 +1,123 @@
+/* emit.yac — translate LIR to x86-64 machine code (M3.2).
+ *
+ * Single pass. Each LIR instruction appends bytes. For branch/call offsets
+ * that are not yet known, we emit a placeholder and record a patch; patches
+ * are applied after all code is generated.
+ *
+ * Slot k -> frame [rbp - 8*k] (disp8). Temporaries flow through rax.
+ * Arg slots load into rdi..r9 (System V order) before a call; result rax
+ * stored to dst slot. Entry function result -> exit code via syscall.
+ *
+ * A program is ["prog", [fun...], entryName] where each fun is
+ * ["fun", name, nparams, [insn...]].
+ *
+ * Returns [codeBytes, funOffsets] where funOffsets is [[name, offset]...].
+ */
+
+let reverse(xs) = foldl(fun (a, x) -> cons(x, a), [], xs)
+
+/* ---- slot addressing: [rbp - 8k], disp8 = (-8k) mod 256 ---- */
+let slot8(k) = band(0 - bshl(k, 3), 255)
+
+/* mov rax, [rbp+off] (load slot k) */
+let emit_load_rax_slot(b, k) = mov_r64_mem_rbp(b, 0, slot8(k))
+/* mov [rbp+off], rax (store slot k) */
+let emit_store_rax_slot(b, k) = mov_mem_rbp_r64(b, slot8(k), 0)
+
+/* append `src` (a bytes) to `dst` (a bytes) */
+let b_append(dst, src) =
+  let copy(i) =
+    if i >= bytes_len(src) then 0
+    else
+      let _ = bytes_append(dst, bytes_ref(src, i)) in
+      copy(i + 1) in
+  let _ = copy(0) in
+  dst
+
+/* encode one instruction into b. is_entry: the entry (_start) has no return
+ * address, so prologue just sets rbp and reserves space; no push/pop rbp. */
+let emit_insn(b, insn, is_entry) =
+  let k = nth(insn, 0) in
+  if k == "prologue" then
+    let nlocals = nth(insn, 1) in
+    if is_entry then
+      let _ = mov_rbp_rsp(b) in
+      let _ = sub_rsp_imm8(b, band(bshl(nlocals, 3), 255)) in
+      0
+    else
+      let _ = push_rbp(b) in
+      let _ = mov_rbp_rsp(b) in
+      let _ = sub_rsp_imm8(b, band(bshl(nlocals, 3), 255)) in
+      0
+  else if k == "mov_imm" then
+    let _ = mov_r64_imm(b, 0, nth(insn, 2)) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    0
+  else if k == "mov" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    0
+  else if k == "binop" then
+    let op = nth(insn, 1) in
+    let dst = nth(insn, 2) in
+    let a = nth(insn, 3) in
+    let bop = nth(insn, 4) in
+    let _ = emit_load_rax_slot(b, a) in
+    let c =
+      if op == "+" then add_rax_mem_rbp(b, slot8(bop))
+      else if op == "-" then sub_rax_mem_rbp(b, slot8(bop))
+      else if op == "*" then imul_rax_mem_rbp(b, slot8(bop))
+      else if op == "/" then
+        let _ = cqo(b) in
+        idiv_rax_mem_rbp(b, slot8(bop))
+      else if op == "%" then
+        let _ = cqo(b) in
+        let _ = idiv_rax_mem_rbp(b, slot8(bop)) in
+        mov_r64_r64(b, 0, 2)   /* rdx (remainder) -> rax */
+      else 0 in
+    let _ = c in
+    let _ = emit_store_rax_slot(b, dst) in
+    0
+  else if k == "ret" then
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    if is_entry then
+      let _ = ret(b) in
+      0
+    else
+      let _ = pop_rbp(b) in
+      let _ = ret(b) in
+      0
+  else if k == "exit" then
+    /* load slot -> rdi; syscall exit(60) */
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = mov_r64_imm(b, 0, 60) in  /* rax = 60 */
+    let _ = syscall(b) in
+    0
+  else 0
+
+/* ---- program emission ---- */
+
+let emit_program(prog) =
+  let funs = nth(prog, 1) in
+  let nfun = len(funs) in
+  let entry = nth(prog, 2) in
+  let out = bytes_new() in
+  let offs = [] in
+  let emit_fun(i, acc_offs) =
+    if i >= nfun then acc_offs
+    else
+      let f = nth(funs, i) in
+      let name = nth(f, 1) in
+      let is_entry = name == entry in
+      let fstart = bytes_len(out) in
+      let insns = nth(f, 3) in
+      let run(j) =
+        if j >= len(insns) then 0
+        else
+          let _ = emit_insn(out, nth(insns, j), is_entry) in
+          run(j + 1) in
+      let _ = run(0) in
+      emit_fun(i + 1, cons([name, fstart], acc_offs)) in
+  let _ = emit_fun(0, []) in
+  [out, reverse(offs)]

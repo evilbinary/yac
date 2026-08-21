@@ -1,0 +1,42 @@
+/* lir.yac — Low-level Intermediate Representation constructors.
+ *
+ * LIR is a flat list of instructions operating on virtual stack slots.
+ * Slot 0 is the return-value temp; function params use slots 1..nparams;
+ * locals are allocated after. Slots map to [rbp + offset] in x86-64 emit.
+ *
+ * Function: ["fun", name, nparams, nlocals, [insn...]]
+ * Program:  ["prog", [fun...], entryFunName]
+ *
+ * Instructions:
+ *   ["prologue", nlocals]          -- reserve stack for locals
+ *   ["mov_imm", dst, imm]
+ *   ["mov",     dst, src]
+ *   ["binop",   op, dst, a, b]     -- dst = a op b (arith)
+ *   ["cmp",     op, dst, a, b]     -- dst = (a op b) boolean
+ *   ["and",     dst, a, b]         -- logical and (short-circuit via br)
+ *   ["or",      dst, a, b]         -- logical or
+ *   ["not",     dst, a]
+ *   ["br",      condslot, trueLabel, falseLabel]
+ *   ["label",   n]
+ *   ["jmp",     label]
+ *   ["call",    dst, fnslot, [argSlots...]]
+ *   ["ret",     slot]
+ *   ["exit",    slot]              -- program result (only in entry)
+ *   ["copyargs",[paramSlots...]]   -- moved into arg regs before call
+ */
+
+/* ---- LIR constructors ---- */
+let l_prologue(n) = ["prologue", n]
+let l_mov_imm(d, v) = ["mov_imm", d, v]
+let l_mov(d, s) = ["mov", d, s]
+let l_binop(op, d, a, b) = ["binop", op, d, a, b]
+let l_cmp(op, d, a, b) = ["cmp", op, d, a, b]
+let l_and(d, a, b) = ["and", d, a, b]
+let l_or(d, a, b) = ["or", d, a, b]
+let l_not(d, a) = ["not", d, a]
+let l_br(c, t, f) = ["br", c, t, f]
+let l_label(n) = ["label", n]
+let l_jmp(l) = ["jmp", l]
+let l_call(d, f, args) = ["call", d, f, args]
+let l_ret(s) = ["ret", s]
+let l_exit(s) = ["exit", s]

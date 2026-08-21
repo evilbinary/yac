@@ -1,0 +1,14 @@
+/* driver_emit.yac — test LIR->ELF compilation: compute 5*6=30 as exit code. */
+let prog = ["prog",
+  [["fun", "_start", 0,
+    [["prologue", 2],
+     ["mov_imm", 1, 5],
+     ["mov_imm", 2, 6],
+     ["binop", "*", 1, 1, 2],
+     ["exit", 1]]]],
+  "_start"];
+let elf = backend_compile(prog);
+let _ = write_file("build/emit_tmp/out.bin", elf);
+print bytes_len(elf);
+print "";
+0

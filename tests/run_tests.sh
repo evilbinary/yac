@@ -248,6 +248,15 @@ else
     fail=$((fail + 1)); echo "FAIL: self-hosted ELF packer suite ($efail failures)"
 fi
 
+# self-hosted compiler M3.2: LIR -> x86-64 ELF codegen (arith, runs natively)
+sh tests/selfhost_emit.sh
+emfail=$?
+if [ $emfail -eq 0 ]; then
+    pass=$((pass + 1)); echo "PASS: self-hosted LIR codegen suite"
+else
+    fail=$((fail + 1)); echo "FAIL: self-hosted LIR codegen suite ($emfail failures)"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]

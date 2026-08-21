@@ -173,7 +173,7 @@ let imul_rax_rdi(b) =
   let _ = e8(b, 72) in
   let _ = e8(b, 15) in
   let _ = e8(b, 175) in
-  let _ = e8(b, 199) in
+  e8(b, 199)
 
 /* mov rdi, rax  (48 89 c7) */
 let mov_rdi_rax(b) =
