@@ -343,3 +343,35 @@ GitHub 推送已通过 SSH 远程 + 代理 `http://127.0.0.1:10809` 解决。
 | GitHub 无法 push           | SSH 远程 `git@github.com` + 代理 `http://127.0.0.1:10809` |
 
 
+
+### M3.4 已完成补充
+
+**多参数调用**（已实现）：System V 约定 rdi,rsi,rdx,rcx,r8,r9。
+- `emit.yac` call 加载参数到 6 个寄存器，prologue 存入槽 1..6
+- **r8/r9 存栈需 REX.R（0x4C）而非 REX.B（0x49）**——REX.B 会把 rbp 变 r13（踩坑，已解决）
+- 验证：`add3(1,2,3)=6`、6 参求和=21、混合运算=68
+
+### M3.5 闭包实现要点（下次继续）
+
+**值表示决策**：推荐全面引入 **tagged value**（非增量），因为一等函数需要统一表示：
+```
+int : (n << 1) | 0     低 bit=0
+ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
+```
+- 需改 emit 的 binop/cmp：算术前右移 1（解 tag），比较前比较 tagged 值
+- `exit`/返回值解 tag
+
+**闭包对象（堆）**：
+```
+[GObj: next, mark, kind=CLO][fnptr][nenv][env0..envN-1]
+```
+- LIR `["closure", dst, fnName, [capSlots]]`：分配闭包
+- LIR `["apply", dst, closSlot, [argSlots]]`：解包（取 fnptr、恢复环境）
+- 函数约定：**rdi=闭包（含环境），rsi..=用户参数**；prologue 解包环境到帧槽
+
+**堆分配/GC**：
+- `yac_alloc`：brk/mmap 分配
+- 标记清除：根集=全局闭包表+活跃闭包（先保守，后栈图）
+- 栈图：调用点记录帧内 tagged 指针偏移
+
+**实现顺序建议**：①tagged value（改 emit 算术）→ ②闭包对象+create/apply → ③无捕获闭包测试 → ④捕获环境 → ⑤GC。每步用差分测试与 C 解释器比对。
