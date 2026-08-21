@@ -1,0 +1,46 @@
+{
+  "name": "yac",
+  "displayName": "Yac",
+  "description": "Syntax highlighting for the Yac functional language",
+  "version": "0.1.0",
+  "publisher": "yac-lang",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "yac",
+    "functional",
+    "anf",
+    "cps"
+  ],
+  "license": "MIT",
+  "contributes": {
+    "languages": [
+      {
+        "id": "yac",
+        "aliases": [
+          "Yac",
+          "yac"
+        ],
+        "extensions": [
+          ".yac"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/yac.svg",
+          "dark": "./icons/yac.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "yac",
+        "scopeName": "source.yac",
+        "path": "./syntaxes/yac.tmLanguage.json"
+      }
+    ]
+  }
+}

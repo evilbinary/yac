@@ -1,0 +1,177 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Yac",
+  "scopeName": "source.yac",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#unit" },
+    { "include": "#constants" },
+    { "include": "#keywords" },
+    { "include": "#builtins" },
+    { "include": "#function-def" },
+    { "include": "#operators" },
+    { "include": "#punctuation" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-dash.yac",
+          "begin": "--",
+          "end": "$",
+          "patterns": [
+            {
+              "name": "punctuation.definition.comment.yac",
+              "match": "--"
+            }
+          ]
+        },
+        {
+          "name": "comment.block.yac",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "patterns": [
+            { "include": "#comments" }
+          ]
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.yac",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.yac",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.yac",
+          "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.float.yac",
+          "match": "\\b[0-9]+[eE][+-]?[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.yac",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "unit": {
+      "name": "constant.language.unit.yac",
+      "match": "\\(\\)"
+    },
+    "constants": {
+      "name": "constant.language.boolean.yac",
+      "match": "\\b(true|false)\\b"
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.yac",
+          "match": "\\b(if|then|else|let|in|fun|callcc|throw)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.yac",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "keyword.other.yac",
+          "match": "\\b(print)\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "name": "support.function.builtin.yac",
+      "match": "\\b(argc|argv|exit|str_len|str_cat|str_slice|str_ref|str_to_bytes|bytes_new|bytes_put|bytes_append|bytes_len|bytes_ref|bytes_to_str|read_file|write_file|bshl|bshr|band|bor|bxor|bnot|int_to_str|cons|append|len|nth|drop|map|filter|foldl|foldr)\\b"
+    },
+    "function-def": {
+      "patterns": [
+        {
+          "name": "meta.function.yac",
+          "match": "\\b(let)\\s+([A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}]*)\\s*\\(",
+          "captures": {
+            "1": { "name": "keyword.control.yac" },
+            "2": { "name": "entity.name.function.yac" }
+          }
+        },
+        {
+          "name": "meta.function.lambda.yac",
+          "match": "\\b(fun)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.yac" }
+          }
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.yac",
+          "match": "(->|=>)"
+        },
+        {
+          "name": "keyword.operator.comparison.yac",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.assignment.yac",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.arithmetic.yac",
+          "match": "[+\\-*/%]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.section.parens.begin.yac",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.section.parens.end.yac",
+          "match": "\\)"
+        },
+        {
+          "name": "punctuation.section.brackets.begin.yac",
+          "match": "\\["
+        },
+        {
+          "name": "punctuation.section.brackets.end.yac",
+          "match": "\\]"
+        },
+        {
+          "name": "punctuation.section.braces.begin.yac",
+          "match": "\\{"
+        },
+        {
+          "name": "punctuation.section.braces.end.yac",
+          "match": "\\}"
+        },
+        {
+          "name": "punctuation.separator.comma.yac",
+          "match": ","
+        },
+        {
+          "name": "punctuation.terminator.statement.yac",
+          "match": ";"
+        }
+      ]
+    },
+    "identifiers": {
+      "name": "variable.other.yac",
+      "match": "[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}]*"
+    }
+  }
+}

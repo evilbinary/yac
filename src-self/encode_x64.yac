@@ -333,6 +333,42 @@ let mov_r8_rax(b) =
 let mov_r9_rax(b) =
   let _ = e8(b, 73) in let _ = e8(b, 137) in e8(b, 193)
 
+/* mov rdi, [rbp+disp8]  (48 8b 7d id8) — load a captured value into rdi */
+let mov_rdi_mem_rbp(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, modrm(1, 7, 5)) in
+  e8(b, band(d, 255))
+/* mov <argreg>, [rax+disp8]  (48/4c 8b 7x id8) — load a captured env value
+ * from the closure object into a System V arg register (rdi..r9). */
+let mov_argreg_rax_disp8(b, reg, disp8) =
+  if reg == 0 then
+    let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 120) in
+    e8(b, band(disp8, 255))
+  else if reg == 1 then
+    let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 112) in
+    e8(b, band(disp8, 255))
+  else if reg == 2 then
+    let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 80) in
+    e8(b, band(disp8, 255))
+  else if reg == 3 then
+    let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 72) in
+    e8(b, band(disp8, 255))
+  else if reg == 4 then
+    let _ = e8(b, 76) in let _ = e8(b, 139) in let _ = e8(b, 64) in
+    e8(b, band(disp8, 255))
+  else
+    let _ = e8(b, 76) in let _ = e8(b, 139) in let _ = e8(b, 72) in
+    e8(b, band(disp8, 255))
+/* mov <argreg idx>, rax  (dispatch to existing mov_*_rax) */
+let mov_rax_to_argreg(b, idx) =
+  if idx == 0 then mov_rdi_rax(b)
+  else if idx == 1 then mov_rsi_rax(b)
+  else if idx == 2 then mov_rdx_rax(b)
+  else if idx == 3 then mov_rcx_rax(b)
+  else if idx == 4 then mov_r8_rax(b)
+  else mov_r9_rax(b)
+
 /* mov [rbp+disp8] <- rsi (48 89 75 id8) */
 let mov_mem_rbp_rsi(b, d) =
   let _ = e8(b, 72) in

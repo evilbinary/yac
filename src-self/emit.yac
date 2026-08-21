@@ -92,6 +92,7 @@ let gen_print_int(d) =
   let _ = ret(b) in
   b
 let emit_load_rax_slot(b, k) = mov_r64_mem_rbp(b, 0, slot8(k))
+let emit_load_rdi_slot(b, k) = mov_rdi_mem_rbp(b, slot8(k))
 let emit_store_rax_slot(b, k) = mov_mem_rbp_r64(b, slot8(k), 0)
 
 let cc_of(op) =
@@ -281,7 +282,7 @@ let emit_insn(st, insn, is_entry) =
       let storecap(i) =
         if i >= nenv then 0
         else
-          let _ = emit_load_rax_slot(b, nth(caps, i)) in
+          let _ = emit_load_rdi_slot(b, nth(caps, i)) in
           let _ = mov_rax_disp8_rdi(b, 16 + i * 8) in
           storecap(i + 1) in
       let _ = storecap(0) in
@@ -291,19 +292,29 @@ let emit_insn(st, insn, is_entry) =
        cons([acall + 1, "yac_alloc"],
             cons(["closurefn", fnpos, fnName], patches))]
     else if k == "apply" then
-      /* apply dst closSlot [argSlots]: untag, indirect call fnptr */
+      /* apply dst closSlot ncap [argSlots]:
+       * untag closure; load ncap captured env values from object [rax+16..]
+       * into rdi,rsi,... as prefix params; load user args into the following
+       * regs; indirect call rbx (fnptr). */
       let dst = nth(insn, 1) in
       let clos = nth(insn, 2) in
-      let args = nth(insn, 3) in
+      let ncap = nth(insn, 3) in
+      let args = nth(insn, 4) in
       let _ = emit_load_rax_slot(b, clos) in
       let _ = and_rax_1(b) in       /* untag closure pointer */
       let _ = mov_rbx_rax0(b) in    /* rbx = fnptr (absolute, untagged) */
+      let loadcap(i) =
+        if i >= ncap then 0
+        else
+          let _ = mov_argreg_rax_disp8(b, i, 16 + i * 8) in
+          loadcap(i + 1) in
+      let _ = loadcap(0) in
       let nargs = len(args) in
       let loadarg(j) =
         if j >= nargs then 0
         else
           let _ = emit_load_rax_slot(b, nth(args, j)) in
-          let _ = mov_rdi_rax(b) in
+          let _ = mov_rax_to_argreg(b, ncap + j) in
           loadarg(j + 1) in
       let _ = loadarg(0) in
       let _ = call_rbx(b) in

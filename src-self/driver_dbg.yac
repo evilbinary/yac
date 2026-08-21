@@ -1,0 +1,11 @@
+let src = read_file("build/lower_tmp/in.yac");
+let toks = tokenize(src);
+let prog = parse_program(toks, 0, []);
+let anf_item(item) =
+  let r = anf_expr(item, 0) in
+  [nth(r, 0), nth(r, 1)];
+let anf_list = map(anf_item, prog);
+let lir = compile_top(anf_list);
+print lir;
+print "";
+0

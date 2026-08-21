@@ -57,3 +57,12 @@ throw k 42                        -- 只有 CPS 机器能跑：yac --cps file.ya
 
 - [docs/DESIGN.md](docs/DESIGN.md) — 语言与 IR 的完整设计
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 模块结构、管线、测试、里程碑
+
+## 编辑器
+
+VS Code / Cursor 语法高亮扩展见 [tools/vscode-yac](tools/vscode-yac)：
+
+```sh
+./tools/vscode-yac/install.sh cursor   # 或 code
+# 然后 Developer: Reload Window
+```
