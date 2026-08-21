@@ -471,3 +471,31 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 3. closure：对象存捕获值；apply 把捕获值作为函数前缀参数传入（rdi.. 前缀，用户参数接后）。
 4. 函数体内捕获变量引用其捕获参数槽。
 5. GC（M3.5c）。
+
+### M3.5b 精确自由变量（已完成）
+
+`collect_anf_vars(anf, accum, shadow)` 线程遮蔽集：let/letbin/letcall/letif 把绑定名加入 shadow，letfun 加 params；返回 `[accum, shadow]`。`free_vars = reverse(accum)`。嵌套闭包精确无过度捕获。
+
+### 捕获集成（下次继续，需 careful）
+
+**函数参数布局**：LIR 函数参数 = `[捕获参数..., 用户参数...]`（捕获在前）。
+- slot 1..ncap = 捕获参数（闭包环境），slot ncap+1.. = 用户参数。
+- 普通 call（顶层命名函数，无捕获）ncap=0，行为不变。
+
+**apply 传前缀**：`["apply", dst, clos, [userArgs...]]` 展开为：
+- 读闭包对象 env 值（[rax+16..]）到 rdi,rsi,...（前缀，ncap 个）
+- 用户参数放 rdx,rcx,...（接在捕获后）
+- 需 ncap 个捕获值从对象拷到寄存器，再拷用户参数。
+
+**closure**：`["closure", dst, fn, [capSlots...]]` 已实现，对象 `[fnptr][nenv][env...]`。
+
+**lower 改动**：
+1. letfun 编译时 `free_vars(body, params)` 得捕获集；函数 LIR 参数 = 捕获名 + 用户参数。
+2. 函数体内捕获变量解析到捕获参数槽（slot 1..ncap），用户参数从 ncap+1。
+3. 闭包值绑定：`let f = fun...` → closure（捕获变量槽）；调用 f → apply。
+4. 顶层递归函数（`let f(n)=`）用 call（ncap=0）。
+
+**先验证**：`let x = 10 in (fun(n) -> n + x)(5)` → 15。逐步：无捕获闭包源码编译 → 捕获 → GC。
+
+### GC（M3.5c，之后）
+闭包对象加 `[next][mark]` 头；标记清除；根集 = 全局 + 活跃闭包。
