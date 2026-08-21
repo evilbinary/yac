@@ -107,6 +107,14 @@ let apply_patch(b, bytePos, target) =
   let _ = bytes_put(b, bytePos + 3, band(bshr(rel, 24), 255)) in
   0
 
+/* write a 32-bit absolute value at bytePos (for closure fnptr fields) */
+let apply_abs32(b, bytePos, val) =
+  let _ = bytes_put(b, bytePos + 0, band(val, 255)) in
+  let _ = bytes_put(b, bytePos + 1, band(bshr(val, 8), 255)) in
+  let _ = bytes_put(b, bytePos + 2, band(bshr(val, 16), 255)) in
+  let _ = bytes_put(b, bytePos + 3, band(bshr(val, 24), 255)) in
+  0
+
 /* emit one instruction; st = [bytes, cur, labelsRev, patchesRev]. */
 let emit_insn(st, insn, is_entry) =
   let b = nth(st, 0) in
@@ -256,6 +264,51 @@ let emit_insn(st, insn, is_entry) =
       let _ = call_rel32(b, 0) in
       let _ = emit_newline(b) in
       [b, cur, labels, cons([callstart + 1, "print_int"], patches)]
+    else if k == "closure" then
+      /* closure dst fnName [capSlots]: alloc [fnptr][nenv][env...], tag, store */
+      let dst = nth(insn, 1) in
+      let fnName = nth(insn, 2) in
+      let caps = nth(insn, 3) in
+      let nenv = len(caps) in
+      let size = (2 + nenv) * 8 in
+      let _ = mov_rdi_imm(b, size) in
+      let acall = bytes_len(b) in
+      let _ = call_rel32(b, 0) in
+      let _ = and_rax_1(b) in    /* alloc returns raw ptr; ensure untagged */
+      let _ = mov_rax_disp8_imm32(b, 0, 0) in  /* fnptr placeholder */
+      let fnpos = bytes_len(b) - 4 in
+      let _ = mov_rax_disp8_imm32(b, 8, nenv) in
+      let storecap(i) =
+        if i >= nenv then 0
+        else
+          let _ = emit_load_rax_slot(b, nth(caps, i)) in
+          let _ = mov_rax_disp8_rdi(b, 16 + i * 8) in
+          storecap(i + 1) in
+      let _ = storecap(0) in
+      let _ = or_rax_1(b) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels,
+       cons([acall + 1, "yac_alloc"],
+            cons(["closurefn", fnpos, fnName], patches))]
+    else if k == "apply" then
+      /* apply dst closSlot [argSlots]: untag, indirect call fnptr */
+      let dst = nth(insn, 1) in
+      let clos = nth(insn, 2) in
+      let args = nth(insn, 3) in
+      let _ = emit_load_rax_slot(b, clos) in
+      let _ = and_rax_1(b) in       /* untag closure pointer */
+      let _ = mov_rbx_rax0(b) in    /* rbx = fnptr (absolute, untagged) */
+      let nargs = len(args) in
+      let loadarg(j) =
+        if j >= nargs then 0
+        else
+          let _ = emit_load_rax_slot(b, nth(args, j)) in
+          let _ = mov_rdi_rax(b) in
+          loadarg(j + 1) in
+      let _ = loadarg(0) in
+      let _ = call_rbx(b) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, patches]
     else [b, cur, labels, patches] in
   /* update cur by the ACTUAL bytes appended */
   let newlen = bytes_len(b) in
@@ -303,15 +356,25 @@ let emit_program(prog) =
   let _ = b_append(b, gen_alloc(0)) in
   let funOffsRev2 = cons(["yac_alloc", alc_off],
                          cons(["print_int", pi_off], funOffsRev)) in
+  let LOAD_VADDR = 4194304 in  /* 0x400000 */
+  let TEXT_OFF = 120 in       /* ELF header + phdr size */
   let resolve(ps) =
     if len(ps) == 0 then 0
     else
       let p = nth(ps, 0) in
-      let pos = nth(p, 0) in
-      let tname = nth(p, 1) in
-      let targ1 = lookup_name(labels, tname) in
-      let targ2 = if targ1 == 0 then lookup_name(funOffsRev2, tname) else targ1 in
-      let _ = apply_patch(b, pos, targ2) in
-      resolve(drop(ps, 1)) in
+      let kind = nth(p, 0) in
+      if kind == "closurefn" then
+        let pos = nth(p, 1) in
+        let tname = nth(p, 2) in
+        let fo = lookup_name(funOffsRev2, tname) in
+        let _ = apply_abs32(b, pos, LOAD_VADDR + TEXT_OFF + fo) in
+        resolve(drop(ps, 1))
+      else
+        let pos = nth(p, 0) in
+        let tname = nth(p, 1) in
+        let targ1 = lookup_name(labels, tname) in
+        let targ2 = if targ1 == 0 then lookup_name(funOffsRev2, tname) else targ1 in
+        let _ = apply_patch(b, pos, targ2) in
+        resolve(drop(ps, 1)) in
   let _ = resolve(patches) in
   [b, funOffsRev2]

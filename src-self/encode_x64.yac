@@ -452,3 +452,24 @@ let mov_rbx_rax(b) =
   let _ = e8(b, 72) in
   let _ = e8(b, 137) in
   e8(b, 195)
+
+/* ---- closure object field writes ---- */
+
+/* mov dword [rax+disp8], imm32  (c7 40 disp8 id32) */
+let mov_rax_disp8_imm32(b, disp8, imm) =
+  let _ = e8(b, 199) in
+  let _ = e8(b, 64) in
+  let _ = e8(b, band(disp8, 255)) in
+  e32(b, imm)
+/* mov [rax+disp8], rdi  (48 89 78 disp8) — store a captured value */
+let mov_rax_disp8_rdi(b, disp8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  let _ = e8(b, 120) in
+  e8(b, band(disp8, 255))
+/* or rax, 1  (48 83 c8 01) — tag pointer */
+let or_rax_1(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 131) in
+  let _ = e8(b, 200) in
+  e8(b, 1)
