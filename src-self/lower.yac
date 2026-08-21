@@ -95,11 +95,19 @@ let lower_body(anf, st) =
         let args = nth(b, 3) in
         let fnname = nth(fn, 1) in
         let dst = ctr in
-        let ra = lower_atom(nth(args, 0), s) in
-        let newinsn = ["call", dst, fnname, [nth(ra, 1)]] in
-        step(i + 1, [append(nth(ra, 0), [newinsn]),
-                     cons([name, dst], nth(ra, 2)), ctr + 1,
-                     nth(ra, 4), nth(ra, 5)])
+        let nargs = len(args) in
+        let funs0 = nth(s, 3) in
+        let loadargs(j, ins, env2, ctr2, slots_rev) =
+          if j >= nargs then [ins, reverse(slots_rev), env2, ctr2]
+          else
+            let r = lower_atom(nth(args, j), [ins, env2, ctr2, funs0, 0]) in
+            loadargs(j + 1, nth(r, 0), nth(r, 2), nth(r, 3),
+                     cons(nth(r, 1), slots_rev)) in
+        let lr = loadargs(0, insns, env, ctr, []) in
+        let newinsn = ["call", dst, fnname, nth(lr, 1)] in
+        step(i + 1, [append(nth(lr, 0), [newinsn]),
+                     cons([name, dst], nth(lr, 2)), nth(lr, 3),
+                     nth(s, 3), nth(s, 4)])
       else if k == "letfun" then
         let name = nth(b, 1) in
         let params = nth(b, 2) in

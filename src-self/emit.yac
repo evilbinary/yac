@@ -54,7 +54,18 @@ let emit_insn(st, insn, is_entry) =
         let _ = push_rbp(b) in
         let _ = mov_rbp_rsp(b) in
         let _ = sub_rsp_imm8(b, band(bshl(nlocals, 3), 255)) in
-        let _ = if nparams > 0 then mov_mem_rbp_rdi(b, slot8(1)) else 0 in
+        let storeparams(j) =
+          if j >= nparams then 0
+          else
+            let _ =
+              if j == 0 then mov_mem_rbp_rdi(b, slot8(j + 1))
+              else if j == 1 then mov_mem_rbp_rsi(b, slot8(j + 1))
+              else if j == 2 then mov_mem_rbp_rdx(b, slot8(j + 1))
+              else if j == 3 then mov_mem_rbp_rcx(b, slot8(j + 1))
+              else if j == 4 then mov_mem_rbp_r8(b, slot8(j + 1))
+              else mov_mem_rbp_r9(b, slot8(j + 1)) in
+            storeparams(j + 1) in
+        let _ = storeparams(0) in
         [b, cur, labels, patches]
     else if k == "mov_imm" then
       let _ = mov_r64_imm(b, 0, nth(insn, 2)) in
@@ -100,14 +111,24 @@ let emit_insn(st, insn, is_entry) =
       let nm = nth(insn, 1) in
       [b, cur, cons([nm, cur], labels), patches]
     else if k == "call" then
-      /* call fn(argSlots...): load args to rdi (M3.3: single-arg), call, store.
-       * The rel32 field of call_rel32 is the last 4 bytes of the 5-byte
-       * instruction; record patch at its start. */
+      /* call fn(argSlots...): load args to rdi,rsi,rdx,rcx,r8,r9; call; store. */
       let dst = nth(insn, 1) in
       let fn = nth(insn, 2) in
       let args = nth(insn, 3) in
-      let _ = emit_load_rax_slot(b, nth(args, 0)) in
-      let _ = mov_rdi_rax(b) in
+      let nargs = len(args) in
+      let loadarg(j) =
+        if j >= nargs then 0
+        else
+          let _ = emit_load_rax_slot(b, nth(args, j)) in
+          let _ =
+            if j == 0 then mov_rdi_rax(b)
+            else if j == 1 then mov_rsi_rax(b)
+            else if j == 2 then mov_rdx_rax(b)
+            else if j == 3 then mov_rcx_rax(b)
+            else if j == 4 then mov_r8_rax(b)
+            else mov_r9_rax(b) in
+          loadarg(j + 1) in
+      let _ = loadarg(0) in
       let callstart = bytes_len(b) in
       let _ = call_rel32(b, 0) in
       let _ = emit_store_rax_slot(b, dst) in

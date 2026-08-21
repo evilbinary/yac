@@ -49,6 +49,9 @@ run_e2e "e2e if true" 'if 1 < 2 then 7 else 9' '7'
 run_e2e "e2e if false" 'if 5 < 2 then 7 else 9' '9'
 run_e2e "e2e func call" 'let f(n) = n * 2 in f(5)' '10'
 run_e2e "e2e recursion" 'let f(n) = if n <= 1 then 1 else n * f(n - 1) in f(5)' '120'
+run_e2e "e2e 2 args" 'let add(a, b) = a + b in add(4, 5)' '9'
+run_e2e "e2e 3 args" 'let add3(a, b, c) = a + b + c in add3(1, 2, 3)' '6'
+run_e2e "e2e 6 args" 'let f(a, b, c, d, e, g) = a + b + c + d + e + g in f(1, 2, 3, 4, 5, 6)' '21'
 
 echo
 echo "$pass passed, $fail failed"
