@@ -1,31 +1,168 @@
 /* lower.yac — translate ANF to LIR (M3.3).
  *
- * Input: ANF [bindings, tailExpr] from anf.yac.
- * Output: LIR program ["prog", [["fun", "_start", 0, [lir...]]], "_start"].
+ * Input: list of top-level ANF items [bindings, tailExpr] from anf.yac.
+ * Output: LIR program ["prog", [fun...], entryName].
  *
- * Stack-slot allocation: each ANF binding name (and temp) gets a slot.
- *   slot 0: reserved (return temp)
- *   slots 1.. : bindings in order, then the result
+ * Integer subset: arithmetic, comparisons, if, let, function calls, and
+ * top-level recursive function definitions (letfun). Function values are
+ * represented by name; recursion works by name.
  *
- * This version handles a single top-level expression (integer subset):
- * arithmetic, comparisons, if, let. Function definitions (letfun) and
- * function calls (letcall) are the next step (they need call support).
- *
- * ANF statements:
- *   ["let",   name, atom]
- *   ["letbin", name, op, aAtom, bAtom]
- *   ["letif",  name, condAtom, thenAnf, elseAnf]
- *   ["letcall", name, fnAtom, [argAtoms]]
- *   ["letfun", name, [params], bodyAnf]
- * atom: ["int",s] ["var",name] etc.
+ * All state threaded explicitly: [insns, env, counter, funs, funcnt].
  */
 
-let anf_to_lir(anf) =
+let reverse(xs) = foldl(fun (a, x) -> cons(x, a), [], xs)
+
+/* ---- int parsing ---- */
+let str_to_int(s) =
+  let n = str_len(s) in
+  let isneg = if n > 0 then str_ref(s, 0) == 45 else false in
+  let start = if isneg then 1 else 0 in
+  let acc(i, v) =
+    if i >= n then v
+    else acc(i + 1, v * 10 + (str_ref(s, i) - 48)) in
+  let v = acc(start, 0) in
+  if isneg then 0 - v else v
+
+/* ---- environment ---- */
+let env_lookup(env, name) =
+  let rec(l) =
+    if len(l) == 0 then 0
+    else if nth(nth(l, 0), 0) == name then nth(nth(l, 0), 1)
+    else rec(drop(l, 1)) in
+  rec(env)
+
+let is_cmp(op) =
+  op == "<" or op == "<=" or op == ">" or op == ">=" or op == "==" or op == "!="
+
+/* atomize a sub-expr to a slot. st = [insns, env, counter, funs, funcnt].
+ * Returns [insns, slot, env, counter, funs, funcnt]. */
+let lower_atom(atom, st) =
+  let insns = nth(st, 0) in
+  let env = nth(st, 1) in
+  let ctr = nth(st, 2) in
+  let funs = nth(st, 3) in
+  let funcnt = nth(st, 4) in
+  let k = nth(atom, 0) in
+  if k == "int" then
+    let slot = ctr in
+    [append(insns, [["mov_imm", slot, str_to_int(nth(atom, 1))]]),
+     slot, env, ctr + 1, funs, funcnt]
+  else if k == "var" then
+    [insns, env_lookup(env, nth(atom, 1)), env, ctr, funs, funcnt]
+  else
+    [insns, 0, env, ctr, funs, funcnt]
+
+/* compile a full ANF body (bindings + tail). st as above.
+ * Returns [insns, resultSlot, env, counter, funs, funcnt]. */
+let lower_body(anf, st) =
   let bindings = nth(anf, 0) in
   let tail = nth(anf, 1) in
-  /* slot allocation: map binding/temp names to slots */
-  /* slot counter starts at 1 */
-  let slot_of(name, i) = i in
-  let lir = [] in
-  let compile(st, n) = nth(st, n) in
-  ["prog", [["fun", "_start", 0, []]], "_start"]
+  let nb = len(bindings) in
+  let step(i, s) =
+    if i >= nb then
+      let tr = lower_atom(tail, s) in
+      [nth(tr, 0), nth(tr, 1), nth(tr, 2), nth(tr, 3), nth(tr, 4), nth(tr, 5)]
+    else
+      let b = nth(bindings, i) in
+      let insns = nth(s, 0) in
+      let env = nth(s, 1) in
+      let ctr = nth(s, 2) in
+      let k = nth(b, 0) in
+      if k == "let" then
+        let name = nth(b, 1) in
+        let atom = nth(b, 2) in
+        let r = lower_atom(atom, s) in
+        let slot = nth(r, 1) in
+        step(i + 1, [nth(r, 0), cons([name, slot], nth(r, 2)), nth(r, 3),
+                     nth(r, 4), nth(r, 5)])
+      else if k == "letbin" then
+        let name = nth(b, 1) in
+        let op = nth(b, 2) in
+        let a = nth(b, 3) in
+        let bop = nth(b, 4) in
+        let ra = lower_atom(a, s) in
+        let rb = lower_atom(bop, [nth(ra, 0), nth(ra, 2), nth(ra, 3),
+                                  nth(ra, 4), nth(ra, 5)]) in
+        let dst = ctr in
+        let lop = if is_cmp(op) then "cmp" else "binop" in
+        let newinsn = [lop, op, dst, nth(ra, 1), nth(rb, 1)] in
+        step(i + 1, [append(nth(rb, 0), [newinsn]),
+                     cons([name, dst], nth(rb, 2)), ctr + 1,
+                     nth(rb, 4), nth(rb, 5)])
+      else if k == "letcall" then
+        let name = nth(b, 1) in
+        let fn = nth(b, 2) in
+        let args = nth(b, 3) in
+        let fnname = nth(fn, 1) in
+        let dst = ctr in
+        let ra = lower_atom(nth(args, 0), s) in
+        let newinsn = ["call", dst, fnname, [nth(ra, 1)]] in
+        step(i + 1, [append(nth(ra, 0), [newinsn]),
+                     cons([name, dst], nth(ra, 2)), ctr + 1,
+                     nth(ra, 4), nth(ra, 5)])
+      else if k == "letfun" then
+        let name = nth(b, 1) in
+        let params = nth(b, 2) in
+        let body = nth(b, 3) in
+        let nparams = len(params) in
+        let build_params(j, e) =
+          if j >= nparams then e
+          else build_params(j + 1, cons([nth(params, j), j + 1], e)) in
+        let p_env = build_params(0, []) in
+        let br = lower_body(body, [[], p_env, nparams + 1, [], 0]) in
+        let f_insns = append([["prologue", nth(br, 1), nparams]],
+                             append(nth(br, 0), [["ret", nth(br, 1)]])) in
+        let f = ["fun", name, nparams, f_insns] in
+        let slot = ctr in
+        step(i + 1, [insns, cons([name, slot], env), ctr + 1,
+                     cons(f, nth(s, 3)), nth(s, 4) + 1])
+      else if k == "letif" then
+        let name = nth(b, 1) in
+        let cond = nth(b, 2) in
+        let thena = nth(b, 3) in  /* [bindings, tail] */
+        let elsea = nth(b, 4) in
+        let cr = lower_atom(cond, s) in
+        let condslot = nth(cr, 1) in
+        /* compile branches independently (fresh insns, same env) */
+        let thenr = lower_body(thena, [[], nth(cr, 2), nth(cr, 3),
+                                       nth(cr, 4), nth(cr, 5)]) in
+        let elser = lower_body(elsea, [[], nth(cr, 2), nth(cr, 3),
+                                       nth(cr, 4), nth(cr, 5)]) in
+        let dst = ctr in
+        let thenslot = nth(thenr, 1) in
+        let elseslot = nth(elser, 1) in
+        let L = nth(elser, 5) in
+        let L0 = str_cat("LIF", int_to_str(L)) in
+        let L1 = str_cat("LIF", int_to_str(L + 1)) in
+        let L2 = str_cat("LIF", int_to_str(L + 2)) in
+        let ifbody =
+          append([["br", condslot, L0, L1], ["label", L0]],
+                 append(nth(thenr, 0),
+                        append([["mov", dst, thenslot], ["jmp", L2],
+                                ["label", L1]],
+                               append(nth(elser, 0),
+                                      [["mov", dst, elseslot],
+                                       ["label", L2]])))) in
+        step(i + 1, [append(nth(cr, 0), ifbody),
+                     cons([name, dst], nth(elser, 2)), ctr + 1,
+                     nth(elser, 4), L + 3])
+      else step(i + 1, s) in
+  step(0, st)
+
+/* ---- public API ---- */
+let compile_top(items) =
+  let nitems = len(items) in
+  let iter(i, env, counter, funs, funcnt, entry_insns, result_slot) =
+    if i >= nitems then [env, counter, funs, funcnt, entry_insns, result_slot]
+    else
+      let r = lower_body(nth(items, i), [entry_insns, env, counter, funs, funcnt]) in
+      iter(i + 1, nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5),
+           nth(r, 0), nth(r, 1)) in
+  let st = iter(0, [], 1, [], 0, [], 0) in
+  let entry_insns = nth(st, 4) in
+  let result_slot = nth(st, 5) in
+  let funs = nth(st, 2) in
+  let entry = ["fun", "_start", 0,
+               append([["prologue", result_slot, 0]],
+                      append(entry_insns, [["exit", result_slot]]))] in
+  ["prog", cons(entry, reverse(funs)), "_start"]
