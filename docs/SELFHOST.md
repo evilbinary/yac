@@ -404,3 +404,27 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 6. **GC**（M3.5c）：标记清除，根集=全局+活跃闭包；堆对象含 `next/mark` 头。
 
 **关键**：apply 的间接调用需 `mov rax,[clos+0]; call rax`（间接 call）；tag 操作用 `test rax,1`/`and rax,~1`。
+
+### M3.5b 已完成补充
+
+**堆分配器 + 闭包编码**（已实现并提交）：
+- `yac_alloc(n in rdi)->rax`（brk syscall 12）：返回分配起始（当前堆顶）。已追加到 ELF，注册 "yac_alloc" 到 funOffsets，可从 LIR `call`。
+- 闭包相关编码：`test rax,1`/`and rax,~1`（tag 检测/清除）、`mov rbx,[rax+0]`（取 fnptr）、间接 `call rbx`、`lea rdi,[rbx+rdi]`、`mov rbx<->rax`。
+- tagged value 就绪：int=`n<<1`，闭包指针=`p|1`。
+
+### 闭包剩余（下次继续）
+
+**关键决策待定：函数地址如何 resolve。**
+- 方案 A：closure 存 fnptr=绝对地址 `LOAD_VADDR+fnOff`，用**绝对 imm32 patch**（新增 apply_abs32，非 rel32）在 resolve 阶段写函数偏移。
+- 方案 B：closure 存 fnOff，apply 用 `lea rbx,[rip+off]`（rel32）——但 apply 生成时函数位置未知，仍需 patch。
+- 推荐 **A**：closure 生成 `mov dword [rax+0], 0` 占位 + 记录 `["closurefn", immPos, fnName]`，resolve 时 `write32(immPos, LOAD_VADDR + fnOffset)`；apply 生成 `mov rbx,[rax+0]; call rbx`（间接）。
+
+**实现顺序**：
+1. emit 加 `closure`/`apply` 指令 + `apply_abs32` patch 类型。
+2. `["closure", dst, fnName, [capSlots]]`：alloc 对象 `[fnptr][nenv][env...]`，填捕获，`or 1` tag，store。
+3. `["apply", dst, closSlot, [argSlots]]`：untag（`and ~1`），取 fnptr，`call rbx`，参数按 System V。
+4. lower 把 letfun 值 / 函数调用改为 closure/apply。
+5. **无捕获闭包先验证**（`let f=fun(n)->n+1 in f(5)` → 6），再加捕获环境。
+6. GC（M3.5c）：闭包对象加 `[next][mark]` 头，标记清除。
+
+**调用约定**：函数参数从用户参数 rdi.. 开始（closure 的环境在对象里，函数内通过额外机制解包——建议先只支持无捕获，捕获环境后续加）。
