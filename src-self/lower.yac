@@ -227,6 +227,38 @@ let collect_anf_vars(anf, accum) =
 
 /* free vars of a function body given its params: collect all refs, remove
  * params and any name bound inside. Returns ordered unique list. */
+/* collect all names bound inside an anf body (for exclusion). */
+let collect_bound(anf, accum) =
+  let bindings = nth(anf, 0) in
+  let nb = len(bindings) in
+  let step(i, acc) =
+    if i >= nb then acc
+    else
+      let b = nth(bindings, i) in
+      let k = nth(b, 0) in
+      if k == "let" then step(i + 1, cons(nth(b, 1), acc))
+      else if k == "letbin" then step(i + 1, cons(nth(b, 1), acc))
+      else if k == "letcall" then step(i + 1, cons(nth(b, 1), acc))
+      else if k == "letif" then
+        let acc2 = collect_bound(nth(b, 3), acc) in
+        step(i + 1, collect_bound(nth(b, 4), acc2))
+      else if k == "letfun" then step(i + 1, cons(nth(b, 1), acc))
+      else if k == "letprint" then step(i + 1, cons(nth(b, 1), acc))
+      else step(i + 1, acc) in
+  step(0, accum)
+
+/* is name in list? */
+let in_list(name, lst) =
+  let rec(l) =
+    if len(l) == 0 then false
+    else if nth(l, 0) == name then true
+    else rec(drop(l, 1)) in
+  rec(lst)
+
+/* free vars of a function body given its params: refs minus params minus
+ * names bound inside. Returns ordered unique list. */
 let free_vars(fnbody, params) =
   let all = collect_anf_vars(fnbody, []) in
-  reverse(all)
+  let bound = collect_bound(fnbody, params) in
+  let filtered = filter(fun (nm) -> not in_list(nm, bound), all) in
+  reverse(filtered)
