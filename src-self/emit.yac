@@ -29,6 +29,23 @@ let b_append(dst, src) =
   let _ = copy(0) in
   dst
 
+/* yac_alloc(n in rdi) -> rax: allocate n bytes on the heap via brk.
+ * Returns the allocation start (current heap top). */
+let gen_alloc(d) =
+  let b = bytes_new() in
+  let _ = e8(b, 87) in               /* push rdi (save n) */
+  let _ = mov_r64_imm(b, 0, 12) in   /* rax = 12 (brk) */
+  let _ = mov_rdi_imm(b, 0) in
+  let _ = syscall(b) in              /* rax = cur heap top */
+  let _ = mov_rbx_rax(b) in          /* rbx = cur */
+  let _ = e8(b, 95) in               /* pop rdi (n) */
+  let _ = lea_rdi_rbx_rdi(b) in      /* rdi = cur + n */
+  let _ = mov_r64_imm(b, 0, 12) in
+  let _ = syscall(b) in              /* brk(cur+n) */
+  let _ = mov_rax_rbx(b) in          /* rax = cur (allocation start) */
+  let _ = ret(b) in
+  b
+
 /* write a single newline via syscall: push '\n'; rsi=rsp; write(1,"\n",1) */
 let emit_newline(b) =
   let _ = e8(b, 106) in       /* push imm8 */
@@ -279,11 +296,13 @@ let emit_program(prog) =
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
   let b = nth(st, 0) in
-  /* append the print_int runtime helper and register its offset */
+  /* append runtime helpers (print_int, yac_alloc) and register offsets */
   let pi_off = bytes_len(b) in
-  let pi = gen_print_int(0) in
-  let _ = b_append(b, pi) in
-  let funOffsRev2 = cons(["print_int", pi_off], funOffsRev) in
+  let _ = b_append(b, gen_print_int(0)) in
+  let alc_off = bytes_len(b) in
+  let _ = b_append(b, gen_alloc(0)) in
+  let funOffsRev2 = cons(["yac_alloc", alc_off],
+                         cons(["print_int", pi_off], funOffsRev)) in
   let resolve(ps) =
     if len(ps) == 0 then 0
     else

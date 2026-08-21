@@ -414,3 +414,41 @@ let idiv_rbx(b) =
 /* cmp rax, rbx  (48 39 d8) */
 let cmp_rax_rbx(b) =
   let _ = e8(b, 72) in let _ = e8(b, 57) in e8(b, 216)
+
+/* ---- closure / heap helpers ---- */
+
+/* test rax, 1  (a8 01) — check low bit (is ptr?) */
+let test_rax_1(b) =
+  let _ = e8(b, 168) in
+  e8(b, 1)
+/* and rax, ~1  (48 83 e0 fe) — clear low bit (untag ptr) */
+let and_rax_1(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 131) in
+  let _ = e8(b, 224) in
+  e8(b, 254)
+/* mov rbx, [rax+0]  (48 8b 18) — load fnptr from closure into rbx */
+let mov_rbx_rax0(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  e8(b, 24)
+/* call rbx  (ff d3) — indirect call to function pointer */
+let call_rbx(b) =
+  let _ = e8(b, 255) in
+  e8(b, 211)
+/* lea rdi, [rbx+rdi]  (48 8d 3c 3b) — rdi = rbx + rdi */
+let lea_rdi_rbx_rdi(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 141) in
+  let _ = e8(b, 60) in
+  e8(b, 59)
+/* mov rax, rbx  (48 89 d8) */
+let mov_rax_rbx(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  e8(b, 216)
+/* mov rbx, rax  (48 89 c3) */
+let mov_rbx_rax(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  e8(b, 195)
