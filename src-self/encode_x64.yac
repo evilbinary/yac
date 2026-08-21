@@ -364,3 +364,11 @@ let mov_mem_rbp_r9(b, d) =
   let _ = e8(b, 137) in
   let _ = e8(b, modrm(1, 1, 5)) in
   e8(b, band(d, 255))
+
+/* ---- tagged-value ops (int = n<<1; ptr = p|1) ---- */
+/* sar rax, 1  (48 d1 f8) — untag an int */
+let sar_rax_1(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 248)
+/* shl rax, 1  (48 d1 e0) — tag an int */
+let shl_rax_1(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 224)
