@@ -45,6 +45,7 @@ let emit_insn(st, insn, is_entry) =
   let done =
     if k == "prologue" then
       let nlocals = nth(insn, 1) in
+      let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
       if is_entry then
         let _ = mov_rbp_rsp(b) in
         let _ = sub_rsp_imm8(b, band(bshl(nlocals, 3), 255)) in
@@ -53,6 +54,7 @@ let emit_insn(st, insn, is_entry) =
         let _ = push_rbp(b) in
         let _ = mov_rbp_rsp(b) in
         let _ = sub_rsp_imm8(b, band(bshl(nlocals, 3), 255)) in
+        let _ = if nparams > 0 then mov_mem_rbp_rdi(b, slot8(1)) else 0 in
         [b, cur, labels, patches]
     else if k == "mov_imm" then
       let _ = mov_r64_imm(b, 0, nth(insn, 2)) in
@@ -97,6 +99,19 @@ let emit_insn(st, insn, is_entry) =
     else if k == "label" then
       let nm = nth(insn, 1) in
       [b, cur, cons([nm, cur], labels), patches]
+    else if k == "call" then
+      /* call fn(argSlots...): load args to rdi (M3.3: single-arg), call, store.
+       * The rel32 field of call_rel32 is the last 4 bytes of the 5-byte
+       * instruction; record patch at its start. */
+      let dst = nth(insn, 1) in
+      let fn = nth(insn, 2) in
+      let args = nth(insn, 3) in
+      let _ = emit_load_rax_slot(b, nth(args, 0)) in
+      let _ = mov_rdi_rax(b) in
+      let callstart = bytes_len(b) in
+      let _ = call_rel32(b, 0) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, cons([callstart + 1, fn], patches)]
     else if k == "jmp" then
       /* jmp_rel32: e9 + rel32; rel32 field at len0+1 */
       let _ = jmp_rel32(b, 0) in
@@ -116,6 +131,7 @@ let emit_insn(st, insn, is_entry) =
       let _ = emit_load_rax_slot(b, nth(insn, 1)) in
       if is_entry then let _ = ret(b) in [b, cur, labels, patches]
       else
+        let _ = mov_rsp_rbp(b) in
         let _ = pop_rbp(b) in
         let _ = ret(b) in
         [b, cur, labels, patches]

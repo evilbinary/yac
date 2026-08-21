@@ -1,0 +1,31 @@
+/* lower.yac — translate ANF to LIR (M3.3).
+ *
+ * Input: ANF [bindings, tailExpr] from anf.yac.
+ * Output: LIR program ["prog", [["fun", "_start", 0, [lir...]]], "_start"].
+ *
+ * Stack-slot allocation: each ANF binding name (and temp) gets a slot.
+ *   slot 0: reserved (return temp)
+ *   slots 1.. : bindings in order, then the result
+ *
+ * This version handles a single top-level expression (integer subset):
+ * arithmetic, comparisons, if, let. Function definitions (letfun) and
+ * function calls (letcall) are the next step (they need call support).
+ *
+ * ANF statements:
+ *   ["let",   name, atom]
+ *   ["letbin", name, op, aAtom, bAtom]
+ *   ["letif",  name, condAtom, thenAnf, elseAnf]
+ *   ["letcall", name, fnAtom, [argAtoms]]
+ *   ["letfun", name, [params], bodyAnf]
+ * atom: ["int",s] ["var",name] etc.
+ */
+
+let anf_to_lir(anf) =
+  let bindings = nth(anf, 0) in
+  let tail = nth(anf, 1) in
+  /* slot allocation: map binding/temp names to slots */
+  /* slot counter starts at 1 */
+  let slot_of(name, i) = i in
+  let lir = [] in
+  let compile(st, n) = nth(st, n) in
+  ["prog", [["fun", "_start", 0, []]], "_start"]

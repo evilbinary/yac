@@ -26,7 +26,7 @@
  */
 
 /* ---- LIR constructors ---- */
-let l_prologue(n) = ["prologue", n]
+let l_prologue(n, np) = ["prologue", n, np]
 let l_mov_imm(d, v) = ["mov_imm", d, v]
 let l_mov(d, s) = ["mov", d, s]
 let l_binop(op, d, a, b) = ["binop", op, d, a, b]

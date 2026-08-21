@@ -67,6 +67,14 @@ run_compile "branch 20<10 (false)" "$IF_FALSE" "2"
 IF_EQ='["prog",[["fun","_start",0,[["prologue",4],["mov_imm",1,7],["mov_imm",2,7],["cmp","==",3,1,2],["br",3,"L1","L2"],["label","L1"],["mov_imm",4,1],["exit",4],["label","L2"],["mov_imm",4,2],["exit",4]]]],"_start"]'
 run_compile "branch 7==7 (true)" "$IF_EQ" "1"
 
+# function call: double(x)=x*2; _start calls double(5)
+CALL='["prog",[["fun","_start",0,[["prologue",2,0],["mov_imm",1,5],["call",2,"double",[1]],["exit",2]]],["fun","double",1,[["prologue",2,1],["mov",2,1],["mov_imm",4,2],["binop","*",2,2,4],["ret",2]]]],"_start"]'
+run_compile "function call double(5)" "$CALL" "10"
+
+# recursion: fact(n)= n<=1?1 : n*fact(n-1); fact(5)=120
+FACT='["prog",[["fun","_start",0,[["prologue",2,0],["mov_imm",1,5],["call",2,"fact",[1]],["exit",2]]],["fun","fact",1,[["prologue",8,1],["mov_imm",3,1],["cmp","<=",2,1,3],["br",2,"L1","L2"],["label","L1"],["mov_imm",3,1],["ret",3],["label","L2"],["mov",3,1],["mov_imm",4,1],["binop","-",5,3,4],["call",6,"fact",[5]],["binop","*",7,3,6],["ret",7]]]],"_start"]'
+run_compile "recursion fact(5)" "$FACT" "120"
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]

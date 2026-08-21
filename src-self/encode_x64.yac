@@ -222,3 +222,35 @@ let syscall(b) =
 let call_rel32(b, off) =
   let _ = e8(b, 232) in
   e32(b, off)
+
+/* ---- argument register moves (System V: rdi,rsi,rdx,rcx,r8,r9) ---- */
+
+/* mov rdi <- rax (48 89 c7) */
+let mov_rdi_rax(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  e8(b, 199)
+
+/* mov [rbp+disp8] <- rdi (48 89 7d id8) */
+let mov_mem_rbp_rdi(b, disp8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  let _ = e8(b, modrm(1, 7, 5)) in   /* reg=rdi rm=rbp */
+  e8(b, band(disp8, 255))
+
+/* mov [rbp+disp8] <- rsi (48 89 75 id8) */
+let mov_mem_rbp_rsi(b, disp8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  let _ = e8(b, modrm(1, 6, 5)) in
+  e8(b, band(disp8, 255))
+
+/* mov rdi <- rax then call via indirection is not needed; direct call_rel32 */
+
+/* ---- division by register not needed for M3.3 ---- */
+
+/* mov rsp, rbp (48 89 ec) — restore frame before pop/ret */
+let mov_rsp_rbp(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  e8(b, 236)
