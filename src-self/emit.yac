@@ -29,8 +29,12 @@ let b_append(dst, src) =
   let _ = copy(0) in
   dst
 
-/* yac_alloc(n in rdi) -> rax: allocate n bytes on the heap via brk.
- * Returns the allocation start (current heap top). */
+/* yac_alloc(n in rdi) -> rax: allocate n bytes on the heap via brk, link the
+ * new object into the global GC list, then run a conservative gc_collect.
+ * Returns the allocation start (current heap top).
+ * New object layout: [next=old head][...rest caller fills...].
+ * Global GC head lives at a data address patched via "gc_head".
+ * Returns [bytes, headaddrPatchPos, gcCallPatchPos]. */
 let gen_alloc(d) =
   let b = bytes_new() in
   let _ = e8(b, 87) in               /* push rdi (save n) */
@@ -43,8 +47,21 @@ let gen_alloc(d) =
   let _ = mov_r64_imm(b, 0, 12) in
   let _ = syscall(b) in              /* brk(cur+n) */
   let _ = mov_rax_rbx(b) in          /* rax = cur (allocation start) */
+  /* link into global list: mov rax,<&head>; mov rdx,[rax]; mov [rbx],rdx; mov [rax],rbx */
+  let _ = mov_rax_imm64(b, 0) in     /* rax = &head (patched) */
+  let headaddr = bytes_len(b) - 8 in
+  let _ = mov_rdx_mem_rax(b) in      /* rdx = old head */
+  let _ = mov_mem_rbx_rdx(b) in      /* [rbx+0] = old head (next) */
+  let _ = mov_mem_rax_rbx(b) in      /* [rax] = rbx (head = new obj) */
+  /* run gc_collect (conservative mark-sweep; keeps all live objects) */
+  let _ = push_r64(b, 3) in          /* push rbx (save base) */
+  let gcall = bytes_len(b) in
+  let _ = call_rel32(b, 0) in        /* call gc_collect (patched) */
+  let _ = pop_r64(b, 3) in           /* pop rbx */
+  let _ = mov_rax_rbx(b) in          /* rax = base (return value) */
   let _ = ret(b) in
-  b
+  [b, headaddr, gcall + 1]
+
 
 /* write a single newline via syscall: push '\n'; rsi=rsp; write(1,"\n",1) */
 let emit_newline(b) =
@@ -115,6 +132,52 @@ let apply_abs32(b, bytePos, val) =
   let _ = bytes_put(b, bytePos + 2, band(bshr(val, 16), 255)) in
   let _ = bytes_put(b, bytePos + 3, band(bshr(val, 24), 255)) in
   0
+
+/* write a 64-bit little-endian value at bytePos (for GC global addresses) */
+let apply_u64(b, bytePos, val) =
+  let _ = apply_abs32(b, bytePos, band(val, 4294967295)) in
+  let _ = apply_abs32(b, bytePos + 4, band(bshr(val, 32), 4294967295)) in
+  0
+
+/* gc_collect: conservative mark-sweep. Walks the global GC list: mark pass
+ * sets every object's mark=1 (conservative root set = all objects, since no
+ * stack maps yet); sweep pass resets marks. Nothing is reclaimed yet — this
+ * keeps all live closures alive and is the safe first version (M3.5c).
+ * Precise reclaim needs stack maps (M6). Clobbers rax, rbx; returns 0.
+ * (Uses apply_patch for its internal rel32 patching.) */
+let gen_gc(d) =
+  let b = bytes_new() in
+  let _ = mov_rax_imm64(b, 0) in     /* rax = &head (patched) */
+  let headaddr = bytes_len(b) - 8 in
+  let _ = mov_rbx_mem_rax(b) in      /* rbx = list head */
+  /* mark pass */
+  let marktest = bytes_len(b) in
+  let _ = test_rbx_rbx(b) in
+  let _ = jcc_rel32(b, 4, 0) in      /* jz -> out */
+  let markjz = bytes_len(b) - 4 in
+  let _ = mov_mem_rbx_disp8_imm32(b, 8, 1) in   /* mark = 1 */
+  let _ = mov_rbx_mem_rbx(b) in      /* next */
+  let _ = jmp_rel32(b, 0) in         /* -> marktest */
+  let markjmp = bytes_len(b) - 4 in
+  /* sweep pass */
+  let _ = mov_rbx_mem_rax(b) in      /* rbx = head */
+  let sweeptest = bytes_len(b) in
+  let _ = test_rbx_rbx(b) in
+  let _ = jcc_rel32(b, 4, 0) in      /* jz -> out */
+  let sweepjz = bytes_len(b) - 4 in
+  let _ = mov_mem_rbx_disp8_imm32(b, 8, 0) in   /* mark = 0 */
+  let _ = mov_rbx_mem_rbx(b) in      /* next */
+  let _ = jmp_rel32(b, 0) in         /* -> sweeptest */
+  let sweepjmp = bytes_len(b) - 4 in
+  /* exit */
+  let out = bytes_len(b) in
+  let _ = xor_rax_rax(b) in
+  let _ = ret(b) in
+  let _ = apply_patch(b, markjz, out) in
+  let _ = apply_patch(b, sweepjz, out) in
+  let _ = apply_patch(b, markjmp, marktest) in
+  let _ = apply_patch(b, sweepjmp, sweeptest) in
+  [b, headaddr]
 
 /* emit one instruction; st = [bytes, cur, labelsRev, patchesRev]. */
 let emit_insn(st, insn, is_entry) =
@@ -266,24 +329,28 @@ let emit_insn(st, insn, is_entry) =
       let _ = emit_newline(b) in
       [b, cur, labels, cons([callstart + 1, "print_int"], patches)]
     else if k == "closure" then
-      /* closure dst fnName [capSlots]: alloc [fnptr][nenv][env...], tag, store */
+      /* closure dst fnName [capSlots]:
+       * alloc object [next][mark][fnptr][nenv][env...], tag, store.
+       * yac_alloc links the object into the global GC list (sets [next]).
+       * Offsets: next=0 mark=8 fnptr=16 nenv=24 env=32. */
       let dst = nth(insn, 1) in
       let fnName = nth(insn, 2) in
       let caps = nth(insn, 3) in
       let nenv = len(caps) in
-      let size = (2 + nenv) * 8 in
+      let size = (4 + nenv) * 8 in
       let _ = mov_rdi_imm(b, size) in
       let acall = bytes_len(b) in
       let _ = call_rel32(b, 0) in
       let _ = and_rax_1(b) in    /* alloc returns raw ptr; ensure untagged */
-      let _ = mov_rax_disp8_imm32(b, 0, 0) in  /* fnptr placeholder */
+      let _ = mov_rax_disp8_imm32(b, 8, 0) in   /* mark = 0 */
+      let _ = mov_rax_disp8_imm32(b, 16, 0) in  /* fnptr placeholder */
       let fnpos = bytes_len(b) - 4 in
-      let _ = mov_rax_disp8_imm32(b, 8, nenv) in
+      let _ = mov_rax_disp8_imm32(b, 24, nenv) in
       let storecap(i) =
         if i >= nenv then 0
         else
           let _ = emit_load_rdi_slot(b, nth(caps, i)) in
-          let _ = mov_rax_disp8_rdi(b, 16 + i * 8) in
+          let _ = mov_rax_disp8_rdi(b, 32 + i * 8) in
           storecap(i + 1) in
       let _ = storecap(0) in
       let _ = or_rax_1(b) in
@@ -293,20 +360,20 @@ let emit_insn(st, insn, is_entry) =
             cons(["closurefn", fnpos, fnName], patches))]
     else if k == "apply" then
       /* apply dst closSlot ncap [argSlots]:
-       * untag closure; load ncap captured env values from object [rax+16..]
+       * untag closure; load ncap captured env values from object [rax+32..]
        * into rdi,rsi,... as prefix params; load user args into the following
-       * regs; indirect call rbx (fnptr). */
+       * regs; indirect call rbx (fnptr at [rax+16]). */
       let dst = nth(insn, 1) in
       let clos = nth(insn, 2) in
       let ncap = nth(insn, 3) in
       let args = nth(insn, 4) in
       let _ = emit_load_rax_slot(b, clos) in
       let _ = and_rax_1(b) in       /* untag closure pointer */
-      let _ = mov_rbx_rax0(b) in    /* rbx = fnptr (absolute, untagged) */
+      let _ = mov_rbx_rax_disp8(b, 16) in  /* rbx = fnptr */
       let loadcap(i) =
         if i >= ncap then 0
         else
-          let _ = mov_argreg_rax_disp8(b, i, 16 + i * 8) in
+          let _ = mov_argreg_rax_disp8(b, i, 32 + i * 8) in
           loadcap(i + 1) in
       let _ = loadcap(0) in
       let nargs = len(args) in
@@ -360,15 +427,34 @@ let emit_program(prog) =
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
   let b = nth(st, 0) in
-  /* append runtime helpers (print_int, yac_alloc) and register offsets */
+  /* append runtime helpers (print_int, yac_alloc, gc_collect) and register offsets */
   let pi_off = bytes_len(b) in
   let _ = b_append(b, gen_print_int(0)) in
   let alc_off = bytes_len(b) in
-  let _ = b_append(b, gen_alloc(0)) in
-  let funOffsRev2 = cons(["yac_alloc", alc_off],
-                         cons(["print_int", pi_off], funOffsRev)) in
+  let alcr = gen_alloc(0) in
+  let _ = b_append(b, nth(alcr, 0)) in
+  let alc_headaddr = nth(alcr, 1) in
+  let gc_call_patch = nth(alcr, 2) in
+  let gc_off = bytes_len(b) in
+  let gcr = gen_gc(0) in
+  let _ = b_append(b, nth(gcr, 0)) in
+  let gc_headaddr = nth(gcr, 1) in
+  let funOffsRev2 = cons(["gc_collect", gc_off],
+                         cons(["yac_alloc", alc_off],
+                              cons(["print_int", pi_off], funOffsRev))) in
   let LOAD_VADDR = 4194304 in  /* 0x400000 */
   let TEXT_OFF = 120 in       /* ELF header + phdr size */
+  /* append a small writable data area for GC globals (the linked-list head). */
+  let data_start = bytes_len(b) in
+  let _ = bytes_append(b, 0) in  /* 8 zero bytes: head = NULL */
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
   let resolve(ps) =
     if len(ps) == 0 then 0
     else
@@ -380,6 +466,10 @@ let emit_program(prog) =
         let fo = lookup_name(funOffsRev2, tname) in
         let _ = apply_abs32(b, pos, LOAD_VADDR + TEXT_OFF + fo) in
         resolve(drop(ps, 1))
+      else if kind == "gc_head" then
+        let pos = nth(p, 1) in
+        let _ = apply_u64(b, pos, GLOBALS_BASE) in
+        resolve(drop(ps, 1))
       else
         let pos = nth(p, 0) in
         let tname = nth(p, 1) in
@@ -387,5 +477,8 @@ let emit_program(prog) =
         let targ2 = if targ1 == 0 then lookup_name(funOffsRev2, tname) else targ1 in
         let _ = apply_patch(b, pos, targ2) in
         resolve(drop(ps, 1)) in
-  let _ = resolve(patches) in
+  let extra = cons(["gc_head", gc_off + gc_headaddr],
+                   cons(["gc_head", alc_off + alc_headaddr],
+                        cons([alc_off + gc_call_patch, "gc_collect"], patches))) in
+  let _ = resolve(extra) in
   [b, funOffsRev2]

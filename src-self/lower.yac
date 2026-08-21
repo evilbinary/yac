@@ -45,39 +45,39 @@ let in_list(name, lst) =
 /* collect vars referenced in an anf body [bindings, tail], excluding names
  * bound inside it (shadow set). accum is reversed list of names. */
 let collect_anf_vars(anf, accum, shadow) =
-  let atom_vars(atom, acc) =
+  let atom_vars(atom, acc, shdw) =
     let k = nth(atom, 0) in
     if k == "var" then
-      if in_list(nth(atom, 1), shadow) then acc
+      if in_list(nth(atom, 1), shdw) then acc
       else cons(nth(atom, 1), acc)
-    else if k == "fun" then collect_anf_vars(nth(atom, 2), acc, shadow)
+    else if k == "fun" then collect_anf_vars(nth(atom, 2), acc, shdw)
     else acc in
   let bindings = nth(anf, 0) in
   let tail = nth(anf, 1) in
   let nb = len(bindings) in
   let step(i, acc, shdw) =
-    if i >= nb then [acc, atom_vars(tail, shdw)]
+    if i >= nb then [atom_vars(tail, acc, shdw), shdw]
     else
       let b = nth(bindings, i) in
       let k = nth(b, 0) in
       let r =
         if k == "let" then
           let a = nth(b, 2) in
-          let acc2 = if nth(a, 0) == "var" then acc else atom_vars(a, acc) in
+          let acc2 = if nth(a, 0) == "var" then acc else atom_vars(a, acc, shdw) in
           [acc2, cons(nth(b, 1), shdw)]
         else if k == "letbin" then
-          let acc2 = atom_vars(nth(b, 3), acc) in
-          let acc3 = atom_vars(nth(b, 4), acc2) in
+          let acc2 = atom_vars(nth(b, 3), acc, shdw) in
+          let acc3 = atom_vars(nth(b, 4), acc2, shdw) in
           [acc3, cons(nth(b, 1), shdw)]
         else if k == "letcall" then
-          let acc2 = atom_vars(nth(b, 2), acc) in
+          let acc2 = atom_vars(nth(b, 2), acc, shdw) in
           let args = nth(b, 3) in
           let loop(j, a) =
             if j >= len(args) then a
-            else loop(j + 1, atom_vars(nth(args, j), a)) in
+            else loop(j + 1, atom_vars(nth(args, j), a, shdw)) in
           [loop(0, acc2), cons(nth(b, 1), shdw)]
         else if k == "letif" then
-          let acc2 = atom_vars(nth(b, 2), acc) in
+          let acc2 = atom_vars(nth(b, 2), acc, shdw) in
           let rr1 = collect_anf_vars(nth(b, 3), acc2, shdw) in
           let acc3 = nth(rr1, 0) in
           let shdw2 = nth(rr1, 1) in
@@ -89,7 +89,7 @@ let collect_anf_vars(anf, accum, shadow) =
           let rr = collect_anf_vars(nth(b, 3), acc, shdw2) in
           [nth(rr, 0), cons(nth(b, 1), shdw)]
         else if k == "letprint" then
-          [atom_vars(nth(b, 2), acc), cons(nth(b, 1), shdw)]
+          [atom_vars(nth(b, 2), acc, shdw), cons(nth(b, 1), shdw)]
         else [acc, shdw] in
       let r0 = nth(r, 0) in
       let r1 = nth(r, 1) in

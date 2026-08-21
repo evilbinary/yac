@@ -472,6 +472,26 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 4. 函数体内捕获变量引用其捕获参数槽。
 5. GC（M3.5c）。
 
+### 捕获集成（已完成）
+
+**捕获环境已实现并验证**：
+- 函数参数布局 = `[捕获参数..., 用户参数...]`：捕获（自由变量）在 slot 1..ncap，用户参数在 ncap+1..。
+- `closure` LIR：分配对象 `[next][mark][fnptr][nenv][env...]`，写捕获值（先 load 到 rdi 再 store，修复了旧版直接 `mov_rax_disp8_rdi` 未先装 rdi 的 bug）。
+- `apply` LIR：untag 闭包指针，读对象 env 作为**前缀参数**进 rdi..，用户参数接后，间接 call。
+- lower 用 `free_vars` 计算捕获集；普通命名函数（ncap=0）走直接 `call`（递归按名解析），捕获闭包走 `apply`。
+- **修复**：`collect_anf_vars` 的 `atom_vars` 原来闭包捕获的是**初始** `shadow` 而非线程化的 `shdw`，导致 letbin 链的临时变量被误判为自由变量——改为把 `shdw` 作参数传入。
+- **验证**：`let x=10 in (fun(n)->n+x)(5)` → **15**。回归：fact/fib/多参/打印全部通过，新增 3 例闭包捕获测试。
+
+**已知限制**：调用**存于变量中的闭包**（高阶，如 `let g = add(3) in g(4)`）暂不支持——call 点需要运行时按 tag 分发（动态 nenv），属 M3.5d 高阶函数范畴。当前仅支持：命名函数直接调用 + 立即应用/静态捕获闭包。
+
+### GC（M3.5c，已完成保守版）
+
+- 闭包对象加 `[next][mark]` 头：`[next][mark][fnptr][nenv][env...]`（offset 0/8/16/24/32）。
+- `yac_alloc`：brk 分配 + 把新对象链入全局链表（`[next]=旧head`，head 指向新对象）。head 存在 ELF 数据区（段改 RWX）。
+- `gc_collect`：保守标记-清除——标记阶段把链表中所有对象 mark=1（保守根集=全部，因暂无栈图），清除阶段复位。**暂不回收**（保持所有活闭包，安全）；精确回收需栈图（M6）。
+- 每次分配后调用 `gc_collect`（保守、无副作用，实际被反复执行验证）。
+- 验证：闭包捕获 + 全部 e2e 在 GC 开启下通过。
+
 ### M3.5b 精确自由变量（已完成）
 
 `collect_anf_vars(anf, accum, shadow)` 线程遮蔽集：let/letbin/letcall/letif 把绑定名加入 shadow，letfun 加 params；返回 `[accum, shadow]`。`free_vars = reverse(accum)`。嵌套闭包精确无过度捕获。

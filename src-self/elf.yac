@@ -33,7 +33,7 @@ let E_MACHINE = 62      /* EM_X86_64 */
 let E_VERSION = 1
 let LOAD_VADDR = 4194304 /* 0x400000 */
 let PH_TYPE_LOAD = 1
-let PH_FLAGS_RX = 5     /* PF_R | PF_X */
+let PH_FLAGS_RWX = 7     /* PF_R | PF_W | PF_X (data area is writable) */
 let PAGE = 4096
 
 /* build the ELF64 header (64 bytes) into b at offset 0 */
@@ -72,7 +72,7 @@ let elf_header(b, entry, text_off) =
 /* build the single PT_LOAD program header (56 bytes) at offset 64 */
 let elf_phdr(b, file_size) =
   let _ = le32(b, PH_TYPE_LOAD, 64) in
-  let _ = le32(b, PH_FLAGS_RX, 68) in
+  let _ = le32(b, PH_FLAGS_RWX, 68) in
   let _ = le64(b, 0, 72) in         /* p_offset = 0 */
   let _ = le64(b, LOAD_VADDR, 80) in /* p_vaddr */
   let _ = le64(b, LOAD_VADDR, 88) in /* p_paddr */

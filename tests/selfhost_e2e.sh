@@ -52,6 +52,9 @@ run_e2e "e2e recursion" 'let f(n) = if n <= 1 then 1 else n * f(n - 1) in f(5)' 
 run_e2e "e2e 2 args" 'let add(a, b) = a + b in add(4, 5)' '9'
 run_e2e "e2e 3 args" 'let add3(a, b, c) = a + b + c in add3(1, 2, 3)' '6'
 run_e2e "e2e 6 args" 'let f(a, b, c, d, e, g) = a + b + c + d + e + g in f(1, 2, 3, 4, 5, 6)' '21'
+run_e2e "e2e capture" 'let x = 10 in (fun(n) -> n + x)(5)' '15'
+run_e2e "e2e multi-capture" 'let x = 1 in let y = 2 in (fun(n) -> n + x + y)(10)' '13'
+run_e2e "e2e capture+2args" 'let x = 100 in (fun(a, b) -> a + b + x)(1, 2)' '103'
 
 # print (decimal output) — compare stdout, not exit code
 run_print() {
