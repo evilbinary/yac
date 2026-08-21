@@ -20,23 +20,19 @@
       "patterns": [
         {
           "name": "comment.line.double-dash.yac",
-          "begin": "--",
-          "end": "$",
-          "patterns": [
-            {
-              "name": "punctuation.definition.comment.yac",
-              "match": "--"
-            }
-          ]
+          "match": "--.*$"
         },
         {
-          "name": "comment.block.yac",
-          "begin": "/\\*",
-          "end": "\\*/",
-          "patterns": [
-            { "include": "#comments" }
-          ]
+          "include": "#block-comment"
         }
+      ]
+    },
+    "block-comment": {
+      "name": "comment.block.yac",
+      "begin": "/\\*",
+      "end": "\\*/",
+      "patterns": [
+        { "include": "#block-comment" }
       ]
     },
     "strings": {
