@@ -375,3 +375,32 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 - 栈图：调用点记录帧内 tagged 指针偏移
 
 **实现顺序建议**：①tagged value（改 emit 算术）→ ②闭包对象+create/apply → ③无捕获闭包测试 → ④捕获环境 → ⑤GC。每步用差分测试与 C 解释器比对。
+
+### M3.5a 已完成补充
+
+**tagged value**（已实现并回归）：
+- int 存 `n<<1`（低 bit 0）；指针（闭包）用 `p|1`（低 bit 1，后续）
+- emit 改造：`mov_imm` tag（shl）；`binop`/`cmp` 解 tag（sar）后运算再 tag（shl）；call 参数以 tagged 传递、返回值已 tagged；`exit`/`print` 解 tag；`br` 测 tagged 条件（非零即真，true=2）
+- 新增 rbx 操作数编码（mov/sar/add/sub/imul/idiv/cmp）用于解 tag 运算
+- 回归：算术/除/模/if/递归 `fact(10)=3628800`、print 全部正确
+- **陷阱**：`in e8(...) in e8(...)` 非法（`in` 前必须是 `let _=` 绑定）——多语句函数必须 `let _=X in let _=Y in ... in C` 链
+
+### M3.5b 闭包（下次继续）
+
+实现顺序：
+1. **堆分配器**：`yac_alloc(n in rdi)->rax`（brk syscall 12）：
+   ```
+   push rdi; mov rax,12; mov rdi,0; syscall   # rax=cur
+   mov rbx,rax; pop rdi; lea rdi,[rbx+rdi]; mov rax,12; syscall  # brk(cur+n)
+   mov rax,rbx; ret                            # 返回 cur 作分配起始
+   ```
+   追加到 ELF，注册 funOffsets。
+2. **闭包对象**（堆）：`[fnptr][nenv][env0..envN-1]`；值=`ptr|1`。
+3. **LIR**：
+   - `["closure", dst, fnName, [capSlots]]`：alloc 对象，填 fnptr+捕获，存 `|1`
+   - `["apply", dst, closSlot, [argSlots]]`：解包（`ptr&~1`），取 fnptr 间接 call
+4. **函数约定**：rdi=闭包（含环境），rsi..=用户参数；prologue 解包环境到帧槽
+5. **无捕获闭包**先验证（`let f=fun(n)->n+1 in f(5)`），再加捕获环境。
+6. **GC**（M3.5c）：标记清除，根集=全局+活跃闭包；堆对象含 `next/mark` 头。
+
+**关键**：apply 的间接调用需 `mov rax,[clos+0]; call rax`（间接 call）；tag 操作用 `test rax,1`/`and rax,~1`。
