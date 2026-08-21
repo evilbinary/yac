@@ -39,7 +39,8 @@ let anf_expr(ast, counter) =
       /* closure: [fun, [params], body] */
       let br = anf_expr(nth(expr, 2), c) in
       let tup = fresh(nth(br, 2)) in
-      [[["letfun", nth(tup, 0), nth(expr, 1), nth(br, 0)]],
+      let fbody = [nth(br, 0), nth(br, 1)] in
+      [[["letfun", nth(tup, 0), nth(expr, 1), fbody]],
        ["var", nth(tup, 0)], nth(tup, 1)]
     else
       /* non-atomic: the normalized expression's tail is already an atom
@@ -57,7 +58,8 @@ let anf_expr(ast, counter) =
     /* fun (params) -> body */
     let br = anf_expr(nth(ast, 2), counter) in
     let tup = fresh(nth(br, 2)) in
-    [[["letfun", nth(tup, 0), nth(ast, 1), nth(br, 0)]],
+    let fbody = [nth(br, 0), nth(br, 1)] in
+    [[["letfun", nth(tup, 0), nth(ast, 1), fbody]],
      ["var", nth(tup, 0)], nth(tup, 1)]
   else if k == "binop" then
     /* op lhs rhs -> temp = lhs op rhs */
@@ -98,10 +100,21 @@ let anf_expr(ast, counter) =
   else if k == "let" then
     /* let name = bound in body */
     let name = nth(ast, 1) in
-    let br = anf_atom(nth(ast, 2), counter) in
-    let bbindings = nth(br, 0) in
-    let batom = nth(br, 1) in
-    let bodyr = anf_expr(nth(ast, 3), nth(br, 2)) in
-    let bbindings2 = append(bbindings, [["let", name, batom]]) in
-    [append(bbindings2, nth(bodyr, 0)), nth(bodyr, 1), nth(bodyr, 2)]
+    let bound_ast = nth(ast, 2) in
+    /* if bound is a function literal, bind it under its own name so
+     * recursion resolves by name */
+    if nth(bound_ast, 0) == "fun" then
+      let params = nth(bound_ast, 1) in
+      let bodyr = anf_expr(nth(bound_ast, 2), counter) in
+      let fbody = [nth(bodyr, 0), nth(bodyr, 1)] in
+      let fbind = ["letfun", name, params, fbody] in
+      let body2 = anf_expr(nth(ast, 3), nth(bodyr, 2)) in
+      [append([fbind], nth(body2, 0)), nth(body2, 1), nth(body2, 2)]
+    else
+      let br = anf_atom(nth(ast, 2), counter) in
+      let bbindings = nth(br, 0) in
+      let batom = nth(br, 1) in
+      let bodyr = anf_expr(nth(ast, 3), nth(br, 2)) in
+      let bbindings2 = append(bbindings, [["let", name, batom]]) in
+      [append(bbindings2, nth(bodyr, 0)), nth(bodyr, 1), nth(bodyr, 2)]
   else [["error", "anf"], ["unit"], counter]
