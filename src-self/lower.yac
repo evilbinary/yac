@@ -89,6 +89,13 @@ let lower_body(anf, st) =
         step(i + 1, [append(nth(rb, 0), [newinsn]),
                      cons([name, dst], nth(rb, 2)), ctr + 1,
                      nth(rb, 4), nth(rb, 5)])
+      else if k == "letprint" then
+        let atom = nth(b, 2) in
+        let ra = lower_atom(atom, s) in
+        let newinsn = ["print", nth(ra, 1)] in
+        step(i + 1, [append(nth(ra, 0), [newinsn]),
+                     cons([nth(b, 1), 0], nth(ra, 2)), nth(ra, 3),
+                     nth(ra, 4), nth(ra, 5)])
       else if k == "letcall" then
         let name = nth(b, 1) in
         let fn = nth(b, 2) in

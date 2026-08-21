@@ -53,6 +53,21 @@ run_e2e "e2e 2 args" 'let add(a, b) = a + b in add(4, 5)' '9'
 run_e2e "e2e 3 args" 'let add3(a, b, c) = a + b + c in add3(1, 2, 3)' '6'
 run_e2e "e2e 6 args" 'let f(a, b, c, d, e, g) = a + b + c + d + e + g in f(1, 2, 3, 4, 5, 6)' '21'
 
+# print (decimal output) — compare stdout, not exit code
+run_print() {
+    name="$1"; src="$2"; want="$3"
+    printf '%s\n' "$src" > "$TMP/in.yac"
+    if ! $BIN "$TMP/run.yac" >/dev/null 2>&1; then
+        fail=$((fail + 1)); echo "FAIL: $name (compile error)"
+        return
+    fi
+    chmod +x "$TMP/out.bin"
+    actual=$("$TMP/out.bin")
+    check "$name" "$want" "$actual"
+}
+run_print "e2e print int" 'print 123' '123'
+run_print "e2e print fact10" 'let f(n) = if n <= 1 then 1 else n * f(n - 1) in print f(10)' '3628800'
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]
