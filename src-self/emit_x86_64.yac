@@ -100,168 +100,12 @@ let emit_newline(b) =
   let _ = e8(b, 8) in
   0
 
-/* print_int(n in rdi): recursively print decimal digits to stdout.
- * Fixed layout; recursive call rel32 is -41 (call to function start). */
-let gen_print_int(d) =
-  let b = bytes_new() in
-  let _ = e8(b, 85) in
-  let _ = mov_rbp_rsp(b) in
-  let _ = sub_rsp_imm8(b, 16) in
-  let _ = mov_rax_rdi(b) in
-  let _ = mov_rcx_imm(b, 10) in
-  let _ = cqo(b) in
-  let _ = idiv_rcx(b) in
-  let _ = mov_mem_rbp8_rdx(b) in
-  let _ = cmp_rax_imm8(b, 0) in
-  let _ = jcc_rel8(b, 4, 8) in    /* je printdigit rel 0x08 */
-  let _ = mov_rdi_rax(b) in
-  let _ = call_rel32(b, -41) in   /* recurse; falls through to printdigit */
-  let _ = mov_rax_mem_rbp8(b) in
-  let _ = add_rax_imm8(b, 48) in
-  let _ = sub_rsp_imm8(b, 8) in
-  let _ = mov_mem_rsp_al(b) in
-  let _ = mov_rsi_rsp(b) in
-  let _ = mov_rdx_imm(b, 1) in
-  let _ = mov_rdi_imm(b, 1) in
-  let _ = mov_r64_imm(b, 0, 1) in
-  let _ = syscall(b) in
-  let _ = add_rsp_imm8(b, 8) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  b
-
-/* time_ms() -> tagged int. clock_gettime(CLOCK_MONOTONIC) via syscall 228. */
-let gen_time_ms(d) =
-  let b = bytes_new() in
-  let _ = push_rbp(b) in
-  let _ = mov_rbp_rsp(b) in
-  let _ = sub_rsp_imm8(b, 16) in
-  let _ = mov_rdi_imm(b, 1) in          /* CLOCK_MONOTONIC */
-  let _ = lea_rsi_rbp_disp8(b, 240) in  /* &timespec at [rbp-16] */
-  let _ = mov_r64_imm(b, 0, 228) in     /* sys_clock_gettime */
-  let _ = syscall(b) in
-  let _ = mov_r64_mem_rbp(b, 0, 240) in /* tv_sec */
-  let _ = mov_rdi_imm(b, 1000) in
-  let _ = imul_rax_rdi(b) in
-  let _ = mov_rbx_rax(b) in
-  let _ = mov_r64_mem_rbp(b, 0, 248) in /* tv_nsec at [rbp-8] */
-  let _ = mov_rcx_imm(b, 1000000) in
-  let _ = cqo(b) in
-  let _ = idiv_rcx(b) in
-  let _ = add_rax_rbx(b) in
-  let _ = shl_rax_1(b) in               /* tag as int */
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  b
-
-/* time_str() -> STR "HH:MM:SS" (UTC from CLOCK_REALTIME).
- * Returns [bytes, allocRel]. Interpreter prim uses local time. */
-let gen_time_str(d) =
-  let b = bytes_new() in
-  let _ = push_rbp(b) in
-  let _ = mov_rbp_rsp(b) in
-  let _ = sub_rsp_imm8(b, 48) in
-  let _ = mov_rdi_imm(b, 0) in          /* CLOCK_REALTIME */
-  let _ = lea_rsi_rbp_disp8(b, 240) in  /* timespec [rbp-16] */
-  let _ = mov_r64_imm(b, 0, 228) in
-  let _ = syscall(b) in
-  let _ = mov_r64_mem_rbp(b, 0, 240) in /* tv_sec */
-  let _ = xor_rdx_rdx(b) in
-  let _ = mov_rcx_imm(b, 86400) in
-  let _ = idiv_rcx(b) in                /* rdx = sec of day */
-  let _ = mov_r64_r64(b, 0, 2) in
-  let _ = xor_rdx_rdx(b) in
-  let _ = mov_rcx_imm(b, 3600) in
-  let _ = idiv_rcx(b) in                /* rax=h rdx=rem */
-  let _ = mov_mem_rbp_r64(b, 232, 0) in /* h [rbp-24] */
-  let _ = mov_r64_r64(b, 0, 2) in
-  let _ = xor_rdx_rdx(b) in
-  let _ = mov_rcx_imm(b, 60) in
-  let _ = idiv_rcx(b) in                /* rax=m rdx=s */
-  let _ = mov_mem_rbp_r64(b, 224, 0) in /* m [rbp-32] */
-  let _ = mov_mem_rbp_r64(b, 216, 2) in /* s [rbp-40] */
-  let _ = mov_rdi_imm(b, 48) in
-  let acall = bytes_len(b) in
-  let _ = call_rel32(b, 0) in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_disp8_imm32(b, 8, 0) in
-  let _ = mov_rax_disp8_imm32(b, 16, 3) in
-  let _ = mov_rax_disp8_imm32(b, 20, 0) in
-  let _ = mov_rax_disp8_imm32(b, 24, 8) in
-  let _ = mov_rax_disp8_imm32(b, 28, 0) in
-  let _ = mov_rbx_rax(b) in
-  /* HH */
-  let _ = mov_r64_mem_rbp(b, 0, 232) in
-  let _ = xor_rdx_rdx(b) in
-  let _ = mov_rcx_imm(b, 10) in
-  let _ = idiv_rcx(b) in
-  let _ = add_rax_imm8(b, 48) in
-  let _ = e8(b, 136) in let _ = e8(b, 67) in let _ = e8(b, 32) in
-  let _ = mov_r64_r64(b, 0, 2) in
-  let _ = add_rax_imm8(b, 48) in
-  let _ = e8(b, 136) in let _ = e8(b, 67) in let _ = e8(b, 33) in
-  let _ = e8(b, 198) in let _ = e8(b, 67) in let _ = e8(b, 34) in let _ = e8(b, 58) in
-  /* MM */
-  let _ = mov_r64_mem_rbp(b, 0, 224) in
-  let _ = xor_rdx_rdx(b) in
-  let _ = mov_rcx_imm(b, 10) in
-  let _ = idiv_rcx(b) in
-  let _ = add_rax_imm8(b, 48) in
-  let _ = e8(b, 136) in let _ = e8(b, 67) in let _ = e8(b, 35) in
-  let _ = mov_r64_r64(b, 0, 2) in
-  let _ = add_rax_imm8(b, 48) in
-  let _ = e8(b, 136) in let _ = e8(b, 67) in let _ = e8(b, 36) in
-  let _ = e8(b, 198) in let _ = e8(b, 67) in let _ = e8(b, 37) in let _ = e8(b, 58) in
-  /* SS */
-  let _ = mov_r64_mem_rbp(b, 0, 216) in
-  let _ = xor_rdx_rdx(b) in
-  let _ = mov_rcx_imm(b, 10) in
-  let _ = idiv_rcx(b) in
-  let _ = add_rax_imm8(b, 48) in
-  let _ = e8(b, 136) in let _ = e8(b, 67) in let _ = e8(b, 38) in
-  let _ = mov_r64_r64(b, 0, 2) in
-  let _ = add_rax_imm8(b, 48) in
-  let _ = e8(b, 136) in let _ = e8(b, 67) in let _ = e8(b, 39) in
-  let _ = e8(b, 198) in let _ = e8(b, 67) in let _ = e8(b, 40) in let _ = e8(b, 0) in
-  let _ = mov_rax_rbx(b) in
-  let _ = or_rax_1(b) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  [b, acall + 1]
-
 let cc_of(op) =
   if op == "<" then 12 else if op == "<=" then 14
   else if op == ">" then 15 else if op == ">=" then 13
   else if op == "==" then 4 else 5
 
-/* gc_collect: conservative mark-sweep. Walks the global GC list: mark pass
- * sets every object's mark=1 (conservative root set = all objects, since no
- * stack maps yet); sweep pass resets marks. Nothing is reclaimed yet — this
- * keeps all live closures alive and is the safe first version (M3.5c).
- * Precise reclaim needs stack maps (M6). Clobbers rax, rbx; returns 0.
- * (Uses apply_patch for its internal rel32 patching.) */
-let gen_gc(d) =
-  let b = bytes_new() in
-  let _ = mov_rax_imm64(b, 0) in     /* rax = &head (patched; keep layout) */
-  let headaddr = bytes_len(b) - 8 in
-  let _ = xor_rax_rax(b) in
-  let _ = ret(b) in
-  [b, headaddr]
-
-/* yac_argc() -> tagged argc. Reads saved_argc at GLOBALS+8. */
-let gen_argc(d) =
-  let b = bytes_new() in
-  let _ = mov_rax_imm64(b, 0) in
-  let gpat = bytes_len(b) - 8 in
-  let _ = mov_rax_mem_rax(b) in
-  let _ = shl_rax_1(b) in
-  let _ = ret(b) in
-  [b, gpat]
-
-/* yac_argv(index tagged in rdi) -> STR. Reads saved_argv at GLOBALS+16. */
+/* yac_argv: C char** from saved_argv. Not LIR — odd C pointers cannot be tagged ints. */
 let gen_argv(d) =
   let b = bytes_new() in
   let _ = push_rbp(b) in
@@ -1026,7 +870,7 @@ let emit_insn(st, insn, is_entry) =
       let _ = test_rax_1(b) in
       let _ = jcc_rel32(b, 5, 0) in          /* jnz -> ptr */
       let jptr = bytes_len(b) - 4 in
-      let _ = sar_rax_1(b) in
+      /* tagged int: print_int is LIR (slot 1 tagged) */
       let _ = mov_rdi_rax(b) in
       let callstart = bytes_len(b) in
       let _ = call_rel32(b, 0) in
@@ -1052,6 +896,41 @@ let emit_insn(st, insn, is_entry) =
       let _ = apply_patch(b, jend, skipoff) in
       let _ = emit_newline(b) in
       [b, cur, labels, cons([callstart + 1, "print_int"], patches)]
+    else if k == "write1" then
+      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+      let _ = sar_rax_1(b) in
+      let _ = sub_rsp_imm8(b, 8) in
+      let _ = mov_mem_rsp_al(b) in
+      let _ = mov_rsi_rsp(b) in
+      let _ = mov_rdx_imm(b, 1) in
+      let _ = mov_rdi_imm(b, 1) in
+      let _ = mov_r64_imm(b, 0, 1) in
+      let _ = syscall(b) in
+      let _ = add_rsp_imm8(b, 8) in
+      [b, cur, labels, patches]
+    else if k == "clock" then
+      let _ = sub_rsp_imm8(b, 16) in
+      let _ = mov_rdi_imm(b, nth(insn, 3)) in
+      let _ = lea_rsi_rsp(b) in
+      let _ = mov_r64_imm(b, 0, 228) in
+      let _ = syscall(b) in
+      let _ = mov_rax_mem_rsp(b) in
+      let _ = shl_rax_1(b) in
+      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+      let _ = mov_rax_mem_rsp8(b) in
+      let _ = shl_rax_1(b) in
+      let _ = emit_store_rax_slot(b, nth(insn, 2)) in
+      let _ = add_rsp_imm8(b, 16) in
+      [b, cur, labels, patches]
+    else if k == "glob" then
+      let _ = mov_rax_imm64(b, 0) in
+      let gpat = bytes_len(b) - 8 in
+      let _ = mov_rax_mem_rax(b) in
+      let _ = shl_rax_1(b) in
+      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+      let which = nth(insn, 2) in
+      let gkind = if which == 1 then "saved_argc" else "saved_argv" in
+      [b, cur, labels, cons([gkind, gpat], patches)]
     else if k == "time_ms" then
       let dst = nth(insn, 1) in
       let callstart = bytes_len(b) in
@@ -1672,15 +1551,6 @@ let emit_program_at(prog, load_vaddr, text_off) =
   let patches = nth(st, 3) in
   let b = nth(st, 0) in
   let _ = log("emit", "helpers") in
-  /* append runtime helpers (print_int, yac_alloc, gc_collect) and register offsets */
-  let pi_off = bytes_len(b) in
-  let _ = b_append(b, gen_print_int(0)) in
-  let tm_off = bytes_len(b) in
-  let _ = b_append(b, gen_time_ms(0)) in
-  let tsr = gen_time_str(0) in
-  let ts_off = bytes_len(b) in
-  let _ = b_append(b, nth(tsr, 0)) in
-  let ts_acall = nth(tsr, 1) in
   let alc_off = bytes_len(b) in
   let alcr = gen_alloc(0) in
   let _ = b_append(b, nth(alcr, 0)) in
@@ -1695,27 +1565,15 @@ let emit_program_at(prog, load_vaddr, text_off) =
   let _ = b_append(b, gen_apply2(0)) in
   let a1_off = bytes_len(b) in
   let _ = b_append(b, gen_apply1(0)) in
-  let gc_off = bytes_len(b) in
-  let gcr = gen_gc(0) in
-  let _ = b_append(b, nth(gcr, 0)) in
-  let gc_headaddr = nth(gcr, 1) in
-  let agr = gen_argc(0) in
-  let ag_off = bytes_len(b) in
-  let _ = b_append(b, nth(agr, 0)) in
   let avr = gen_argv(0) in
   let av_off = bytes_len(b) in
   let _ = b_append(b, nth(avr, 0)) in
-  let funOffsRev2 = cons(["gc_collect", gc_off],
-                         cons(["yac_apply1", a1_off],
-                              cons(["yac_apply2", a2_off],
-                                   cons(["yac_write_file", wf_off],
-                                        cons(["yac_read_file", rf_off],
-                                             cons(["yac_alloc", alc_off],
-                                                  cons(["yac_argv", av_off],
-                                                       cons(["yac_argc", ag_off],
-                                                            cons(["time_str", ts_off],
-                                                                 cons(["time_ms", tm_off],
-                                                                      cons(["print_int", pi_off], funOffsRev))))))))))) in
+  let funOffsRev2 = cons(["yac_apply1", a1_off],
+                         cons(["yac_apply2", a2_off],
+                              cons(["yac_write_file", wf_off],
+                                   cons(["yac_read_file", rf_off],
+                                        cons(["yac_alloc", alc_off],
+                                             cons(["yac_argv", av_off], funOffsRev)))))) in
   let LOAD_VADDR = load_vaddr in
   let TEXT_OFF = text_off in
   /* writable globals: gc head, saved_argc, saved_argv (8 bytes each). */
@@ -1757,12 +1615,9 @@ let emit_program_at(prog, load_vaddr, text_off) =
         step(i + 1) in
     step(0) in
   let extra = list_new() in
-  let _ = list_push(extra, ["gc_head", gc_off + gc_headaddr]) in
   let _ = list_push(extra, ["gc_head", alc_off + alc_headaddr]) in
   let _ = list_push(extra, [alc_off + gc_call_patch, "gc_collect"]) in
   let _ = list_push(extra, [rf_off + nth(rfr, 1), "yac_alloc"]) in
-  let _ = list_push(extra, [ts_off + ts_acall, "yac_alloc"]) in
-  let _ = list_push(extra, ["saved_argc", ag_off + nth(agr, 1)]) in
   let _ = list_push(extra, ["saved_argv", av_off + nth(avr, 2)]) in
   let _ = list_push(extra, ["saved_argc", av_off + nth(avr, 1)]) in
   let _ = list_push(extra, [av_off + nth(avr, 3), "yac_alloc"]) in

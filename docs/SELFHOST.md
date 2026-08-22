@@ -242,12 +242,26 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | M3.5d | 一等函数/高阶、列表/字符串/bytes/IO 原语、`yc.yac` 驱动                               | ✅ 完成*  |
 
 
-**已落地文件**：`src-self/{lexer,parser,anf,lower,lir,emit,elf,backend,encode_x64,driver_*}.yac`；
-测试套件 `tests/selfhost_{lexer,parser,anf,elf,emit,e2e,yc,bootstrap}.sh`（`make test` 含 L5：`yac`→`yc_A`→`yc_B` 与同一套 e2e）。
-**下一步**：精确 GC（M6）。
-GitHub 推送已通过 SSH 远程 + 代理 `http://127.0.0.1:10809` 解决。
+**已落地文件**：`src-self/{lexer,parser,anf,lower,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,elf,pe,macho,pack,backend,encode_*,yc}.yac`。
+全量：`./yac tests/run.yac`（interp + boot + interp/`yc_A`/`yc_B` 编译用例 + L5 iso）。
+**下一步**：M5 补齐 arm64/riscv64（含 kernel LIR）；M6 栈图 GC；不要把大块逻辑塞进 `emit_insn`（见下）。
 
-**近期完成（perf）**：全量 bundle 自编译 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）；`make test` 含 L5 bootstrap。
+**LIR 运行时（M6 的 yac 化，已尽量推进）**
+
+`runtime.yac` 用 LIR 实现列表/字符串/bytes 以及 `print_int`、`time_ms`/`time_str`、`yac_argc`、`gc_collect`（仍 no-op）。kernel 指令：`write1`、`clock`、`glob`（x86-64）。`compile_top` 产出 **24** 个 fun（`_start` + 23 runtime；手写 helper 不占 fun 表）。
+
+**无法再迁进 LIR 的手写 `gen_*`**（`emit_program_at` 末尾追加）：
+
+| 函数 | 原因 |
+| --- | --- |
+| `gen_alloc` | `brk` + 对 `gc_head` 的绝对地址 patch |
+| `gen_read_file` / `gen_write_file` | 多步 syscall，指针与 tagged int 混用 |
+| `gen_argv` | Linux `char**` 指针可为奇数，不能当 tagged int 暂存 |
+| `gen_apply1` / `gen_apply2` | 动态 `nenv` 跳表 + SysV 寄存器 |
+
+**已知编译器限制**：单个编译函数里约 33 个 ANF `let`、或 `_start` 里过长的 LIR cons 字面量，会被 `yc_A` 错编（segfault / iso 漂）。`bytes_to_str` 用 `rt_bts_a`…`d` 小函数 `list_push` 再 `list_rev` 两次。`rep movsb` memcpy 在解释器下正确，但一进 `emit_insn` 或被 runtime 使用，L5 iso 就全挂（A/B 对 memcpy 编码不一致）。字符串热路径仍走 `ld8` 循环。
+
+**近期完成（perf）**：全量 bundle 自编译曾 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）。memcpy 热路径要等 `emit_insn` 拆文件之后再接。
 
 ### 10.2 计划（按用户确定的路线图）
 
@@ -513,7 +527,9 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 7. **M4 起步**：`yc.yac` + `selfhost_yc.sh`；L4 烟测 `selfhost_l4_lex.sh`（原生 is_kw）。
 
 **仍待**：
-1. **精确 GC**：`gc_collect` 现为 no-op（保守扫描曾破坏 `saved_argc`/`saved_argv`）；栈图在 M6。
+1. **精确 GC**：`gc_collect` 现为 LIR no-op（保守扫描曾破坏 `saved_argc`/`saved_argv`）；栈图在 M6。
+2. **M5**：arm64/riscv64 仅整数子集；缺 `write1`/`clock`/`glob`、alloc/IO/apply 与 qemu 验收。
+3. **`--emit-asm` / `regalloc.yac` / M7 callcc**：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。
 

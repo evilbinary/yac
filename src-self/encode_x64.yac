@@ -125,6 +125,12 @@ let mov_rdi_mem_rsp(b) =
   let _ = e8(b, 139) in
   let _ = e8(b, 60) in
   e8(b, 36)
+/* lea rsi, [rsp]  (48 8d 34 24) */
+let lea_rsi_rsp(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 141) in
+  let _ = e8(b, 52) in
+  e8(b, 36)
 /* lea rsi, [rsp+8]  (48 8d 74 24 08) */
 let lea_rsi_rsp8(b) =
   let _ = e8(b, 72) in
@@ -270,7 +276,6 @@ let jmp_rel8(b, off) =
   let _ = e8(b, 235) in
   e8(b, band(off, 255))
 
-/* ---- syscall (0f 05) ---- */
 let syscall(b) =
   let _ = e8(b, 15) in
   e8(b, 5)
