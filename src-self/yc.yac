@@ -43,6 +43,10 @@ let anf_top(item) =
   let r = anf_expr(item, 0) in
   [nth(r, 0), nth(r, 1)]
 
+let anf_all(i, prog, acc) =
+  if i >= len(prog) then acc
+  else anf_all(i + 1, prog, append(acc, [anf_top(nth(prog, i))]))
+
 let compile_file(inpath, outpath) =
   let _ = log("yc", "start") in
   let src = read_file(inpath) in
@@ -54,7 +58,7 @@ let compile_file(inpath, outpath) =
   let prog = parse_program(toks, 0, []) in
   let _ = log_i("yc", "nprog", len(prog)) in
   let _ = log("yc", "anf begin") in
-  let anf_list = map(anf_top, prog) in
+  let anf_list = anf_all(0, prog, []) in
   let _ = log_i("yc", "nanf", len(anf_list)) in
   let lir = compile_top(anf_list) in
   let elf = backend_compile(lir) in
@@ -82,4 +86,4 @@ let main =
         let out_opt = nth(pr, 0) in
         let outpath = if out_opt == "" then default_out(inpath) else out_opt in
         compile_file(inpath, outpath)
-let _ = main in main
+in main

@@ -10,15 +10,17 @@
  *   where bytePos is the start of the rel32 field
  * After all code, patches are resolved: rel = target - (bytePos+4).
  *
- * Slot k -> [rbp - 8*k]. Entry (_start) sets rbp, no push/pop.
+ * Slot k -> [rbp - 8*(k+1)]. Never [rbp+0] (saved rbp / _start argc).
+ * Entry (_start) sets rbp, no push/pop.
  *
  * Program: ["prog", [fun...], entryName]; fun = ["fun", name, nparams, [insn...]].
  * Returns [codeBytes, funOffsets].
  */
 
 let reverse(xs) = list_rev(xs)
-/* slot k at [rbp - 8*k]; signed byte offset when |off| <= 128 */
-let slot_off(k) = 0 - bshl(k, 3)
+/* slot k at [rbp - 8*(k+1)]; signed byte offset when |off| <= 128.
+ * k=0 must not use [rbp+0]: that is saved rbp (or _start argc). */
+let slot_off(k) = 0 - bshl(k + 1, 3)
 let slot_fits8(k) =
   let off = slot_off(k) in
   off >= (0 - 128) and off <= 127
@@ -83,12 +85,13 @@ let gen_alloc(d) =
   let _ = mov_rdx_mem_rax(b) in      /* rdx = old head */
   let _ = mov_mem_rbx_rdx(b) in      /* [rbx+0] = old head (next) */
   let _ = mov_mem_rax_rbx(b) in      /* [rax] = rbx (head = new obj) */
-  /* run gc_collect (conservative mark-sweep; keeps all live objects) */
-  let _ = push_r64(b, 3) in          /* push rbx (save base) */
+  /* gc_collect is a no-op until stack maps exist (walking next ptrs
+   * smashed globals). Call kept so the existing patch still resolves. */
+  let _ = push_r64(b, 3) in
   let gcall = bytes_len(b) in
-  let _ = call_rel32(b, 0) in        /* call gc_collect (patched) */
-  let _ = pop_r64(b, 3) in           /* pop rbx */
-  let _ = mov_rax_rbx(b) in          /* rax = base (return value) */
+  let _ = call_rel32(b, 0) in
+  let _ = pop_r64(b, 3) in
+  let _ = mov_rax_rbx(b) in
   let _ = ret(b) in
   [b, headaddr, gcall + 1]
 
@@ -275,36 +278,10 @@ let apply_u64(b, bytePos, val) =
  * (Uses apply_patch for its internal rel32 patching.) */
 let gen_gc(d) =
   let b = bytes_new() in
-  let _ = mov_rax_imm64(b, 0) in     /* rax = &head (patched) */
+  let _ = mov_rax_imm64(b, 0) in     /* rax = &head (patched; keep layout) */
   let headaddr = bytes_len(b) - 8 in
-  let _ = mov_rbx_mem_rax(b) in      /* rbx = list head */
-  /* mark pass */
-  let marktest = bytes_len(b) in
-  let _ = test_rbx_rbx(b) in
-  let _ = jcc_rel32(b, 4, 0) in      /* jz -> out */
-  let markjz = bytes_len(b) - 4 in
-  let _ = mov_mem_rbx_disp8_imm32(b, 8, 1) in   /* mark = 1 */
-  let _ = mov_rbx_mem_rbx(b) in      /* next */
-  let _ = jmp_rel32(b, 0) in         /* -> marktest */
-  let markjmp = bytes_len(b) - 4 in
-  /* sweep pass */
-  let _ = mov_rbx_mem_rax(b) in      /* rbx = head */
-  let sweeptest = bytes_len(b) in
-  let _ = test_rbx_rbx(b) in
-  let _ = jcc_rel32(b, 4, 0) in      /* jz -> out */
-  let sweepjz = bytes_len(b) - 4 in
-  let _ = mov_mem_rbx_disp8_imm32(b, 8, 0) in   /* mark = 0 */
-  let _ = mov_rbx_mem_rbx(b) in      /* next */
-  let _ = jmp_rel32(b, 0) in         /* -> sweeptest */
-  let sweepjmp = bytes_len(b) - 4 in
-  /* exit */
-  let out = bytes_len(b) in
   let _ = xor_rax_rax(b) in
   let _ = ret(b) in
-  let _ = apply_patch(b, markjz, out) in
-  let _ = apply_patch(b, sweepjz, out) in
-  let _ = apply_patch(b, markjmp, marktest) in
-  let _ = apply_patch(b, sweepjmp, sweeptest) in
   [b, headaddr]
 
 /* yac_len(list in rdi) -> tagged count in rax.
@@ -352,11 +329,15 @@ let gen_len(d) =
   b
 
 /* yac_nth(list in rdi, idx tagged in rsi) -> element in rax.
- * kind=5: start walk from head at +32. kind=2: normal linked. */
+ * kind=5: start walk from head at +32. kind=2: normal linked.
+ * Returns nil (tagged 1) when list is nil. */
 let gen_nth(d) =
   let b = bytes_new() in
   let _ = sar_rsi_1(b) in
   let _ = mov_rax_rdi(b) in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jnil = bytes_len(b) - 4 in
   let _ = and_rax_1(b) in
   let _ = mov_rax_rax_disp8(b, 16) in
   let _ = cmp_rax_imm8(b, 5) in
@@ -385,6 +366,10 @@ let gen_nth(d) =
   let _ = and_rax_1(b) in
   let _ = mov_rax_rax_disp8(b, 24) in
   let _ = ret(b) in
+  let nilp = bytes_len(b) in
+  let _ = mov_r64_imm(b, 0, 1) in
+  let _ = ret(b) in
+  let _ = apply_patch(b, jnil, nilp) in
   let _ = apply_patch(b, jbuf, bufp) in
   let _ = apply_patch(b, jz, found) in
   let _ = apply_patch(b, jback, loop) in
@@ -632,6 +617,9 @@ let gen_argv(d) =
   let _ = mov_rax_mem_rax(b) in
   let _ = mov_rsi_rax(b) in
   let _ = mov_rax_mem_rsi_rcx8(b) in
+  let _ = test_rax_rax(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jnull = bytes_len(b) - 4 in
   let _ = mov_mem_rbp_r64(b, 248, 0) in
   let _ = xor_rdx_rdx(b) in
   let slen = bytes_len(b) in
@@ -659,22 +647,28 @@ let gen_argv(d) =
   let _ = mov_rax_disp8_rdx(b, 24) in
   let _ = xor_rdx_rdx(b) in
   let cpy = bytes_len(b) in
-  let _ = mov_r64_mem_rbp(b, 2, 240) in   /* rcx = len */
+  let _ = mov_r64_mem_rbp(b, 1, 240) in   /* rcx = len (reg 1, not rdx=2) */
   let _ = cmp_rdx_rcx(b) in
   let _ = jcc_rel32(b, 3, 0) in          /* jae cpyend */
   let jcpy = bytes_len(b) - 4 in
   let _ = mov_r64_mem_rbp(b, 7, 248) in  /* rdi = src cstr */
   let _ = movzx_eax_rdi_rdx(b) in
+  let _ = mov_r64_r64(b, 1, 0) in        /* rcx = al (save byte across rax clobber) */
   let _ = mov_r64_mem_rbp(b, 3, 232) in  /* rbx = dst obj */
   let _ = mov_r64_r64(b, 0, 3) in
   let _ = add_rax_imm32(b, 32) in
-  let _ = mov_rax_rdx_al(b) in
+  let _ = e8(b, 136) in let _ = e8(b, 12) in let _ = e8(b, 16) in /* mov [rax+rdx], cl */
   let _ = inc_rdx(b) in
   let _ = jmp_rel32(b, 0) in
   let jbcpy = bytes_len(b) - 4 in
   let _ = apply_patch(b, jbcpy, cpy) in
   let cpyend = bytes_len(b) in
   let _ = apply_patch(b, jcpy, cpyend) in
+  let _ = mov_r64_mem_rbp(b, 3, 232) in
+  let _ = mov_r64_mem_rbp(b, 2, 240) in
+  let _ = mov_r64_r64(b, 0, 3) in
+  let _ = add_rax_imm32(b, 32) in
+  let _ = e8(b, 198) in let _ = e8(b, 4) in let _ = e8(b, 16) in let _ = e8(b, 0) in /* mov [rax+rdx], 0 */
   let _ = mov_r64_mem_rbp(b, 0, 232) in
   let _ = or_rax_1(b) in
   let _ = mov_rsp_rbp(b) in
@@ -682,6 +676,7 @@ let gen_argv(d) =
   let _ = ret(b) in
   let fail = bytes_len(b) in
   let _ = apply_patch(b, jfail, fail) in
+  let _ = apply_patch(b, jnull, fail) in
   let _ = xor_rax_rax(b) in
   let _ = mov_rsp_rbp(b) in
   let _ = pop_rbp(b) in
@@ -926,16 +921,15 @@ let gen_str_eq(d) =
   let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 115) in let _ = e8(b, 32) in
   let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 121) in let _ = e8(b, 32) in
   let loop = bytes_len(b) in
-  let _ = test_rdx_rdx(b) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jz = bytes_len(b) - 4 in
-  let _ = e8(b, 138) in let _ = e8(b, 6) in
-  let _ = e8(b, 58) in let _ = e8(b, 7) in
-  let _ = jcc_rel32(b, 5, 0) in
+  let _ = e8(b, 138) in let _ = e8(b, 6) in       /* mov al, [rsi] */
+  let _ = e8(b, 58) in let _ = e8(b, 7) in       /* cmp al, [rdi] */
+  let _ = jcc_rel32(b, 5, 0) in                  /* jne ne */
   let jne2 = bytes_len(b) - 4 in
-  let _ = e8(b, 72) in let _ = e8(b, 255) in let _ = e8(b, 198) in
-  let _ = e8(b, 72) in let _ = e8(b, 255) in let _ = e8(b, 199) in
-  let _ = e8(b, 72) in let _ = e8(b, 255) in let _ = e8(b, 202) in
+  let _ = e8(b, 132) in let _ = e8(b, 192) in    /* test al, al */
+  let _ = jcc_rel32(b, 4, 0) in                  /* jz eq */
+  let jz = bytes_len(b) - 4 in
+  let _ = e8(b, 72) in let _ = e8(b, 255) in let _ = e8(b, 199) in /* inc rdi */
+  let _ = e8(b, 72) in let _ = e8(b, 255) in let _ = e8(b, 198) in /* inc rsi */
   let _ = jmp_rel32(b, 0) in
   let jb = bytes_len(b) - 4 in
   let _ = apply_patch(b, jb, loop) in
@@ -1484,7 +1478,7 @@ let emit_insn(st, insn, is_entry) =
         let av_save = bytes_len(b) - 8 in
         let _ = mov_mem_rax_rsi(b) in
         let _ = mov_rbp_rsp(b) in
-        let nbytes = bshl(nlocals, 3) in
+        let nbytes = bshl(nlocals + 1, 3) in
         let _ =
           if nbytes > 127 then sub_rsp_imm32(b, nbytes)
           else sub_rsp_imm8(b, band(nbytes, 255)) in
@@ -1494,7 +1488,7 @@ let emit_insn(st, insn, is_entry) =
       else
         let _ = push_rbp(b) in
         let _ = mov_rbp_rsp(b) in
-        let nbytes = bshl(nlocals, 3) in
+        let nbytes = bshl(nlocals + 1, 3) in
         let _ =
           if nbytes > 127 then sub_rsp_imm32(b, nbytes)
           else sub_rsp_imm8(b, band(nbytes, 255)) in
@@ -1765,6 +1759,7 @@ let emit_insn(st, insn, is_entry) =
       let _ = mov_rax_disp8_imm32(b, 8, 0) in   /* mark = 0 */
       let _ = mov_rax_disp8_imm32(b, 16, 0) in  /* fnptr placeholder */
       let fnpos = bytes_len(b) - 4 in
+      let _ = mov_rax_disp8_imm32(b, 20, 0) in  /* high 32 of fnptr (must be 0) */
       let _ = mov_rax_disp8_imm32(b, 24, nenv) in
       let _ = mov_rax_disp8_imm32(b, 28, 0) in  /* clear high dword of nenv qword */
       let storecap(i) =
@@ -2038,9 +2033,23 @@ let emit_insn(st, insn, is_entry) =
     else if k == "str_len" then
       let dst = nth(insn, 1) in
       let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+      let _ = test_rax_rax(b) in
+      let _ = jcc_rel32(b, 4, 0) in
+      let jz0 = bytes_len(b) - 4 in
+      let _ = cmp_rax_imm8(b, 1) in
+      let _ = jcc_rel32(b, 4, 0) in
+      let jnil = bytes_len(b) - 4 in
       let _ = and_rax_1(b) in
       let _ = mov_rax_rax_disp8(b, 24) in
       let _ = shl_rax_1(b) in
+      let _ = jmp_rel32(b, 0) in
+      let jdone = bytes_len(b) - 4 in
+      let zlen = bytes_len(b) in
+      let _ = apply_patch(b, jz0, zlen) in
+      let _ = apply_patch(b, jnil, zlen) in
+      let _ = xor_rax_rax(b) in
+      let done = bytes_len(b) in
+      let _ = apply_patch(b, jdone, done) in
       let _ = emit_store_rax_slot(b, dst) in
       [b, cur, labels, patches]
     else if k == "str_ref" then
@@ -2345,7 +2354,9 @@ let emit_program(prog) =
       let fstart = nth(st, 1) in
       let st0 = [nth(st, 0), nth(st, 1), [], []] in
       let insns = nth(f, 4) in
-      let run(j, s) =
+      if len(insns) == 0 then emit_fun(i + 1, st, fo)
+      else
+        let run(j, s) =
         if j >= len(insns) then s
         else run(j + 1, emit_insn(s, nth(insns, j), is_entry)) in
       let s1 = run(0, st0) in

@@ -348,9 +348,11 @@ let lower_body(anf, st) =
       else if k == "letprint" then
         let atom = nth(b, 2) in
         let ra = lower_atom(atom, s) in
-        let newinsn = ["print", nth(ra, 1)] in
-        step(i + 1, [insn_push(nth(ra, 0), newinsn),
-                     cons([nth(b, 1), 0, 0], nth(ra, 2)), nth(ra, 3),
+        let dst = nth(ra, 3) in
+        let ins2 = insn_push(insn_push(nth(ra, 0), ["print", nth(ra, 1)]),
+                             ["mov_imm", dst, 0]) in
+        step(i + 1, [ins2,
+                     cons([nth(b, 1), dst, 0], nth(ra, 2)), dst + 1,
                      nth(ra, 4), nth(ra, 5)])
       else if k == "letcall" then
         let name = nth(b, 1) in
@@ -497,9 +499,11 @@ let lower_body(anf, st) =
         /* compile branches independently (fresh insns, same env) */
         let thenr = lower_body(thena, [list_new(), nth(cr, 2), ctr1,
                                        nth(cr, 4), nth(cr, 5)]) in
-        /* else labels continue after then's label counter to avoid collisions */
+        /* Thread then-branch funs into else so letfuns defined only in the
+         * then arm are still emitted (else previously started from cr.funs
+         * and dropped them; closures then patched fnptr to _start). */
         let elser = lower_body(elsea, [list_new(), nth(cr, 2), ctr1,
-                                       nth(cr, 4), nth(thenr, 5)]) in
+                                       nth(thenr, 4), nth(thenr, 5)]) in
         let thenslot = nth(thenr, 1) in
         let elseslot = nth(elser, 1) in
         let L = nth(elser, 5) in
