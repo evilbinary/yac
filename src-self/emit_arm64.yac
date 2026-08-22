@@ -74,7 +74,7 @@ let emit_insn_a64(st, insn, is_entry) =
     let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 2), true, 0) in
     [b, cur, labels, patches]
-  else if k == "cmp" then
+  else if k == "cmp" or k == "icmp" then
     let op = nth(insn, 1) in
     let _ = a64_slot(b, nth(insn, 3), false, 0) in
     let _ = a64_asr1(b, 0, 0) in

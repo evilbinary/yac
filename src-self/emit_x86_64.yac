@@ -846,6 +846,19 @@ let emit_insn(st, insn, is_entry) =
         let _ = shl_rax_1(b) in
         let _ = emit_store_rax_slot(b, dst) in
         [b, cur, labels, patches]
+    else if k == "icmp" then
+      let op = nth(insn, 1) in
+      let dst = nth(insn, 2) in
+      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+      let _ = sar_rax_1(b) in
+      let _ = emit_load_rbx_slot(b, nth(insn, 4)) in
+      let _ = sar_rbx_1(b) in
+      let _ = cmp_rax_rbx(b) in
+      let _ = setcc_r8(b, cc_of(op)) in
+      let _ = movzx_eax_al(b) in
+      let _ = shl_rax_1(b) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, patches]
     else if k == "label" then
       let nm = nth(insn, 1) in
       [b, cur, cons([nm, cur], labels), patches]

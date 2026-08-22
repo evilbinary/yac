@@ -19,6 +19,8 @@ let l_mov_imm(d, v) = ["mov_imm", d, v]
 let l_mov(d, s) = ["mov", d, s]
 let l_binop(op, d, a, b) = ["binop", op, d, a, b]
 let l_cmp(op, d, a, b) = ["cmp", op, d, a, b]
+/* Integer-only compare (never yac_str_eq). Use in runtime loops. */
+let l_icmp(op, d, a, b) = ["icmp", op, d, a, b]
 let l_br(c, t, f) = ["br", c, t, f]
 let l_label(n) = ["label", n]
 let l_jmp(l) = ["jmp", l]
