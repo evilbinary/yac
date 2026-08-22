@@ -72,10 +72,17 @@ Value v_list(List *l) {
 }
 
 Value v_list_arena(Arena *a, const Value *items, int n) {
-    List *l = (List *)arena_alloc(a, sizeof(List) + (size_t)n * sizeof(Value));
+    List *l = (List *)arena_alloc(a, sizeof(List));
     memset(l, 0, sizeof(List));
     l->len = n;
-    if (items) memcpy(l->items, items, (size_t)n * sizeof(Value));
+    l->cap = -1; /* immutable: must not list_push / realloc */
+    if (n == 0) {
+        l->items = NULL;
+    } else {
+        l->items = (Value *)arena_alloc(a, (size_t)n * sizeof(Value));
+        if (items) memcpy(l->items, items, (size_t)n * sizeof(Value));
+        else memset(l->items, 0, (size_t)n * sizeof(Value));
+    }
     return v_list(l);
 }
 
@@ -457,6 +464,57 @@ static Value prim_bytes_new(Value *args, int nargs, PrimCtx *ctx) {
     (void)args;
     (void)nargs;
     return v_bytes(gc_new_bytes(ctx->gc));
+}
+
+/* list_new() -> empty growable list (for amortized push while compiling) */
+static Value prim_list_new(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    return v_list(gc_new_list(ctx->gc, 0));
+}
+
+/* list_push(lst, x) -> unit. Amortized O(1) append; mutates lst. */
+static Value prim_list_push(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_LIST) {
+        ctx->errored = true;
+        strcpy(ctx->errmsg, "list_push: expected a list");
+        return VALUE_NULL;
+    }
+    List *l = args[0].u.l;
+    if (l->cap < 0) {
+        ctx->errored = true;
+        strcpy(ctx->errmsg, "list_push: list is immutable");
+        return VALUE_NULL;
+    }
+    if (l->len >= l->cap) {
+        int ncap = l->cap ? l->cap * 2 : 8;
+        Value *ni = (Value *)realloc(l->items, (size_t)ncap * sizeof(Value));
+        if (!ni) {
+            ctx->errored = true;
+            strcpy(ctx->errmsg, "list_push: out of memory");
+            return VALUE_NULL;
+        }
+        l->items = ni;
+        l->cap = ncap;
+    }
+    l->items[l->len++] = args[1];
+    return v_unit();
+}
+
+/* reverse(lst) -> new list, O(n) */
+static Value prim_reverse(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_LIST) {
+        ctx->errored = true;
+        strcpy(ctx->errmsg, "reverse: expected a list");
+        return VALUE_NULL;
+    }
+    List *src = args[0].u.l;
+    List *out = gc_new_list(ctx->gc, src->len);
+    for (int i = 0; i < src->len; i++)
+        out->items[i] = src->items[src->len - 1 - i];
+    return v_list(out);
 }
 
 /* zero-arity prims are called as name() which the parser desugars to a single
@@ -863,6 +921,9 @@ static const Prim PRIMS[] = {
     {"str_slice", 3, true, true, prim_strslice},
     {"str_ref", 2, true, false, prim_strref},
     {"bytes_new", 1, true, true, prim_bytes_new}, /* called as bytes_new(); parser passes unit */
+    {"list_new", 1, true, true, prim_list_new},   /* called as list_new(); parser passes unit */
+    {"list_push", 2, false, true, prim_list_push},
+    {"list_rev", 1, true, true, prim_reverse},
     {"bytes_put", 3, false, true, prim_bytes_put},
     {"bytes_append", 2, false, true, prim_bytes_append},
     {"bytes_len", 1, true, false, prim_bytes_len},

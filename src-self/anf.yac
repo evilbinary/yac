@@ -20,7 +20,7 @@
  * anf_expr) is a nested local closure inside it.
  */
 
-let reverse(xs) = foldl(fun (a, x) -> cons(x, a), [], xs)
+let reverse(xs) = list_rev(xs)
 
 let anf_expr(ast, counter) =
   /* fresh temp name + incremented counter */

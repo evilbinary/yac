@@ -21,7 +21,7 @@
  *   ["error", msg]
  */
 
-let reverse(xs) = foldl(fun (a, x) -> cons(x, a), [], xs)
+let reverse(xs) = list_rev(xs)
 let ERR = ["error", "parse"]
 let is_err(a) = nth(a, 0) == "error"
 

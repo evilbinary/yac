@@ -10,7 +10,18 @@
  * All state threaded explicitly: [insns, env, counter, funs, funcnt].
  */
 
-let reverse(xs) = foldl(fun (a, x) -> cons(x, a), [], xs)
+let reverse(xs) = list_rev(xs)
+
+/* Amortized O(1) insn emit (C list_push). Returns the same buffer. */
+let insn_push(ins, x) =
+  let _ = list_push(ins, x) in ins
+
+let insn_extend(ins, xs) =
+  let n = len(xs) in
+  let loop(i) =
+    if i >= n then ins
+    else let _ = list_push(ins, nth(xs, i)) in loop(i + 1) in
+  loop(0)
 
 /* ---- int parsing ---- */
 let str_to_int(s) =
@@ -46,7 +57,7 @@ let prim_names = ["cons", "len", "nth", "tail", "append", "print",
                   "map", "filter", "foldl", "foldr", "drop", "head",
                   "str_len", "str_cat", "str_ref", "str_slice", "int_to_str",
                   "bytes_new", "bytes_len", "bytes_append", "bytes_ref", "bytes_put",
-                  "bytes_to_str",
+                  "bytes_to_str", "list_new", "list_push", "list_rev",
                   "read_file", "write_file", "band", "bor", "bxor", "bshl", "bshr"]
 let is_prim_name(w) = in_list(w, prim_names)
 
@@ -166,20 +177,20 @@ let lower_atom(atom, st) =
   let k = nth(atom, 0) in
   if k == "int" then
     let slot = ctr in
-    [append(insns, [["mov_imm", slot, str_to_int(nth(atom, 1))]]),
+    [insn_push(insns, ["mov_imm", slot, str_to_int(nth(atom, 1))]),
      slot, env, ctr + 1, funs, funcnt]
   else if k == "nil" then
     let slot = ctr in
-    [append(insns, [["nil", slot]]),
+    [insn_push(insns, ["nil", slot]),
      slot, env, ctr + 1, funs, funcnt]
   else if k == "str" then
     let slot = ctr in
-    [append(insns, [["strlit", slot, nth(atom, 1)]]),
+    [insn_push(insns, ["strlit", slot, nth(atom, 1)]),
      slot, env, ctr + 1, funs, funcnt]
   else if k == "bool" then
     let slot = ctr in
     let v = if nth(atom, 1) == "true" then 1 else 0 in
-    [append(insns, [["mov_imm", slot, v]]),
+    [insn_push(insns, ["mov_imm", slot, v]),
      slot, env, ctr + 1, funs, funcnt]
   else if k == "var" then
     [insns, env_lookup(env, nth(atom, 1)), env, ctr, funs, funcnt]
@@ -221,14 +232,14 @@ let lower_body(anf, st) =
         let dst = nth(rb, 3) in
         let lop = if is_cmp(op) then "cmp" else "binop" in
         let newinsn = [lop, op, dst, nth(ra, 1), nth(rb, 1)] in
-        step(i + 1, [append(nth(rb, 0), [newinsn]),
+        step(i + 1, [insn_push(nth(rb, 0), newinsn),
                      cons([name, dst, 0], nth(rb, 2)), dst + 1,
                      nth(rb, 4), nth(rb, 5)])
       else if k == "letprint" then
         let atom = nth(b, 2) in
         let ra = lower_atom(atom, s) in
         let newinsn = ["print", nth(ra, 1)] in
-        step(i + 1, [append(nth(ra, 0), [newinsn]),
+        step(i + 1, [insn_push(nth(ra, 0), newinsn),
                      cons([nth(b, 1), 0, 0], nth(ra, 2)), nth(ra, 3),
                      nth(ra, 4), nth(ra, 5)])
       else if k == "letcall" then
@@ -272,6 +283,10 @@ let lower_body(anf, st) =
           else if fnname == "map" then
             ["map", dst, nth(slots, 0), nth(slots, 1)]
           else if fnname == "bytes_new" then ["bytes_new", dst]
+          else if fnname == "list_new" then ["list_new", dst]
+          else if fnname == "list_push" then
+            ["list_push", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "list_rev" then ["list_rev", dst, nth(slots, 0)]
           else if fnname == "bytes_len" then ["bytes_len", dst, nth(slots, 0)]
           else if fnname == "bytes_ref" then
             ["bytes_ref", dst, nth(slots, 0), nth(slots, 1)]
@@ -294,7 +309,7 @@ let lower_body(anf, st) =
             else if env_has(env, fnname) and not funs_has(funs0, fnname) then
               ["apply", dst, fnslot, 0 - 1, slots]
             else ["call", dst, fnname, slots] in
-        step(i + 1, [append(nth(lr, 0), [newinsn]),
+        step(i + 1, [insn_push(nth(lr, 0), newinsn),
                      cons([name, dst, 0], nth(lr, 2)), dst + 1,
                      nth(s, 3), nth(s, 4)])
       else if k == "letfun" then
@@ -317,11 +332,13 @@ let lower_body(anf, st) =
           else build_user(j + 1, cons([nth(params, j), ncap + j + 1, 0], e)) in
         let p_env = build_user(0, build_cap(0, [])) in
         let ntot = ncap + nparams in
-        let br = lower_body(body, [[], p_env, ntot + 1, nth(s, 3), 0]) in
+        let br = lower_body(body, [list_new(), p_env, ntot + 1, nth(s, 3), 0]) in
         /* pad frame so recursive calls cannot clobber live slots */
         let nslots = nth(br, 3) + 8 in
-        let f_insns = append([["prologue", nslots, ntot]],
-                             append(nth(br, 0), [["ret", nth(br, 1)]])) in
+        let f_insns = insn_push(
+              insn_extend(insn_push(list_new(), ["prologue", nslots, ntot]),
+                          nth(br, 0)),
+              ["ret", nth(br, 1)]) in
         let f = ["fun", name, ntot, ncap, f_insns] in
         let slot = ctr in
         /* Always allocate a closure object so the function is a first-class
@@ -333,7 +350,7 @@ let lower_body(anf, st) =
         let capslots = capslot_of(0, []) in
         let clo = ["closure", slot, name, capslots] in
         let funs1 = cons(f, nth(br, 4)) in
-        step(i + 1, [append(insns, [clo]), cons([name, slot, ncap], env),
+        step(i + 1, [insn_push(insns, clo), cons([name, slot, ncap], env),
                      ctr + 1, funs1, nth(s, 4) + 1 + nth(br, 5)])
       else if k == "letif" then
         let name = nth(b, 1) in
@@ -346,10 +363,10 @@ let lower_body(anf, st) =
         let dst = nth(cr, 3) in
         let ctr1 = dst + 1 in
         /* compile branches independently (fresh insns, same env) */
-        let thenr = lower_body(thena, [[], nth(cr, 2), ctr1,
+        let thenr = lower_body(thena, [list_new(), nth(cr, 2), ctr1,
                                        nth(cr, 4), nth(cr, 5)]) in
         /* else labels continue after then's label counter to avoid collisions */
-        let elser = lower_body(elsea, [[], nth(cr, 2), ctr1,
+        let elser = lower_body(elsea, [list_new(), nth(cr, 2), ctr1,
                                        nth(cr, 4), nth(thenr, 5)]) in
         let thenslot = nth(thenr, 1) in
         let elseslot = nth(elser, 1) in
@@ -359,15 +376,16 @@ let lower_body(anf, st) =
         let L2 = str_cat("LIF", int_to_str(L + 2)) in
         let nextctr =
           if nth(thenr, 3) > nth(elser, 3) then nth(thenr, 3) else nth(elser, 3) in
-        let ifbody =
-          append([["br", condslot, L0, L1], ["label", L0]],
-                 append(nth(thenr, 0),
-                        append([["mov", dst, thenslot], ["jmp", L2],
-                                ["label", L1]],
-                               append(nth(elser, 0),
-                                      [["mov", dst, elseslot],
-                                       ["label", L2]])))) in
-        step(i + 1, [append(nth(cr, 0), ifbody),
+        let ib0 = insn_push(list_new(), ["br", condslot, L0, L1]) in
+        let ib1 = insn_push(ib0, ["label", L0]) in
+        let ib2 = insn_extend(ib1, nth(thenr, 0)) in
+        let ib3 = insn_push(ib2, ["mov", dst, thenslot]) in
+        let ib4 = insn_push(ib3, ["jmp", L2]) in
+        let ib5 = insn_push(ib4, ["label", L1]) in
+        let ib6 = insn_extend(ib5, nth(elser, 0)) in
+        let ib7 = insn_push(ib6, ["mov", dst, elseslot]) in
+        let ifbuf = insn_push(ib7, ["label", L2]) in
+        step(i + 1, [insn_extend(nth(cr, 0), ifbuf),
                      cons([name, dst, 0], nth(elser, 2)), nextctr,
                      nth(elser, 4), L + 3])
       else step(i + 1, s) in
@@ -382,12 +400,14 @@ let compile_top(items) =
       let r = lower_body(nth(items, i), [entry_insns, env, counter, funs, funcnt]) in
       iter(i + 1, nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5),
            nth(r, 0), nth(r, 1)) in
-  let st = iter(0, [], 1, [], 0, [], 0) in
+  let st = iter(0, [], 1, [], 0, list_new(), 0) in
   let entry_insns = nth(st, 4) in
   let result_slot = nth(st, 5) in
   let funs = nth(st, 2) in
   let nslots = nth(st, 1) in
   let entry = ["fun", "_start", 0, 0,
-               append([["prologue", nslots, 0]],
-                      append(entry_insns, [["exit", result_slot]]))] in
+               insn_push(
+                 insn_extend(insn_push(list_new(), ["prologue", nslots, 0]),
+                             entry_insns),
+                 ["exit", result_slot])] in
   ["prog", cons(entry, reverse(funs)), "_start"]

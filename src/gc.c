@@ -64,8 +64,9 @@ static void mark_obj(Gc *g, GObj *o) {
         break;
     }
     case G_BIGNUM:
+        break;
     case G_BYTES:
-        break; /* payload is inline or a separate raw block; no child pointers */
+        break; /* payload is a separate raw block; no child pointers */
     }
 }
 
@@ -124,10 +125,16 @@ ValArr *gc_new_valarr(Gc *g, int n) {
 }
 
 List *gc_new_list(Gc *g, int n) {
-    List *l = (List *)gc_alloc_raw(g, G_LIST,
-                                    sizeof(List) + (size_t)n * sizeof(Value));
+    List *l = (List *)gc_alloc_raw(g, G_LIST, sizeof(List));
     l->len = n;
-    memset(l->items, 0, (size_t)n * sizeof(Value));
+    l->cap = n;
+    if (n == 0) {
+        l->items = NULL;
+    } else {
+        l->items = (Value *)malloc((size_t)n * sizeof(Value));
+        if (!l->items) oom();
+        memset(l->items, 0, (size_t)n * sizeof(Value));
+    }
     return l;
 }
 
@@ -183,7 +190,7 @@ void gc_set_frame(Gc *g, GObj *frame) {
 
 static void free_obj(GObj *o) {
     if (o->kind == G_BYTES) free(((Bytes *)o)->data); /* separate malloc block */
-    /* all other payloads are contiguous with the header */
+    if (o->kind == G_LIST) free(((List *)o)->items);
     free(o);
 }
 

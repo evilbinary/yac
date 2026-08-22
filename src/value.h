@@ -103,13 +103,15 @@ struct Closure {
     int rslot;      /* V_CONT: slot of the param in the captured frame */
 };
 
-/* Immutable list value: a GC- or arena-resident array of Values. GC lists
- * are allocated via gc_new_list() (gc.h); arena lists are used for literals
- * and for values deserialized from checkpoints/runtime files. */
+/* List value: len elements in a separately allocated items array (like Bytes).
+ * GC lists come from gc_new_list(); arena lists from v_list_arena().
+ * `list_push` grows items with amortized O(1) append (bootstrap compiler hot path).
+ * `cap < 0` means immutable (arena/literal): list_push must not be used. */
 struct List {
     GObj hdr;
     int len;
-    Value items[]; /* flexible array of len Values */
+    int cap;     /* capacity of items[]; -1 = immutable (do not realloc) */
+    Value *items;
 };
 
 /* Arbitrary-precision signed integer: base-2^32 little-endian digits.

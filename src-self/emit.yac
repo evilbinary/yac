@@ -16,7 +16,7 @@
  * Returns [codeBytes, funOffsets].
  */
 
-let reverse(xs) = foldl(fun (a, x) -> cons(x, a), [], xs)
+let reverse(xs) = list_rev(xs)
 /* slot k at [rbp - 8*k]; signed byte offset when |off| <= 128 */
 let slot_off(k) = 0 - bshl(k, 3)
 let slot_fits8(k) =
@@ -270,6 +270,52 @@ let gen_tail(d) =
   let _ = ret(b) in
   let _ = apply_patch(b, jz, done) in
   b
+
+/* yac_list_rev(list in rdi) -> reversed list in rax.
+ * Returns [bytes, allocCallRelPos]. */
+let gen_list_rev(d) =
+  let b = bytes_new() in
+  let _ = push_rbp(b) in
+  let _ = mov_rbp_rsp(b) in
+  let _ = sub_rsp_imm8(b, 32) in
+  let _ = mov_mem_rbp_rdi(b, 248) in   /* lst */
+  let _ = mov_r64_imm(b, 0, 1) in
+  let _ = mov_mem_rbp_r64(b, 240, 0) in /* acc = nil */
+  let loop = bytes_len(b) in
+  let _ = mov_r64_mem_rbp(b, 0, 248) in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jdone = bytes_len(b) - 4 in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_rax_disp8(b, 24) in  /* head */
+  let _ = mov_mem_rbp_r64(b, 232, 0) in /* save head */
+  let _ = mov_r64_mem_rbp(b, 0, 248) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_rax_disp8(b, 32) in  /* tail */
+  let _ = mov_mem_rbp_r64(b, 248, 0) in /* lst = tail */
+  let _ = mov_rdi_imm(b, 40) in
+  let acall = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_disp8_imm32(b, 8, 0) in
+  let _ = mov_rax_disp8_imm32(b, 16, 2) in
+  let _ = mov_rax_disp8_imm32(b, 20, 0) in
+  let _ = mov_r64_mem_rbp(b, 7, 232) in /* rdi = head */
+  let _ = mov_rax_disp8_rdi(b, 24) in
+  let _ = mov_r64_mem_rbp(b, 7, 240) in /* rdi = acc */
+  let _ = mov_rax_disp8_rdi(b, 32) in
+  let _ = or_rax_1(b) in
+  let _ = mov_mem_rbp_r64(b, 240, 0) in /* acc = cons */
+  let _ = jmp_rel32(b, 0) in
+  let jback = bytes_len(b) - 4 in
+  let done = bytes_len(b) in
+  let _ = mov_r64_mem_rbp(b, 0, 240) in
+  let _ = mov_rsp_rbp(b) in
+  let _ = pop_rbp(b) in
+  let _ = ret(b) in
+  let _ = apply_patch(b, jdone, done) in
+  let _ = apply_patch(b, jback, loop) in
+  [b, acall + 1]
 
 /* yac_append(a in rdi, b in rsi) -> tagged list in rax.
  * Returns [bytes, selfCallRelPos, allocCallRelPos]. */
@@ -1528,6 +1574,24 @@ let emit_insn(st, insn, is_entry) =
       let _ = call_rel32(b, 0) in
       let _ = emit_store_rax_slot(b, dst) in
       [b, cur, labels, cons([acall + 1, "yac_append"], patches)]
+    else if k == "list_rev" then
+      let dst = nth(insn, 1) in
+      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+      let _ = mov_rdi_rax(b) in
+      let acall = bytes_len(b) in
+      let _ = call_rel32(b, 0) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, cons([acall + 1, "yac_list_rev"], patches)]
+    else if k == "list_new" then
+      let dst = nth(insn, 1) in
+      let _ = mov_r64_imm(b, 0, 1) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, patches]
+    else if k == "list_push" then
+      let dst = nth(insn, 1) in
+      let _ = xor_rax_rax(b) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, patches]
     else if k == "strlit" then
       /* STR: [next][mark][kind=3][len][bytes...]; size 8-aligned */
       let dst = nth(insn, 1) in
@@ -1808,6 +1872,9 @@ let emit_program(prog) =
   let _ = b_append(b, gen_nth(0)) in
   let tail_off = bytes_len(b) in
   let _ = b_append(b, gen_tail(0)) in
+  let lrr = gen_list_rev(0) in
+  let lrev_off = bytes_len(b) in
+  let _ = b_append(b, nth(lrr, 0)) in
   let alc_off = bytes_len(b) in
   let alcr = gen_alloc(0) in
   let _ = b_append(b, nth(alcr, 0)) in
@@ -1866,10 +1933,11 @@ let emit_program(prog) =
                                                                                 cons(["yac_read_file", rf_off],
                                                                                      cons(["yac_append", app_off],
                                                                                           cons(["yac_alloc", alc_off],
+                                                                                               cons(["yac_list_rev", lrev_off],
                                                                                                cons(["yac_tail", tail_off],
                                                                                                     cons(["yac_nth", nth_off],
                                                                                                          cons(["yac_len", len_off],
-                                                                                                              cons(["print_int", pi_off], funOffsRev))))))))))))))))))) in
+                                                                                                              cons(["print_int", pi_off], funOffsRev)))))))))))))))))))) in
   let LOAD_VADDR = 4194304 in  /* 0x400000 */
   let TEXT_OFF = 120 in       /* ELF header + phdr size */
   /* append a small writable data area for GC globals (the linked-list head). */
@@ -1910,6 +1978,7 @@ let emit_program(prog) =
                         cons([alc_off + gc_call_patch, "gc_collect"],
                              cons([app_off + nth(appr, 1), "yac_append"],
                                   cons([app_off + nth(appr, 2), "yac_alloc"],
+                                       cons([lrev_off + nth(lrr, 1), "yac_alloc"],
                                        cons([rf_off + nth(rfr, 1), "yac_alloc"],
                                             cons([sc_off + nth(scr, 1), "yac_alloc"],
                                                  cons([it_off + nth(itr, 1), "yac_alloc"],
@@ -1919,6 +1988,6 @@ let emit_program(prog) =
                                                                      cons([mp_off + nth(mpr, 1), "yac_map"],
                                                                           cons([mp_off + nth(mpr, 2), "yac_apply1"],
                                                                                cons([mp_off + nth(mpr, 3), "yac_alloc"],
-                                                                                    patches)))))))))))))) in
+                                                                                    patches))))))))))))))) in
   let _ = resolve(extra) in
   [b, funOffsRev2]
