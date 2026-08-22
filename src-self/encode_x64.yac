@@ -88,6 +88,25 @@ let add_rsp_imm8(b, imm8) =
   let _ = e8(b, 131) in
   let _ = e8(b, 196) in      /* 83 /4 -> add */
   e8(b, band(imm8, 255))
+/* mov rax, [rsp]  (48 8b 04 24) */
+let mov_rax_mem_rsp(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 4) in
+  e8(b, 36)
+/* mov rax, [rsp+8]  (48 8b 44 24 08) */
+let mov_rax_mem_rsp8(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 68) in
+  let _ = e8(b, 36) in
+  e8(b, 8)
+/* mov rbx, [rsp]  (48 8b 1c 24) */
+let mov_rbx_mem_rsp(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 28) in
+  e8(b, 36)
 /* ret */
 let ret(b) = e8(b, 195)
 

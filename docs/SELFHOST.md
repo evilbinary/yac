@@ -503,11 +503,11 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 **已完成**：
 1. **HO**：每个 `letfun`（含 ncap=0）分配 closure；捕获/参数走 `apply`（动态读 nenv）；命名函数直 `call`；嵌套函数合并进 funs。
-2. **列表**：nil/cons/len/nth/tail/append/drop；字面量 desugar；`foldl`/`map`/`filter`（用户定义）e2e；`nth(map(...))` 已修。
-3. **字符串**：STR 堆对象（kind=3）；`strlit` / `str_len` / `str_ref` / `str_cat`。
-4. **bytes**：BYTES 堆对象（kind=4，初容 1MiB）；`bytes_new/len/ref/put/append`。
-5. **IO**：`read_file` / `write_file`（syscall open/read/write/close）。
-6. **位运算**：`band` / `bor` / `bshl` / `bshr`。
-7. **M4 起步**：`src-self/yc.yac` 驱动 + `tests/selfhost_yc.sh`（解释器托管编译 fact）。
+2. **列表**：nil/cons/len/nth/tail/append/drop；字面量 desugar；`foldl`/`map`/`filter`（用户定义与原语）e2e。
+3. **字符串**：STR 堆对象（kind=3，8 字节对齐）；`strlit` / `str_len` / `str_ref` / `str_cat` / `str_slice` / `int_to_str`；`==`/`!=` 内容比较。
+4. **bytes**：BYTES 堆对象（kind=4，初容 1MiB）；`bytes_new/len/ref/put/append` / `bytes_to_str`。
+5. **IO**：`read_file` / `write_file`；位运算；`and`/`or`；bool 字面量。
+6. **HO 原语**：`yac_apply1`/`yac_apply2` + 原生 `foldl`/`map`（含捕获）。
+7. **M4 起步**：`yc.yac` + `selfhost_yc.sh`；L4 烟测 `selfhost_l4_lex.sh`（原生 is_kw）。
 
-**仍待（阻塞完整 L4/L5）**：原生 `foldl`/`map` 原语（含捕获闭包 apply）；字符串 `==`；argv；L4/L5 同构验证。
+**仍待（完整 L4/L5）**：argv；整份 `lexer.yac` 等大源经 selfhost lower 仍有边界问题；原生 `yc_A` 自编译同构。

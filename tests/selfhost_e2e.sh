@@ -75,6 +75,13 @@ run_e2e "e2e bytes" 'let b = bytes_new() in let _ = bytes_append(b, 65) in let _
 run_e2e "e2e int_to_str" 'str_ref(int_to_str(42), 1)' '50'
 run_e2e "e2e str_slice" 'str_ref(str_slice("abcdef", 2, 3), 0)' '99'
 run_e2e "e2e bytes_to_str" 'let b = bytes_new() in let _ = bytes_append(b, 90) in str_ref(bytes_to_str(b), 0)' '90'
+run_e2e "e2e str_eq" 'if "ab" == "ab" then 1 else 0' '1'
+run_e2e "e2e str_neq" 'if "ab" == "cd" then 1 else 0' '0'
+run_e2e "e2e bool" 'if true then 7 else 9' '7'
+run_e2e "e2e and" 'if (1 < 2 and 3 < 4) then 5 else 0' '5'
+run_e2e "e2e foldl prim" 'foldl(fun(a, x) -> a + x, 0, [1, 2, 3, 4])' '10'
+run_e2e "e2e map prim" 'nth(map(fun(x) -> x + 1, [1, 2, 3]), 2)' '4'
+run_e2e "e2e is_kw" 'let w = "let" in foldl(fun(a, k) -> if a then true else w == k, false, ["if", "let", "in"])' '1'
 
 # print (decimal output) — compare stdout, not exit code
 run_print() {
