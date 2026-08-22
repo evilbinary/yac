@@ -37,7 +37,7 @@ let PH_FLAGS_RWX = 7     /* PF_R | PF_W | PF_X (data area is writable) */
 let PAGE = 4096
 
 /* build the ELF64 header (64 bytes) into b at offset 0 */
-let elf_header(b, entry, text_off) =
+let elf_header(b, entry, text_off, machine) =
   let _ = bytes_put(b, 0, 127) in   /* 0x7f */
   let _ = bytes_put(b, 1, 69) in    /* 'E' */
   let _ = bytes_put(b, 2, 76) in    /* 'L' */
@@ -55,7 +55,7 @@ let elf_header(b, entry, text_off) =
   let _ = bytes_put(b, 14, 0) in
   let _ = bytes_put(b, 15, 0) in
   let _ = le16(b, E_TYPE, 16) in
-  let _ = le16(b, E_MACHINE, 18) in
+  let _ = le16(b, machine, 18) in
   let _ = le32(b, E_VERSION, 20) in
   let _ = le64(b, entry, 24) in
   let _ = le64(b, 64, 32) in        /* e_phoff */
@@ -81,16 +81,17 @@ let elf_phdr(b, file_size) =
   let _ = le64(b, PAGE, 112) in     /* p_align */
   0
 
-/* pack code bytes into a full ELF executable (bytes buffer). */
-let pack_elf(code) =
+/* pack code into ELF; machine is ELF e_machine (see target.yac). */
+let pack_elf_arch(code, machine) =
   let text_off = 120 in              /* 64 ehdr + 56 phdr */
   let entry = LOAD_VADDR + text_off in
   let code_len = bytes_len(code) in
   let file_size = text_off + code_len in
   let out = bytes_new() in
   let _ = bytes_put(out, 119, 0) in /* ensure capacity 120+ */
-  let _ = elf_header(out, entry, text_off) in
+  let _ = elf_header(out, entry, text_off, machine) in
   let _ = elf_phdr(out, file_size) in
-  /* bulk-append .text (avoid O(n) recursion depth in native code) */
   let _ = bytes_extend(out, code) in
   out
+
+let pack_elf(code) = pack_elf_arch(code, E_MACHINE)

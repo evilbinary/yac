@@ -1,7 +1,7 @@
 /* lower.yac — translate ANF to LIR (M3.3).
  *
  * Input: list of top-level ANF items [bindings, tailExpr] from anf.yac.
- * Output: LIR program ["prog", [fun...], entryName].
+ * Output: LIR via lir.yac constructors (shared by every emit-<arch>).
  *
  * Integer subset: arithmetic, comparisons, if, let, function calls, and
  * top-level recursive function definitions (letfun). Function values are
@@ -287,20 +287,20 @@ let lower_atom(atom, st) =
   let k = nth(atom, 0) in
   if k == "int" then
     let slot = ctr in
-    [insn_push(insns, ["mov_imm", slot, str_to_int(nth(atom, 1))]),
+    [insn_push(insns, l_mov_imm(slot, str_to_int(nth(atom, 1)))),
      slot, env, ctr + 1, funs, funcnt]
   else if k == "nil" then
     let slot = ctr in
-    [insn_push(insns, ["nil", slot]),
+    [insn_push(insns, l_nil(slot)),
      slot, env, ctr + 1, funs, funcnt]
   else if k == "str" then
     let slot = ctr in
-    [insn_push(insns, ["strlit", slot, nth(atom, 1)]),
+    [insn_push(insns, l_strlit(slot, nth(atom, 1))),
      slot, env, ctr + 1, funs, funcnt]
   else if k == "bool" then
     let slot = ctr in
     let v = if nth(atom, 1) == "true" then 1 else 0 in
-    [insn_push(insns, ["mov_imm", slot, v]),
+    [insn_push(insns, l_mov_imm(slot, v)),
      slot, env, ctr + 1, funs, funcnt]
   else if k == "var" then
     [insns, env_lookup(env, nth(atom, 1)), env, ctr, funs, funcnt]
@@ -347,8 +347,9 @@ let lower_body(anf, st, in_tail) =
                                   nth(ra, 4), nth(ra, 5)]) in
         /* dst after atoms so it cannot alias an operand slot */
         let dst = nth(rb, 3) in
-        let lop = if is_cmp(op) then "cmp" else "binop" in
-        let newinsn = [lop, op, dst, nth(ra, 1), nth(rb, 1)] in
+        let newinsn =
+          if is_cmp(op) then l_cmp(op, dst, nth(ra, 1), nth(rb, 1))
+          else l_binop(op, dst, nth(ra, 1), nth(rb, 1)) in
         step(i + 1, [insn_push(nth(rb, 0), newinsn),
                      cons([name, dst, 0], nth(rb, 2)), dst + 1,
                      nth(rb, 4), nth(rb, 5)])
@@ -356,8 +357,8 @@ let lower_body(anf, st, in_tail) =
         let atom = nth(b, 2) in
         let ra = lower_atom(atom, s) in
         let dst = nth(ra, 3) in
-        let ins2 = insn_push(insn_push(nth(ra, 0), ["print", nth(ra, 1)]),
-                             ["mov_imm", dst, 0]) in
+        let ins2 = insn_push(insn_push(nth(ra, 0), l_print(nth(ra, 1))),
+                             l_mov_imm(dst, 0)) in
         step(i + 1, [ins2,
                      cons([nth(b, 1), dst, 0], nth(ra, 2)), dst + 1,
                      nth(ra, 4), nth(ra, 5)])
@@ -380,70 +381,70 @@ let lower_body(anf, st, in_tail) =
         let dst = nth(lr, 3) in
         /* list / sequence prims */
         let newinsn =
-          if fnname == "cons" then ["cons", dst, nth(slots, 0), nth(slots, 1)]
-          else if fnname == "len" then ["len", dst, nth(slots, 0)]
-          else if fnname == "nth" then ["nth", dst, nth(slots, 0), nth(slots, 1)]
-          else if fnname == "tail" then ["tail", dst, nth(slots, 0)]
+          if fnname == "cons" then l_cons(dst, nth(slots, 0), nth(slots, 1))
+          else if fnname == "len" then l_len(dst, nth(slots, 0))
+          else if fnname == "nth" then l_nth(dst, nth(slots, 0), nth(slots, 1))
+          else if fnname == "tail" then l_tail(dst, nth(slots, 0))
           else if fnname == "append" then
-            ["append", dst, nth(slots, 0), nth(slots, 1)]
-          else if fnname == "str_len" then ["str_len", dst, nth(slots, 0)]
+            l_append(dst, nth(slots, 0), nth(slots, 1))
+          else if fnname == "str_len" then l_str_len(dst, nth(slots, 0))
           else if fnname == "str_ref" then
-            ["str_ref", dst, nth(slots, 0), nth(slots, 1)]
+            l_str_ref(dst, nth(slots, 0), nth(slots, 1))
           else if fnname == "str_cat" then
-            ["str_cat", dst, nth(slots, 0), nth(slots, 1)]
+            l_str_cat(dst, nth(slots, 0), nth(slots, 1))
           else if fnname == "str_slice" then
-            ["str_slice", dst, nth(slots, 0), nth(slots, 1), nth(slots, 2)]
-          else if fnname == "int_to_str" then ["int_to_str", dst, nth(slots, 0)]
-          else if fnname == "time_ms" then ["time_ms", dst]
-          else if fnname == "time_str" then ["time_str", dst]
-          else if fnname == "argc" then ["argc", dst]
-          else if fnname == "argv" then ["argv", dst, nth(slots, 0)]
-          else if fnname == "bytes_to_str" then ["bytes_to_str", dst, nth(slots, 0)]
+            l_str_slice(dst, nth(slots, 0), nth(slots, 1), nth(slots, 2))
+          else if fnname == "int_to_str" then l_int_to_str(dst, nth(slots, 0))
+          else if fnname == "time_ms" then l_time_ms(dst)
+          else if fnname == "time_str" then l_time_str(dst)
+          else if fnname == "argc" then l_argc(dst)
+          else if fnname == "argv" then l_argv(dst, nth(slots, 0))
+          else if fnname == "bytes_to_str" then l_bytes_to_str(dst, nth(slots, 0))
           else if fnname == "drop" then
-            ["drop", dst, nth(slots, 0), nth(slots, 1)]
+            l_drop(dst, nth(slots, 0), nth(slots, 1))
           else if fnname == "foldl" then
-            ["foldl", dst, nth(slots, 0), nth(slots, 1), nth(slots, 2)]
+            l_foldl(dst, nth(slots, 0), nth(slots, 1), nth(slots, 2))
           else if fnname == "map" then
-            ["map", dst, nth(slots, 0), nth(slots, 1)]
-          else if fnname == "bytes_new" then ["bytes_new", dst]
-          else if fnname == "list_new" then ["list_new", dst]
+            l_map(dst, nth(slots, 0), nth(slots, 1))
+          else if fnname == "bytes_new" then l_bytes_new(dst)
+          else if fnname == "list_new" then l_list_new(dst)
           else if fnname == "list_push" then
-            ["list_push", dst, nth(slots, 0), nth(slots, 1)]
-          else if fnname == "list_rev" then ["list_rev", dst, nth(slots, 0)]
-          else if fnname == "bytes_len" then ["bytes_len", dst, nth(slots, 0)]
+            l_list_push(dst, nth(slots, 0), nth(slots, 1))
+          else if fnname == "list_rev" then l_list_rev(dst, nth(slots, 0))
+          else if fnname == "bytes_len" then l_bytes_len(dst, nth(slots, 0))
           else if fnname == "bytes_ref" then
-            ["bytes_ref", dst, nth(slots, 0), nth(slots, 1)]
+            l_bytes_ref(dst, nth(slots, 0), nth(slots, 1))
           else if fnname == "bytes_put" then
-            ["bytes_put", dst, nth(slots, 0), nth(slots, 1), nth(slots, 2)]
+            l_bytes_put(dst, nth(slots, 0), nth(slots, 1), nth(slots, 2))
           else if fnname == "bytes_append" then
-            ["bytes_append", dst, nth(slots, 0), nth(slots, 1)]
+            l_bytes_append(dst, nth(slots, 0), nth(slots, 1))
           else if fnname == "bytes_extend" then
-            ["bytes_extend", dst, nth(slots, 0), nth(slots, 1)]
-          else if fnname == "read_file" then ["read_file", dst, nth(slots, 0)]
+            l_bytes_extend(dst, nth(slots, 0), nth(slots, 1))
+          else if fnname == "read_file" then l_read_file(dst, nth(slots, 0))
           else if fnname == "write_file" then
-            ["write_file", dst, nth(slots, 0), nth(slots, 1)]
-          else if fnname == "band" then ["binop", "&", dst, nth(slots, 0), nth(slots, 1)]
-          else if fnname == "bor" then ["binop", "|", dst, nth(slots, 0), nth(slots, 1)]
-          else if fnname == "bshl" then ["binop", "<<", dst, nth(slots, 0), nth(slots, 1)]
-          else if fnname == "bshr" then ["binop", ">>", dst, nth(slots, 0), nth(slots, 1)]
+            l_write_file(dst, nth(slots, 0), nth(slots, 1))
+          else if fnname == "band" then l_binop("&", dst, nth(slots, 0), nth(slots, 1))
+          else if fnname == "bor" then l_binop("|", dst, nth(slots, 0), nth(slots, 1))
+          else if fnname == "bshl" then l_binop("<<", dst, nth(slots, 0), nth(slots, 1))
+          else if fnname == "bshr" then l_binop(">>", dst, nth(slots, 0), nth(slots, 1))
           else
             let fnslot = env_lookup(env, fnname) in
             let fncap = env_ncap(env, fnname) in
             if env_has(env, fnname) and fncap > 0 then
-              ["apply", dst, fnslot, fncap, slots]
+              l_apply(dst, fnslot, fncap, slots)
             else if env_has(env, fnname) and not funs_has(funs0, fnname) then
-              ["apply", dst, fnslot, 0 - 1, slots]
-            else ["call", dst, fun_code_name(funs0, fnname), slots] in
+              l_apply(dst, fnslot, 0 - 1, slots)
+            else l_call(dst, fun_code_name(funs0, fnname), slots) in
         let tagged =
           if not rest_tail then newinsn
           else if nth(newinsn, 0) == "call" then
             if len(slots) <= 6 then
-              ["tailcall", dst, nth(newinsn, 2), slots]
+              l_tailcall(dst, nth(newinsn, 2), slots)
             else newinsn
           else if nth(newinsn, 0) == "apply" then
             if nth(newinsn, 3) < 0 then newinsn
             else if nth(newinsn, 3) + len(slots) > 6 then newinsn
-            else ["tailapply", dst, nth(newinsn, 2), nth(newinsn, 3), slots]
+            else l_tailapply(dst, nth(newinsn, 2), nth(newinsn, 3), slots)
           else newinsn in
         step(i + 1, [insn_push(nth(lr, 0), tagged),
                      cons([name, dst, 0], nth(lr, 2)), dst + 1,
@@ -478,7 +479,7 @@ let lower_body(anf, st, in_tail) =
         let p_env =
           if need_self then cons([name, self_slot, ncap], p_env0) else p_env0 in
         let ntot = ncap + nparams in
-        let stub = ["fun", gname, ntot, ncap, list_new(), name] in
+        let stub = l_fun(gname, ntot, ncap, list_new(), name) in
         let fs1 = funs_cons(nth(s, 3), stub) in
         let br = lower_body(body, [list_new(), p_env,
                                    if need_self then self_slot + 1 else ntot + 1,
@@ -487,20 +488,20 @@ let lower_body(anf, st, in_tail) =
         let self_caps(j, acc) =
           if j >= ncap then acc
           else self_caps(j + 1, append(acc, [j + 1])) in
-        let f_insns0 = insn_push(list_new(), ["prologue", nslots, ntot]) in
+        let f_insns0 = insn_push(list_new(), l_prologue(nslots, ntot)) in
         let f_insns1 =
           if need_self then
-            insn_push(f_insns0, ["closure", self_slot, gname, self_caps(0, [])])
+            insn_push(f_insns0, l_closure(self_slot, gname, self_caps(0, [])))
           else f_insns0 in
         let f_insns2 = insn_extend(f_insns1, nth(br, 0)) in
-        let f_insns = insn_push(f_insns2, ["ret", nth(br, 1)]) in
-        let f = ["fun", gname, ntot, ncap, f_insns, name] in
+        let f_insns = insn_push(f_insns2, l_ret(nth(br, 1))) in
+        let f = l_fun(gname, ntot, ncap, f_insns, name) in
         let slot = ctr in
         let capslot_of(j, acc) =
           if j >= ncap then acc
           else capslot_of(j + 1, append(acc, [env_lookup(env, nth(fvs, j))])) in
         let capslots = capslot_of(0, []) in
-        let clo = ["closure", slot, gname, capslots] in
+        let clo = l_closure(slot, gname, capslots) in
         let funs1 = funs_cons(nth(br, 4), f) in
         step(i + 1, [insn_push(insns, clo), cons([name, slot, ncap], env),
                      ctr + 1, funs1, nth(br, 5)])
@@ -530,15 +531,15 @@ let lower_body(anf, st, in_tail) =
         let L2 = str_cat("LIF", int_to_str(L + 2)) in
         let nextctr =
           if nth(thenr, 3) > nth(elser, 3) then nth(thenr, 3) else nth(elser, 3) in
-        let ib0 = insn_push(list_new(), ["br", condslot, L0, L1]) in
-        let ib1 = insn_push(ib0, ["label", L0]) in
+        let ib0 = insn_push(list_new(), l_br(condslot, L0, L1)) in
+        let ib1 = insn_push(ib0, l_label(L0)) in
         let ib2 = insn_extend(ib1, nth(thenr, 0)) in
-        let ib3 = insn_push(ib2, ["mov", dst, thenslot]) in
-        let ib4 = insn_push(ib3, ["jmp", L2]) in
-        let ib5 = insn_push(ib4, ["label", L1]) in
+        let ib3 = insn_push(ib2, l_mov(dst, thenslot)) in
+        let ib4 = insn_push(ib3, l_jmp(L2)) in
+        let ib5 = insn_push(ib4, l_label(L1)) in
         let ib6 = insn_extend(ib5, nth(elser, 0)) in
-        let ib7 = insn_push(ib6, ["mov", dst, elseslot]) in
-        let ifbuf = insn_push(ib7, ["label", L2]) in
+        let ib7 = insn_push(ib6, l_mov(dst, elseslot)) in
+        let ifbuf = insn_push(ib7, l_label(L2)) in
         step(i + 1, [insn_extend(nth(cr, 0), ifbuf),
                      cons([name, dst, 0], nth(elser, 2)), nextctr,
                      nth(elser, 4), L + 3])
@@ -564,10 +565,11 @@ let compile_top(items) =
   let funs = funs_list(nth(st, 2)) in
   let _ = log_i("lower", "nfuns", len(funs)) in
   let nslots = nth(st, 1) in
-  let entry = ["fun", "_start", 0, 0,
+  let entry = l_fun("_start", 0, 0,
                insn_push(
-                 insn_extend(insn_push(list_new(), ["prologue", nslots, 0]),
+                 insn_extend(insn_push(list_new(), l_prologue(nslots, 0)),
                              entry_insns),
-                 ["exit", result_slot])] in
+                 l_exit(result_slot)),
+               "_start") in
   let _ = log("lower", "compile_top done") in
-  ["prog", cons(entry, reverse(funs)), "_start"]
+  l_prog(cons(entry, reverse(funs)), "_start")

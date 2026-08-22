@@ -1,0 +1,23 @@
+/* target.yac — machine selected for emit + pack (multi-arch).
+ *
+ * LIR is shared. emit-<arch> and ELF e_machine come from the target.
+ * ["target", archName, emachine]
+ *   emachine: ELF e_machine (EM_X86_64=62, EM_AARCH64=183, EM_RISCV=243)
+ *
+ * emit_arm64 / emit_riscv64 are not in the bundle yet; emit_for rejects them.
+ */
+
+let ARCH_X64 = ["target", "x86_64", 62]
+let ARCH_ARM64 = ["target", "arm64", 183]
+let ARCH_RISCV64 = ["target", "riscv64", 243]
+
+let target_arch(t) = nth(t, 1)
+let target_emachine(t) = nth(t, 2)
+
+let target_by_name(s) =
+  if s == "x86_64" then ARCH_X64
+  else if s == "x64" then ARCH_X64
+  else if s == "arm64" then ARCH_ARM64
+  else if s == "aarch64" then ARCH_ARM64
+  else if s == "riscv64" then ARCH_RISCV64
+  else 0

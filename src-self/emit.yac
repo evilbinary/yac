@@ -1,4 +1,7 @@
-/* emit.yac — translate LIR to x86-64 machine code (M3.2).
+/* emit.yac — x86-64 emit of LIR (one emit-<arch> file).
+ *
+ * Input: LIR from lower.yac / lir.yac. Output: code bytes (no ELF).
+ * Other arches get emit_arm64.yac / emit_riscv64.yac with the same LIR.
  *
  * Single-pass emission with deferred patch-up. Lengths are computed from the
  * ACTUAL number of bytes appended (bytes_len before/after), never hand-counted,
@@ -13,7 +16,7 @@
  * Slot k -> [rbp - 8*(k+1)]. Never [rbp+0] (saved rbp / _start argc).
  * Entry (_start) sets rbp, no push/pop.
  *
- * Program: ["prog", [fun...], entryName]; fun = ["fun", name, nparams, [insn...]].
+ * Program: ["prog", [fun...], entryName]; fun from l_fun in lir.yac.
  * Returns [codeBytes, funOffsets].
  */
 

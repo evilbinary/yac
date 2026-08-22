@@ -1,42 +1,64 @@
-/* lir.yac — Low-level Intermediate Representation constructors.
+/* lir.yac — LIR: arch-independent ISA between lower and emit-*.
  *
- * LIR is a flat list of instructions operating on virtual stack slots.
- * Slot 0 is the return-value temp; function params use slots 1..nparams;
- * locals are allocated after. Slots map to [rbp + offset] in x86-64 emit.
+ * Lower (ANF → LIR) emits only these constructors. Each emit-<arch> consumes
+ * the same ["prog", ...] and produces raw code bytes; pack wraps a container.
  *
- * Function: ["fun", name, nparams, nlocals, [insn...]]
- * Program:  ["prog", [fun...], entryFunName]
+ * Program:  ["prog", [fun...], entryName]
+ * Function: ["fun", name, nparams, ncap, [insn...], srcname]
  *
- * Instructions:
- *   ["prologue", nlocals]          -- reserve stack for locals
- *   ["mov_imm", dst, imm]
- *   ["mov",     dst, src]
- *   ["binop",   op, dst, a, b]     -- dst = a op b (arith)
- *   ["cmp",     op, dst, a, b]     -- dst = (a op b) boolean
- *   ["and",     dst, a, b]         -- logical and (short-circuit via br)
- *   ["or",      dst, a, b]         -- logical or
- *   ["not",     dst, a]
- *   ["br",      condslot, trueLabel, falseLabel]
- *   ["label",   n]
- *   ["jmp",     label]
- *   ["call",    dst, fnslot, [argSlots...]]
- *   ["ret",     slot]
- *   ["exit",    slot]              -- program result (only in entry)
- *   ["copyargs",[paramSlots...]]   -- moved into arg regs before call
+ * Slots are virtual (not machine registers). emit-x64 maps them to [rbp+off];
+ * other arches use their own frame. Do not put x86/arm ops in this file.
  */
 
-/* ---- LIR constructors ---- */
-let l_prologue(n, np) = ["prologue", n, np]
+let l_prog(funs, entry) = ["prog", funs, entry]
+let l_fun(name, nparams, ncap, insns, srcname) =
+  ["fun", name, nparams, ncap, insns, srcname]
+
+let l_prologue(nlocals, nparams) = ["prologue", nlocals, nparams]
 let l_mov_imm(d, v) = ["mov_imm", d, v]
 let l_mov(d, s) = ["mov", d, s]
 let l_binop(op, d, a, b) = ["binop", op, d, a, b]
 let l_cmp(op, d, a, b) = ["cmp", op, d, a, b]
-let l_and(d, a, b) = ["and", d, a, b]
-let l_or(d, a, b) = ["or", d, a, b]
-let l_not(d, a) = ["not", d, a]
 let l_br(c, t, f) = ["br", c, t, f]
 let l_label(n) = ["label", n]
 let l_jmp(l) = ["jmp", l]
 let l_call(d, f, args) = ["call", d, f, args]
+let l_tailcall(d, f, args) = ["tailcall", d, f, args]
+let l_apply(d, fnslot, ncap, args) = ["apply", d, fnslot, ncap, args]
+let l_tailapply(d, fnslot, ncap, args) =
+  ["tailapply", d, fnslot, ncap, args]
 let l_ret(s) = ["ret", s]
 let l_exit(s) = ["exit", s]
+let l_closure(d, fname, caps) = ["closure", d, fname, caps]
+let l_print(s) = ["print", s]
+let l_nil(d) = ["nil", d]
+let l_strlit(d, s) = ["strlit", d, s]
+let l_cons(d, a, b) = ["cons", d, a, b]
+let l_len(d, a) = ["len", d, a]
+let l_nth(d, a, b) = ["nth", d, a, b]
+let l_tail(d, a) = ["tail", d, a]
+let l_append(d, a, b) = ["append", d, a, b]
+let l_list_rev(d, a) = ["list_rev", d, a]
+let l_list_new(d) = ["list_new", d]
+let l_list_push(d, a, b) = ["list_push", d, a, b]
+let l_str_len(d, a) = ["str_len", d, a]
+let l_str_ref(d, a, b) = ["str_ref", d, a, b]
+let l_str_cat(d, a, b) = ["str_cat", d, a, b]
+let l_str_slice(d, a, b, c) = ["str_slice", d, a, b, c]
+let l_int_to_str(d, a) = ["int_to_str", d, a]
+let l_bytes_to_str(d, a) = ["bytes_to_str", d, a]
+let l_time_ms(d) = ["time_ms", d]
+let l_time_str(d) = ["time_str", d]
+let l_argc(d) = ["argc", d]
+let l_argv(d, a) = ["argv", d, a]
+let l_drop(d, a, b) = ["drop", d, a, b]
+let l_foldl(d, a, b, c) = ["foldl", d, a, b, c]
+let l_map(d, a, b) = ["map", d, a, b]
+let l_bytes_new(d) = ["bytes_new", d]
+let l_bytes_len(d, a) = ["bytes_len", d, a]
+let l_bytes_ref(d, a, b) = ["bytes_ref", d, a, b]
+let l_bytes_put(d, a, b, c) = ["bytes_put", d, a, b, c]
+let l_bytes_append(d, a, b) = ["bytes_append", d, a, b]
+let l_bytes_extend(d, a, b) = ["bytes_extend", d, a, b]
+let l_read_file(d, a) = ["read_file", d, a]
+let l_write_file(d, a, b) = ["write_file", d, a, b]
