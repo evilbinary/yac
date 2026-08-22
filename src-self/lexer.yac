@@ -28,9 +28,6 @@ let at_end(s, i) = i >= str_len(s)
 
 let reverse(xs) = foldl(fun (a,x) -> cons(x, a), [], xs)
 
-/* error sentinel: a token with kind "error" */
-let ERR = ["error", "lex", 0]
-
 /* skip spaces; returns new pos */
 let skip_sp(s, i, line) =
   if at_end(s, i) then [i, line]
@@ -42,17 +39,23 @@ let skip_sp(s, i, line) =
 let skip_line_cm(s, i) =
   if at_end(s, i) or sat(s, i) == 10 then i else skip_line_cm(s, i + 1)
 
-/* skip /* ... */ block comment; returns pos (0 on unterminated) */
+/* skip block comment (*...*); returns pos (0 on unterminated) */
 let skip_block_cm(s, i, line) =
   if at_end(s, i) then 0
   else if sat(s, i) == 42 and not at_end(s, i + 1) and sat(s, i + 1) == 47 then i + 2
   else if sat(s, i) == 10 then skip_block_cm(s, i + 1, line + 1)
   else skip_block_cm(s, i + 1, line)
 
-/* read a run of chars satisfying pred (given as a predicate fn on a char) */
-let read_run(s, i, pred) =
+/* read a run of alnum chars (specialized; avoids HO capture of is_alnum) */
+let read_alnum(s, i) =
   if at_end(s, i) then i
-  else if pred(sat(s, i)) then read_run(s, i + 1, pred)
+  else if is_alnum(sat(s, i)) then read_alnum(s, i + 1)
+  else i
+
+/* read a run of chars satisfying pred (given as a predicate fn on a char) */
+let read_opchars(s, i) =
+  if at_end(s, i) then i
+  else if is_opchar(sat(s, i)) then read_opchars(s, i + 1)
   else i
 
 /* --- token constructors --- */
@@ -60,9 +63,13 @@ let mk_tok(kind, text, line) = [kind, text, line]
 
 /* scan an identifier or keyword starting at pos */
 let scan_ident(s, i, line) =
-  let e = read_run(s, i, is_alnum) in
+  let e = read_alnum(s, i) in
   let w = str_slice(s, i, e - i) in
-  let k = if is_kw(w) then "kw" else "ident" in
+  let k =
+    if w == "let" or w == "in" or w == "fun" or w == "if" or w == "then" or
+       w == "else" or w == "not" or w == "print" or w == "and" or w == "or" or
+       w == "true" or w == "false" or w == "callcc" or w == "throw"
+    then "kw" else "ident" in
   [mk_tok(k, w, line), e]
 
 /* scan a number (int or float) starting at pos. Grammar:
@@ -70,19 +77,27 @@ let scan_ident(s, i, line) =
  * The exponent is only part of the number when e/E is followed by a digit
  * (optionally signed); otherwise e/E begins a separate identifier. */
 let is_exp(c) = c == 101 or c == 69  /* 'e' or 'E' */
+let read_digits(s, i) =
+  if at_end(s, i) then i
+  else if is_digit(sat(s, i)) then read_digits(s, i + 1)
+  else i
+let read_num_body(s, i) =
+  if at_end(s, i) then i
+  else if is_digit(sat(s, i)) or sat(s, i) == 46 then read_num_body(s, i + 1)
+  else i
 let scan_num(s, i, line) =
-  let e = read_run(s, i, fun (c) -> is_digit(c) or c == 46) in
+  let e = read_num_body(s, i) in
   /* yac's and/or are not short-circuit, so guard each sat() with if */
   let m =
     if at_end(s, e) then e
     else if not is_exp(sat(s, e)) then e
     else if at_end(s, e + 1) then e
     else if is_digit(sat(s, e + 1)) then
-      read_run(s, e + 1, is_digit)
+      read_digits(s, e + 1)
     else if sat(s, e + 1) == 43 or sat(s, e + 1) == 45 then
       /* optional sign: consume only if a digit follows */
       if at_end(s, e + 2) then e
-      else if is_digit(sat(s, e + 2)) then read_run(s, e + 2, is_digit)
+      else if is_digit(sat(s, e + 2)) then read_digits(s, e + 2)
       else e
     else e
   in
@@ -92,7 +107,7 @@ let scan_num(s, i, line) =
 /* scan a string literal starting after the opening quote at pos; returns
  * [tok, nextpos] or [null, 0] on unterminated */
 let scan_str(s, i, line, acc, buf) =
-  if at_end(s, i) then [ERR, 0]
+  if at_end(s, i) then [["error", "lex", 0], 0]
   else
     let c = sat(s, i) in
     if c == 34 then
@@ -100,7 +115,7 @@ let scan_str(s, i, line, acc, buf) =
       [mk_tok("str", out, line), i + 1]
     else if c == 92 then
       /* escape: use next char raw (simple lexer; no \x decoding) */
-      if at_end(s, i + 1) then [ERR, 0]
+      if at_end(s, i + 1) then [["error", "lex", 0], 0]
       else scan_str(s, i + 2, line, acc, buf)
     else
       let _ = bytes_append(buf, c) in
@@ -145,7 +160,7 @@ let lex(s, i, line, acc) =
     if nth(nth(r, 0), 0) == "error" then cons(mk_tok("eof", "unterminated-string", line), acc)
     else lex(s, nth(r, 1), line, cons(nth(r, 0), acc))
   else if is_opchar(sat(s, i)) then
-    let e = read_run(s, i, is_opchar) in
+    let e = read_opchars(s, i) in
     let txt = str_slice(s, i, e - i) in
     lex(s, e, line, cons(mk_tok("op", txt, line), acc))
   else if is_punct(sat(s, i)) then

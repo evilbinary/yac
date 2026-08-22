@@ -65,6 +65,24 @@ let mov_mem_rbp_r64(b, disp8, reg) =
   let _ = e8(b, modrm(1, reg, 5)) in
   e8(b, band(disp8, 255))
 
+/* mov [rbp+disp32], r64  (48/4c 89 85 id32) */
+let mov_mem_rbp32_r64(b, disp32, reg) =
+  let rex = if reg >= 8 then 76 else 72 in
+  let r = if reg >= 8 then reg - 8 else reg in
+  let _ = e8(b, rex) in
+  let _ = e8(b, 137) in
+  let _ = e8(b, modrm(2, r, 5)) in
+  e32(b, disp32)
+
+/* mov r64, [rbp+disp32]  (48/4c 8b 85 id32) */
+let mov_r64_mem_rbp32(b, reg, disp32) =
+  let rex = if reg >= 8 then 76 else 72 in
+  let r = if reg >= 8 then reg - 8 else reg in
+  let _ = e8(b, rex) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, modrm(2, r, 5)) in
+  e32(b, disp32)
+
 /* ---- stack frame ---- */
 
 /* push rbp */
@@ -472,6 +490,12 @@ let sub_rsp_imm32(b, v) =
   let _ = e8(b, 129) in
   let _ = e8(b, 236) in
   e32(b, v)
+/* add rsp, imm32  (48 81 c4 id32) */
+let add_rsp_imm32(b, v) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 129) in
+  let _ = e8(b, 196) in
+  e32(b, v)
 /* mov byte [rax+disp8], imm8  (c6 40 disp imm) */
 let mov_rax_disp8_imm8(b, disp8, imm8) =
   let _ = e8(b, 198) in
@@ -572,6 +596,11 @@ let mov_rbx_rax0(b) =
   e8(b, 24)
 /* call rbx  (ff d3) — indirect call to function pointer */
 let call_rbx(b) =
+  let _ = e8(b, 255) in
+  e8(b, 211)
+/* call r11 (41 ff d3) */
+let call_r11(b) =
+  let _ = e8(b, 65) in
   let _ = e8(b, 255) in
   e8(b, 211)
 /* lea rdi, [rbx+rdi]  (48 8d 3c 3b) — rdi = rbx + rdi */

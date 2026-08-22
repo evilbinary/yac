@@ -44,73 +44,11 @@ let in_list(name, lst) =
 
 let prim_names = ["cons", "len", "nth", "tail", "append", "print",
                   "map", "filter", "foldl", "foldr", "drop", "head",
-                  "str_len", "str_cat", "str_ref", "int_to_str",
+                  "str_len", "str_cat", "str_ref", "str_slice", "int_to_str",
                   "bytes_new", "bytes_len", "bytes_append", "bytes_ref", "bytes_put",
+                  "bytes_to_str",
                   "read_file", "write_file", "band", "bor", "bxor", "bshl", "bshr"]
 let is_prim_name(w) = in_list(w, prim_names)
-
-/* collect vars referenced in an anf body [bindings, tail], excluding names
- * bound inside it (shadow set). accum is reversed list of names. */
-let collect_anf_vars(anf, accum, shadow) =
-  let atom_vars(atom, acc, shdw) =
-    let k = nth(atom, 0) in
-    if k == "var" then
-      if in_list(nth(atom, 1), shdw) then acc
-      else cons(nth(atom, 1), acc)
-    else if k == "fun" then collect_anf_vars(nth(atom, 2), acc, shdw)
-    else acc in
-  let bindings = nth(anf, 0) in
-  let tail = nth(anf, 1) in
-  let nb = len(bindings) in
-  let step(i, acc, shdw) =
-    if i >= nb then [atom_vars(tail, acc, shdw), shdw]
-    else
-      let b = nth(bindings, i) in
-      let k = nth(b, 0) in
-      let r =
-        if k == "let" then
-          let a = nth(b, 2) in
-          let acc2 = if nth(a, 0) == "var" then acc else atom_vars(a, acc, shdw) in
-          [acc2, cons(nth(b, 1), shdw)]
-        else if k == "letbin" then
-          let acc2 = atom_vars(nth(b, 3), acc, shdw) in
-          let acc3 = atom_vars(nth(b, 4), acc2, shdw) in
-          [acc3, cons(nth(b, 1), shdw)]
-        else if k == "letcall" then
-          let fn = nth(b, 2) in
-          let acc2 =
-            if nth(fn, 0) == "var" and is_prim_name(nth(fn, 1)) then acc
-            else atom_vars(fn, acc, shdw) in
-          let args = nth(b, 3) in
-          let loop(j, a) =
-            if j >= len(args) then a
-            else loop(j + 1, atom_vars(nth(args, j), a, shdw)) in
-          [loop(0, acc2), cons(nth(b, 1), shdw)]
-        else if k == "letif" then
-          let acc2 = atom_vars(nth(b, 2), acc, shdw) in
-          let rr1 = collect_anf_vars(nth(b, 3), acc2, shdw) in
-          let acc3 = nth(rr1, 0) in
-          let shdw2 = nth(rr1, 1) in
-          let rr2 = collect_anf_vars(nth(b, 4), acc3, shdw2) in
-          [nth(rr2, 0), cons(nth(b, 1), nth(rr2, 1))]
-        else if k == "letfun" then
-          let p = nth(b, 2) in
-          let shdw2 = append(p, shdw) in
-          let rr = collect_anf_vars(nth(b, 3), acc, shdw2) in
-          [nth(rr, 0), cons(nth(b, 1), shdw)]
-        else if k == "letprint" then
-          [atom_vars(nth(b, 2), acc, shdw), cons(nth(b, 1), shdw)]
-        else [acc, shdw] in
-      let r0 = nth(r, 0) in
-      let r1 = nth(r, 1) in
-      step(i + 1, r0, r1) in
-  let res = step(0, accum, shadow) in
-  [nth(res, 0), nth(res, 1)]
-
-/* free vars of a function body given its params: refs minus params minus
- * names bound inside. Returns ordered unique list. */
-let free_vars(fnbody, params) =
-  reverse(nth(collect_anf_vars(fnbody, [], params), 0))
 
 /* ---- environment ---- */
 /* env entries are [name, slot, ncap] (ncap = number of captured vars; 0 for
@@ -144,6 +82,78 @@ let funs_has(funs, name) =
     else if nth(nth(l, 0), 1) == name then true
     else rec(drop(l, 1)) in
   rec(funs)
+
+/* ncap at index 3: ["fun", name, ntot, ncap, insns] */
+let fun_ncap(funs, name) =
+  let rec(l) =
+    if len(l) == 0 then 0
+    else if nth(nth(l, 0), 1) == name then nth(nth(l, 0), 3)
+    else rec(drop(l, 1)) in
+  rec(funs)
+
+/* collect vars in anf body. Prim / zero-capture global call targets are not
+ * free; HO values and capturing call targets remain free (need apply). */
+let collect_anf_vars(anf, accum, shadow, funs) =
+  let atom_vars(atom, acc, shdw) =
+    let k = nth(atom, 0) in
+    if k == "var" then
+      if in_list(nth(atom, 1), shdw) then acc
+      else if in_list(nth(atom, 1), acc) then acc
+      else cons(nth(atom, 1), acc)
+    else if k == "fun" then collect_anf_vars(nth(atom, 2), acc, shdw, funs)
+    else acc in
+  let bindings = nth(anf, 0) in
+  let tail = nth(anf, 1) in
+  let nb = len(bindings) in
+  let step(i, acc, shdw) =
+    if i >= nb then [atom_vars(tail, acc, shdw), shdw]
+    else
+      let b = nth(bindings, i) in
+      let k = nth(b, 0) in
+      let r =
+        if k == "let" then
+          let a = nth(b, 2) in
+          let acc2 = if nth(a, 0) == "var" then acc else atom_vars(a, acc, shdw) in
+          [acc2, cons(nth(b, 1), shdw)]
+        else if k == "letbin" then
+          let acc2 = atom_vars(nth(b, 3), acc, shdw) in
+          let acc3 = atom_vars(nth(b, 4), acc2, shdw) in
+          [acc3, cons(nth(b, 1), shdw)]
+        else if k == "letcall" then
+          let fn = nth(b, 2) in
+          let acc2 =
+            if nth(fn, 0) == "var" then
+              let fnm = nth(fn, 1) in
+              if is_prim_name(fnm) then acc
+              else if funs_has(funs, fnm) and fun_ncap(funs, fnm) == 0 then acc
+              else atom_vars(fn, acc, shdw)
+            else atom_vars(fn, acc, shdw) in
+          let args = nth(b, 3) in
+          let loop(j, a) =
+            if j >= len(args) then a
+            else loop(j + 1, atom_vars(nth(args, j), a, shdw)) in
+          [loop(0, acc2), cons(nth(b, 1), shdw)]
+        else if k == "letif" then
+          let acc2 = atom_vars(nth(b, 2), acc, shdw) in
+          let rr1 = collect_anf_vars(nth(b, 3), acc2, shdw, funs) in
+          let acc3 = nth(rr1, 0) in
+          let shdw2 = nth(rr1, 1) in
+          let rr2 = collect_anf_vars(nth(b, 4), acc3, shdw2, funs) in
+          [nth(rr2, 0), cons(nth(b, 1), nth(rr2, 1))]
+        else if k == "letfun" then
+          let p = nth(b, 2) in
+          let shdw2 = append(p, shdw) in
+          let rr = collect_anf_vars(nth(b, 3), acc, shdw2, funs) in
+          [nth(rr, 0), cons(nth(b, 1), shdw)]
+        else if k == "letprint" then
+          [atom_vars(nth(b, 2), acc, shdw), cons(nth(b, 1), shdw)]
+        else [acc, shdw] in
+      step(i + 1, nth(r, 0), nth(r, 1)) in
+  let res = step(0, accum, shadow) in
+  [nth(res, 0), nth(res, 1)]
+
+let free_vars(fnbody, params, funs) =
+  reverse(nth(collect_anf_vars(fnbody, [], params, funs), 0))
 
 /* atomize a sub-expr to a slot. st = [insns, env, counter, funs, funcnt].
  * Returns [insns, slot, env, counter, funs, funcnt]. */
@@ -207,11 +217,12 @@ let lower_body(anf, st) =
         let ra = lower_atom(a, s) in
         let rb = lower_atom(bop, [nth(ra, 0), nth(ra, 2), nth(ra, 3),
                                   nth(ra, 4), nth(ra, 5)]) in
-        let dst = ctr in
+        /* dst after atoms so it cannot alias an operand slot */
+        let dst = nth(rb, 3) in
         let lop = if is_cmp(op) then "cmp" else "binop" in
         let newinsn = [lop, op, dst, nth(ra, 1), nth(rb, 1)] in
         step(i + 1, [append(nth(rb, 0), [newinsn]),
-                     cons([name, dst, 0], nth(rb, 2)), ctr + 1,
+                     cons([name, dst, 0], nth(rb, 2)), dst + 1,
                      nth(rb, 4), nth(rb, 5)])
       else if k == "letprint" then
         let atom = nth(b, 2) in
@@ -225,7 +236,6 @@ let lower_body(anf, st) =
         let fn = nth(b, 2) in
         let args = nth(b, 3) in
         let fnname = nth(fn, 1) in
-        let dst = ctr in
         let nargs = len(args) in
         let funs0 = nth(s, 3) in
         let loadargs(j, ins, env2, ctr2, slots_rev) =
@@ -234,8 +244,10 @@ let lower_body(anf, st) =
             let r = lower_atom(nth(args, j), [ins, env2, ctr2, funs0, 0]) in
             loadargs(j + 1, nth(r, 0), nth(r, 2), nth(r, 3),
                      cons(nth(r, 1), slots_rev)) in
+        /* allocate arg slots first so dst cannot alias an argument */
         let lr = loadargs(0, insns, env, ctr, []) in
         let slots = nth(lr, 1) in
+        let dst = nth(lr, 3) in
         /* list / sequence prims */
         let newinsn =
           if fnname == "cons" then ["cons", dst, nth(slots, 0), nth(slots, 1)]
@@ -292,33 +304,35 @@ let lower_body(anf, st) =
         let nparams = len(params) in
         /* self-reference (recursion) resolves by direct call, not capture,
          * so the function's own name is added to the shadow. */
-        let fvs = free_vars(body, append([name], params)) in
+        let fvs = free_vars(body, append([name], params), nth(s, 3)) in
         let ncap = len(fvs) in
         /* captured (free) vars occupy slots 1..ncap; user params ncap+1.. */
         let build_cap(j, e) =
           if j >= ncap then e
-          else build_cap(j + 1, cons([nth(fvs, j), j + 1, 0], e)) in
+          else
+            let vn = nth(fvs, j) in
+            build_cap(j + 1, cons([vn, j + 1, env_ncap(env, vn)], e)) in
         let build_user(j, e) =
           if j >= nparams then e
           else build_user(j + 1, cons([nth(params, j), ncap + j + 1, 0], e)) in
         let p_env = build_user(0, build_cap(0, [])) in
         let ntot = ncap + nparams in
-        let br = lower_body(body, [[], p_env, ntot + 1, [], 0]) in
+        let br = lower_body(body, [[], p_env, ntot + 1, nth(s, 3), 0]) in
         /* pad frame so recursive calls cannot clobber live slots */
         let nslots = nth(br, 3) + 8 in
         let f_insns = append([["prologue", nslots, ntot]],
                              append(nth(br, 0), [["ret", nth(br, 1)]])) in
-        let f = ["fun", name, ntot, f_insns] in
+        let f = ["fun", name, ntot, ncap, f_insns] in
         let slot = ctr in
         /* Always allocate a closure object so the function is a first-class
          * value (needed for higher-order calls). ncap=0 still gets a heap
-         * object with empty env. Merge nested funs from the body. */
+         * object with empty env. Nested lowering inherits parent funs. */
         let capslot_of(j, acc) =
           if j >= ncap then acc
           else capslot_of(j + 1, append(acc, [env_lookup(env, nth(fvs, j))])) in
         let capslots = capslot_of(0, []) in
         let clo = ["closure", slot, name, capslots] in
-        let funs1 = cons(f, append(nth(br, 4), nth(s, 3))) in
+        let funs1 = cons(f, nth(br, 4)) in
         step(i + 1, [append(insns, [clo]), cons([name, slot, ncap], env),
                      ctr + 1, funs1, nth(s, 4) + 1 + nth(br, 5)])
       else if k == "letif" then
@@ -328,18 +342,23 @@ let lower_body(anf, st) =
         let elsea = nth(b, 4) in
         let cr = lower_atom(cond, s) in
         let condslot = nth(cr, 1) in
+        /* reserve if-result slot before branches so it cannot alias temps */
+        let dst = nth(cr, 3) in
+        let ctr1 = dst + 1 in
         /* compile branches independently (fresh insns, same env) */
-        let thenr = lower_body(thena, [[], nth(cr, 2), nth(cr, 3),
+        let thenr = lower_body(thena, [[], nth(cr, 2), ctr1,
                                        nth(cr, 4), nth(cr, 5)]) in
-        let elser = lower_body(elsea, [[], nth(cr, 2), nth(cr, 3),
-                                       nth(cr, 4), nth(cr, 5)]) in
-        let dst = ctr in
+        /* else labels continue after then's label counter to avoid collisions */
+        let elser = lower_body(elsea, [[], nth(cr, 2), ctr1,
+                                       nth(cr, 4), nth(thenr, 5)]) in
         let thenslot = nth(thenr, 1) in
         let elseslot = nth(elser, 1) in
         let L = nth(elser, 5) in
         let L0 = str_cat("LIF", int_to_str(L)) in
         let L1 = str_cat("LIF", int_to_str(L + 1)) in
         let L2 = str_cat("LIF", int_to_str(L + 2)) in
+        let nextctr =
+          if nth(thenr, 3) > nth(elser, 3) then nth(thenr, 3) else nth(elser, 3) in
         let ifbody =
           append([["br", condslot, L0, L1], ["label", L0]],
                  append(nth(thenr, 0),
@@ -349,7 +368,7 @@ let lower_body(anf, st) =
                                       [["mov", dst, elseslot],
                                        ["label", L2]])))) in
         step(i + 1, [append(nth(cr, 0), ifbody),
-                     cons([name, dst, 0], nth(elser, 2)), ctr + 1,
+                     cons([name, dst, 0], nth(elser, 2)), nextctr,
                      nth(elser, 4), L + 3])
       else step(i + 1, s) in
   step(0, st)
@@ -368,7 +387,7 @@ let compile_top(items) =
   let result_slot = nth(st, 5) in
   let funs = nth(st, 2) in
   let nslots = nth(st, 1) in
-  let entry = ["fun", "_start", 0,
+  let entry = ["fun", "_start", 0, 0,
                append([["prologue", nslots, 0]],
                       append(entry_insns, [["exit", result_slot]]))] in
   ["prog", cons(entry, reverse(funs)), "_start"]

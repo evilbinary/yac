@@ -17,7 +17,42 @@
  */
 
 let reverse(xs) = foldl(fun (a, x) -> cons(x, a), [], xs)
-let slot8(k) = band(0 - bshl(k, 3), 255)
+/* slot k at [rbp - 8*k]; signed byte offset when |off| <= 128 */
+let slot_off(k) = 0 - bshl(k, 3)
+let slot_fits8(k) =
+  let off = slot_off(k) in
+  off >= (0 - 128) and off <= 127
+
+let emit_load_rax_slot(b, k) =
+  if slot_fits8(k) then mov_r64_mem_rbp(b, 0, band(slot_off(k), 255))
+  else mov_r64_mem_rbp32(b, 0, slot_off(k))
+let emit_load_rdi_slot(b, k) =
+  if slot_fits8(k) then mov_rdi_mem_rbp(b, band(slot_off(k), 255))
+  else mov_r64_mem_rbp32(b, 7, slot_off(k))
+let emit_store_rax_slot(b, k) =
+  if slot_fits8(k) then mov_mem_rbp_r64(b, band(slot_off(k), 255), 0)
+  else mov_mem_rbp32_r64(b, slot_off(k), 0)
+let emit_load_rbx_slot(b, k) =
+  if slot_fits8(k) then mov_rbx_mem_rbp(b, band(slot_off(k), 255))
+  else mov_r64_mem_rbp32(b, 3, slot_off(k))
+let emit_store_param(b, j, k) =
+  /* store argreg j into slot k */
+  let off = slot_off(k) in
+  if slot_fits8(k) then
+    let d = band(off, 255) in
+    if j == 0 then mov_mem_rbp_rdi(b, d)
+    else if j == 1 then mov_mem_rbp_rsi(b, d)
+    else if j == 2 then mov_mem_rbp_rdx(b, d)
+    else if j == 3 then mov_mem_rbp_rcx(b, d)
+    else if j == 4 then mov_mem_rbp_r8(b, d)
+    else mov_mem_rbp_r9(b, d)
+  else
+    if j == 0 then mov_mem_rbp32_r64(b, off, 7)
+    else if j == 1 then mov_mem_rbp32_r64(b, off, 6)
+    else if j == 2 then mov_mem_rbp32_r64(b, off, 2)
+    else if j == 3 then mov_mem_rbp32_r64(b, off, 1)
+    else if j == 4 then mov_mem_rbp32_r64(b, off, 8)
+    else mov_mem_rbp32_r64(b, off, 9)
 
 /* append bytes `src` to bytes `dst` */
 let b_append(dst, src) =
@@ -108,9 +143,6 @@ let gen_print_int(d) =
   let _ = pop_rbp(b) in
   let _ = ret(b) in
   b
-let emit_load_rax_slot(b, k) = mov_r64_mem_rbp(b, 0, slot8(k))
-let emit_load_rdi_slot(b, k) = mov_rdi_mem_rbp(b, slot8(k))
-let emit_store_rax_slot(b, k) = mov_mem_rbp_r64(b, slot8(k), 0)
 
 let cc_of(op) =
   if op == "<" then 12 else if op == "<=" then 14
@@ -1043,11 +1075,12 @@ let emit_insn(st, insn, is_entry) =
     if k == "prologue" then
       let nlocals = nth(insn, 1) in
       let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
+      /* imm8 for sub/add rsp is signed (-128..127); frames >= 128 need imm32 */
       if is_entry then
         let _ = mov_rbp_rsp(b) in
         let nbytes = bshl(nlocals, 3) in
         let _ =
-          if nbytes > 255 then sub_rsp_imm32(b, nbytes)
+          if nbytes > 127 then sub_rsp_imm32(b, nbytes)
           else sub_rsp_imm8(b, band(nbytes, 255)) in
         [b, cur, labels, patches]
       else
@@ -1055,18 +1088,18 @@ let emit_insn(st, insn, is_entry) =
         let _ = mov_rbp_rsp(b) in
         let nbytes = bshl(nlocals, 3) in
         let _ =
-          if nbytes > 255 then sub_rsp_imm32(b, nbytes)
+          if nbytes > 127 then sub_rsp_imm32(b, nbytes)
           else sub_rsp_imm8(b, band(nbytes, 255)) in
         let storeparams(j) =
           if j >= nparams then 0
+          else if j < 6 then
+            let _ = emit_store_param(b, j, j + 1) in
+            storeparams(j + 1)
           else
-            let _ =
-              if j == 0 then mov_mem_rbp_rdi(b, slot8(j + 1))
-              else if j == 1 then mov_mem_rbp_rsi(b, slot8(j + 1))
-              else if j == 2 then mov_mem_rbp_rdx(b, slot8(j + 1))
-              else if j == 3 then mov_mem_rbp_rcx(b, slot8(j + 1))
-              else if j == 4 then mov_mem_rbp_r8(b, slot8(j + 1))
-              else mov_mem_rbp_r9(b, slot8(j + 1)) in
+            /* stack arg: [rbp + 16 + 8*(j-6)] */
+            let off = 16 + bshl(j - 6, 3) in
+            let _ = mov_r64_mem_rbp32(b, 0, off) in
+            let _ = emit_store_rax_slot(b, j + 1) in
             storeparams(j + 1) in
         let _ = storeparams(0) in
         [b, cur, labels, patches]
@@ -1088,7 +1121,7 @@ let emit_insn(st, insn, is_entry) =
       let bop = nth(insn, 4) in
       let _ = emit_load_rax_slot(b, a) in
       let _ = sar_rax_1(b) in
-      let _ = mov_rbx_mem_rbp(b, slot8(bop)) in
+      let _ = emit_load_rbx_slot(b, bop) in
       let _ = sar_rbx_1(b) in
       let c =
         if op == "+" then add_rax_rbx(b)
@@ -1184,7 +1217,7 @@ let emit_insn(st, insn, is_entry) =
       else
         let _ = emit_load_rax_slot(b, a) in
         let _ = sar_rax_1(b) in
-        let _ = mov_rbx_mem_rbp(b, slot8(bop)) in
+        let _ = emit_load_rbx_slot(b, bop) in
         let _ = sar_rbx_1(b) in
         let _ = cmp_rax_rbx(b) in
         let _ = setcc_r8(b, cc_of(op)) in
@@ -1228,11 +1261,12 @@ let emit_insn(st, insn, is_entry) =
       let fl = nth(insn, 3) in
       let _ = emit_load_rax_slot(b, cond) in
       let _ = test_rax_rax(b) in
+      let jcc_at = bytes_len(b) in
       let _ = jcc_rel32(b, 4, 0) in  /* 0f 84 + rel32 */
+      let jmp_at = bytes_len(b) in
       let _ = jmp_rel32(b, 0) in     /* e9 + rel32 */
-      /* jz rel32 at len0+4+3+2; jmp rel32 at len0+4+3+6+1 */
       [b, cur, labels,
-       cons([len0 + 9, fl], cons([len0 + 14, tl], patches))]
+       cons([jcc_at + 2, fl], cons([jmp_at + 1, tl], patches))]
     else if k == "ret" then
       let _ = emit_load_rax_slot(b, nth(insn, 1)) in
       if is_entry then let _ = ret(b) in [b, cur, labels, patches]
@@ -1298,23 +1332,46 @@ let emit_insn(st, insn, is_entry) =
       let args = nth(insn, 4) in
       let nargs = len(args) in
       if ncap >= 0 then
+        let ntot = ncap + nargs in
+        let nstack = if ntot > 6 then ntot - 6 else 0 in
+        /* push stack args (indices ntot-1 .. 6), reloading clos as needed */
+        let push_flat(i) =
+          if i < 6 then 0
+          else
+            let _ =
+              if i < ncap then
+                let _ = emit_load_rax_slot(b, clos) in
+                let _ = and_rax_1(b) in
+                let _ = mov_rax_rax_disp8(b, 32 + i * 8) in
+                push_r64(b, 0)
+              else
+                let _ = emit_load_rax_slot(b, nth(args, i - ncap)) in
+                push_r64(b, 0) in
+            push_flat(i - 1) in
+        let _ = push_flat(ntot - 1) in
         let _ = emit_load_rax_slot(b, clos) in
         let _ = and_rax_1(b) in
         let _ = mov_rbx_rax_disp8(b, 16) in
-        let loadcap(i) =
-          if i >= ncap then 0
-          else
+        let _ = push_r64(b, 3) in
+        let nreg = if ntot < 6 then ntot else 6 in
+        let load_reg(i) =
+          if i >= nreg then 0
+          else if i < ncap then
+            let _ = emit_load_rax_slot(b, clos) in
+            let _ = and_rax_1(b) in
             let _ = mov_argreg_rax_disp8(b, i, 32 + i * 8) in
-            loadcap(i + 1) in
-        let _ = loadcap(0) in
-        let loadarg(j) =
-          if j >= nargs then 0
+            load_reg(i + 1)
           else
-            let _ = emit_load_rax_slot(b, nth(args, j)) in
-            let _ = mov_rax_to_argreg(b, ncap + j) in
-            loadarg(j + 1) in
-        let _ = loadarg(0) in
+            let _ = emit_load_rax_slot(b, nth(args, i - ncap)) in
+            let _ = mov_rax_to_argreg(b, i) in
+            load_reg(i + 1) in
+        let _ = load_reg(0) in
+        let _ = pop_r64(b, 3) in
         let _ = call_rbx(b) in
+        let _ =
+          if nstack == 0 then 0
+          else if bshl(nstack, 3) > 127 then add_rsp_imm32(b, bshl(nstack, 3))
+          else add_rsp_imm8(b, bshl(nstack, 3)) in
         let _ = emit_store_rax_slot(b, dst) in
         [b, cur, labels, patches]
       else
@@ -1688,6 +1745,29 @@ let lookup_name(table, name) =
     else rec(drop(l, 1)) in
   rec(table)
 
+let label_has(labels, name) =
+  let rec(l) =
+    if len(l) == 0 then false
+    else if nth(nth(l, 0), 0) == name then true
+    else rec(drop(l, 1)) in
+  rec(labels)
+
+/* Resolve patches that target labels defined in this function; keep the rest
+ * (calls to other funs / runtime). Labels are not unique across functions. */
+let resolve_local_labels(b, labels, patches) =
+  let step(ps, keep) =
+    if len(ps) == 0 then reverse(keep)
+    else
+      let p = nth(ps, 0) in
+      let hd = nth(p, 0) in
+      if hd == "closurefn" or hd == "gc_head" then
+        step(drop(ps, 1), cons(p, keep))
+      else if label_has(labels, nth(p, 1)) then
+        let _ = apply_patch(b, nth(p, 0), lookup_name(labels, nth(p, 1))) in
+        step(drop(ps, 1), keep)
+      else step(drop(ps, 1), cons(p, keep)) in
+  step(patches, [])
+
 let emit_program(prog) =
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
@@ -1702,12 +1782,17 @@ let emit_program(prog) =
       let name = nth(f, 1) in
       let is_entry = name == entry in
       let fstart = nth(st, 1) in
-      let insns = nth(f, 3) in
+      /* fresh label table per function (LIF0 etc. collide otherwise) */
+      let st0 = [nth(st, 0), nth(st, 1), [], nth(st, 3)] in
+      let insns = nth(f, 4) in
       let run(j, s) =
         if j >= len(insns) then s
         else run(j + 1, emit_insn(s, nth(insns, j), is_entry)) in
-      let s1 = run(0, st) in
-      emit_fun(i + 1, s1, cons([name, fstart], fo)) in
+      let s1 = run(0, st0) in
+      let b = nth(s1, 0) in
+      let kept = resolve_local_labels(b, nth(s1, 2), nth(s1, 3)) in
+      let s2 = [b, nth(s1, 1), [], kept] in
+      emit_fun(i + 1, s2, cons([name, fstart], fo)) in
   let r1 = emit_fun(0, glob, []) in
   let st = nth(r1, 0) in
   let funOffsRev = nth(r1, 1) in

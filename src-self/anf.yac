@@ -84,6 +84,9 @@ let anf_expr(ast, counter) =
     let tup = fresh(nth(ar, 2)) in
     [append(nth(ar, 0), [["letprint", nth(tup, 0), nth(ar, 1)]]),
      ["unit"], nth(tup, 1)]
+  else if k == "not" then
+    /* not x  →  if x then false else true */
+    anf_expr(["if", nth(ast, 1), ["bool", "false"], ["bool", "true"]], counter)
   else if k == "binop" then
     /* op lhs rhs -> temp = lhs op rhs */
     let la = anf_atom(nth(ast, 2), counter) in
