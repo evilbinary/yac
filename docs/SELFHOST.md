@@ -235,13 +235,16 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | M3.1 | ELF 打包器 `elf.yac`（最小 x86-64 ELF64，exit(42) 跑通）                                    | ✅ 完成   |
 | M3.2 | x86-64 指令编码库 `encode_x64.yac` + LIR `lir.yac` + 代码发射 `emit.yac`（算术/比较/if/函数调用/递归） | ✅ 完成   |
 | M3.3 | `lower.yac` ANF→LIR + **源码→ELF 端到端**（递归 fact 跑通）                                  | ✅ 完成   |
-| M3.4 | 多参数调用、print（十进制输出）                                                                | 🔄 进行中 |
-| M3.5 | **闭包 + GC**（必需项，见 §10.3）                                                          | ⏳ 待开始  |
+| M3.4 | 多参数调用、print（十进制输出）                                                                | ✅ 完成   |
+| M3.5a | tagged value（int=`n<<1`，ptr=`p\|1`）                                                   | ✅ 完成   |
+| M3.5b | 闭包 + 捕获环境 + 精确 free_vars                                                         | ✅ 完成   |
+| M3.5c | 保守 GC（`yac_alloc` + 链表；暂不回收）                                                    | ✅ 完成   |
+| M3.5d | 一等函数/高阶、列表堆对象、原生 prims 子集、`yc.yac` 驱动                               | ✅ 完成*  |
 
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,emit,elf,backend,encode_x64,driver_*}.yac`；
-测试套件 `tests/selfhost_{lexer,parser,anf,elf,emit,e2e}.sh`（49 项全绿，`make test`）。
-**M3.3 完成**：源码→ELF 端到端（递归 fact(5)=120 等 9 例）。
+测试套件 `tests/selfhost_{lexer,parser,anf,elf,emit,e2e}.sh`（`make test`）。
+**下一步验收（M3.5d）**：`twice(inc,5)`、柯里化、`tests/list.yac` 子集在原生 ELF 上与解释器一致。
 GitHub 推送已通过 SSH 远程 + 代理 `http://127.0.0.1:10809` 解决。
 
 ### 10.2 计划（按用户确定的路线图）
@@ -496,26 +499,11 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 `collect_anf_vars(anf, accum, shadow)` 线程遮蔽集：let/letbin/letcall/letif 把绑定名加入 shadow，letfun 加 params；返回 `[accum, shadow]`。`free_vars = reverse(accum)`。嵌套闭包精确无过度捕获。
 
-### 捕获集成（下次继续，需 careful）
+### M3.5d（进行中 → 大部完成）
 
-**函数参数布局**：LIR 函数参数 = `[捕获参数..., 用户参数...]`（捕获在前）。
-- slot 1..ncap = 捕获参数（闭包环境），slot ncap+1.. = 用户参数。
-- 普通 call（顶层命名函数，无捕获）ncap=0，行为不变。
+**已完成**：
+1. **HO**：每个 `letfun`（含 ncap=0）分配 closure；捕获/参数走 `apply`（动态读 nenv）；命名函数直 `call`；嵌套函数合并进 funs。
+2. **列表**：nil/cons/len/nth/tail；字面量 desugar；`foldl` / `len(map(...))` e2e。
+3. **M4 起步**：`src-self/yc.yac` 驱动 + `tests/selfhost_yc.sh`。
 
-**apply 传前缀**：`["apply", dst, clos, [userArgs...]]` 展开为：
-- 读闭包对象 env 值（[rax+16..]）到 rdi,rsi,...（前缀，ncap 个）
-- 用户参数放 rdx,rcx,...（接在捕获后）
-- 需 ncap 个捕获值从对象拷到寄存器，再拷用户参数。
-
-**closure**：`["closure", dst, fn, [capSlots...]]` 已实现，对象 `[fnptr][nenv][env...]`。
-
-**lower 改动**：
-1. letfun 编译时 `free_vars(body, params)` 得捕获集；函数 LIR 参数 = 捕获名 + 用户参数。
-2. 函数体内捕获变量解析到捕获参数槽（slot 1..ncap），用户参数从 ncap+1。
-3. 闭包值绑定：`let f = fun...` → closure（捕获变量槽）；调用 f → apply。
-4. 顶层递归函数（`let f(n)=`）用 call（ncap=0）。
-
-**先验证**：`let x = 10 in (fun(n) -> n + x)(5)` → 15。逐步：无捕获闭包源码编译 → 捕获 → GC。
-
-### GC（M3.5c，之后）
-闭包对象加 `[next][mark]` 头；标记清除；根集 = 全局 + 活跃闭包。
+**仍待**：字符串堆对象与其余 PRIMS 全量；map/filter 对 cons 结果再 `nth` 的帧布局边界情况；L4/L5 同构（原生 `yc` 再编译自身）。

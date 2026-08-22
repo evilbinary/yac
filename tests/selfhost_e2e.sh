@@ -55,6 +55,14 @@ run_e2e "e2e 6 args" 'let f(a, b, c, d, e, g) = a + b + c + d + e + g in f(1, 2,
 run_e2e "e2e capture" 'let x = 10 in (fun(n) -> n + x)(5)' '15'
 run_e2e "e2e multi-capture" 'let x = 1 in let y = 2 in (fun(n) -> n + x + y)(10)' '13'
 run_e2e "e2e capture+2args" 'let x = 100 in (fun(a, b) -> a + b + x)(1, 2)' '103'
+run_e2e "e2e higher" 'let twice(f, x) = f(f(x)) in let inc(n) = n + 1 in twice(inc, 5)' '7'
+run_e2e "e2e curry" 'let add(a) = fun(b) -> a + b in let g = add(3) in g(4)' '7'
+run_e2e "e2e return clo" 'let mk(x) = fun(n) -> n + x in mk(10)(5)' '15'
+run_e2e "e2e list len" 'len([1, 2, 3])' '3'
+run_e2e "e2e list nth" 'nth([10, 20, 30], 1)' '20'
+run_e2e "e2e list cons" 'len(cons(0, [1, 2]))' '3'
+run_e2e "e2e foldl" 'let foldl(f, acc, xs) = if len(xs) == 0 then acc else foldl(f, f(acc, nth(xs, 0)), tail(xs)) in foldl(fun(a, x) -> a + x, 0, [1, 2, 3, 4])' '10'
+run_e2e "e2e map len" 'let map(f, xs) = if len(xs) == 0 then [] else cons(f(nth(xs, 0)), map(f, tail(xs))) in let inc(n) = n + 1 in len(map(inc, [1, 2, 3]))' '3'
 
 # print (decimal output) — compare stdout, not exit code
 run_print() {

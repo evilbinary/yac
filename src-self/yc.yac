@@ -1,0 +1,21 @@
+/* yc.yac — self-hosted compiler driver (M4).
+ *
+ * Reads build/yc_tmp/in.yac, writes build/yc_tmp/out.bin.
+ * Bundle under the C interpreter:
+ *   cat src-self/{lexer,parser,anf,encode_x64,elf,lir,emit,backend,lower,yc}.yac \
+ *     | ./yac /dev/stdin
+ * Or: ./yac build/yc_tmp/yc_bundle.yac
+ */
+let src = read_file("build/yc_tmp/in.yac")
+let toks = tokenize(src)
+let prog = parse_program(toks, 0, [])
+let anf_item(item) =
+  let r = anf_expr(item, 0) in
+  [nth(r, 0), nth(r, 1)]
+let anf_list = map(anf_item, prog)
+let lir = compile_top(anf_list)
+let elf = backend_compile(lir)
+let _ = write_file("build/yc_tmp/out.bin", elf)
+print bytes_len(elf)
+print ""
+0

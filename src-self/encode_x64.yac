@@ -548,3 +548,61 @@ let or_rax_1(b) =
   let _ = e8(b, 131) in
   let _ = e8(b, 200) in
   e8(b, 1)
+
+/* ---- dynamic apply helpers (r11 = nenv) ---- */
+
+/* mov r11, [rax+disp8]  (4c 8b 58 disp) REX.W|REX.R — 64-bit load */
+let mov_r11_rax_disp8(b, d) =
+  let _ = e8(b, 76) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 88) in
+  e8(b, band(d, 255))
+/* mov r11d, [rax+disp8]  (44 8b 58 disp) — 32-bit load, zero-extends to r11.
+ * Use this for fields stored with mov dword (e.g. nenv). */
+let mov_r11d_rax_disp8(b, d) =
+  let _ = e8(b, 68) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 88) in
+  e8(b, band(d, 255))
+/* cmp r11, imm8  (49 83 fb imm) REX.W|REX.B */
+let cmp_r11_imm8(b, imm8) =
+  let _ = e8(b, 73) in
+  let _ = e8(b, 131) in
+  let _ = e8(b, 251) in
+  e8(b, band(imm8, 255))
+/* pop into System V arg register idx */
+let pop_argreg(b, idx) =
+  if idx == 0 then pop_r64(b, 7)
+  else if idx == 1 then pop_r64(b, 6)
+  else if idx == 2 then pop_r64(b, 2)
+  else if idx == 3 then pop_r64(b, 1)
+  else if idx == 4 then
+    let _ = e8(b, 65) in pop_r64(b, 0)
+  else
+    let _ = e8(b, 65) in pop_r64(b, 1)
+
+/* mov rax, [rax+disp8]  (48 8b 40 disp) */
+let mov_rax_rax_disp8(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 64) in
+  e8(b, band(d, 255))
+/* inc rcx  (48 ff c1) */
+let inc_rcx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 255) in e8(b, 193)
+/* dec rsi  (48 ff ce) */
+let dec_rsi(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 255) in e8(b, 206)
+/* mov rcx, 0 */
+let xor_rcx_rcx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 49) in e8(b, 201)
+/* mov rax, rcx  (48 89 c8) */
+let mov_rax_rcx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 200)
+/* cmp rsi, 0  (48 83 fe 00) */
+let cmp_rsi_imm8(b, v) =
+  let _ = e8(b, 72) in let _ = e8(b, 131) in let _ = e8(b, 254) in
+  e8(b, band(v, 255))
+/* sar rsi, 1 */
+let sar_rsi_1(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 254)

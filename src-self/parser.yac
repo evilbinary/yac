@@ -121,18 +121,18 @@ let parse_expr(toks, i, min_prec) =
         else [nth(r, 0), nth(r, 1) + 1]
     else [ERR, j] in
 
-  /* ---- application: head followed by ( args ) or space-separated args ---- */
+  /* ---- application: head followed by ( args ), chainable: f(a)(b) ---- */
   let parse_app(j, head) =
     if kk(j) == "lparen" then
-      /* fn( a, b, c ) */
+      /* fn( a, b, c ) — keep consuming further ( args ) */
       let r = parse_arglist(j + 1, []) in
-      [["call", head, nth(r, 0)], nth(r, 1)]
+      parse_app(nth(r, 1), ["call", head, nth(r, 0)])
     else if kk(j) == "ident" or kk(j) == "num" or kk(j) == "str" or
             kk(j) == "lparen" or kk(j) == "lbrk" or is_kw(j, "fun") then
       /* fn arg  (single space-separated argument) */
       let r = parse_expr(toks, j, 0) in
       if is_err(nth(r, 0)) then [head, j]
-      else [["call", head, [nth(r, 0)]], nth(r, 1)]
+      else parse_app(nth(r, 1), ["call", head, [nth(r, 0)]])
     else [head, j] in
 
   /* ---- if ---- */

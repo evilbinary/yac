@@ -42,6 +42,10 @@ let in_list(name, lst) =
     else rec(drop(l, 1)) in
   rec(lst)
 
+let prim_names = ["cons", "len", "nth", "tail", "append", "print",
+                  "map", "filter", "foldl", "foldr", "drop", "head"]
+let is_prim_name(w) = in_list(w, prim_names)
+
 /* collect vars referenced in an anf body [bindings, tail], excluding names
  * bound inside it (shadow set). accum is reversed list of names. */
 let collect_anf_vars(anf, accum, shadow) =
@@ -70,7 +74,10 @@ let collect_anf_vars(anf, accum, shadow) =
           let acc3 = atom_vars(nth(b, 4), acc2, shdw) in
           [acc3, cons(nth(b, 1), shdw)]
         else if k == "letcall" then
-          let acc2 = atom_vars(nth(b, 2), acc, shdw) in
+          let fn = nth(b, 2) in
+          let acc2 =
+            if nth(fn, 0) == "var" and is_prim_name(nth(fn, 1)) then acc
+            else atom_vars(fn, acc, shdw) in
           let args = nth(b, 3) in
           let loop(j, a) =
             if j >= len(args) then a
@@ -119,6 +126,22 @@ let env_ncap(env, name) =
     else rec(drop(l, 1)) in
   rec(env)
 
+/* true if name is bound in env (even if slot is 0) */
+let env_has(env, name) =
+  let rec(l) =
+    if len(l) == 0 then false
+    else if nth(nth(l, 0), 0) == name then true
+    else rec(drop(l, 1)) in
+  rec(env)
+
+/* true if name is a known function symbol in the funs list */
+let funs_has(funs, name) =
+  let rec(l) =
+    if len(l) == 0 then false
+    else if nth(nth(l, 0), 1) == name then true
+    else rec(drop(l, 1)) in
+  rec(funs)
+
 /* atomize a sub-expr to a slot. st = [insns, env, counter, funs, funcnt].
  * Returns [insns, slot, env, counter, funs, funcnt]. */
 let lower_atom(atom, st) =
@@ -131,6 +154,15 @@ let lower_atom(atom, st) =
   if k == "int" then
     let slot = ctr in
     [append(insns, [["mov_imm", slot, str_to_int(nth(atom, 1))]]),
+     slot, env, ctr + 1, funs, funcnt]
+  else if k == "nil" then
+    let slot = ctr in
+    [append(insns, [["nil", slot]]),
+     slot, env, ctr + 1, funs, funcnt]
+  else if k == "str" then
+    /* M3.5d: string literal → length as tagged int (full STR objects later) */
+    let slot = ctr in
+    [append(insns, [["mov_imm", slot, str_len(nth(atom, 1))]]),
      slot, env, ctr + 1, funs, funcnt]
   else if k == "var" then
     [insns, env_lookup(env, nth(atom, 1)), env, ctr, funs, funcnt]
@@ -196,13 +228,23 @@ let lower_body(anf, st) =
             loadargs(j + 1, nth(r, 0), nth(r, 2), nth(r, 3),
                      cons(nth(r, 1), slots_rev)) in
         let lr = loadargs(0, insns, env, ctr, []) in
-        let fnslot = env_lookup(env, fnname) in
-        let fncap = env_ncap(env, fnname) in
+        let slots = nth(lr, 1) in
+        /* list / sequence prims */
         let newinsn =
-          if fncap > 0 then ["apply", dst, fnslot, fncap, nth(lr, 1)]
-          else ["call", dst, fnname, nth(lr, 1)] in
+          if fnname == "cons" then ["cons", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "len" then ["len", dst, nth(slots, 0)]
+          else if fnname == "nth" then ["nth", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "tail" then ["tail", dst, nth(slots, 0)]
+          else
+            let fnslot = env_lookup(env, fnname) in
+            let fncap = env_ncap(env, fnname) in
+            if env_has(env, fnname) and fncap > 0 then
+              ["apply", dst, fnslot, fncap, slots]
+            else if env_has(env, fnname) and not funs_has(funs0, fnname) then
+              ["apply", dst, fnslot, 0 - 1, slots]
+            else ["call", dst, fnname, slots] in
         step(i + 1, [append(nth(lr, 0), [newinsn]),
-                     cons([name, dst, 0], nth(lr, 2)), nth(lr, 3),
+                     cons([name, dst, 0], nth(lr, 2)), dst + 1,
                      nth(s, 3), nth(s, 4)])
       else if k == "letfun" then
         let name = nth(b, 1) in
@@ -223,23 +265,23 @@ let lower_body(anf, st) =
         let p_env = build_user(0, build_cap(0, [])) in
         let ntot = ncap + nparams in
         let br = lower_body(body, [[], p_env, ntot + 1, [], 0]) in
-        let f_insns = append([["prologue", nth(br, 1), ntot]],
+        /* pad frame so recursive calls cannot clobber live slots */
+        let nslots = nth(br, 3) + 8 in
+        let f_insns = append([["prologue", nslots, ntot]],
                              append(nth(br, 0), [["ret", nth(br, 1)]])) in
         let f = ["fun", name, ntot, f_insns] in
         let slot = ctr in
-        if ncap > 0 then
-          /* closure: capture free vars (in this scope) into a heap object */
-          let capslot_of(j, acc) =
-            if j >= ncap then acc
-            else capslot_of(j + 1, append(acc, [env_lookup(env, nth(fvs, j))])) in
-          let capslots = capslot_of(0, []) in
-          let clo = ["closure", slot, name, capslots] in
-          step(i + 1, [append(insns, [clo]), cons([name, slot, ncap], env),
-                       ctr + 1, cons(f, nth(s, 3)), nth(s, 4) + 1])
-        else
-          /* plain named function: direct call by name; recursion works */
-          step(i + 1, [insns, cons([name, slot, 0], env), ctr + 1,
-                       cons(f, nth(s, 3)), nth(s, 4) + 1])
+        /* Always allocate a closure object so the function is a first-class
+         * value (needed for higher-order calls). ncap=0 still gets a heap
+         * object with empty env. Merge nested funs from the body. */
+        let capslot_of(j, acc) =
+          if j >= ncap then acc
+          else capslot_of(j + 1, append(acc, [env_lookup(env, nth(fvs, j))])) in
+        let capslots = capslot_of(0, []) in
+        let clo = ["closure", slot, name, capslots] in
+        let funs1 = cons(f, append(nth(br, 4), nth(s, 3))) in
+        step(i + 1, [append(insns, [clo]), cons([name, slot, ncap], env),
+                     ctr + 1, funs1, nth(s, 4) + 1 + nth(br, 5)])
       else if k == "letif" then
         let name = nth(b, 1) in
         let cond = nth(b, 2) in
@@ -286,7 +328,8 @@ let compile_top(items) =
   let entry_insns = nth(st, 4) in
   let result_slot = nth(st, 5) in
   let funs = nth(st, 2) in
+  let nslots = nth(st, 1) in
   let entry = ["fun", "_start", 0,
-               append([["prologue", result_slot, 0]],
+               append([["prologue", nslots, 0]],
                       append(entry_insns, [["exit", result_slot]]))] in
   ["prog", cons(entry, reverse(funs)), "_start"]
