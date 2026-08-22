@@ -659,6 +659,10 @@ let mov_rbx_rax0(b) =
 let call_rbx(b) =
   let _ = e8(b, 255) in
   e8(b, 211)
+/* jmp rbx  (ff e3) — tail-call through a closure fnptr */
+let jmp_rbx(b) =
+  let _ = e8(b, 255) in
+  e8(b, 227)
 /* call r11 (41 ff d3) */
 let call_r11(b) =
   let _ = e8(b, 65) in

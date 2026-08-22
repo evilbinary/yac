@@ -1687,6 +1687,29 @@ let emit_insn(st, insn, is_entry) =
       let _ = call_rel32(b, 0) in
       let _ = emit_store_rax_slot(b, dst) in
       [b, cur, labels, cons([callstart + 1, fn], patches)]
+    else if k == "tailcall" then
+      /* TCO: load args, tear down frame, jmp (no extra stack). */
+      let fn = nth(insn, 2) in
+      let args = nth(insn, 3) in
+      let nargs = len(args) in
+      let loadarg(j) =
+        if j >= nargs then 0
+        else
+          let _ = emit_load_rax_slot(b, nth(args, j)) in
+          let _ =
+            if j == 0 then mov_rdi_rax(b)
+            else if j == 1 then mov_rsi_rax(b)
+            else if j == 2 then mov_rdx_rax(b)
+            else if j == 3 then mov_rcx_rax(b)
+            else if j == 4 then mov_r8_rax(b)
+            else mov_r9_rax(b) in
+          loadarg(j + 1) in
+      let _ = loadarg(0) in
+      let _ = mov_rsp_rbp(b) in
+      let _ = pop_rbp(b) in
+      let jmpstart = bytes_len(b) in
+      let _ = jmp_rel32(b, 0) in
+      [b, cur, labels, cons([jmpstart + 1, fn], patches)]
     else if k == "jmp" then
       /* jmp_rel32: e9 + rel32; rel32 field at len0+1 */
       let _ = jmp_rel32(b, 0) in
@@ -1954,6 +1977,32 @@ let emit_insn(st, insn, is_entry) =
         let _ = apply_patch(b, j4, lc) in
         let _ = apply_patch(b, j5, lc) in
         [b, cur, labels, patches]
+    else if k == "tailapply" then
+      let clos = nth(insn, 2) in
+      let ncap = nth(insn, 3) in
+      let args = nth(insn, 4) in
+      let nargs = len(args) in
+      let ntot = ncap + nargs in
+      let nreg = if ntot < 6 then ntot else 6 in
+      let _ = emit_load_rax_slot(b, clos) in
+      let _ = and_rax_1(b) in
+      let _ = mov_rbx_rax_disp8(b, 16) in
+      let load_reg(i) =
+        if i >= nreg then 0
+        else if i < ncap then
+          let _ = emit_load_rax_slot(b, clos) in
+          let _ = and_rax_1(b) in
+          let _ = mov_argreg_rax_disp8(b, i, 32 + i * 8) in
+          load_reg(i + 1)
+        else
+          let _ = emit_load_rax_slot(b, nth(args, i - ncap)) in
+          let _ = mov_rax_to_argreg(b, i) in
+          load_reg(i + 1) in
+      let _ = load_reg(0) in
+      let _ = mov_rsp_rbp(b) in
+      let _ = pop_rbp(b) in
+      let _ = jmp_rbx(b) in
+      [b, cur, labels, patches]
     else if k == "nil" then
       /* nil = tagged null = 1 */
       let _ = mov_r64_imm(b, 0, 1) in

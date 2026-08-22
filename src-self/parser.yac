@@ -67,6 +67,7 @@ let parse_expr(toks, i, min_prec) =
       if kk(j + 1) == "comma" then parse_params(j + 2, cons(tt(j), acc))
       else if kk(j + 1) == "rparen" then [reverse(cons(tt(j), acc)), j + 2]
       else [reverse(cons(tt(j), acc)), j + 1]
+    else if kk(j) == "rparen" then [acc, j + 1]
     else [acc, j] in
 
   /* ---- parse list literal items after '[' ---- */

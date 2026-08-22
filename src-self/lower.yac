@@ -308,8 +308,10 @@ let lower_atom(atom, st) =
     [insns, 0, env, ctr, funs, funcnt]
 
 /* compile a full ANF body (bindings + tail). st as above.
+ * in_tail: true if this body's tail is the enclosing function's return
+ * (enables TCO for trailing self-recursion, e.g. lex).
  * Returns [insns, resultSlot, env, counter, funs, funcnt]. */
-let lower_body(anf, st) =
+let lower_body(anf, st, in_tail) =
   let bindings = nth(anf, 0) in
   let tail = nth(anf, 1) in
   let nb = len(bindings) in
@@ -323,6 +325,11 @@ let lower_body(anf, st) =
       let env = nth(s, 1) in
       let ctr = nth(s, 2) in
       let k = nth(b, 0) in
+      let rest_tail =
+        if not in_tail then false
+        else if i != nb - 1 then false
+        else if nth(tail, 0) != "var" then false
+        else nth(tail, 1) == nth(b, 1) in
       if k == "let" then
         let name = nth(b, 1) in
         let atom = nth(b, 2) in
@@ -427,7 +434,18 @@ let lower_body(anf, st) =
             else if env_has(env, fnname) and not funs_has(funs0, fnname) then
               ["apply", dst, fnslot, 0 - 1, slots]
             else ["call", dst, fun_code_name(funs0, fnname), slots] in
-        step(i + 1, [insn_push(nth(lr, 0), newinsn),
+        let tagged =
+          if not rest_tail then newinsn
+          else if nth(newinsn, 0) == "call" then
+            if len(slots) <= 6 then
+              ["tailcall", dst, nth(newinsn, 2), slots]
+            else newinsn
+          else if nth(newinsn, 0) == "apply" then
+            if nth(newinsn, 3) < 0 then newinsn
+            else if nth(newinsn, 3) + len(slots) > 6 then newinsn
+            else ["tailapply", dst, nth(newinsn, 2), nth(newinsn, 3), slots]
+          else newinsn in
+        step(i + 1, [insn_push(nth(lr, 0), tagged),
                      cons([name, dst, 0], nth(lr, 2)), dst + 1,
                      nth(s, 3), nth(s, 4)])
       else if k == "letfun" then
@@ -464,7 +482,7 @@ let lower_body(anf, st) =
         let fs1 = funs_cons(nth(s, 3), stub) in
         let br = lower_body(body, [list_new(), p_env,
                                    if need_self then self_slot + 1 else ntot + 1,
-                                   fs1, uid + 1]) in
+                                   fs1, uid + 1], true) in
         let nslots = nth(br, 3) + 8 in
         let self_caps(j, acc) =
           if j >= ncap then acc
@@ -498,12 +516,12 @@ let lower_body(anf, st) =
         let ctr1 = dst + 1 in
         /* compile branches independently (fresh insns, same env) */
         let thenr = lower_body(thena, [list_new(), nth(cr, 2), ctr1,
-                                       nth(cr, 4), nth(cr, 5)]) in
+                                       nth(cr, 4), nth(cr, 5)], rest_tail) in
         /* Thread then-branch funs into else so letfuns defined only in the
          * then arm are still emitted (else previously started from cr.funs
          * and dropped them; closures then patched fnptr to _start). */
         let elser = lower_body(elsea, [list_new(), nth(cr, 2), ctr1,
-                                       nth(thenr, 4), nth(thenr, 5)]) in
+                                       nth(thenr, 4), nth(thenr, 5)], rest_tail) in
         let thenslot = nth(thenr, 1) in
         let elseslot = nth(elser, 1) in
         let L = nth(elser, 5) in
@@ -537,7 +555,7 @@ let compile_top(items) =
     else
       let _ =
         if i == 0 or ((i % 50) == 0) then log_i("lower", "item", i) else 0 in
-      let r = lower_body(nth(items, i), [entry_insns, env, counter, funs, funcnt]) in
+      let r = lower_body(nth(items, i), [entry_insns, env, counter, funs, funcnt], false) in
       iter(i + 1, nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5),
            nth(r, 0), nth(r, 1)) in
   let st = iter(0, [], 1, funs_empty(0), 0, list_new(), 0) in
