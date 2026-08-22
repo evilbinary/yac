@@ -43,7 +43,10 @@ let in_list(name, lst) =
   rec(lst)
 
 let prim_names = ["cons", "len", "nth", "tail", "append", "print",
-                  "map", "filter", "foldl", "foldr", "drop", "head"]
+                  "map", "filter", "foldl", "foldr", "drop", "head",
+                  "str_len", "str_cat", "str_ref", "int_to_str",
+                  "bytes_new", "bytes_len", "bytes_append", "bytes_ref", "bytes_put",
+                  "read_file", "write_file", "band", "bor", "bxor", "bshl", "bshr"]
 let is_prim_name(w) = in_list(w, prim_names)
 
 /* collect vars referenced in an anf body [bindings, tail], excluding names
@@ -160,9 +163,8 @@ let lower_atom(atom, st) =
     [append(insns, [["nil", slot]]),
      slot, env, ctr + 1, funs, funcnt]
   else if k == "str" then
-    /* M3.5d: string literal → length as tagged int (full STR objects later) */
     let slot = ctr in
-    [append(insns, [["mov_imm", slot, str_len(nth(atom, 1))]]),
+    [append(insns, [["strlit", slot, nth(atom, 1)]]),
      slot, env, ctr + 1, funs, funcnt]
   else if k == "var" then
     [insns, env_lookup(env, nth(atom, 1)), env, ctr, funs, funcnt]
@@ -235,6 +237,34 @@ let lower_body(anf, st) =
           else if fnname == "len" then ["len", dst, nth(slots, 0)]
           else if fnname == "nth" then ["nth", dst, nth(slots, 0), nth(slots, 1)]
           else if fnname == "tail" then ["tail", dst, nth(slots, 0)]
+          else if fnname == "append" then
+            ["append", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "str_len" then ["str_len", dst, nth(slots, 0)]
+          else if fnname == "str_ref" then
+            ["str_ref", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "str_cat" then
+            ["str_cat", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "str_slice" then
+            ["str_slice", dst, nth(slots, 0), nth(slots, 1), nth(slots, 2)]
+          else if fnname == "int_to_str" then ["int_to_str", dst, nth(slots, 0)]
+          else if fnname == "bytes_to_str" then ["bytes_to_str", dst, nth(slots, 0)]
+          else if fnname == "drop" then
+            ["drop", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "bytes_new" then ["bytes_new", dst]
+          else if fnname == "bytes_len" then ["bytes_len", dst, nth(slots, 0)]
+          else if fnname == "bytes_ref" then
+            ["bytes_ref", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "bytes_put" then
+            ["bytes_put", dst, nth(slots, 0), nth(slots, 1), nth(slots, 2)]
+          else if fnname == "bytes_append" then
+            ["bytes_append", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "read_file" then ["read_file", dst, nth(slots, 0)]
+          else if fnname == "write_file" then
+            ["write_file", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "band" then ["binop", "&", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "bor" then ["binop", "|", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "bshl" then ["binop", "<<", dst, nth(slots, 0), nth(slots, 1)]
+          else if fnname == "bshr" then ["binop", ">>", dst, nth(slots, 0), nth(slots, 1)]
           else
             let fnslot = env_lookup(env, fnname) in
             let fncap = env_ncap(env, fnname) in

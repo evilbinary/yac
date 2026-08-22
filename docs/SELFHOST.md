@@ -239,12 +239,12 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | M3.5a | tagged value（int=`n<<1`，ptr=`p\|1`）                                                   | ✅ 完成   |
 | M3.5b | 闭包 + 捕获环境 + 精确 free_vars                                                         | ✅ 完成   |
 | M3.5c | 保守 GC（`yac_alloc` + 链表；暂不回收）                                                    | ✅ 完成   |
-| M3.5d | 一等函数/高阶、列表堆对象、原生 prims 子集、`yc.yac` 驱动                               | ✅ 完成*  |
+| M3.5d | 一等函数/高阶、列表/字符串/bytes/IO 原语、`yc.yac` 驱动                               | ✅ 完成*  |
 
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,emit,elf,backend,encode_x64,driver_*}.yac`；
-测试套件 `tests/selfhost_{lexer,parser,anf,elf,emit,e2e}.sh`（`make test`）。
-**下一步验收（M3.5d）**：`twice(inc,5)`、柯里化、`tests/list.yac` 子集在原生 ELF 上与解释器一致。
+测试套件 `tests/selfhost_{lexer,parser,anf,elf,emit,e2e,yc}.sh`（`make test`）。
+**下一步（M4）**：补齐编译器自举所需剩余 PRIMS → L4（解释器产出原生 `yc_A`）→ L5 同构。
 GitHub 推送已通过 SSH 远程 + 代理 `http://127.0.0.1:10809` 解决。
 
 ### 10.2 计划（按用户确定的路线图）
@@ -499,11 +499,15 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 `collect_anf_vars(anf, accum, shadow)` 线程遮蔽集：let/letbin/letcall/letif 把绑定名加入 shadow，letfun 加 params；返回 `[accum, shadow]`。`free_vars = reverse(accum)`。嵌套闭包精确无过度捕获。
 
-### M3.5d（进行中 → 大部完成）
+### M3.5d（已完成核心；M4 前剩余原语）
 
 **已完成**：
 1. **HO**：每个 `letfun`（含 ncap=0）分配 closure；捕获/参数走 `apply`（动态读 nenv）；命名函数直 `call`；嵌套函数合并进 funs。
-2. **列表**：nil/cons/len/nth/tail；字面量 desugar；`foldl` / `len(map(...))` e2e。
-3. **M4 起步**：`src-self/yc.yac` 驱动 + `tests/selfhost_yc.sh`。
+2. **列表**：nil/cons/len/nth/tail/append/drop；字面量 desugar；`foldl`/`map`/`filter`（用户定义）e2e；`nth(map(...))` 已修。
+3. **字符串**：STR 堆对象（kind=3）；`strlit` / `str_len` / `str_ref` / `str_cat`。
+4. **bytes**：BYTES 堆对象（kind=4，初容 1MiB）；`bytes_new/len/ref/put/append`。
+5. **IO**：`read_file` / `write_file`（syscall open/read/write/close）。
+6. **位运算**：`band` / `bor` / `bshl` / `bshr`。
+7. **M4 起步**：`src-self/yc.yac` 驱动 + `tests/selfhost_yc.sh`（解释器托管编译 fact）。
 
-**仍待**：字符串堆对象与其余 PRIMS 全量；map/filter 对 cons 结果再 `nth` 的帧布局边界情况；L4/L5 同构（原生 `yc` 再编译自身）。
+**仍待（阻塞完整 L4/L5）**：原生 `foldl`/`map` 原语（含捕获闭包 apply）；字符串 `==`；argv；L4/L5 同构验证。

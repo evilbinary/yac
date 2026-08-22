@@ -432,6 +432,89 @@ let mov_rbx_mem_rbp(b, d) =
 /* sar rbx, 1  (48 d1 fb) */
 let sar_rbx_1(b) =
   let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 251)
+/* and rax, rbx  (48 21 d8) */
+let and_rax_rbx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 33) in e8(b, 216)
+/* or rax, rbx  (48 09 d8) */
+let or_rax_rbx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 9) in e8(b, 216)
+/* mov rcx, rbx  (48 89 d9) */
+let mov_rcx_rbx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 217)
+/* shl rax, cl  (48 d3 e0) */
+let shl_rax_cl(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 211) in e8(b, 224)
+/* shr rax, cl  (48 d3 e8) */
+let shr_rax_cl(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 211) in e8(b, 232)
+/* sub rsp, imm32  (48 81 ec id32) */
+let sub_rsp_imm32(b, v) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 129) in
+  let _ = e8(b, 236) in
+  e32(b, v)
+/* mov byte [rax+disp8], imm8  (c6 40 disp imm) */
+let mov_rax_disp8_imm8(b, disp8, imm8) =
+  let _ = e8(b, 198) in
+  let _ = e8(b, 64) in
+  let _ = e8(b, band(disp8, 255)) in
+  e8(b, band(imm8, 255))
+/* movzx eax, byte [rax+disp8]  (0f b6 40 disp) */
+let movzx_eax_rax_disp8(b, disp8) =
+  let _ = e8(b, 15) in
+  let _ = e8(b, 182) in
+  let _ = e8(b, 64) in
+  e8(b, band(disp8, 255))
+/* add rax, imm32  (48 05 id32) — for large offsets use lea */
+let add_rax_imm32(b, v) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 5) in
+  e32(b, v)
+/* mov [rax+rdx], dil  (40 88 3c 10) */
+let mov_rax_rdx_dil(b) =
+  let _ = e8(b, 64) in
+  let _ = e8(b, 136) in
+  let _ = e8(b, 60) in
+  e8(b, 16)
+/* movzx eax, byte [rax+rdx]  (0f b6 04 10) */
+let movzx_eax_rax_rdx(b) =
+  let _ = e8(b, 15) in
+  let _ = e8(b, 182) in
+  let _ = e8(b, 4) in
+  e8(b, 16)
+/* inc qword [rax+disp8]  (48 ff 40 disp) */
+let inc_mem_rax_disp8(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 255) in
+  let _ = e8(b, 64) in
+  e8(b, band(d, 255))
+/* mov rdx, [rax+disp8] */
+let mov_rdx_rax_disp8(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 80) in
+  e8(b, band(d, 255))
+/* mov [rax+disp8], rdx */
+let mov_rax_disp8_rdx(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  let _ = e8(b, 80) in
+  e8(b, band(d, 255))
+/* cmp rdx, [rax+disp8] */
+let cmp_rdx_rax_disp8(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 59) in
+  let _ = e8(b, 80) in
+  e8(b, band(d, 255))
+/* mov rsi, rax */
+let mov_rsi_rax_reg(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 198)
+/* xor rdx, rdx */
+let xor_rdx_rdx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 49) in e8(b, 210)
+/* add rdx, 1 */
+let inc_rdx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 255) in e8(b, 194)
 /* add rax, rbx  (48 01 d8) */
 let add_rax_rbx(b) =
   let _ = e8(b, 72) in let _ = e8(b, 1) in e8(b, 216)
@@ -514,6 +597,12 @@ let mov_mem_rax_rbx(b) =
 /* test rbx, rbx  (48 85 db) */
 let test_rbx_rbx(b) =
   let _ = e8(b, 72) in let _ = e8(b, 133) in e8(b, 219)
+/* test rdx, rdx */
+let test_rdx_rdx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 133) in e8(b, 210)
+/* mov rax, rsi */
+let mov_rax_rsi(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 240)
 /* mov qword [rbx+disp8], imm32  (48 c7 43 disp8 id32) — set mark field */
 let mov_mem_rbx_disp8_imm32(b, disp8, imm) =
   let _ = e8(b, 72) in

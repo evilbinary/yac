@@ -63,6 +63,18 @@ run_e2e "e2e list nth" 'nth([10, 20, 30], 1)' '20'
 run_e2e "e2e list cons" 'len(cons(0, [1, 2]))' '3'
 run_e2e "e2e foldl" 'let foldl(f, acc, xs) = if len(xs) == 0 then acc else foldl(f, f(acc, nth(xs, 0)), tail(xs)) in foldl(fun(a, x) -> a + x, 0, [1, 2, 3, 4])' '10'
 run_e2e "e2e map len" 'let map(f, xs) = if len(xs) == 0 then [] else cons(f(nth(xs, 0)), map(f, tail(xs))) in let inc(n) = n + 1 in len(map(inc, [1, 2, 3]))' '3'
+run_e2e "e2e map nth" 'let map(f, xs) = if len(xs) == 0 then [] else cons(f(nth(xs, 0)), map(f, tail(xs))) in let inc(n) = n + 1 in nth(map(inc, [1, 2, 3]), 2)' '4'
+run_e2e "e2e filter" 'let gt1(x) = x > 1 in let filter(f, xs) = if len(xs) == 0 then [] else let x = nth(xs, 0) in let keep = f(x) in let rest = filter(f, tail(xs)) in if keep then cons(x, rest) else rest in len(filter(gt1, [1, 2, 3, 0]))' '2'
+run_e2e "e2e append" 'nth(append([1, 2], [3, 4]), 3)' '4'
+run_e2e "e2e drop" 'nth(drop([1, 2, 3, 4], 2), 0)' '3'
+run_e2e "e2e str_len" 'str_len("abc")' '3'
+run_e2e "e2e str_ref" 'str_ref("Hi", 1)' '105'
+run_e2e "e2e str_cat" 'str_len(str_cat("ab", "cd"))' '4'
+run_e2e "e2e band" 'band(7, 3)' '3'
+run_e2e "e2e bytes" 'let b = bytes_new() in let _ = bytes_append(b, 65) in let _ = bytes_append(b, 66) in bytes_ref(b, 1)' '66'
+run_e2e "e2e int_to_str" 'str_ref(int_to_str(42), 1)' '50'
+run_e2e "e2e str_slice" 'str_ref(str_slice("abcdef", 2, 3), 0)' '99'
+run_e2e "e2e bytes_to_str" 'let b = bytes_new() in let _ = bytes_append(b, 90) in str_ref(bytes_to_str(b), 0)' '90'
 
 # print (decimal output) — compare stdout, not exit code
 run_print() {
