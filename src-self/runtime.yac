@@ -1,0 +1,85 @@
+/* runtime.yac — arch-independent runtime as LIR (same emit_insn as user code).
+ *
+ * Kernel only: obj_kind / obj_ld / obj_st / tag (plus ordinary control LIR).
+ * Layout (qword): next=0 mark=8 kind=16 car/len=24 cdr/head=32 (listbuf tail=40).
+ * nil is tagged 1. kind 2 = cons, kind 5 = listbuf.
+ */
+
+let rt_tail_ins =
+  [l_prologue(6, 1),
+   l_nil(2),
+   l_cmp("==", 3, 1, 2),
+   l_br(3, "t_nil", "t_go"),
+   l_label("t_nil"),
+   l_ret(2),
+   l_label("t_go"),
+   l_obj_ld(4, 1, 32),
+   l_ret(4)]
+
+let rt_len_ins =
+  [l_prologue(14, 1),
+   l_nil(2),
+   l_cmp("==", 3, 1, 2),
+   l_br(3, "l_nil", "l_nz"),
+   l_label("l_nil"),
+   l_mov_imm(4, 0),
+   l_ret(4),
+   l_label("l_nz"),
+   l_obj_kind(5, 1),
+   l_mov_imm(6, 5),
+   l_cmp("==", 7, 5, 6),
+   l_br(7, "l_buf", "l_walk"),
+   l_label("l_buf"),
+   l_obj_ld(8, 1, 24),
+   l_tag(4, 8),
+   l_ret(4),
+   l_label("l_walk"),
+   l_mov(10, 1),
+   l_mov_imm(11, 0),
+   l_label("l_loop"),
+   l_cmp("==", 3, 10, 2),
+   l_br(3, "l_done", "l_more"),
+   l_label("l_more"),
+   l_obj_ld(10, 10, 32),
+   l_mov_imm(12, 1),
+   l_binop("+", 11, 11, 12),
+   l_jmp("l_loop"),
+   l_label("l_done"),
+   l_ret(11)]
+
+let rt_nth_ins =
+  [l_prologue(16, 2),
+   l_nil(3),
+   l_cmp("==", 4, 1, 3),
+   l_br(4, "n_nil", "n_nz"),
+   l_label("n_nil"),
+   l_ret(3),
+   l_label("n_nz"),
+   l_obj_kind(5, 1),
+   l_mov_imm(6, 5),
+   l_cmp("==", 7, 5, 6),
+   l_br(7, "n_buf", "n_cons"),
+   l_label("n_buf"),
+   l_obj_ld(8, 1, 32),
+   l_jmp("n_join"),
+   l_label("n_cons"),
+   l_mov(8, 1),
+   l_label("n_join"),
+   l_mov(9, 2),
+   l_label("n_loop"),
+   l_mov_imm(10, 0),
+   l_cmp("==", 11, 9, 10),
+   l_br(11, "n_found", "n_step"),
+   l_label("n_step"),
+   l_obj_ld(8, 8, 32),
+   l_mov_imm(12, 1),
+   l_binop("-", 9, 9, 12),
+   l_jmp("n_loop"),
+   l_label("n_found"),
+   l_obj_ld(13, 8, 24),
+   l_ret(13)]
+
+let runtime_funs(_) =
+  [l_fun("yac_tail", 1, 0, rt_tail_ins, "yac_tail"),
+   l_fun("yac_len", 1, 0, rt_len_ins, "yac_len"),
+   l_fun("yac_nth", 2, 0, rt_nth_ins, "yac_nth")]

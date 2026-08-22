@@ -572,4 +572,4 @@ let compile_top(items) =
                  l_exit(result_slot)),
                "_start") in
   let _ = log("lower", "compile_top done") in
-  l_prog(cons(entry, reverse(funs)), "_start")
+  l_prog(cons(entry, append(reverse(funs), runtime_funs(0))), "_start")

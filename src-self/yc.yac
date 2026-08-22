@@ -13,7 +13,7 @@
  * The last positional argument is always the input source file.
  *
  * Bundle:
- *   cat src-self/{log,pass,target,lexer,parser,anf,encode_x64,encode_arm64,encode_riscv64,elf,pe,macho,pack,lir,emit,emit_x86_64,emit_arm64,emit_riscv64,backend,lower,yc}.yac \
+ *   cat src-self/{log,pass,target,lexer,parser,anf,encode_x64,encode_arm64,encode_riscv64,elf,pe,macho,pack,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,backend,lower,yc}.yac \
  *     > build/yc_tmp/yc_bundle.yac
  *
  * PIPELINE: src -lex-> tok -parse-> ast -anf-> anf -lower-> lir -emit-> pack

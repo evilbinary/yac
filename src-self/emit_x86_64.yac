@@ -251,186 +251,6 @@ let gen_gc(d) =
   let _ = ret(b) in
   [b, headaddr]
 
-/* yac_len(list in rdi) -> tagged count in rax.
- * kind=2 linked list: walk tails; kind=5 listbuf: read cached len. */
-let gen_len(d) =
-  let b = bytes_new() in
-  let _ = mov_rax_rdi(b) in
-  let _ = cmp_rax_imm8(b, 1) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jnil = bytes_len(b) - 4 in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 16) in   /* kind */
-  let _ = cmp_rax_imm8(b, 5) in
-  let _ = jcc_rel32(b, 4, 0) in         /* je -> buf */
-  let jbuf = bytes_len(b) - 4 in
-  /* linked walk */
-  let _ = mov_rax_rdi(b) in
-  let _ = xor_rcx_rcx(b) in
-  let loop = bytes_len(b) in
-  let _ = cmp_rax_imm8(b, 1) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jz = bytes_len(b) - 4 in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 32) in
-  let _ = inc_rcx(b) in
-  let _ = jmp_rel32(b, 0) in
-  let jback = bytes_len(b) - 4 in
-  let done = bytes_len(b) in
-  let _ = mov_rax_rcx(b) in
-  let _ = shl_rax_1(b) in
-  let _ = ret(b) in
-  let bufp = bytes_len(b) in
-  let _ = mov_rax_rdi(b) in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 24) in   /* len */
-  let _ = shl_rax_1(b) in
-  let _ = ret(b) in
-  let nilp = bytes_len(b) in
-  let _ = xor_rax_rax(b) in
-  let _ = ret(b) in
-  let _ = apply_patch(b, jnil, nilp) in
-  let _ = apply_patch(b, jbuf, bufp) in
-  let _ = apply_patch(b, jz, done) in
-  let _ = apply_patch(b, jback, loop) in
-  b
-
-/* yac_nth(list in rdi, idx tagged in rsi) -> element in rax.
- * kind=5: start walk from head at +32. kind=2: normal linked.
- * Returns nil (tagged 1) when list is nil. */
-let gen_nth(d) =
-  let b = bytes_new() in
-  let _ = sar_rsi_1(b) in
-  let _ = mov_rax_rdi(b) in
-  let _ = cmp_rax_imm8(b, 1) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jnil = bytes_len(b) - 4 in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 16) in
-  let _ = cmp_rax_imm8(b, 5) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jbuf = bytes_len(b) - 4 in
-  let _ = mov_rax_rdi(b) in
-  let _ = jmp_rel32(b, 0) in
-  let jjoin = bytes_len(b) - 4 in
-  let bufp = bytes_len(b) in
-  let _ = mov_rax_rdi(b) in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 32) in  /* head */
-  let _ = or_rax_1(b) in
-  let join = bytes_len(b) in
-  let _ = apply_patch(b, jjoin, join) in
-  let loop = bytes_len(b) in
-  let _ = cmp_rsi_imm8(b, 0) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jz = bytes_len(b) - 4 in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 32) in
-  let _ = dec_rsi(b) in
-  let _ = jmp_rel32(b, 0) in
-  let jback = bytes_len(b) - 4 in
-  let found = bytes_len(b) in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 24) in
-  let _ = ret(b) in
-  let nilp = bytes_len(b) in
-  let _ = mov_r64_imm(b, 0, 1) in
-  let _ = ret(b) in
-  let _ = apply_patch(b, jnil, nilp) in
-  let _ = apply_patch(b, jbuf, bufp) in
-  let _ = apply_patch(b, jz, found) in
-  let _ = apply_patch(b, jback, loop) in
-  b
-
-/* yac_list_new() -> tagged listbuf kind=5.
- * Layout: [next][mark][kind=5][len][head][tail], size 48. */
-let gen_list_new(d) =
-  let b = bytes_new() in
-  let _ = mov_rdi_imm(b, 48) in
-  let acall = bytes_len(b) in
-  let _ = call_rel32(b, 0) in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_disp8_imm32(b, 8, 0) in
-  let _ = mov_rax_disp8_imm32(b, 16, 5) in
-  let _ = mov_rax_disp8_imm32(b, 20, 0) in
-  let _ = mov_rax_disp8_imm32(b, 24, 0) in   /* len = 0 */
-  let _ = mov_rax_disp8_imm32(b, 28, 0) in
-  let _ = mov_r64_imm(b, 7, 1) in            /* rdi = nil */
-  let _ = mov_rax_disp8_rdi(b, 32) in        /* head = nil */
-  let _ = mov_rax_disp8_rdi(b, 40) in        /* tail = nil */
-  let _ = or_rax_1(b) in
-  let _ = ret(b) in
-  [b, acall + 1]
-
-/* yac_list_push(buf in rdi, x in rsi) -> unit 0. Mutates buf. */
-let gen_list_push(d) =
-  let b = bytes_new() in
-  let _ = push_rbp(b) in
-  let _ = mov_rbp_rsp(b) in
-  let _ = sub_rsp_imm8(b, 32) in
-  let _ = mov_mem_rbp_rdi(b, 248) in  /* buf */
-  let _ = mov_mem_rbp_rsi(b, 240) in  /* x */
-  let _ = mov_rdi_imm(b, 40) in
-  let acall = bytes_len(b) in
-  let _ = call_rel32(b, 0) in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_disp8_imm32(b, 8, 0) in
-  let _ = mov_rax_disp8_imm32(b, 16, 2) in
-  let _ = mov_rax_disp8_imm32(b, 20, 0) in
-  let _ = mov_r64_mem_rbp(b, 7, 240) in      /* rdi = x */
-  let _ = mov_rax_disp8_rdi(b, 24) in        /* head = x */
-  let _ = mov_r64_imm(b, 7, 1) in
-  let _ = mov_rax_disp8_rdi(b, 32) in        /* tail = nil */
-  let _ = or_rax_1(b) in                     /* tagged cons */
-  let _ = mov_mem_rbp_r64(b, 232, 0) in      /* save cons */
-  let _ = mov_r64_mem_rbp(b, 0, 248) in
-  let _ = and_rax_1(b) in                    /* buf raw */
-  let _ = mov_rbx_rax(b) in
-  let _ = mov_rax_rbx_disp8(b, 24) in        /* len */
-  let _ = cmp_rax_imm8(b, 0) in
-  let _ = jcc_rel32(b, 4, 0) in              /* jz empty */
-  let jempty = bytes_len(b) - 4 in
-  /* non-empty: link from old tail */
-  let _ = mov_rax_rbx_disp8(b, 40) in        /* old tail tagged */
-  let _ = and_rax_1(b) in
-  let _ = mov_r64_mem_rbp(b, 7, 232) in      /* rdi = new cons */
-  let _ = mov_rax_disp8_rdi(b, 32) in        /* oldtail.tail = new */
-  let _ = mov_r64_mem_rbp(b, 0, 232) in
-  let _ = mov_mem_rbx_disp8_rax(b, 40) in    /* buf.tail = new */
-  let _ = jmp_rel32(b, 0) in
-  let jjoin = bytes_len(b) - 4 in
-  let emptyp = bytes_len(b) in
-  let _ = mov_r64_mem_rbp(b, 0, 232) in
-  let _ = mov_mem_rbx_disp8_rax(b, 32) in    /* head = new */
-  let _ = mov_mem_rbx_disp8_rax(b, 40) in    /* tail = new */
-  let join = bytes_len(b) in
-  let _ = apply_patch(b, jempty, emptyp) in
-  let _ = apply_patch(b, jjoin, join) in
-  let _ = mov_rax_rbx_disp8(b, 24) in
-  let _ = add_rax_imm8(b, 1) in
-  let _ = mov_mem_rbx_disp8_rax(b, 24) in    /* len++ */
-  let _ = xor_rax_rax(b) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  [b, acall + 1]
-
-/* yac_tail(list in rdi) -> tail in rax (nil if nil) */
-let gen_tail(d) =
-  let b = bytes_new() in
-  let _ = mov_rax_rdi(b) in
-  let _ = cmp_rax_imm8(b, 1) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jz = bytes_len(b) - 4 in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 32) in
-  let _ = ret(b) in
-  let done = bytes_len(b) in
-  let _ = mov_r64_imm(b, 0, 1) in
-  let _ = ret(b) in
-  let _ = apply_patch(b, jz, done) in
-  b
-
 /* yac_list_rev(list in rdi) -> reversed list in rax.
  * kind=5 listbuf: reverse its head chain. Returns [bytes, allocCallRelPos]. */
 let gen_list_rev(d) =
@@ -1564,10 +1384,16 @@ let emit_insn(st, insn, is_entry) =
         let _ = push_r64(b, 0) in
         /* stack: [rsp]=b [rsp+8]=a */
         let _ = mov_rax_mem_rsp8(b) in
+        let _ = cmp_rax_imm8(b, 1) in
+        let _ = jcc_rel32(b, 4, 0) in
+        let jnil1 = bytes_len(b) - 4 in
         let _ = test_rax_1(b) in
         let _ = jcc_rel32(b, 4, 0) in
         let jz1 = bytes_len(b) - 4 in
         let _ = mov_rax_mem_rsp(b) in
+        let _ = cmp_rax_imm8(b, 1) in
+        let _ = jcc_rel32(b, 4, 0) in
+        let jnil2 = bytes_len(b) - 4 in
         let _ = test_rax_1(b) in
         let _ = jcc_rel32(b, 4, 0) in
         let jz2 = bytes_len(b) - 4 in
@@ -1602,6 +1428,8 @@ let emit_insn(st, insn, is_entry) =
         let intp = bytes_len(b) in
         let _ = apply_patch(b, jz1, intp) in
         let _ = apply_patch(b, jz2, intp) in
+        let _ = apply_patch(b, jnil1, intp) in
+        let _ = apply_patch(b, jnil2, intp) in
         let _ = apply_patch(b, jne1, intp) in
         let _ = apply_patch(b, jne2, intp) in
         let _ = mov_rax_mem_rsp8(b) in
@@ -1707,6 +1535,32 @@ let emit_insn(st, insn, is_entry) =
       let _ = mov_rdi_rax(b) in
       let _ = mov_r64_imm(b, 0, 60) in
       let _ = syscall(b) in
+      [b, cur, labels, patches]
+    else if k == "obj_kind" then
+      let dst = nth(insn, 1) in
+      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+      let _ = and_rax_1(b) in
+      let _ = mov_rax_rax_disp8(b, 16) in
+      let _ = shl_rax_1(b) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, patches]
+    else if k == "obj_ld" then
+      let dst = nth(insn, 1) in
+      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+      let _ = and_rax_1(b) in
+      let _ = mov_rax_rax_disp8(b, nth(insn, 3)) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, patches]
+    else if k == "obj_st" then
+      let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
+      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+      let _ = and_rax_1(b) in
+      let _ = mov_rax_disp8_rdi(b, nth(insn, 2)) in
+      [b, cur, labels, patches]
+    else if k == "tag" then
+      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+      let _ = shl_rax_1(b) in
+      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
       [b, cur, labels, patches]
     else if k == "print" then
       /* print slot: int -> print_int; STR (kind=3) -> write(1,data,len); newline */
@@ -2369,12 +2223,6 @@ let emit_program_at(prog, load_vaddr, text_off) =
   let ts_off = bytes_len(b) in
   let _ = b_append(b, nth(tsr, 0)) in
   let ts_acall = nth(tsr, 1) in
-  let len_off = bytes_len(b) in
-  let _ = b_append(b, gen_len(0)) in
-  let nth_off = bytes_len(b) in
-  let _ = b_append(b, gen_nth(0)) in
-  let tail_off = bytes_len(b) in
-  let _ = b_append(b, gen_tail(0)) in
   let lrr = gen_list_rev(0) in
   let lrev_off = bytes_len(b) in
   let _ = b_append(b, nth(lrr, 0)) in
@@ -2454,14 +2302,11 @@ let emit_program_at(prog, load_vaddr, text_off) =
                                                                                                     cons(["yac_list_push", lpush_off],
                                                                                                          cons(["yac_list_new", lnew_off],
                                                                                                               cons(["yac_list_rev", lrev_off],
-                                                                                                                   cons(["yac_tail", tail_off],
-                                                                                                                        cons(["yac_nth", nth_off],
-                                                                                                                             cons(["yac_len", len_off],
-                                                                                                                                  cons(["yac_argv", av_off],
-                                                                                                                                       cons(["yac_argc", ag_off],
-                                                                                                                                            cons(["time_str", ts_off],
-                                                                                                                                                 cons(["time_ms", tm_off],
-                                                                                                                                                      cons(["print_int", pi_off], funOffsRev))))))))))))))))))))))))))) in
+                                                                                                                   cons(["yac_argv", av_off],
+                                                                                                                        cons(["yac_argc", ag_off],
+                                                                                                                             cons(["time_str", ts_off],
+                                                                                                                                  cons(["time_ms", tm_off],
+                                                                                                                                       cons(["print_int", pi_off], funOffsRev)))))))))))))))))))))))) in
   let LOAD_VADDR = load_vaddr in
   let TEXT_OFF = text_off in
   /* writable globals: gc head, saved_argc, saved_argv (8 bytes each). */
