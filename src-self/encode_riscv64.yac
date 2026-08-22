@@ -37,9 +37,17 @@ let rv_lui(b, rd, imm20) =
 let rv_ld(b, rd, rs1, imm) =
   rv_u32(b, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + 12288 + bshl(rd, 7) + 3)
 
+let rv_lbu(b, rd, rs1, imm) =
+  rv_u32(b, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + 16384 + bshl(rd, 7) + 3)
+
 let rv_sd(b, rs2, rs1, imm) =
   let i = band(imm, 4095) in
   rv_u32(b, bshl(bshr(i, 5), 25) + bshl(rs2, 20) + bshl(rs1, 15) + 12288 +
+           bshl(band(i, 31), 7) + 35)
+
+let rv_sb(b, rs2, rs1, imm) =
+  let i = band(imm, 4095) in
+  rv_u32(b, bshl(bshr(i, 5), 25) + bshl(rs2, 20) + bshl(rs1, 15) +
            bshl(band(i, 31), 7) + 35)
 
 let rv_beq(b, rs1, rs2, imm13) =

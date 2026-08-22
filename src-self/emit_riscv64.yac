@@ -167,6 +167,30 @@ let emit_insn_rv(st, insn, is_entry) =
     let _ = rv_and(b, 10, 10, 6) in
     let _ = rv_sd(b, 11, 10, nth(insn, 2)) in
     [b, cur, labels, patches]
+  else if k == "ld8" then
+    let _ = rv_slot(b, nth(insn, 2), false, 10) in
+    let _ = rv_addi(b, 6, 0, 0 - 2) in
+    let _ = rv_and(b, 10, 10, 6) in
+    let _ = rv_slot(b, nth(insn, 3), false, 11) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_sra(b, 11, 11, 7) in
+    let _ = rv_add(b, 10, 10, 11) in
+    let _ = rv_lbu(b, 10, 10, 0) in
+    let _ = rv_add(b, 10, 10, 10) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    [b, cur, labels, patches]
+  else if k == "st8" then
+    let _ = rv_slot(b, nth(insn, 3), false, 12) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_sra(b, 12, 12, 7) in
+    let _ = rv_slot(b, nth(insn, 1), false, 10) in
+    let _ = rv_addi(b, 6, 0, 0 - 2) in
+    let _ = rv_and(b, 10, 10, 6) in
+    let _ = rv_slot(b, nth(insn, 2), false, 11) in
+    let _ = rv_sra(b, 11, 11, 7) in
+    let _ = rv_add(b, 10, 10, 11) in
+    let _ = rv_sb(b, 12, 10, 0) in
+    [b, cur, labels, patches]
   else
     let _ = rv_unimp(b) in
     [b, cur, labels, patches]

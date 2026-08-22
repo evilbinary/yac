@@ -73,5 +73,8 @@ let l_tag(d, s) = ["tag", d, s]
  * obj_sti writes a zero-extended 32-bit immediate (kind/mark/len).
  * obj_st_int stores untagged bits of a tagged int slot. */
 let l_alloc(d, nbytes) = ["alloc", d, nbytes]
+let l_alloc_s(d, n) = ["alloc_s", d, n]
 let l_obj_sti(p, off, imm) = ["obj_sti", p, off, imm]
 let l_obj_st_int(p, off, s) = ["obj_st_int", p, off, s]
+let l_ld8(d, p, off) = ["ld8", d, p, off]
+let l_st8(p, off, v) = ["st8", p, off, v]

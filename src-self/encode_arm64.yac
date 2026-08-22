@@ -63,6 +63,11 @@ let a64_asr1(b, rd, rn) =
 let a64_cmp_reg(b, rn, rm) =
   a64_u32(b, 3942645760 + bshl(rm, 16) + bshl(rn, 5) + 31)
 
+/* LDRB Wt,[Xn]  0x39400000 */
+let a64_ldrb(b, rt, rn) = a64_u32(b, 960495616 + bshl(rn, 5) + rt)
+/* STRB Wt,[Xn]  0x39000000 */
+let a64_strb(b, rt, rn) = a64_u32(b, 956301312 + bshl(rn, 5) + rt)
+
 /* STUR Xt,[Xn,#simm9]  0xF8000000 */
 let a64_stur(b, rt, rn, simm9) =
   let imm = band(simm9, 511) in
