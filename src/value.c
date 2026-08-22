@@ -557,6 +557,23 @@ static Value prim_bytes_append(Value *args, int nargs, PrimCtx *ctx) {
     return v_unit();
 }
 
+/* bytes_extend(dst, src) -> unit. Append all bytes of src onto dst (memcpy). */
+static Value prim_bytes_extend(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_BYTES || args[1].tag != V_BYTES) {
+        ctx->errored = true;
+        strcpy(ctx->errmsg, "bytes_extend: expected two buffers");
+        return VALUE_NULL;
+    }
+    Bytes *dst = args[0].u.bytes;
+    Bytes *src = args[1].u.bytes;
+    if (src->len <= 0) return v_unit();
+    bytes_grow(dst, dst->len + src->len);
+    memcpy(dst->data + dst->len, src->data, (size_t)src->len);
+    dst->len += src->len;
+    return v_unit();
+}
+
 /* bytes-len(b) -> int */
 static Value prim_bytes_len(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
@@ -959,6 +976,7 @@ static const Prim PRIMS[] = {
     {"list_rev", 1, true, true, prim_reverse},
     {"bytes_put", 3, false, true, prim_bytes_put},
     {"bytes_append", 2, false, true, prim_bytes_append},
+    {"bytes_extend", 2, false, true, prim_bytes_extend},
     {"bytes_len", 1, true, false, prim_bytes_len},
     {"bytes_ref", 2, true, false, prim_bytes_ref},
     {"bytes_to_str", 1, true, true, prim_bytes_to_str},

@@ -568,6 +568,9 @@ let inc_rdx(b) =
 /* add rax, rbx  (48 01 d8) */
 let add_rax_rbx(b) =
   let _ = e8(b, 72) in let _ = e8(b, 1) in e8(b, 216)
+/* add rax, rdx  (48 01 d0) */
+let add_rax_rdx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 1) in e8(b, 208)
 /* sub rax, rbx  (48 29 d8) */
 let sub_rax_rbx(b) =
   let _ = e8(b, 72) in let _ = e8(b, 41) in e8(b, 216)

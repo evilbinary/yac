@@ -1137,6 +1137,48 @@ let gen_map(d) =
   let _ = ret(b) in
   [b, selfcall + 1, a1call + 1, acall + 1]
 
+/* yac_bytes_extend(dst rdi, src rsi) -> dst tagged. Appends src onto dst (no grow). */
+let gen_bytes_extend(d) =
+  let b = bytes_new() in
+  let _ = push_rbp(b) in
+  let _ = mov_rbp_rsp(b) in
+  let _ = sub_rsp_imm8(b, 16) in
+  let _ = mov_rax_rdi(b) in
+  let _ = and_rax_1(b) in
+  let _ = mov_mem_rbp_r64(b, 248, 0) in
+  let _ = mov_rax_rsi(b) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rbx_rax(b) in
+  let _ = mov_rax_rbx_disp8(b, 24) in
+  let _ = test_rax_rax(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jempty = bytes_len(b) - 4 in
+  let _ = mov_r64_r64(b, 2, 0) in
+  let _ = mov_rax_rbx(b) in
+  let _ = add_rax_imm32(b, 40) in
+  let _ = mov_rsi_rax(b) in
+  let _ = mov_r64_mem_rbp(b, 0, 248) in
+  let _ = mov_rbx_rax(b) in
+  let _ = mov_rax_rbx_disp8(b, 24) in
+  let _ = add_rax_imm32(b, 40) in
+  let _ = mov_rdi_rax(b) in
+  let _ = lea_rdi_rbx_rdi(b) in
+  let _ = mov_r64_r64(b, 1, 2) in
+  let _ = e8(b, 243) in
+  let _ = e8(b, 164) in
+  let _ = mov_r64_mem_rbp(b, 3, 248) in
+  let _ = mov_rax_rbx_disp8(b, 24) in
+  let _ = add_rax_rdx(b) in
+  let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 67) in let _ = e8(b, 24) in
+  let done = bytes_len(b) in
+  let _ = apply_patch(b, jempty, done) in
+  let _ = mov_r64_mem_rbp(b, 0, 248) in
+  let _ = or_rax_1(b) in
+  let _ = mov_rsp_rbp(b) in
+  let _ = pop_rbp(b) in
+  let _ = ret(b) in
+  b
+
 /* yac_int_to_str(n tagged rdi) -> STR. Non-negative only. Returns [bytes, allocRel]. */
 let gen_int_to_str(d) =
   let b = bytes_new() in
@@ -1971,6 +2013,16 @@ let emit_insn(st, insn, is_entry) =
       let _ = or_rax_1(b) in
       let _ = emit_store_rax_slot(b, dst) in
       [b, cur, labels, patches]
+    else if k == "bytes_extend" then
+      let dst = nth(insn, 1) in
+      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+      let _ = mov_rdi_rax(b) in
+      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+      let _ = mov_rsi_rax(b) in
+      let acall = bytes_len(b) in
+      let _ = call_rel32(b, 0) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, cons([acall + 1, "yac_bytes_extend"], patches)]
     else if k == "str_cat" then
       let dst = nth(insn, 1) in
       let _ = emit_load_rax_slot(b, nth(insn, 2)) in
@@ -2072,6 +2124,47 @@ let lookup_name(table, name) =
     else if nth(nth(l, 0), 0) == name then nth(nth(l, 0), 1)
     else rec(drop(l, 1)) in
   rec(table)
+
+/* 256-bucket name->int map for O(1) avg fun-offset lookup during resolve. */
+let emit_hash(s) =
+  let n = str_len(s) in
+  let loop(i, h) =
+    if i >= n then h
+    else loop(i + 1, (h * 31 + str_ref(s, i)) % 256) in
+  loop(0, 0)
+
+let emit_map_new(_) =
+  let b = list_new() in
+  let fill(i) =
+    if i >= 256 then b
+    else let _ = list_push(b, list_new()) in fill(i + 1) in
+  fill(0)
+
+let emit_map_put(m, k, v) =
+  let bucket = nth(m, emit_hash(k)) in
+  let _ = list_push(bucket, [k, v]) in
+  0
+
+let emit_map_get(m, k) =
+  let bucket = nth(m, emit_hash(k)) in
+  let n = len(bucket) in
+  /* First put wins — same as lookup_name on funOffsRev. */
+  let scan(i) =
+    if i >= n then 0
+    else if nth(nth(bucket, i), 0) == k then nth(nth(bucket, i), 1)
+    else scan(i + 1) in
+  scan(0)
+
+let emit_map_from_list(xs) =
+  let m = emit_map_new(0) in
+  let n = len(xs) in
+  let loop(i) =
+    if i >= n then m
+    else
+      let e = nth(xs, i) in
+      let _ = emit_map_put(m, nth(e, 0), nth(e, 1)) in
+      loop(i + 1) in
+  loop(0)
 
 let label_has(labels, name) =
   let rec(l) =
@@ -2184,6 +2277,8 @@ let emit_program(prog) =
   let scr = gen_str_cat(0) in
   let sc_off = bytes_len(b) in
   let _ = b_append(b, nth(scr, 0)) in
+  let bex_off = bytes_len(b) in
+  let _ = b_append(b, gen_bytes_extend(0)) in
   let drop_off = bytes_len(b) in
   let _ = b_append(b, gen_drop(0)) in
   let itr = gen_int_to_str(0) in
@@ -2221,20 +2316,21 @@ let emit_program(prog) =
                                                        cons(["yac_str_slice", ss_off],
                                                             cons(["yac_int_to_str", it_off],
                                                                  cons(["yac_drop", drop_off],
-                                                                      cons(["yac_str_cat", sc_off],
-                                                                           cons(["yac_write_file", wf_off],
-                                                                                cons(["yac_read_file", rf_off],
-                                                                                     cons(["yac_append", app_off],
-                                                                                          cons(["yac_alloc", alc_off],
-                                                                                               cons(["yac_list_push", lpush_off],
-                                                                                                    cons(["yac_list_new", lnew_off],
-                                                                                                         cons(["yac_list_rev", lrev_off],
-                                                                                                              cons(["yac_tail", tail_off],
-                                                                                                                   cons(["yac_nth", nth_off],
-                                                                                                                        cons(["yac_len", len_off],
-                                                                                                                             cons(["time_str", ts_off],
-                                                                                                                                  cons(["time_ms", tm_off],
-                                                                                                                                       cons(["print_int", pi_off], funOffsRev)))))))))))))))))))))))) in
+                                                                      cons(["yac_bytes_extend", bex_off],
+                                                                           cons(["yac_str_cat", sc_off],
+                                                                                cons(["yac_write_file", wf_off],
+                                                                                     cons(["yac_read_file", rf_off],
+                                                                                          cons(["yac_append", app_off],
+                                                                                               cons(["yac_alloc", alc_off],
+                                                                                                    cons(["yac_list_push", lpush_off],
+                                                                                                         cons(["yac_list_new", lnew_off],
+                                                                                                              cons(["yac_list_rev", lrev_off],
+                                                                                                                   cons(["yac_tail", tail_off],
+                                                                                                                        cons(["yac_nth", nth_off],
+                                                                                                                             cons(["yac_len", len_off],
+                                                                                                                                  cons(["time_str", ts_off],
+                                                                                                                                       cons(["time_ms", tm_off],
+                                                                                                                                            cons(["print_int", pi_off], funOffsRev))))))))))))))))))))))))) in
   let LOAD_VADDR = 4194304 in  /* 0x400000 */
   let TEXT_OFF = 120 in       /* ELF header + phdr size */
   /* append a small writable data area for GC globals (the linked-list head). */
@@ -2248,6 +2344,7 @@ let emit_program(prog) =
   let _ = bytes_append(b, 0) in
   let _ = bytes_append(b, 0) in
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
+  let funOffsMap = emit_map_from_list(funOffsRev2) in
   let resolve(ps) =
     let n = len(ps) in
     let step(i) =
@@ -2259,7 +2356,7 @@ let emit_program(prog) =
           if kind == "closurefn" then
             let pos = nth(p, 1) in
             let tname = nth(p, 2) in
-            let fo = lookup_name(funOffsRev2, tname) in
+            let fo = emit_map_get(funOffsMap, tname) in
             apply_abs32(b, pos, LOAD_VADDR + TEXT_OFF + fo)
           else if kind == "gc_head" then
             let pos = nth(p, 1) in
@@ -2268,7 +2365,7 @@ let emit_program(prog) =
             let pos = nth(p, 0) in
             let tname = nth(p, 1) in
             let targ1 = lookup_name(labels, tname) in
-            let targ2 = if targ1 == 0 then lookup_name(funOffsRev2, tname) else targ1 in
+            let targ2 = if targ1 == 0 then emit_map_get(funOffsMap, tname) else targ1 in
             apply_patch(b, pos, targ2) in
         step(i + 1) in
     step(0) in
@@ -2292,6 +2389,7 @@ let emit_program(prog) =
   let _ = list_push(extra, [mp_off + nth(mpr, 2), "yac_apply1"]) in
   let _ = list_push(extra, [mp_off + nth(mpr, 3), "yac_alloc"]) in
   let _ = patches_extend(extra, patches) in
+  let _ = log("emit", "resolve") in
   let _ = resolve(extra) in
   let _ = log_i("emit", "code_len", bytes_len(b)) in
   let _ = log("emit", "done") in

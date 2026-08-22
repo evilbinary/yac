@@ -17,15 +17,24 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SELF = os.path.join(ROOT, "src-self")
 YAC = os.path.join(ROOT, "yac")
 
+# lower/emit/backend call log(); unit tests assert on stdout so use no-ops.
+LOG_STUB = """/* no-op log for unit tests */
+let log(mod, msg) = 0
+let log_i(mod, key, n) = 0
+"""
+
 SRC = {
     "lexer": ["lexer.yac"],
     "parser": ["lexer.yac", "parser.yac"],
     "anf": ["lexer.yac", "parser.yac", "anf.yac"],
     "lower": ["lexer.yac", "parser.yac", "anf.yac", "lower.yac"],
+    "backend": ["encode_x64.yac", "elf.yac", "emit.yac", "backend.yac"],
     "lir": ["lir.yac"],
     "elf": ["elf.yac"],
     "encode": ["encode_x64.yac"],
 }
+
+LOG_MODULES = {"lower.yac", "emit.yac", "backend.yac"}
 
 passed = 0
 failed = 0
@@ -38,7 +47,8 @@ def load(name):
 
 
 def run_yac(files, driver):
-    src = "".join(load(f) for f in files) + "\n" + driver
+    src = LOG_STUB if any(f in LOG_MODULES for f in files) else ""
+    src += "".join(load(f) for f in files) + "\n" + driver
     fd, path = tempfile.mkstemp(suffix=".yac")
     try:
         with os.fdopen(fd, "w") as f:
@@ -268,7 +278,7 @@ print bytes_ref(elf, 4);
 print "";
 0;
 """
-    check("backend: ELF magic", ["encode_x64.yac", "elf.yac", "emit.yac", "backend.yac"],
+    check("backend: ELF magic", SRC["backend"],
           d, "127\n\n69\n\n76\n\n70\n\n2\n\n0")
     # gen_print_int emits the recursive decimal printer (objdump-verified prefix)
     d2 = """
@@ -283,7 +293,7 @@ print bytes_ref(b, 8);
 print "";
 0;
 """
-    check("backend: gen_print_int", ["encode_x64.yac", "elf.yac", "emit.yac", "backend.yac"],
+    check("backend: gen_print_int", SRC["backend"],
           d2, "91\n\n85\n\n72\n\n72\n\n0")
 
 

@@ -33,7 +33,7 @@ let elf = backend_compile(prog);
 let _ = write_file("$TMP/out.bin", elf);
 0;
 EOF
-    cat src-self/encode_x64.yac src-self/elf.yac src-self/emit.yac \
+    cat src-self/log.yac src-self/encode_x64.yac src-self/elf.yac src-self/emit.yac \
         src-self/backend.yac "$TMP/gen.yac" > "$TMP/run.yac"
     if ! $BIN "$TMP/run.yac" >/dev/null 2>&1; then
         fail=$((fail + 1)); echo "FAIL: $name (compile error)"
