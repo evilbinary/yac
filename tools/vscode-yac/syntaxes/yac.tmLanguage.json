@@ -23,6 +23,11 @@
           "match": "--.*$"
         },
         {
+          "name": "comment.block.starstar.yac",
+          "begin": "/\\*\\*(?!/)",
+          "end": "\\*\\*/"
+        },
+        {
           "include": "#block-comment"
         }
       ]

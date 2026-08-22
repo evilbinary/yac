@@ -39,7 +39,7 @@ let skip_sp(s, i, line) =
 let skip_line_cm(s, i) =
   if at_end(s, i) or sat(s, i) == 10 then i else skip_line_cm(s, i + 1)
 
-/* skip block comment (*...*); returns pos (0 on unterminated) */
+/* skip nested slash-star comments; returns pos (0 on unterminated) */
 let skip_block_cm(s, i, line) =
   if at_end(s, i) then 0
   else if sat(s, i) == 42 then
@@ -48,6 +48,19 @@ let skip_block_cm(s, i, line) =
     else skip_block_cm(s, i + 1, line)
   else if sat(s, i) == 10 then skip_block_cm(s, i + 1, line + 1)
   else skip_block_cm(s, i + 1, line)
+
+/* skip double-star comments (slash-star-star ... star-star-slash); pos 0 if open */
+let skip_starstar_cm(s, i, line) =
+  if at_end(s, i) then 0
+  else if sat(s, i) == 42 then
+    if at_end(s, i + 1) then 0
+    else if sat(s, i + 1) == 42 then
+      if at_end(s, i + 2) then 0
+      else if sat(s, i + 2) == 47 then i + 3
+      else skip_starstar_cm(s, i + 1, line)
+    else skip_starstar_cm(s, i + 1, line)
+  else if sat(s, i) == 10 then skip_starstar_cm(s, i + 1, line + 1)
+  else skip_starstar_cm(s, i + 1, line)
 
 /* read a run of alnum chars (specialized; avoids HO capture of is_alnum) */
 let read_alnum(s, i) =
@@ -149,7 +162,14 @@ let lex(s, i, line, acc) =
   else if sat(s, i) == 45 and (if at_end(s, i + 1) then false else sat(s, i + 1) == 45) then
     lex(s, skip_line_cm(s, i + 2), line, acc)
   else if sat(s, i) == 47 and (if at_end(s, i + 1) then false else sat(s, i + 1) == 42) then
-    let e = skip_block_cm(s, i + 2, line) in
+    let starstar =
+      if at_end(s, i + 2) then false
+      else if sat(s, i + 2) != 42 then false
+      else if at_end(s, i + 3) then true
+      else sat(s, i + 3) != 47 in
+    let e =
+      if starstar then skip_starstar_cm(s, i + 3, line)
+      else skip_block_cm(s, i + 2, line) in
     if e == 0 then cons(mk_tok("eof", "unterminated-comment", line), acc)
     else lex(s, e, line, acc)
   else if is_alpha(sat(s, i)) then

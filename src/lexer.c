@@ -99,17 +99,39 @@ LexResult lex_program(const char *src, Arena *a) {
             else if (c == '-' && src[lx.pos + 1] == '-') {
                 while (src[lx.pos] && src[lx.pos] != '\n') { lx.pos++; lx.col++; }
             } else if (c == '/' && src[lx.pos + 1] == '*') {
-                lx.pos += 2; lx.col += 2;
-                int depth = 1;
-                while (src[lx.pos] && depth > 0) {
-                    if (src[lx.pos] == '/' && src[lx.pos + 1] == '*') { depth++; lx.pos += 2; lx.col += 2; }
-                    else if (src[lx.pos] == '*' && src[lx.pos + 1] == '/') { depth--; lx.pos += 2; lx.col += 2; }
-                    else if (src[lx.pos] == '\n') { lx.pos++; lx.line++; lx.col = 1; }
-                    else { lx.pos++; lx.col++; }
-                }
-                if (depth > 0) {
-                    snprintf(errbuf, sizeof(errbuf), "%d:%d: unterminated block comment", lx.line, lx.col);
-                    goto err;
+                /* Double-star block comments: open with slash-star-star (not
+                 * slash-star-star-slash, which is an empty nested comment).
+                 * They close only on star-star-slash, so a glob like src/star
+                 * or interp/star-slash.yac can appear in the body. */
+                if (src[lx.pos + 2] == '*' && src[lx.pos + 3] && src[lx.pos + 3] != '/') {
+                    lx.pos += 3; lx.col += 3;
+                    int closed = 0;
+                    while (src[lx.pos]) {
+                        if (src[lx.pos] == '*' && src[lx.pos + 1] == '*' && src[lx.pos + 2] == '/') {
+                            lx.pos += 3; lx.col += 3;
+                            closed = 1;
+                            break;
+                        }
+                        if (src[lx.pos] == '\n') { lx.pos++; lx.line++; lx.col = 1; }
+                        else { lx.pos++; lx.col++; }
+                    }
+                    if (!closed) {
+                        snprintf(errbuf, sizeof(errbuf), "%d:%d: unterminated block comment", lx.line, lx.col);
+                        goto err;
+                    }
+                } else {
+                    lx.pos += 2; lx.col += 2;
+                    int depth = 1;
+                    while (src[lx.pos] && depth > 0) {
+                        if (src[lx.pos] == '/' && src[lx.pos + 1] == '*') { depth++; lx.pos += 2; lx.col += 2; }
+                        else if (src[lx.pos] == '*' && src[lx.pos + 1] == '/') { depth--; lx.pos += 2; lx.col += 2; }
+                        else if (src[lx.pos] == '\n') { lx.pos++; lx.line++; lx.col = 1; }
+                        else { lx.pos++; lx.col++; }
+                    }
+                    if (depth > 0) {
+                        snprintf(errbuf, sizeof(errbuf), "%d:%d: unterminated block comment", lx.line, lx.col);
+                        goto err;
+                    }
                 }
             } else break;
         }

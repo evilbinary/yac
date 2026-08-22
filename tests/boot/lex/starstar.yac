@@ -1,0 +1,2 @@
+/** src/* and tests/interp/*.yac **/
+let x = 1
