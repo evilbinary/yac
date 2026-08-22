@@ -144,6 +144,107 @@ let gen_print_int(d) =
   let _ = ret(b) in
   b
 
+/* time_ms() -> tagged int. clock_gettime(CLOCK_MONOTONIC) via syscall 228. */
+let gen_time_ms(d) =
+  let b = bytes_new() in
+  let _ = push_rbp(b) in
+  let _ = mov_rbp_rsp(b) in
+  let _ = sub_rsp_imm8(b, 16) in
+  let _ = mov_rdi_imm(b, 1) in          /* CLOCK_MONOTONIC */
+  let _ = lea_rsi_rbp_disp8(b, 240) in  /* &timespec at [rbp-16] */
+  let _ = mov_r64_imm(b, 0, 228) in     /* sys_clock_gettime */
+  let _ = syscall(b) in
+  let _ = mov_r64_mem_rbp(b, 0, 240) in /* tv_sec */
+  let _ = mov_rdi_imm(b, 1000) in
+  let _ = imul_rax_rdi(b) in
+  let _ = mov_rbx_rax(b) in
+  let _ = mov_r64_mem_rbp(b, 0, 248) in /* tv_nsec at [rbp-8] */
+  let _ = mov_rcx_imm(b, 1000000) in
+  let _ = cqo(b) in
+  let _ = idiv_rcx(b) in
+  let _ = add_rax_rbx(b) in
+  let _ = shl_rax_1(b) in               /* tag as int */
+  let _ = mov_rsp_rbp(b) in
+  let _ = pop_rbp(b) in
+  let _ = ret(b) in
+  b
+
+/* time_str() -> STR "HH:MM:SS" (UTC from CLOCK_REALTIME).
+ * Returns [bytes, allocRel]. Interpreter prim uses local time. */
+let gen_time_str(d) =
+  let b = bytes_new() in
+  let _ = push_rbp(b) in
+  let _ = mov_rbp_rsp(b) in
+  let _ = sub_rsp_imm8(b, 48) in
+  let _ = mov_rdi_imm(b, 0) in          /* CLOCK_REALTIME */
+  let _ = lea_rsi_rbp_disp8(b, 240) in  /* timespec [rbp-16] */
+  let _ = mov_r64_imm(b, 0, 228) in
+  let _ = syscall(b) in
+  let _ = mov_r64_mem_rbp(b, 0, 240) in /* tv_sec */
+  let _ = xor_rdx_rdx(b) in
+  let _ = mov_rcx_imm(b, 86400) in
+  let _ = idiv_rcx(b) in                /* rdx = sec of day */
+  let _ = mov_r64_r64(b, 0, 2) in
+  let _ = xor_rdx_rdx(b) in
+  let _ = mov_rcx_imm(b, 3600) in
+  let _ = idiv_rcx(b) in                /* rax=h rdx=rem */
+  let _ = mov_mem_rbp_r64(b, 232, 0) in /* h [rbp-24] */
+  let _ = mov_r64_r64(b, 0, 2) in
+  let _ = xor_rdx_rdx(b) in
+  let _ = mov_rcx_imm(b, 60) in
+  let _ = idiv_rcx(b) in                /* rax=m rdx=s */
+  let _ = mov_mem_rbp_r64(b, 224, 0) in /* m [rbp-32] */
+  let _ = mov_mem_rbp_r64(b, 216, 2) in /* s [rbp-40] */
+  let _ = mov_rdi_imm(b, 48) in
+  let acall = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_disp8_imm32(b, 8, 0) in
+  let _ = mov_rax_disp8_imm32(b, 16, 3) in
+  let _ = mov_rax_disp8_imm32(b, 20, 0) in
+  let _ = mov_rax_disp8_imm32(b, 24, 8) in
+  let _ = mov_rax_disp8_imm32(b, 28, 0) in
+  let _ = mov_rbx_rax(b) in
+  /* HH */
+  let _ = mov_r64_mem_rbp(b, 0, 232) in
+  let _ = xor_rdx_rdx(b) in
+  let _ = mov_rcx_imm(b, 10) in
+  let _ = idiv_rcx(b) in
+  let _ = add_rax_imm8(b, 48) in
+  let _ = e8(b, 136) in let _ = e8(b, 67) in let _ = e8(b, 32) in
+  let _ = mov_r64_r64(b, 0, 2) in
+  let _ = add_rax_imm8(b, 48) in
+  let _ = e8(b, 136) in let _ = e8(b, 67) in let _ = e8(b, 33) in
+  let _ = e8(b, 198) in let _ = e8(b, 67) in let _ = e8(b, 34) in let _ = e8(b, 58) in
+  /* MM */
+  let _ = mov_r64_mem_rbp(b, 0, 224) in
+  let _ = xor_rdx_rdx(b) in
+  let _ = mov_rcx_imm(b, 10) in
+  let _ = idiv_rcx(b) in
+  let _ = add_rax_imm8(b, 48) in
+  let _ = e8(b, 136) in let _ = e8(b, 67) in let _ = e8(b, 35) in
+  let _ = mov_r64_r64(b, 0, 2) in
+  let _ = add_rax_imm8(b, 48) in
+  let _ = e8(b, 136) in let _ = e8(b, 67) in let _ = e8(b, 36) in
+  let _ = e8(b, 198) in let _ = e8(b, 67) in let _ = e8(b, 37) in let _ = e8(b, 58) in
+  /* SS */
+  let _ = mov_r64_mem_rbp(b, 0, 216) in
+  let _ = xor_rdx_rdx(b) in
+  let _ = mov_rcx_imm(b, 10) in
+  let _ = idiv_rcx(b) in
+  let _ = add_rax_imm8(b, 48) in
+  let _ = e8(b, 136) in let _ = e8(b, 67) in let _ = e8(b, 38) in
+  let _ = mov_r64_r64(b, 0, 2) in
+  let _ = add_rax_imm8(b, 48) in
+  let _ = e8(b, 136) in let _ = e8(b, 67) in let _ = e8(b, 39) in
+  let _ = e8(b, 198) in let _ = e8(b, 67) in let _ = e8(b, 40) in let _ = e8(b, 0) in
+  let _ = mov_rax_rbx(b) in
+  let _ = or_rax_1(b) in
+  let _ = mov_rsp_rbp(b) in
+  let _ = pop_rbp(b) in
+  let _ = ret(b) in
+  [b, acall + 1]
+
 let cc_of(op) =
   if op == "<" then 12 else if op == "<=" then 14
   else if op == ">" then 15 else if op == ">=" then 13
@@ -1456,14 +1557,49 @@ let emit_insn(st, insn, is_entry) =
       let _ = syscall(b) in
       [b, cur, labels, patches]
     else if k == "print" then
-      /* print slot: load -> untag -> rdi; call print_int; write newline */
+      /* print slot: int -> print_int; STR (kind=3) -> write(1,data,len); newline */
       let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+      let _ = test_rax_1(b) in
+      let _ = jcc_rel32(b, 5, 0) in          /* jnz -> ptr */
+      let jptr = bytes_len(b) - 4 in
       let _ = sar_rax_1(b) in
       let _ = mov_rdi_rax(b) in
       let callstart = bytes_len(b) in
       let _ = call_rel32(b, 0) in
+      let _ = jmp_rel32(b, 0) in
+      let jend = bytes_len(b) - 4 in
+      let ptroff = bytes_len(b) in
+      let _ = apply_patch(b, jptr, ptroff) in
+      let _ = and_rax_1(b) in
+      let _ = mov_rbx_rax(b) in
+      let _ = mov_rax_rbx_disp8(b, 16) in   /* kind */
+      let _ = cmp_rax_imm8(b, 3) in
+      let _ = jcc_rel32(b, 5, 0) in          /* jne -> skip write */
+      let jskip = bytes_len(b) - 4 in
+      let _ = mov_rax_rbx(b) in
+      let _ = mov_rdx_rax_disp8(b, 24) in   /* len */
+      let _ = add_rax_imm32(b, 32) in
+      let _ = mov_rsi_rax(b) in
+      let _ = mov_rdi_imm(b, 1) in
+      let _ = mov_r64_imm(b, 0, 1) in
+      let _ = syscall(b) in
+      let skipoff = bytes_len(b) in
+      let _ = apply_patch(b, jskip, skipoff) in
+      let _ = apply_patch(b, jend, skipoff) in
       let _ = emit_newline(b) in
       [b, cur, labels, cons([callstart + 1, "print_int"], patches)]
+    else if k == "time_ms" then
+      let dst = nth(insn, 1) in
+      let callstart = bytes_len(b) in
+      let _ = call_rel32(b, 0) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, cons([callstart + 1, "time_ms"], patches)]
+    else if k == "time_str" then
+      let dst = nth(insn, 1) in
+      let callstart = bytes_len(b) in
+      let _ = call_rel32(b, 0) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, cons([callstart + 1, "time_str"], patches)]
     else if k == "closure" then
       /* closure dst fnName [capSlots]:
        * alloc object [next][mark][fnptr][nenv][env...], tag, store.
@@ -1999,6 +2135,12 @@ let emit_program(prog) =
   /* append runtime helpers (print_int, yac_alloc, gc_collect) and register offsets */
   let pi_off = bytes_len(b) in
   let _ = b_append(b, gen_print_int(0)) in
+  let tm_off = bytes_len(b) in
+  let _ = b_append(b, gen_time_ms(0)) in
+  let tsr = gen_time_str(0) in
+  let ts_off = bytes_len(b) in
+  let _ = b_append(b, nth(tsr, 0)) in
+  let ts_acall = nth(tsr, 1) in
   let len_off = bytes_len(b) in
   let _ = b_append(b, gen_len(0)) in
   let nth_off = bytes_len(b) in
@@ -2078,7 +2220,9 @@ let emit_program(prog) =
                                                                                                               cons(["yac_tail", tail_off],
                                                                                                                    cons(["yac_nth", nth_off],
                                                                                                                         cons(["yac_len", len_off],
-                                                                                                                             cons(["print_int", pi_off], funOffsRev)))))))))))))))))))))) in
+                                                                                                                             cons(["time_str", ts_off],
+                                                                                                                                  cons(["time_ms", tm_off],
+                                                                                                                                       cons(["print_int", pi_off], funOffsRev)))))))))))))))))))))))) in
   let LOAD_VADDR = 4194304 in  /* 0x400000 */
   let TEXT_OFF = 120 in       /* ELF header + phdr size */
   /* append a small writable data area for GC globals (the linked-list head). */
@@ -2127,10 +2271,11 @@ let emit_program(prog) =
                                                                 cons([it_off + nth(itr, 1), "yac_alloc"],
                                                                      cons([ss_off + nth(ssr, 1), "yac_alloc"],
                                                                           cons([bt_off + nth(btr, 1), "yac_alloc"],
-                                                                               cons([fl_off + nth(flr, 1), "yac_apply2"],
-                                                                                    cons([mp_off + nth(mpr, 1), "yac_map"],
-                                                                                         cons([mp_off + nth(mpr, 2), "yac_apply1"],
-                                                                                              cons([mp_off + nth(mpr, 3), "yac_alloc"],
-                                                                                                   patches))))))))))))))))) in
+                                                                               cons([ts_off + ts_acall, "yac_alloc"],
+                                                                                    cons([fl_off + nth(flr, 1), "yac_apply2"],
+                                                                                         cons([mp_off + nth(mpr, 1), "yac_map"],
+                                                                                              cons([mp_off + nth(mpr, 2), "yac_apply1"],
+                                                                                                   cons([mp_off + nth(mpr, 3), "yac_alloc"],
+                                                                                                        patches)))))))))))))))))) in
   let _ = resolve(extra) in
   [b, funOffsRev2]

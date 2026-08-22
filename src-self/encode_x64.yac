@@ -205,6 +205,13 @@ let lea_rdi_rdi_disp8(b, disp8) =
   let _ = e8(b, 127) in   /* mod=01 reg=rdi rm=rdi */
   e8(b, band(disp8, 255))
 
+/* lea rsi, [rbp + disp8]  (48 8d 75 id8) — e.g. timespec on stack */
+let lea_rsi_rbp_disp8(b, disp8) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 141) in
+  let _ = e8(b, 117) in   /* mod=01 reg=rsi rm=rbp */
+  e8(b, band(disp8, 255))
+
 /* imul rax, rdi  (48 0f af c7) */
 let imul_rax_rdi(b) =
   let _ = e8(b, 72) in

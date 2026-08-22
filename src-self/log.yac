@@ -1,0 +1,28 @@
+/* log.yac — structured progress logging for the self-hosted compiler.
+ *
+ * Format (one line):
+ *   [<HH:MM:SS>] [<module>] <msg>
+ *
+ * Example:
+ *   [12:25:30] [yc] src_len=54
+ *
+ * API:
+ *   log(mod, msg)       — string message
+ *   log_i(mod, key, n)  — key=int helper
+ *
+ * Requires prims: time_str, str_cat, int_to_str, print.
+ * Bundle this file first so drivers / stages can call it.
+ */
+
+let log(mod, msg) =
+  let line =
+    str_cat("[",
+      str_cat(time_str(),
+        str_cat("] [",
+          str_cat(mod,
+            str_cat("] ", msg))))) in
+  let _ = print line in
+  0
+
+let log_i(mod, key, n) =
+  log(mod, str_cat(key, str_cat("=", int_to_str(n))))

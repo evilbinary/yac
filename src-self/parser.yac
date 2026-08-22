@@ -22,8 +22,9 @@
  */
 
 let reverse(xs) = list_rev(xs)
-let ERR = ["error", "parse"]
 let is_err(a) = nth(a, 0) == "error"
+/* Top-level helper so parse_expr stays ncap=0 (no self-closure alloc). */
+let parse_err(j) = [["error", "parse"], j]
 
 let parse_expr(toks, i, min_prec) =
   /* ---- token access ---- */
@@ -104,8 +105,8 @@ let parse_expr(toks, i, min_prec) =
         if is_op(after, "->") then
           let r = parse_expr(toks, after + 1, 0) in
           [["fun", nth(pr, 0), nth(r, 0)], nth(r, 1)]
-        else [ERR, j]
-      else [ERR, j]
+        else parse_err(j)
+      else parse_err(j)
     else if kk(j) == "lparen" then
       /* ( params ) -> body  OR  ( expr )  OR  fn(expr, ...) */
       if kk(j + 1) == "ident" and kk(j + 2) == "comma" then
@@ -114,12 +115,12 @@ let parse_expr(toks, i, min_prec) =
         if is_op(after, "->") then
           let r = parse_expr(toks, after + 1, 0) in
           [["fun", nth(pr, 0), nth(r, 0)], nth(r, 1)]
-        else [ERR, j]
+        else parse_err(j)
       else
         let r = parse_expr(toks, j + 1, 0) in
-        if is_err(nth(r, 0)) then [ERR, j]
+        if is_err(nth(r, 0)) then parse_err(j)
         else [nth(r, 0), nth(r, 1) + 1]
-    else [ERR, j] in
+    else parse_err(j) in
 
   /* ---- application: head followed by ( args ), chainable: f(a)(b) ---- */
   let parse_app(j, head) =
@@ -147,8 +148,8 @@ let parse_expr(toks, i, min_prec) =
       if is_kw(m, "else") then
         let er = parse_expr(toks, m + 1, 0) in
         [["if", cond, thena, nth(er, 0)], nth(er, 1)]
-      else [ERR, m]
-    else [ERR, k] in
+      else parse_err(m)
+    else parse_err(k) in
 
   /* ---- let (supports both `let x = e` and `let f(ps) = e`) ---- */
   let parse_let(j) =
@@ -170,8 +171,8 @@ let parse_expr(toks, i, min_prec) =
           let bodyr = parse_expr(toks, k + 1, 0) in
           [["let", name, bound1, nth(bodyr, 0)], nth(bodyr, 1)]
         else [["let", name, bound1, ["unit"]], k]
-      else [ERR, j]
-    else [ERR, j] in
+      else parse_err(j)
+    else parse_err(j) in
 
   /* ---- binary operator loop (left-assoc, precedence climbing) ---- */
   let parse_binloop(j, lhs, minp) =
@@ -180,7 +181,7 @@ let parse_expr(toks, i, min_prec) =
       let p = prec_of(op) in
       if p >= minp then
         let rr = parse_expr(toks, j + 1, p + 1) in
-        if is_err(nth(rr, 0)) then [ERR, j]
+        if is_err(nth(rr, 0)) then parse_err(j)
         else parse_binloop(nth(rr, 1), ["binop", op, lhs, nth(rr, 0)], minp)
       else [lhs, j]
     else [lhs, j] in
@@ -192,16 +193,16 @@ let parse_expr(toks, i, min_prec) =
     /* unary minus: -x  ==  (0 - x); operand binds tightest (min_prec high),
      * then continue with trailing binary operators */
     let ur = parse_expr(toks, i + 1, 7) in
-    if is_err(nth(ur, 0)) then [ERR, i]
+    if is_err(nth(ur, 0)) then parse_err(i)
     else
       let un = ["binop", "-", ["int", "0"], nth(ur, 0)] in
       parse_binloop(nth(ur, 1), un, min_prec)
   else
     let pr = parse_primary(i) in
-    if is_err(nth(pr, 0)) then [ERR, i]
+    if is_err(nth(pr, 0)) then parse_err(i)
     else
       let appr = parse_app(nth(pr, 1), nth(pr, 0)) in
-      if is_err(nth(appr, 0)) then [ERR, i]
+      if is_err(nth(appr, 0)) then parse_err(i)
       else parse_binloop(nth(appr, 1), nth(appr, 0), min_prec)
 
 /* ---- program: sequence of top-level items ---- */

@@ -2,20 +2,28 @@
  *
  * Reads build/yc_tmp/in.yac, writes build/yc_tmp/out.bin.
  * Bundle under the C interpreter:
- *   cat src-self/{lexer,parser,anf,encode_x64,elf,lir,emit,backend,lower,yc}.yac \
- *     | ./yac /dev/stdin
- * Or: ./yac build/yc_tmp/yc_bundle.yac
+ *   cat src-self/{log,lexer,parser,anf,encode_x64,elf,lir,emit,backend,lower,yc}.yac \
+ *     > build/yc_tmp/yc_bundle.yac && ./yac build/yc_tmp/yc_bundle.yac
+ *
+ * Logs: [ms] [yc] stage=...  (see log.yac)
  */
+let _ = log("yc", "start")
 let src = read_file("build/yc_tmp/in.yac")
+let _ = log_i("yc", "src_len", str_len(src))
 let toks = tokenize(src)
+let _ = log_i("yc", "ntoks", len(toks))
 let prog = parse_program(toks, 0, [])
+let _ = log_i("yc", "nprog", len(prog))
 let anf_item(item) =
   let r = anf_expr(item, 0) in
   [nth(r, 0), nth(r, 1)]
 let anf_list = map(anf_item, prog)
+let _ = log_i("yc", "nanf", len(anf_list))
+let _ = log("yc", "lower")
 let lir = compile_top(anf_list)
+let _ = log("yc", "backend")
 let elf = backend_compile(lir)
-let _ = write_file("build/yc_tmp/out.bin", elf)
-print bytes_len(elf)
-print ""
+let _ = log_i("yc", "elf_len", bytes_len(elf))
+let _ = write_file("build/yc_tmp/out.bin", elf) in
+let __ = log("yc", "done") in
 0

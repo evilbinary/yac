@@ -1,17 +1,25 @@
 /* driver_lower.yac — full pipeline: source -> parse -> anf -> lower -> emit
  * -> ELF. Reads build/lower_tmp/in.yac, writes build/lower_tmp/out.bin.
+ *
+ * Logs: [ms] [lower] ...  (requires log.yac first in the bundle)
  */
+let _ = log("lower", "start")
 let src = read_file("build/lower_tmp/in.yac");
+let _ = log_i("lower", "src_len", str_len(src))
 let toks = tokenize(src);
+let _ = log_i("lower", "ntoks", len(toks))
 let prog = parse_program(toks, 0, []);
-/* anf each top-level item, keep [bindings, tail] */
+let _ = log_i("lower", "nprog", len(prog))
 let anf_item(item) =
   let r = anf_expr(item, 0) in
   [nth(r, 0), nth(r, 1)];
 let anf_list = map(anf_item, prog);
+let _ = log_i("lower", "nanf", len(anf_list))
+let _ = log("lower", "compile_top")
 let lir = compile_top(anf_list);
+let _ = log("lower", "backend")
 let elf = backend_compile(lir);
-let _ = write_file("build/lower_tmp/out.bin", elf);
-print bytes_len(elf);
-print "";
+let _ = log_i("lower", "elf_len", bytes_len(elf))
+let _ = write_file("build/lower_tmp/out.bin", elf) in
+let __ = log("lower", "done") in
 0

@@ -56,6 +56,7 @@ let in_list(name, lst) =
 let prim_names = ["cons", "len", "nth", "tail", "append", "print",
                   "map", "filter", "foldl", "foldr", "drop", "head",
                   "str_len", "str_cat", "str_ref", "str_slice", "int_to_str",
+                  "time_ms", "time_str",
                   "bytes_new", "bytes_len", "bytes_append", "bytes_ref", "bytes_put",
                   "bytes_to_str", "list_new", "list_push", "list_rev",
                   "read_file", "write_file", "band", "bor", "bxor", "bshl", "bshr"]
@@ -86,19 +87,31 @@ let env_has(env, name) =
     else rec(drop(l, 1)) in
   rec(env)
 
-/* true if name is a known function symbol in the funs list */
+/* true if name is a known function symbol in the funs list.
+ * Fun records: ["fun", gname, ntot, ncap, insns, srcname] (srcname optional
+ * for legacy/_start). Match on source name so mangled globals still resolve. */
+let fun_src(f) = if len(f) > 5 then nth(f, 5) else nth(f, 1)
+
 let funs_has(funs, name) =
   let rec(l) =
     if len(l) == 0 then false
-    else if nth(nth(l, 0), 1) == name then true
+    else if fun_src(nth(l, 0)) == name then true
     else rec(drop(l, 1)) in
   rec(funs)
 
-/* ncap at index 3: ["fun", name, ntot, ncap, insns] */
+/* code symbol (gname) for a source-level function name */
+let fun_code_name(funs, name) =
+  let rec(l) =
+    if len(l) == 0 then name
+    else if fun_src(nth(l, 0)) == name then nth(nth(l, 0), 1)
+    else rec(drop(l, 1)) in
+  rec(funs)
+
+/* ncap at index 3: ["fun", gname, ntot, ncap, insns, srcname] */
 let fun_ncap(funs, name) =
   let rec(l) =
     if len(l) == 0 then 0
-    else if nth(nth(l, 0), 1) == name then nth(nth(l, 0), 3)
+    else if fun_src(nth(l, 0)) == name then nth(nth(l, 0), 3)
     else rec(drop(l, 1)) in
   rec(funs)
 
@@ -153,7 +166,10 @@ let collect_anf_vars(anf, accum, shadow, funs) =
           [nth(rr2, 0), cons(nth(b, 1), nth(rr2, 1))]
         else if k == "letfun" then
           let p = nth(b, 2) in
-          let shdw2 = append(p, shdw) in
+          /* Shadow the function's own name so recursive calls do not leak
+           * as free vars of the enclosing function (was inflating ncap and
+           * forcing per-entry self-closures). */
+          let shdw2 = append(p, cons(nth(b, 1), shdw)) in
           let rr = collect_anf_vars(nth(b, 3), acc, shdw2, funs) in
           [nth(rr, 0), cons(nth(b, 1), shdw)]
         else if k == "letprint" then
@@ -275,6 +291,8 @@ let lower_body(anf, st) =
           else if fnname == "str_slice" then
             ["str_slice", dst, nth(slots, 0), nth(slots, 1), nth(slots, 2)]
           else if fnname == "int_to_str" then ["int_to_str", dst, nth(slots, 0)]
+          else if fnname == "time_ms" then ["time_ms", dst]
+          else if fnname == "time_str" then ["time_str", dst]
           else if fnname == "bytes_to_str" then ["bytes_to_str", dst, nth(slots, 0)]
           else if fnname == "drop" then
             ["drop", dst, nth(slots, 0), nth(slots, 1)]
@@ -308,7 +326,7 @@ let lower_body(anf, st) =
               ["apply", dst, fnslot, fncap, slots]
             else if env_has(env, fnname) and not funs_has(funs0, fnname) then
               ["apply", dst, fnslot, 0 - 1, slots]
-            else ["call", dst, fnname, slots] in
+            else ["call", dst, fun_code_name(funs0, fnname), slots] in
         step(i + 1, [insn_push(nth(lr, 0), newinsn),
                      cons([name, dst, 0], nth(lr, 2)), dst + 1,
                      nth(s, 3), nth(s, 4)])
@@ -317,11 +335,18 @@ let lower_body(anf, st) =
         let params = nth(b, 2) in
         let body = nth(b, 3) in
         let nparams = len(params) in
-        /* self-reference (recursion) resolves by direct call, not capture,
-         * so the function's own name is added to the shadow. */
+        let uid = nth(s, 4) in
+        let gname =
+          if funs_has(nth(s, 3), name) then
+            str_cat(name, str_cat("#", int_to_str(uid)))
+          else name in
+        /* Recursion with captures must apply a self closure; ncap=0 can
+         * direct-call. Detect recursion before shadowing self in free_vars. */
+        let fvs_raw = free_vars(body, params, nth(s, 3)) in
+        let is_rec = in_list(name, fvs_raw) in
         let fvs = free_vars(body, append([name], params), nth(s, 3)) in
         let ncap = len(fvs) in
-        /* captured (free) vars occupy slots 1..ncap; user params ncap+1.. */
+        let need_self = is_rec and ncap > 0 in
         let build_cap(j, e) =
           if j >= ncap then e
           else
@@ -330,28 +355,36 @@ let lower_body(anf, st) =
         let build_user(j, e) =
           if j >= nparams then e
           else build_user(j + 1, cons([nth(params, j), ncap + j + 1, 0], e)) in
-        let p_env = build_user(0, build_cap(0, [])) in
+        let self_slot = ncap + nparams + 1 in
+        let p_env0 = build_user(0, build_cap(0, [])) in
+        let p_env =
+          if need_self then cons([name, self_slot, ncap], p_env0) else p_env0 in
         let ntot = ncap + nparams in
-        let br = lower_body(body, [list_new(), p_env, ntot + 1, nth(s, 3), 0]) in
-        /* pad frame so recursive calls cannot clobber live slots */
+        let stub = ["fun", gname, ntot, ncap, list_new(), name] in
+        let br = lower_body(body, [list_new(), p_env,
+                                   if need_self then self_slot + 1 else ntot + 1,
+                                   cons(stub, nth(s, 3)), uid + 1]) in
         let nslots = nth(br, 3) + 8 in
-        let f_insns = insn_push(
-              insn_extend(insn_push(list_new(), ["prologue", nslots, ntot]),
-                          nth(br, 0)),
-              ["ret", nth(br, 1)]) in
-        let f = ["fun", name, ntot, ncap, f_insns] in
+        let self_caps(j, acc) =
+          if j >= ncap then acc
+          else self_caps(j + 1, append(acc, [j + 1])) in
+        let f_insns0 = insn_push(list_new(), ["prologue", nslots, ntot]) in
+        let f_insns1 =
+          if need_self then
+            insn_push(f_insns0, ["closure", self_slot, gname, self_caps(0, [])])
+          else f_insns0 in
+        let f_insns2 = insn_extend(f_insns1, nth(br, 0)) in
+        let f_insns = insn_push(f_insns2, ["ret", nth(br, 1)]) in
+        let f = ["fun", gname, ntot, ncap, f_insns, name] in
         let slot = ctr in
-        /* Always allocate a closure object so the function is a first-class
-         * value (needed for higher-order calls). ncap=0 still gets a heap
-         * object with empty env. Nested lowering inherits parent funs. */
         let capslot_of(j, acc) =
           if j >= ncap then acc
           else capslot_of(j + 1, append(acc, [env_lookup(env, nth(fvs, j))])) in
         let capslots = capslot_of(0, []) in
-        let clo = ["closure", slot, name, capslots] in
+        let clo = ["closure", slot, gname, capslots] in
         let funs1 = cons(f, nth(br, 4)) in
         step(i + 1, [insn_push(insns, clo), cons([name, slot, ncap], env),
-                     ctr + 1, funs1, nth(s, 4) + 1 + nth(br, 5)])
+                     ctr + 1, funs1, nth(br, 5)])
       else if k == "letif" then
         let name = nth(b, 1) in
         let cond = nth(b, 2) in

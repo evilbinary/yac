@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 TMP=build/yc_tmp
 mkdir -p "$TMP"
 
-cat src-self/lexer.yac src-self/parser.yac src-self/anf.yac \
+cat src-self/log.yac src-self/lexer.yac src-self/parser.yac src-self/anf.yac \
     src-self/encode_x64.yac src-self/elf.yac src-self/lir.yac \
     src-self/emit.yac src-self/backend.yac src-self/lower.yac \
     src-self/yc.yac > "$TMP/yc_bundle.yac"

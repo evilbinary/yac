@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 BIN=./yac
 TMP=build/lower_tmp
 mkdir -p "$TMP"
-SRC='src-self/lexer.yac src-self/parser.yac src-self/anf.yac src-self/encode_x64.yac src-self/elf.yac src-self/lir.yac src-self/emit.yac src-self/backend.yac src-self/lower.yac src-self/driver_lower.yac'
+SRC='src-self/log.yac src-self/lexer.yac src-self/parser.yac src-self/anf.yac src-self/encode_x64.yac src-self/elf.yac src-self/lir.yac src-self/emit.yac src-self/backend.yac src-self/lower.yac src-self/driver_lower.yac'
 cat $SRC > "$TMP/run.yac"
 
 pass=0

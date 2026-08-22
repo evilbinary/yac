@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "bignum.h"
@@ -688,6 +689,37 @@ static Value prim_int_to_str(Value *args, int nargs, PrimCtx *ctx) {
     return v_str(ctx->a, buf);
 }
 
+/* time_ms() -> monotonic milliseconds (boot epoch). time_ms(); ignores unit. */
+static Value prim_time_ms(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    (void)ctx;
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return v_int(0);
+    return v_int((int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000L));
+}
+
+/* time_str() -> local wall-clock "HH:MM:SS.mmm". Called as time_str(). */
+static Value prim_time_str(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+        return v_str(ctx->a, "??:??:??.???");
+    }
+    struct tm tm;
+    if (!localtime_r(&ts.tv_sec, &tm)) {
+        return v_str(ctx->a, "??:??:??.???");
+    }
+    char buf[32];
+    int n = (int)strftime(buf, sizeof(buf), "%H:%M:%S", &tm);
+    if (n <= 0 || n >= (int)sizeof(buf) - 5) {
+        return v_str(ctx->a, "??:??:??.???");
+    }
+    snprintf(buf + n, sizeof(buf) - (size_t)n, ".%03ld", ts.tv_nsec / 1000000L);
+    return v_str(ctx->a, buf);
+}
+
 /* ---- lists ---- */
 
 static Value prim_cons(Value *args, int nargs, PrimCtx *ctx) {
@@ -939,6 +971,8 @@ static const Prim PRIMS[] = {
     {"bxor", 2, true, false, prim_bxor},
     {"bnot", 1, true, false, prim_bnot},
     {"int_to_str", 1, true, true, prim_int_to_str},
+    {"time_ms", 1, true, false, prim_time_ms}, /* called as time_ms(); parser passes unit */
+    {"time_str", 1, true, true, prim_time_str}, /* called as time_str(); local HH:MM:SS */
     {"cons", 2, true, true, prim_cons},
     {"append", 2, true, true, prim_append},
     {"len", 1, true, false, prim_len},
