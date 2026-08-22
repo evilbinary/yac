@@ -251,129 +251,6 @@ let gen_gc(d) =
   let _ = ret(b) in
   [b, headaddr]
 
-/* yac_list_rev(list in rdi) -> reversed list in rax.
- * kind=5 listbuf: reverse its head chain. Returns [bytes, allocCallRelPos]. */
-let gen_list_rev(d) =
-  let b = bytes_new() in
-  let _ = push_rbp(b) in
-  let _ = mov_rbp_rsp(b) in
-  let _ = sub_rsp_imm8(b, 32) in
-  let _ = mov_rax_rdi(b) in
-  let _ = cmp_rax_imm8(b, 1) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jnil = bytes_len(b) - 4 in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 16) in
-  let _ = cmp_rax_imm8(b, 5) in
-  let _ = jcc_rel32(b, 5, 0) in         /* jne -> already cons */
-  let jne = bytes_len(b) - 4 in
-  let _ = mov_rax_rdi(b) in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 32) in   /* head */
-  let _ = or_rax_1(b) in
-  let _ = mov_rdi_rax(b) in
-  let start = bytes_len(b) in
-  let _ = apply_patch(b, jne, start) in
-  let _ = mov_mem_rbp_rdi(b, 248) in   /* lst */
-  let _ = mov_r64_imm(b, 0, 1) in
-  let _ = mov_mem_rbp_r64(b, 240, 0) in /* acc = nil */
-  let loop = bytes_len(b) in
-  let _ = mov_r64_mem_rbp(b, 0, 248) in
-  let _ = cmp_rax_imm8(b, 1) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jdone = bytes_len(b) - 4 in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 24) in  /* head */
-  let _ = mov_mem_rbp_r64(b, 232, 0) in /* save head */
-  let _ = mov_r64_mem_rbp(b, 0, 248) in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 32) in  /* tail */
-  let _ = mov_mem_rbp_r64(b, 248, 0) in /* lst = tail */
-  let _ = mov_rdi_imm(b, 40) in
-  let acall = bytes_len(b) in
-  let _ = call_rel32(b, 0) in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_disp8_imm32(b, 8, 0) in
-  let _ = mov_rax_disp8_imm32(b, 16, 2) in
-  let _ = mov_rax_disp8_imm32(b, 20, 0) in
-  let _ = mov_r64_mem_rbp(b, 7, 232) in /* rdi = head */
-  let _ = mov_rax_disp8_rdi(b, 24) in
-  let _ = mov_r64_mem_rbp(b, 7, 240) in /* rdi = acc */
-  let _ = mov_rax_disp8_rdi(b, 32) in
-  let _ = or_rax_1(b) in
-  let _ = mov_mem_rbp_r64(b, 240, 0) in /* acc = cons */
-  let _ = jmp_rel32(b, 0) in
-  let jback = bytes_len(b) - 4 in
-  let done = bytes_len(b) in
-  let _ = mov_r64_mem_rbp(b, 0, 240) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  let nilp = bytes_len(b) in
-  let _ = mov_r64_imm(b, 0, 1) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  let _ = apply_patch(b, jnil, nilp) in
-  let _ = apply_patch(b, jdone, done) in
-  let _ = apply_patch(b, jback, loop) in
-  [b, acall + 1]
-
-/* yac_append(a in rdi, b in rsi) -> tagged list in rax.
- * Returns [bytes, selfCallRelPos, allocCallRelPos]. */
-let gen_append(d) =
-  let b = bytes_new() in
-  let _ = push_rbp(b) in
-  let _ = mov_rbp_rsp(b) in
-  let _ = sub_rsp_imm8(b, 32) in
-  let _ = mov_mem_rbp_rdi(b, 248) in
-  let _ = mov_mem_rbp_rsi(b, 240) in
-  let _ = mov_rax_rdi(b) in
-  let _ = cmp_rax_imm8(b, 1) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jz = bytes_len(b) - 4 in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 32) in
-  let _ = mov_rdi_rax(b) in
-  let _ = mov_r64_mem_rbp(b, 0, 240) in
-  let _ = mov_rsi_rax(b) in
-  let selfcall = bytes_len(b) in
-  let _ = call_rel32(b, 0) in
-  let _ = mov_mem_rbp_r64(b, 232, 0) in
-  let _ = mov_r64_mem_rbp(b, 0, 248) in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 24) in
-  let _ = mov_rdi_rax(b) in
-  let _ = mov_r64_mem_rbp(b, 0, 232) in
-  let _ = mov_rsi_rax(b) in
-  let _ = push_r64(b, 7) in
-  let _ = push_r64(b, 6) in
-  let _ = mov_rdi_imm(b, 40) in
-  let acall = bytes_len(b) in
-  let _ = call_rel32(b, 0) in
-  let _ = and_rax_1(b) in
-  let _ = pop_r64(b, 6) in
-  let _ = pop_r64(b, 7) in
-  let _ = mov_rax_disp8_imm32(b, 8, 0) in
-  let _ = mov_rax_disp8_imm32(b, 16, 2) in
-  let _ = mov_rax_disp8_imm32(b, 20, 0) in
-  let _ = mov_rax_disp8_rdi(b, 24) in
-  let _ = e8(b, 72) in
-  let _ = e8(b, 137) in
-  let _ = e8(b, 112) in
-  let _ = e8(b, 32) in
-  let _ = or_rax_1(b) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  let retb = bytes_len(b) in
-  let _ = mov_r64_mem_rbp(b, 0, 240) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  let _ = apply_patch(b, jz, retb) in
-  [b, selfcall + 1, acall + 1]
-
 /* yac_argc() -> tagged argc. Reads saved_argc at GLOBALS+8. */
 let gen_argc(d) =
   let b = bytes_new() in
@@ -696,34 +573,6 @@ let gen_str_cat(d) =
   let _ = ret(b) in
   [b, acall + 1]
 
-/* yac_drop(list rdi, n tagged rsi) -> list */
-let gen_drop(d) =
-  let b = bytes_new() in
-  let _ = mov_rax_rsi(b) in
-  let _ = sar_rax_1(b) in
-  let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 194) in
-  let loop = bytes_len(b) in
-  let _ = test_rdx_rdx(b) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jz = bytes_len(b) - 4 in
-  let _ = mov_rax_rdi(b) in
-  let _ = cmp_rax_imm8(b, 1) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jz2 = bytes_len(b) - 4 in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 32) in
-  let _ = mov_rdi_rax(b) in
-  let _ = e8(b, 72) in let _ = e8(b, 255) in let _ = e8(b, 202) in
-  let _ = jmp_rel32(b, 0) in
-  let jb = bytes_len(b) - 4 in
-  let _ = apply_patch(b, jb, loop) in
-  let done = bytes_len(b) in
-  let _ = mov_rax_rdi(b) in
-  let _ = ret(b) in
-  let _ = apply_patch(b, jz, done) in
-  let _ = apply_patch(b, jz2, done) in
-  b
-
 /* yac_str_eq(a rdi, b rsi) -> tagged bool 0/2 */
 let gen_str_eq(d) =
   let b = bytes_new() in
@@ -942,101 +791,6 @@ let gen_apply1(d) =
   let _ = apply_patch(b, j4, lc) in
   let _ = apply_patch(b, j5, lc) in
   b
-
-/* yac_foldl(f rdi, acc rsi, xs rdx) */
-let gen_foldl(d) =
-  let b = bytes_new() in
-  let _ = push_rbp(b) in
-  let _ = mov_rbp_rsp(b) in
-  let _ = sub_rsp_imm8(b, 32) in
-  let _ = mov_mem_rbp_rdi(b, 248) in
-  let _ = mov_mem_rbp_rsi(b, 240) in
-  let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 85) in let _ = e8(b, 232) in
-  let loop = bytes_len(b) in
-  let _ = mov_r64_mem_rbp(b, 0, 232) in
-  let _ = cmp_rax_imm8(b, 1) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jz = bytes_len(b) - 4 in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 24) in
-  let _ = mov_mem_rbp_r64(b, 224, 0) in
-  let _ = mov_r64_mem_rbp(b, 0, 232) in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 32) in
-  let _ = mov_mem_rbp_r64(b, 232, 0) in
-  let _ = mov_r64_mem_rbp(b, 7, 248) in
-  let _ = mov_r64_mem_rbp(b, 6, 240) in
-  let _ = mov_r64_mem_rbp(b, 2, 224) in
-  let acall = bytes_len(b) in
-  let _ = call_rel32(b, 0) in
-  let _ = mov_mem_rbp_r64(b, 240, 0) in
-  let _ = jmp_rel32(b, 0) in
-  let jb = bytes_len(b) - 4 in
-  let _ = apply_patch(b, jb, loop) in
-  let done = bytes_len(b) in
-  let _ = apply_patch(b, jz, done) in
-  let _ = mov_r64_mem_rbp(b, 0, 240) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  [b, acall + 1]
-
-/* yac_map(f rdi, xs rsi) — recursive. Returns [bytes, selfRel, apply1Rel, allocRel] */
-let gen_map(d) =
-  let b = bytes_new() in
-  let _ = push_rbp(b) in
-  let _ = mov_rbp_rsp(b) in
-  let _ = sub_rsp_imm8(b, 48) in
-  let _ = mov_mem_rbp_rdi(b, 248) in
-  let _ = mov_mem_rbp_rsi(b, 240) in
-  let _ = mov_rax_rsi(b) in
-  let _ = cmp_rax_imm8(b, 1) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jz = bytes_len(b) - 4 in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 24) in
-  let _ = mov_mem_rbp_r64(b, 232, 0) in
-  let _ = mov_r64_mem_rbp(b, 0, 240) in
-  let _ = and_rax_1(b) in
-  let _ = mov_rax_rax_disp8(b, 32) in
-  let _ = mov_mem_rbp_r64(b, 224, 0) in
-  /* head' = apply1(f, head) */
-  let _ = mov_r64_mem_rbp(b, 7, 248) in
-  let _ = mov_r64_mem_rbp(b, 6, 232) in
-  let a1call = bytes_len(b) in
-  let _ = call_rel32(b, 0) in
-  let _ = mov_mem_rbp_r64(b, 216, 0) in
-  /* rest = map(f, tail) */
-  let _ = mov_r64_mem_rbp(b, 7, 248) in
-  let _ = mov_r64_mem_rbp(b, 6, 224) in
-  let selfcall = bytes_len(b) in
-  let _ = call_rel32(b, 0) in
-  let _ = mov_rsi_rax(b) in
-  let _ = mov_r64_mem_rbp(b, 7, 216) in
-  let _ = push_r64(b, 7) in
-  let _ = push_r64(b, 6) in
-  let _ = mov_rdi_imm(b, 40) in
-  let acall = bytes_len(b) in
-  let _ = call_rel32(b, 0) in
-  let _ = and_rax_1(b) in
-  let _ = pop_r64(b, 6) in
-  let _ = pop_r64(b, 7) in
-  let _ = mov_rax_disp8_imm32(b, 8, 0) in
-  let _ = mov_rax_disp8_imm32(b, 16, 2) in
-  let _ = mov_rax_disp8_imm32(b, 20, 0) in
-  let _ = mov_rax_disp8_rdi(b, 24) in
-  let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 112) in let _ = e8(b, 32) in
-  let _ = or_rax_1(b) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  let nilret = bytes_len(b) in
-  let _ = apply_patch(b, jz, nilret) in
-  let _ = mov_r64_imm(b, 0, 1) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  [b, selfcall + 1, a1call + 1, acall + 1]
 
 /* yac_bytes_extend(dst rdi, src rsi) -> dst tagged. Appends src onto dst (no grow). */
 let gen_bytes_extend(d) =
@@ -1561,6 +1315,27 @@ let emit_insn(st, insn, is_entry) =
       let _ = emit_load_rax_slot(b, nth(insn, 2)) in
       let _ = shl_rax_1(b) in
       let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+      [b, cur, labels, patches]
+    else if k == "alloc" then
+      let _ = mov_rdi_imm(b, nth(insn, 2)) in
+      let acall = bytes_len(b) in
+      let _ = call_rel32(b, 0) in
+      let _ = or_rax_1(b) in
+      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+      [b, cur, labels, cons([acall + 1, "yac_alloc"], patches)]
+    else if k == "obj_sti" then
+      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+      let _ = and_rax_1(b) in
+      let _ = mov_rax_disp8_imm32(b, nth(insn, 2), nth(insn, 3)) in
+      let _ = mov_rax_disp8_imm32(b, nth(insn, 2) + 4, 0) in
+      [b, cur, labels, patches]
+    else if k == "obj_st_int" then
+      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+      let _ = sar_rax_1(b) in
+      let _ = mov_rdi_rax(b) in
+      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+      let _ = and_rax_1(b) in
+      let _ = mov_rax_disp8_rdi(b, nth(insn, 2)) in
       [b, cur, labels, patches]
     else if k == "print" then
       /* print slot: int -> print_int; STR (kind=3) -> write(1,data,len); newline */
@@ -2223,23 +1998,11 @@ let emit_program_at(prog, load_vaddr, text_off) =
   let ts_off = bytes_len(b) in
   let _ = b_append(b, nth(tsr, 0)) in
   let ts_acall = nth(tsr, 1) in
-  let lrr = gen_list_rev(0) in
-  let lrev_off = bytes_len(b) in
-  let _ = b_append(b, nth(lrr, 0)) in
-  let lnr = gen_list_new(0) in
-  let lnew_off = bytes_len(b) in
-  let _ = b_append(b, nth(lnr, 0)) in
-  let lpr = gen_list_push(0) in
-  let lpush_off = bytes_len(b) in
-  let _ = b_append(b, nth(lpr, 0)) in
   let alc_off = bytes_len(b) in
   let alcr = gen_alloc(0) in
   let _ = b_append(b, nth(alcr, 0)) in
   let alc_headaddr = nth(alcr, 1) in
   let gc_call_patch = nth(alcr, 2) in
-  let appr = gen_append(0) in
-  let app_off = bytes_len(b) in
-  let _ = b_append(b, nth(appr, 0)) in
   let rfr = gen_read_file(0) in
   let rf_off = bytes_len(b) in
   let _ = b_append(b, nth(rfr, 0)) in
@@ -2250,8 +2013,6 @@ let emit_program_at(prog, load_vaddr, text_off) =
   let _ = b_append(b, nth(scr, 0)) in
   let bex_off = bytes_len(b) in
   let _ = b_append(b, gen_bytes_extend(0)) in
-  let drop_off = bytes_len(b) in
-  let _ = b_append(b, gen_drop(0)) in
   let itr = gen_int_to_str(0) in
   let it_off = bytes_len(b) in
   let _ = b_append(b, nth(itr, 0)) in
@@ -2267,12 +2028,6 @@ let emit_program_at(prog, load_vaddr, text_off) =
   let _ = b_append(b, gen_apply2(0)) in
   let a1_off = bytes_len(b) in
   let _ = b_append(b, gen_apply1(0)) in
-  let flr = gen_foldl(0) in
-  let fl_off = bytes_len(b) in
-  let _ = b_append(b, nth(flr, 0)) in
-  let mpr = gen_map(0) in
-  let mp_off = bytes_len(b) in
-  let _ = b_append(b, nth(mpr, 0)) in
   let gc_off = bytes_len(b) in
   let gcr = gen_gc(0) in
   let _ = b_append(b, nth(gcr, 0)) in
@@ -2284,29 +2039,22 @@ let emit_program_at(prog, load_vaddr, text_off) =
   let av_off = bytes_len(b) in
   let _ = b_append(b, nth(avr, 0)) in
   let funOffsRev2 = cons(["gc_collect", gc_off],
-                         cons(["yac_map", mp_off],
-                              cons(["yac_foldl", fl_off],
-                                   cons(["yac_apply1", a1_off],
-                                        cons(["yac_apply2", a2_off],
-                                             cons(["yac_str_eq", seq_off],
-                                                  cons(["yac_bytes_to_str", bt_off],
-                                                       cons(["yac_str_slice", ss_off],
-                                                            cons(["yac_int_to_str", it_off],
-                                                                 cons(["yac_drop", drop_off],
-                                                                      cons(["yac_bytes_extend", bex_off],
-                                                                           cons(["yac_str_cat", sc_off],
-                                                                                cons(["yac_write_file", wf_off],
-                                                                                     cons(["yac_read_file", rf_off],
-                                                                                          cons(["yac_append", app_off],
-                                                                                               cons(["yac_alloc", alc_off],
-                                                                                                    cons(["yac_list_push", lpush_off],
-                                                                                                         cons(["yac_list_new", lnew_off],
-                                                                                                              cons(["yac_list_rev", lrev_off],
-                                                                                                                   cons(["yac_argv", av_off],
-                                                                                                                        cons(["yac_argc", ag_off],
-                                                                                                                             cons(["time_str", ts_off],
-                                                                                                                                  cons(["time_ms", tm_off],
-                                                                                                                                       cons(["print_int", pi_off], funOffsRev)))))))))))))))))))))))) in
+                         cons(["yac_apply1", a1_off],
+                              cons(["yac_apply2", a2_off],
+                                   cons(["yac_str_eq", seq_off],
+                                        cons(["yac_bytes_to_str", bt_off],
+                                             cons(["yac_str_slice", ss_off],
+                                                  cons(["yac_int_to_str", it_off],
+                                                       cons(["yac_bytes_extend", bex_off],
+                                                            cons(["yac_str_cat", sc_off],
+                                                                 cons(["yac_write_file", wf_off],
+                                                                      cons(["yac_read_file", rf_off],
+                                                                           cons(["yac_alloc", alc_off],
+                                                                                cons(["yac_argv", av_off],
+                                                                                     cons(["yac_argc", ag_off],
+                                                                                          cons(["time_str", ts_off],
+                                                                                               cons(["time_ms", tm_off],
+                                                                                                    cons(["print_int", pi_off], funOffsRev))))))))))))))))) in
   let LOAD_VADDR = load_vaddr in
   let TEXT_OFF = text_off in
   /* writable globals: gc head, saved_argc, saved_argv (8 bytes each). */
@@ -2351,21 +2099,12 @@ let emit_program_at(prog, load_vaddr, text_off) =
   let _ = list_push(extra, ["gc_head", gc_off + gc_headaddr]) in
   let _ = list_push(extra, ["gc_head", alc_off + alc_headaddr]) in
   let _ = list_push(extra, [alc_off + gc_call_patch, "gc_collect"]) in
-  let _ = list_push(extra, [app_off + nth(appr, 1), "yac_append"]) in
-  let _ = list_push(extra, [app_off + nth(appr, 2), "yac_alloc"]) in
-  let _ = list_push(extra, [lrev_off + nth(lrr, 1), "yac_alloc"]) in
-  let _ = list_push(extra, [lnew_off + nth(lnr, 1), "yac_alloc"]) in
-  let _ = list_push(extra, [lpush_off + nth(lpr, 1), "yac_alloc"]) in
   let _ = list_push(extra, [rf_off + nth(rfr, 1), "yac_alloc"]) in
   let _ = list_push(extra, [sc_off + nth(scr, 1), "yac_alloc"]) in
   let _ = list_push(extra, [it_off + nth(itr, 1), "yac_alloc"]) in
   let _ = list_push(extra, [ss_off + nth(ssr, 1), "yac_alloc"]) in
   let _ = list_push(extra, [bt_off + nth(btr, 1), "yac_alloc"]) in
   let _ = list_push(extra, [ts_off + ts_acall, "yac_alloc"]) in
-  let _ = list_push(extra, [fl_off + nth(flr, 1), "yac_apply2"]) in
-  let _ = list_push(extra, [mp_off + nth(mpr, 1), "yac_map"]) in
-  let _ = list_push(extra, [mp_off + nth(mpr, 2), "yac_apply1"]) in
-  let _ = list_push(extra, [mp_off + nth(mpr, 3), "yac_alloc"]) in
   let _ = list_push(extra, ["saved_argc", ag_off + nth(agr, 1)]) in
   let _ = list_push(extra, ["saved_argv", av_off + nth(avr, 2)]) in
   let _ = list_push(extra, ["saved_argc", av_off + nth(avr, 1)]) in

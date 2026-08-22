@@ -169,6 +169,21 @@ let emit_insn_a64(st, insn, is_entry) =
     let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     [b, cur, labels, patches]
+  else if k == "obj_sti" then
+    let _ = a64_slot(b, nth(insn, 1), false, 0) in
+    let _ = a64_mov_imm64(b, 1, 0 - 2) in
+    let _ = a64_and_reg(b, 0, 0, 1) in
+    let _ = a64_mov_imm64(b, 1, nth(insn, 3)) in
+    let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
+    [b, cur, labels, patches]
+  else if k == "obj_st_int" then
+    let _ = a64_slot(b, nth(insn, 3), false, 1) in
+    let _ = a64_asr1(b, 1, 1) in
+    let _ = a64_slot(b, nth(insn, 1), false, 0) in
+    let _ = a64_mov_imm64(b, 2, 0 - 2) in
+    let _ = a64_and_reg(b, 0, 0, 2) in
+    let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
+    [b, cur, labels, patches]
   else
     let _ = a64_brk(b) in
     [b, cur, labels, patches]

@@ -1,6 +1,7 @@
 /* runtime.yac — arch-independent runtime as LIR (same emit_insn as user code).
  *
- * Kernel only: obj_kind / obj_ld / obj_st / tag (plus ordinary control LIR).
+ * Kernel: obj_kind / obj_ld / obj_st / obj_sti / obj_st_int / tag / alloc
+ * plus ordinary control LIR. cons still goes through emit (yac_alloc).
  * Layout (qword): next=0 mark=8 kind=16 car/len=24 cdr/head=32 (listbuf tail=40).
  * nil is tagged 1. kind 2 = cons, kind 5 = listbuf.
  */
@@ -79,7 +80,136 @@ let rt_nth_ins =
    l_obj_ld(13, 8, 24),
    l_ret(13)]
 
+let rt_list_rev_ins =
+  [l_prologue(12, 1),
+   l_nil(2),
+   l_cmp("==", 3, 1, 2),
+   l_br(3, "rv_nil", "rv_nz"),
+   l_label("rv_nil"),
+   l_ret(2),
+   l_label("rv_nz"),
+   l_obj_kind(4, 1),
+   l_mov_imm(5, 5),
+   l_cmp("==", 6, 4, 5),
+   l_br(6, "rv_buf", "rv_acc"),
+   l_label("rv_buf"),
+   l_obj_ld(1, 1, 32),
+   l_label("rv_acc"),
+   l_mov(7, 2),
+   l_label("rv_loop"),
+   l_cmp("==", 3, 1, 2),
+   l_br(3, "rv_done", "rv_more"),
+   l_label("rv_more"),
+   l_obj_ld(8, 1, 24),
+   l_obj_ld(1, 1, 32),
+   l_cons(7, 8, 7),
+   l_jmp("rv_loop"),
+   l_label("rv_done"),
+   l_ret(7)]
+
+let rt_append_ins =
+  [l_prologue(10, 2),
+   l_nil(3),
+   l_cmp("==", 4, 1, 3),
+   l_br(4, "ap_nil", "ap_go"),
+   l_label("ap_nil"),
+   l_ret(2),
+   l_label("ap_go"),
+   l_obj_ld(5, 1, 32),
+   l_call(6, "yac_append", [5, 2]),
+   l_obj_ld(7, 1, 24),
+   l_cons(8, 7, 6),
+   l_ret(8)]
+
+let rt_drop_ins =
+  [l_prologue(8, 2),
+   l_label("dr_loop"),
+   l_mov_imm(3, 0),
+   l_cmp("==", 4, 2, 3),
+   l_br(4, "dr_done", "dr_chk"),
+   l_label("dr_chk"),
+   l_nil(5),
+   l_cmp("==", 4, 1, 5),
+   l_br(4, "dr_done", "dr_step"),
+   l_label("dr_step"),
+   l_obj_ld(1, 1, 32),
+   l_mov_imm(6, 1),
+   l_binop("-", 2, 2, 6),
+   l_jmp("dr_loop"),
+   l_label("dr_done"),
+   l_ret(1)]
+
+let rt_list_new_ins =
+  [l_prologue(4, 0),
+   l_alloc(1, 48),
+   l_obj_sti(1, 8, 0),
+   l_obj_sti(1, 16, 5),
+   l_obj_sti(1, 24, 0),
+   l_nil(2),
+   l_obj_st(1, 32, 2),
+   l_obj_st(1, 40, 2),
+   l_ret(1)]
+
+let rt_list_push_ins =
+  [l_prologue(12, 2),
+   l_nil(3),
+   l_cons(4, 2, 3),
+   l_obj_ld(5, 1, 24),
+   l_tag(6, 5),
+   l_mov_imm(7, 0),
+   l_cmp("==", 8, 6, 7),
+   l_br(8, "lp_empty", "lp_ne"),
+   l_label("lp_empty"),
+   l_obj_st(1, 32, 4),
+   l_obj_st(1, 40, 4),
+   l_jmp("lp_inc"),
+   l_label("lp_ne"),
+   l_obj_ld(9, 1, 40),
+   l_obj_st(9, 32, 4),
+   l_obj_st(1, 40, 4),
+   l_label("lp_inc"),
+   l_mov_imm(10, 1),
+   l_binop("+", 6, 6, 10),
+   l_obj_st_int(1, 24, 6),
+   l_mov_imm(11, 0),
+   l_ret(11)]
+
+let rt_foldl_ins =
+  [l_prologue(8, 3),
+   l_nil(4),
+   l_cmp("==", 5, 3, 4),
+   l_br(5, "fd_done", "fd_go"),
+   l_label("fd_done"),
+   l_ret(2),
+   l_label("fd_go"),
+   l_obj_ld(6, 3, 24),
+   l_obj_ld(3, 3, 32),
+   l_apply(2, 1, 0 - 1, [2, 6]),
+   l_tailcall(2, "yac_foldl", [1, 2, 3])]
+
+let rt_map_ins =
+  [l_prologue(12, 2),
+   l_nil(3),
+   l_cmp("==", 4, 2, 3),
+   l_br(4, "mp_nil", "mp_go"),
+   l_label("mp_nil"),
+   l_ret(3),
+   l_label("mp_go"),
+   l_obj_ld(5, 2, 24),
+   l_obj_ld(6, 2, 32),
+   l_apply(7, 1, 0 - 1, [5]),
+   l_call(8, "yac_map", [1, 6]),
+   l_cons(9, 7, 8),
+   l_ret(9)]
+
 let runtime_funs(_) =
   [l_fun("yac_tail", 1, 0, rt_tail_ins, "yac_tail"),
    l_fun("yac_len", 1, 0, rt_len_ins, "yac_len"),
-   l_fun("yac_nth", 2, 0, rt_nth_ins, "yac_nth")]
+   l_fun("yac_nth", 2, 0, rt_nth_ins, "yac_nth"),
+   l_fun("yac_list_rev", 1, 0, rt_list_rev_ins, "yac_list_rev"),
+   l_fun("yac_append", 2, 0, rt_append_ins, "yac_append"),
+   l_fun("yac_drop", 2, 0, rt_drop_ins, "yac_drop"),
+   l_fun("yac_list_new", 0, 0, rt_list_new_ins, "yac_list_new"),
+   l_fun("yac_list_push", 2, 0, rt_list_push_ins, "yac_list_push"),
+   l_fun("yac_foldl", 3, 0, rt_foldl_ins, "yac_foldl"),
+   l_fun("yac_map", 2, 0, rt_map_ins, "yac_map")]
