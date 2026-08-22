@@ -628,6 +628,18 @@ let mov_rbx_rax_disp8(b, d) =
   let _ = e8(b, 139) in
   let _ = e8(b, modrm(1, 3, 0)) in   /* reg=rbx rm=rax mod=01 */
   e8(b, band(d, 255))
+/* mov rax, [rbx+disp8]  (48 8b 43 id8) */
+let mov_rax_rbx_disp8(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 67) in
+  e8(b, band(d, 255))
+/* mov [rbx+disp8], rax  (48 89 43 id8) */
+let mov_mem_rbx_disp8_rax(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  let _ = e8(b, 67) in
+  e8(b, band(d, 255))
 /* mov rax, imm64  (48 b8 id64) — load a 64-bit absolute address */
 let mov_rax_imm64(b, v) =
   let _ = e8(b, 72) in
