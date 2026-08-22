@@ -1,0 +1,241 @@
+/* tests/prop.yac — random programs: ANF vs CPS vs --opt, plus dump-rt round trip.
+ * Callcc programs must terminate under --cps (rc 0 or 1).
+ *
+ *   ./yac tests/prop.yac           200 ordinary + 40 callcc
+ *   ./yac tests/prop.yac 50 10     N ordinary, M callcc
+ */
+let TMP = "build/prop_tmp"
+let PATH = "build/prop_tmp/p.yac"
+let RT = "build/prop_tmp/p.yacrt"
+
+let sh_quote(s) = str_cat("'", str_cat(s, "'"))
+
+let join_cmd(xs) =
+  let rec(i, acc) =
+    if i >= len(xs) then acc
+    else if i == 0 then rec(1, sh_quote(nth(xs, 0)))
+    else rec(i + 1, str_cat(acc, str_cat(" ", sh_quote(nth(xs, i))))) in
+  rec(0, "")
+
+let run(argv) = popen(join_cmd(argv), "")
+
+let parse_int(s) =
+  let n = str_len(s) in
+  let rec(i, acc, sign) =
+    if i >= n then acc * sign
+    else
+      let c = str_ref(s, i) in
+      if i == 0 then
+        if c == 45 then rec(1, 0, 0 - 1)
+        else rec(i + 1, acc * 10 + (c - 48), sign)
+      else rec(i + 1, acc * 10 + (c - 48), sign) in
+  if n == 0 then 0 else rec(0, 0, 1)
+
+let arg_int(i, def) =
+  if argc() <= i then def
+  else parse_int(argv(i))
+
+let xorshift(r) =
+  let a = bxor(r, bshl(r, 13)) in
+  let b = bxor(a, bshr(a, 7)) in
+  bxor(b, bshl(b, 17))
+
+/* st = [rng, namec, scope] */
+let rnd(st) = [xorshift(nth(st, 0)), nth(st, 1), nth(st, 2)]
+
+let pick(st, n) =
+  let st2 = rnd(st) in
+  let k = nth(st2, 0) % n in
+  [st2, if k < 0 then k + n else k]
+
+let fresh(st) =
+  let n = nth(st, 1) in
+  [[nth(st, 0), n + 1, nth(st, 2)], str_cat("v", int_to_str(n))]
+
+let spush(st, nm) = [nth(st, 0), nth(st, 1), append(nth(st, 2), [nm])]
+
+let spop(st) =
+  let sc = nth(st, 2) in
+  let n = len(sc) - 1 in
+  let rec(i, acc) =
+    if i >= n then acc
+    else rec(i + 1, append(acc, [nth(sc, i)])) in
+  [nth(st, 0), nth(st, 1), rec(0, [])]
+
+let join_comma(xs) =
+  let rec(i, acc) =
+    if i >= len(xs) then acc
+    else if i == 0 then rec(1, nth(xs, 0))
+    else rec(i + 1, str_cat(acc, str_cat(", ", nth(xs, i)))) in
+  rec(0, "")
+
+let floats = ["0.25", "1.5", "-2.5", "3.75", "0.5"]
+let ops = ["+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">", ">=", "and", "or"]
+
+let g(kind, depth, st) =
+  if kind == "atom" then
+    let p = pick(st, 6) in
+    let st1 = nth(p, 0) in
+    let k = nth(p, 1) in
+    if k == 0 then
+      let p2 = pick(st1, 201) in
+      [nth(p2, 0), int_to_str(nth(p2, 1) - 100)]
+    else if k == 1 then
+      let p2 = pick(st1, 5) in
+      [nth(p2, 0), nth(floats, nth(p2, 1))]
+    else if k == 2 then
+      let p2 = pick(st1, 2) in
+      [nth(p2, 0), if nth(p2, 1) == 0 then "true" else "false"]
+    else if k == 3 then [st1, "()"]
+    else if k == 4 then [st1, "\"str\""]
+    else
+      let sc = nth(st1, 2) in
+      if len(sc) == 0 then [st1, "42"]
+      else
+        let p2 = pick(st1, len(sc)) in
+        [nth(p2, 0), nth(sc, nth(p2, 1))]
+  else if kind == "lambda" then
+    let p = pick(st, 2) in
+    let np = 1 + nth(p, 1) in
+    let add(i, st2, names) =
+      if i >= np then [st2, names]
+      else
+        let f = fresh(st2) in
+        add(i + 1, spush(nth(f, 0), nth(f, 1)), append(names, [nth(f, 1)])) in
+    let got = add(0, nth(p, 0), []) in
+    let body = g("expr", depth + 1, nth(got, 0)) in
+    let names = nth(got, 1) in
+    let nsc = nth(nth(p, 0), 2) in
+    let st_out = [nth(nth(body, 0), 0), nth(nth(body, 0), 1), nsc] in
+    [st_out, str_cat("(fun (", str_cat(join_comma(names), str_cat(") -> ", str_cat(nth(body, 1), ")")))), np]
+  else if kind == "app" then
+    let lam = g("lambda", depth, st) in
+    let np = nth(lam, 2) in
+    let args(i, st2, acc) =
+      if i >= np then [st2, acc]
+      else
+        let e = g("expr", depth + 1, st2) in
+        args(i + 1, nth(e, 0), str_cat(acc, str_cat(" (", str_cat(nth(e, 1), ")")))) in
+    let a = args(0, nth(lam, 0), "") in
+    [nth(a, 0), str_cat(nth(lam, 1), nth(a, 1))]
+  else
+    if depth > 4 then g("atom", depth, st)
+    else
+      let p = pick(st, 10) in
+      let st1 = nth(p, 0) in
+      let k = nth(p, 1) in
+      if k <= 1 then g("atom", depth, st1)
+      else if k == 2 then
+        let lam = g("lambda", depth, st1) in
+        [nth(lam, 0), nth(lam, 1)]
+      else if k == 3 then g("app", depth, st1)
+      else if k == 4 then
+        let p2 = pick(st1, 13) in
+        let a = g("expr", depth + 1, nth(p2, 0)) in
+        let b = g("expr", depth + 1, nth(a, 0)) in
+        [nth(b, 0), str_cat("(", str_cat(nth(a, 1), str_cat(" ", str_cat(nth(ops, nth(p2, 1)), str_cat(" ", str_cat(nth(b, 1), ")"))))))]
+      else if k == 5 then
+        let c = g("expr", depth + 1, st1) in
+        let t = g("expr", depth + 1, nth(c, 0)) in
+        let e = g("expr", depth + 1, nth(t, 0)) in
+        [nth(e, 0), str_cat("(if ", str_cat(nth(c, 1), str_cat(" then ", str_cat(nth(t, 1), str_cat(" else ", str_cat(nth(e, 1), ")"))))))]
+      else if k == 6 then
+        let f = fresh(st1) in
+        let nm = nth(f, 1) in
+        let bound = g("expr", depth + 1, nth(f, 0)) in
+        let st2 = spush(nth(bound, 0), nm) in
+        let body = g("expr", depth + 1, st2) in
+        [spop(nth(body, 0)), str_cat("(let ", str_cat(nm, str_cat(" = ", str_cat(nth(bound, 1), str_cat(" in ", str_cat(nth(body, 1), ")"))))))]
+      else if k == 7 then
+        let a = g("expr", depth + 1, st1) in
+        [nth(a, 0), str_cat("(not ", str_cat(nth(a, 1), ")"))]
+      else if k == 8 then
+        let a = g("expr", depth + 1, st1) in
+        [nth(a, 0), str_cat("(print ", str_cat(nth(a, 1), ")"))]
+      else [st1, "42"]
+
+let gen_callcc(st) =
+  let f = fresh(st) in
+  let k = nth(f, 1) in
+  let e = g("expr", 0, nth(f, 0)) in
+  [nth(e, 0), str_cat("(let ", str_cat(k, str_cat(" = callcc (fun (", str_cat(k, str_cat(") -> ", str_cat(k, str_cat(") in throw ", str_cat(k, str_cat(" (", str_cat(nth(e, 1), "))"))))))))))]
+
+let gen_program(seed, want_cc) =
+  let st0 = [if seed == 0 then 1 else seed, 0, []] in
+  if not want_cc then
+    let r = g("expr", 0, st0) in
+    str_cat(nth(r, 1), "\n")
+  else
+    let p = pick(st0, 3) in
+    if nth(p, 1) == 0 then
+      let r = gen_callcc(nth(p, 0)) in
+      str_cat(nth(r, 1), "\n")
+    else
+      let r = g("expr", 0, nth(p, 0)) in
+      str_cat(nth(r, 1), "\n")
+
+let trip_eq(a, b) =
+  if nth(a, 0) != nth(b, 0) then false
+  else if nth(a, 1) != nth(b, 1) then false
+  else nth(a, 2) == nth(b, 2)
+
+let fail_ord(seed, src, a, c, o) =
+  let _ = print(str_cat("FAIL seed=", int_to_str(seed))) in
+  let _ = print(str_cat("  src: ", src)) in
+  let _ = print(str_cat("  anf(rc=", str_cat(int_to_str(nth(a, 0)), str_cat(") out=[", str_cat(nth(a, 1), str_cat("] err=[", str_cat(nth(a, 2), "]"))))))) in
+  let _ = print(str_cat("  cps(rc=", str_cat(int_to_str(nth(c, 0)), str_cat(") out=[", str_cat(nth(c, 1), str_cat("] err=[", str_cat(nth(c, 2), "]"))))))) in
+  let _ = print(str_cat("  opt(rc=", str_cat(int_to_str(nth(o, 0)), str_cat(") out=[", str_cat(nth(o, 1), str_cat("] err=[", str_cat(nth(o, 2), "]"))))))) in
+  0
+
+let fail_rt(seed, a, l) =
+  let _ = print(str_cat("FAIL(rt) seed=", int_to_str(seed))) in
+  let _ = print(str_cat("  direct(rc=", str_cat(int_to_str(nth(a, 0)), str_cat(") out=[", str_cat(nth(a, 1), str_cat("] err=[", str_cat(nth(a, 2), "]"))))))) in
+  let _ = print(str_cat("  loaded(rc=", str_cat(int_to_str(nth(l, 0)), str_cat(") out=[", str_cat(nth(l, 1), str_cat("] err=[", str_cat(nth(l, 2), "]"))))))) in
+  0
+
+let prop_one(acc, i) =
+  let seed = i * 10007 + 1 in
+  let src = gen_program(seed, false) in
+  let _ = write_file(PATH, src) in
+  let a = run(["./yac", PATH]) in
+  let c = run(["./yac", "--cps", PATH]) in
+  let o = run(["./yac", "--opt", "--cps", PATH]) in
+  let acc1 =
+    if trip_eq(a, c) then
+      if trip_eq(c, o) then [nth(acc, 0) + 1, nth(acc, 1)]
+      else let _ = fail_ord(seed, src, a, c, o) in [nth(acc, 0), nth(acc, 1) + 1]
+    else let _ = fail_ord(seed, src, a, c, o) in [nth(acc, 0), nth(acc, 1) + 1] in
+  let _ = run(["./yac", "--dump-rt", RT, PATH]) in
+  let l = run(["./yac", "--load-rt", RT]) in
+  if trip_eq(a, l) then [nth(acc1, 0) + 1, nth(acc1, 1)]
+  else let _ = fail_rt(seed, a, l) in [nth(acc1, 0), nth(acc1, 1) + 1]
+
+let cc_one(acc, i) =
+  let seed = i * 9999 + 7 in
+  let src = gen_program(seed, true) in
+  let _ = write_file(PATH, src) in
+  let r = run(["./yac", "--cps", PATH]) in
+  let rc = nth(r, 0) in
+  if rc <= 1 then [nth(acc, 0) + 1, nth(acc, 1)]
+  else
+    let _ = print(str_cat("FAIL(callcc) seed=", str_cat(int_to_str(seed), str_cat(" rc=", str_cat(int_to_str(rc), str_cat(" src=", src)))))) in
+    [nth(acc, 0), nth(acc, 1) + 1]
+
+let loop_n(n, acc, f) =
+  let rec(i, a) =
+    if i > n then a
+    else rec(i + 1, f(a, i)) in
+  rec(1, acc)
+
+let main =
+  let n = arg_int(2, 200) in
+  let m = arg_int(3, 40) in
+  let _ = run(["mkdir", "-p", TMP]) in
+  let st0 = loop_n(n, [0, 0], prop_one) in
+  let st1 = loop_n(m, st0, cc_one) in
+  let _ = print("") in
+  let _ = print(str_cat(int_to_str(nth(st1, 0)),
+                 str_cat(" passed, ",
+                   str_cat(int_to_str(nth(st1, 1)), " failed")))) in
+  if nth(st1, 1) == 0 then exit(0) else exit(1)
+in main

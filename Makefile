@@ -22,7 +22,7 @@ test: $(BIN)
 test-boot: test
 
 prop: $(BIN)
-	sh tests/prop.sh
+	./yac tests/prop.yac
 
 $(BUILD)/genyac: tools/genyac.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<
