@@ -119,6 +119,19 @@ let mov_rax_mem_rsp8(b) =
   let _ = e8(b, 68) in
   let _ = e8(b, 36) in
   e8(b, 8)
+/* mov rdi, [rsp]  (48 8b 3c 24) */
+let mov_rdi_mem_rsp(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 60) in
+  e8(b, 36)
+/* lea rsi, [rsp+8]  (48 8d 74 24 08) */
+let lea_rsi_rsp8(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 141) in
+  let _ = e8(b, 116) in
+  let _ = e8(b, 36) in
+  e8(b, 8)
 /* mov rbx, [rsp]  (48 8b 1c 24) */
 let mov_rbx_mem_rsp(b) =
   let _ = e8(b, 72) in

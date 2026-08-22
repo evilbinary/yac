@@ -625,7 +625,7 @@ let gen_argv(d) =
   let acpat = bytes_len(b) - 8 in
   let _ = mov_rax_mem_rax(b) in
   let _ = cmp_rcx_rax(b) in
-  let _ = jcc_rel32(b, 6, 0) in
+  let _ = jcc_rel32(b, 3, 0) in   /* jae: fail if index >= argc */
   let jfail = bytes_len(b) - 4 in
   let _ = mov_rax_imm64(b, 0) in
   let avpat = bytes_len(b) - 8 in
@@ -1474,9 +1474,12 @@ let emit_insn(st, insn, is_entry) =
       let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
       /* imm8 for sub/add rsp is signed (-128..127); frames >= 128 need imm32 */
       if is_entry then
+        /* Linux _start: [rsp]=argc, [rsp+8]=argv (not rdi/rsi). */
+        let _ = mov_rdi_mem_rsp(b) in
         let _ = mov_rax_imm64(b, 0) in
         let ac_save = bytes_len(b) - 8 in
         let _ = mov_mem_rax_rdi(b) in
+        let _ = lea_rsi_rsp8(b) in
         let _ = mov_rax_imm64(b, 0) in
         let av_save = bytes_len(b) - 8 in
         let _ = mov_mem_rax_rsi(b) in
@@ -2081,9 +2084,11 @@ let emit_insn(st, insn, is_entry) =
       let dst = nth(insn, 1) in
       let _ = emit_load_rax_slot(b, nth(insn, 2)) in
       let _ = and_rax_1(b) in
+      let _ = mov_rbx_rax(b) in
       let _ = emit_load_rax_slot(b, nth(insn, 3)) in
       let _ = mov_rdx_rax(b) in
       let _ = sar_rdx_1(b) in
+      let _ = mov_rax_rbx(b) in
       let _ = add_rax_imm32(b, 40) in
       let _ = movzx_eax_rax_rdx(b) in
       let _ = shl_rax_1(b) in
@@ -2305,7 +2310,7 @@ let resolve_local_labels(b, labels, patches) =
       let p = nth(patches, i) in
       let hd = nth(p, 0) in
       let _ =
-        if hd == "closurefn" or hd == "gc_head" then list_push(keep, p)
+        if hd == "closurefn" or hd == "gc_head" or hd == "saved_argc" or hd == "saved_argv" then list_push(keep, p)
         else if label_has(labels, nth(p, 1)) then
           apply_patch(b, nth(p, 0), lookup_name(labels, nth(p, 1)))
         else list_push(keep, p) in
