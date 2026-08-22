@@ -82,6 +82,8 @@ run_e2e "e2e and" 'if (1 < 2 and 3 < 4) then 5 else 0' '5'
 run_e2e "e2e foldl prim" 'foldl(fun(a, x) -> a + x, 0, [1, 2, 3, 4])' '10'
 run_e2e "e2e map prim" 'nth(map(fun(x) -> x + 1, [1, 2, 3]), 2)' '4'
 run_e2e "e2e is_kw" 'let w = "let" in foldl(fun(a, k) -> if a then true else w == k, false, ["if", "let", "in"])' '1'
+python3 -c "open('$TMP/big70k.txt','wb').write(b'x'*70000)"
+run_e2e "e2e read_file 70k" "if str_len(read_file(\"$TMP/big70k.txt\")) == 70000 then 42 else 1" '42'
 
 # print (decimal output) — compare stdout, not exit code
 run_print() {

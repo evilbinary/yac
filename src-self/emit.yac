@@ -683,8 +683,9 @@ let gen_argv(d) =
   let _ = ret(b) in
   [b, acpat, avpat, acall + 1]
 
-/* yac_read_file(path STR in rdi) -> STR in rax. Reads up to 65536 bytes.
- * Returns [bytes, allocCallRelPos]. */
+/* yac_read_file(path STR in rdi) -> STR in rax.
+ * Size via lseek(SEEK_END); no 64KiB cap. Returns [bytes, allocCallRelPos].
+ * Frame: [rbp-8]=fd [rbp-16]=obj [rbp-24]=size. */
 let gen_read_file(d) =
   let b = bytes_new() in
   let _ = push_rbp(b) in
@@ -700,8 +701,33 @@ let gen_read_file(d) =
   let _ = mov_r64_imm(b, 0, 2) in
   let _ = syscall(b) in
   let _ = mov_mem_rbp_r64(b, 248, 0) in
-  /* alloc STR buffer */
-  let _ = mov_rdi_imm(b, 32 + 65536) in
+  /* lseek(fd, 0, SEEK_END=2) */
+  let _ = mov_rdi_rax(b) in
+  let _ = xor_rax_rax(b) in
+  let _ = mov_rsi_rax(b) in
+  let _ = mov_rdx_imm(b, 2) in
+  let _ = mov_r64_imm(b, 0, 8) in
+  let _ = syscall(b) in
+  let _ = test_rax_rax(b) in
+  let _ = jcc_rel32(b, 9, 0) in
+  let jns1 = bytes_len(b) - 4 in
+  let _ = xor_rax_rax(b) in
+  let ok1 = bytes_len(b) in
+  let _ = apply_patch(b, jns1, ok1) in
+  let _ = mov_mem_rbp_r64(b, 232, 0) in
+  /* lseek(fd, 0, SEEK_SET=0) */
+  let _ = mov_r64_mem_rbp(b, 7, 248) in
+  let _ = xor_rax_rax(b) in
+  let _ = mov_rsi_rax(b) in
+  let _ = xor_rdx_rdx(b) in
+  let _ = mov_r64_imm(b, 0, 8) in
+  let _ = syscall(b) in
+  /* alloc 8-aligned (32 + size + 1) */
+  let _ = mov_r64_mem_rbp(b, 0, 232) in
+  let _ = add_rax_imm32(b, 33) in
+  let _ = add_rax_imm8(b, 7) in
+  let _ = e8(b, 72) in let _ = e8(b, 131) in let _ = e8(b, 224) in let _ = e8(b, 248) in
+  let _ = mov_rdi_rax(b) in
   let acall = bytes_len(b) in
   let _ = call_rel32(b, 0) in
   let _ = and_rax_1(b) in
@@ -711,18 +737,26 @@ let gen_read_file(d) =
   let _ = mov_rax_disp8_imm32(b, 20, 0) in
   let _ = mov_rax_disp8_imm32(b, 24, 0) in
   let _ = mov_rax_disp8_imm32(b, 28, 0) in
-  /* read(fd, obj+32, 65536) */
-  let _ = mov_r64_mem_rbp(b, 0, 240) in
+  /* read(fd, obj+32, size) */
   let _ = add_rax_imm32(b, 32) in
   let _ = mov_rsi_rax(b) in
   let _ = mov_r64_mem_rbp(b, 7, 248) in
-  let _ = mov_rdx_imm(b, 65536) in
+  let _ = mov_r64_mem_rbp(b, 2, 232) in
   let _ = mov_r64_imm(b, 0, 0) in
   let _ = syscall(b) in
-  /* store nread at [obj+24]; rax=nread */
+  let _ = test_rax_rax(b) in
+  let _ = jcc_rel32(b, 9, 0) in
+  let jns2 = bytes_len(b) - 4 in
+  let _ = xor_rax_rax(b) in
+  let ok2 = bytes_len(b) in
+  let _ = apply_patch(b, jns2, ok2) in
+  /* rbx=nread; [obj+24]=nread; NUL at obj+32+nread */
   let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 195) in
   let _ = mov_r64_mem_rbp(b, 0, 240) in
   let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 88) in let _ = e8(b, 24) in
+  let _ = add_rax_imm32(b, 32) in
+  let _ = add_rax_rbx(b) in
+  let _ = mov_rax_disp8_imm8(b, 0, 0) in
   /* close(fd) */
   let _ = mov_r64_mem_rbp(b, 7, 248) in
   let _ = mov_r64_imm(b, 0, 3) in
