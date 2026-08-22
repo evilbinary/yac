@@ -8,5 +8,10 @@
  * API: backend_compile(lirProg) -> bytes (the ELF executable).
  */
 let backend_compile(prog) =
+  let _ = log("backend", "emit begin") in
   let r = emit_program(prog) in
-  pack_elf(nth(r, 0))
+  let _ = log_i("backend", "code_len", bytes_len(nth(r, 0))) in
+  let _ = log("backend", "pack_elf") in
+  let elf = pack_elf(nth(r, 0)) in
+  let _ = log("backend", "done") in
+  elf

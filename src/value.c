@@ -361,6 +361,7 @@ static Value prim_print(Value *args, int nargs, PrimCtx *ctx) {
     char *s = value_to_string(NULL, args[0]);
     fputs(s, stdout);
     fputc('\n', stdout);
+    fflush(stdout);
     free(s);
     return args[0];
 }

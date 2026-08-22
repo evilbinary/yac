@@ -54,14 +54,9 @@ let emit_store_param(b, j, k) =
     else if j == 4 then mov_mem_rbp32_r64(b, off, 8)
     else mov_mem_rbp32_r64(b, off, 9)
 
-/* append bytes `src` to bytes `dst` */
+/* append bytes `src` to bytes `dst` (bulk copy). */
 let b_append(dst, src) =
-  let copy(i) =
-    if i >= bytes_len(src) then 0
-    else
-      let _ = bytes_append(dst, bytes_ref(src, i)) in
-      copy(i + 1) in
-  let _ = copy(0) in
+  let _ = bytes_extend(dst, src) in
   dst
 
 /* yac_alloc(n in rdi) -> rax: allocate n bytes on the heap via brk, link the
@@ -2086,37 +2081,51 @@ let label_has(labels, name) =
   rec(labels)
 
 /* Resolve patches that target labels defined in this function; keep the rest
- * (calls to other funs / runtime). Labels are not unique across functions. */
+ * (calls to other funs / runtime). Labels are not unique across functions.
+ * Index-based to avoid O(n²) drop. */
 let resolve_local_labels(b, labels, patches) =
-  let step(ps, keep) =
-    if len(ps) == 0 then reverse(keep)
+  let n = len(patches) in
+  let keep = list_new() in
+  let step(i) =
+    if i >= n then keep
     else
-      let p = nth(ps, 0) in
+      let p = nth(patches, i) in
       let hd = nth(p, 0) in
-      if hd == "closurefn" or hd == "gc_head" then
-        step(drop(ps, 1), cons(p, keep))
-      else if label_has(labels, nth(p, 1)) then
-        let _ = apply_patch(b, nth(p, 0), lookup_name(labels, nth(p, 1))) in
-        step(drop(ps, 1), keep)
-      else step(drop(ps, 1), cons(p, keep)) in
-  step(patches, [])
+      let _ =
+        if hd == "closurefn" or hd == "gc_head" then list_push(keep, p)
+        else if label_has(labels, nth(p, 1)) then
+          apply_patch(b, nth(p, 0), lookup_name(labels, nth(p, 1)))
+        else list_push(keep, p) in
+      step(i + 1) in
+  step(0)
+
+let patches_extend(dst, src) =
+  let n = len(src) in
+  let loop(i) =
+    if i >= n then dst
+    else let _ = list_push(dst, nth(src, i)) in loop(i + 1) in
+  loop(0)
 
 let emit_program(prog) =
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
+  let _ = log_i("emit", "nfun", nfun) in
   let entry = nth(prog, 2) in
   let out = bytes_new() in
-  let glob = [out, 0, [], []] in
+  /* [code, cur, labels, globalPatches]. Per-fun patches start empty so
+   * resolve_local_labels is O(patches_in_fun), not O(total_patches). */
+  let glob = [out, 0, [], list_new()] in
   let funOffsRev = [] in
   let emit_fun(i, st, fo) =
     if i >= nfun then [st, fo]
     else
+      let _ =
+        if i == 0 or ((i % 20) == 0) then log_i("emit", "fun", i) else 0 in
       let f = nth(funs, i) in
       let name = nth(f, 1) in
       let is_entry = name == entry in
       let fstart = nth(st, 1) in
-      /* fresh label table per function (LIF0 etc. collide otherwise) */
-      let st0 = [nth(st, 0), nth(st, 1), [], nth(st, 3)] in
+      let st0 = [nth(st, 0), nth(st, 1), [], []] in
       let insns = nth(f, 4) in
       let run(j, s) =
         if j >= len(insns) then s
@@ -2124,14 +2133,17 @@ let emit_program(prog) =
       let s1 = run(0, st0) in
       let b = nth(s1, 0) in
       let kept = resolve_local_labels(b, nth(s1, 2), nth(s1, 3)) in
-      let s2 = [b, nth(s1, 1), [], kept] in
+      let _ = patches_extend(nth(st, 3), kept) in
+      let s2 = [b, nth(s1, 1), [], nth(st, 3)] in
       emit_fun(i + 1, s2, cons([name, fstart], fo)) in
   let r1 = emit_fun(0, glob, []) in
+  let _ = log("emit", "funs done") in
   let st = nth(r1, 0) in
   let funOffsRev = nth(r1, 1) in
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
   let b = nth(st, 0) in
+  let _ = log("emit", "helpers") in
   /* append runtime helpers (print_int, yac_alloc, gc_collect) and register offsets */
   let pi_off = bytes_len(b) in
   let _ = b_append(b, gen_print_int(0)) in
@@ -2237,45 +2249,50 @@ let emit_program(prog) =
   let _ = bytes_append(b, 0) in
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
   let resolve(ps) =
-    if len(ps) == 0 then 0
-    else
-      let p = nth(ps, 0) in
-      let kind = nth(p, 0) in
-      if kind == "closurefn" then
-        let pos = nth(p, 1) in
-        let tname = nth(p, 2) in
-        let fo = lookup_name(funOffsRev2, tname) in
-        let _ = apply_abs32(b, pos, LOAD_VADDR + TEXT_OFF + fo) in
-        resolve(drop(ps, 1))
-      else if kind == "gc_head" then
-        let pos = nth(p, 1) in
-        let _ = apply_u64(b, pos, GLOBALS_BASE) in
-        resolve(drop(ps, 1))
+    let n = len(ps) in
+    let step(i) =
+      if i >= n then 0
       else
-        let pos = nth(p, 0) in
-        let tname = nth(p, 1) in
-        let targ1 = lookup_name(labels, tname) in
-        let targ2 = if targ1 == 0 then lookup_name(funOffsRev2, tname) else targ1 in
-        let _ = apply_patch(b, pos, targ2) in
-        resolve(drop(ps, 1)) in
-  let extra = cons(["gc_head", gc_off + gc_headaddr],
-                   cons(["gc_head", alc_off + alc_headaddr],
-                        cons([alc_off + gc_call_patch, "gc_collect"],
-                             cons([app_off + nth(appr, 1), "yac_append"],
-                                  cons([app_off + nth(appr, 2), "yac_alloc"],
-                                       cons([lrev_off + nth(lrr, 1), "yac_alloc"],
-                                            cons([lnew_off + nth(lnr, 1), "yac_alloc"],
-                                                 cons([lpush_off + nth(lpr, 1), "yac_alloc"],
-                                                      cons([rf_off + nth(rfr, 1), "yac_alloc"],
-                                                           cons([sc_off + nth(scr, 1), "yac_alloc"],
-                                                                cons([it_off + nth(itr, 1), "yac_alloc"],
-                                                                     cons([ss_off + nth(ssr, 1), "yac_alloc"],
-                                                                          cons([bt_off + nth(btr, 1), "yac_alloc"],
-                                                                               cons([ts_off + ts_acall, "yac_alloc"],
-                                                                                    cons([fl_off + nth(flr, 1), "yac_apply2"],
-                                                                                         cons([mp_off + nth(mpr, 1), "yac_map"],
-                                                                                              cons([mp_off + nth(mpr, 2), "yac_apply1"],
-                                                                                                   cons([mp_off + nth(mpr, 3), "yac_alloc"],
-                                                                                                        patches)))))))))))))))))) in
+        let p = nth(ps, i) in
+        let kind = nth(p, 0) in
+        let _ =
+          if kind == "closurefn" then
+            let pos = nth(p, 1) in
+            let tname = nth(p, 2) in
+            let fo = lookup_name(funOffsRev2, tname) in
+            apply_abs32(b, pos, LOAD_VADDR + TEXT_OFF + fo)
+          else if kind == "gc_head" then
+            let pos = nth(p, 1) in
+            apply_u64(b, pos, GLOBALS_BASE)
+          else
+            let pos = nth(p, 0) in
+            let tname = nth(p, 1) in
+            let targ1 = lookup_name(labels, tname) in
+            let targ2 = if targ1 == 0 then lookup_name(funOffsRev2, tname) else targ1 in
+            apply_patch(b, pos, targ2) in
+        step(i + 1) in
+    step(0) in
+  let extra = list_new() in
+  let _ = list_push(extra, ["gc_head", gc_off + gc_headaddr]) in
+  let _ = list_push(extra, ["gc_head", alc_off + alc_headaddr]) in
+  let _ = list_push(extra, [alc_off + gc_call_patch, "gc_collect"]) in
+  let _ = list_push(extra, [app_off + nth(appr, 1), "yac_append"]) in
+  let _ = list_push(extra, [app_off + nth(appr, 2), "yac_alloc"]) in
+  let _ = list_push(extra, [lrev_off + nth(lrr, 1), "yac_alloc"]) in
+  let _ = list_push(extra, [lnew_off + nth(lnr, 1), "yac_alloc"]) in
+  let _ = list_push(extra, [lpush_off + nth(lpr, 1), "yac_alloc"]) in
+  let _ = list_push(extra, [rf_off + nth(rfr, 1), "yac_alloc"]) in
+  let _ = list_push(extra, [sc_off + nth(scr, 1), "yac_alloc"]) in
+  let _ = list_push(extra, [it_off + nth(itr, 1), "yac_alloc"]) in
+  let _ = list_push(extra, [ss_off + nth(ssr, 1), "yac_alloc"]) in
+  let _ = list_push(extra, [bt_off + nth(btr, 1), "yac_alloc"]) in
+  let _ = list_push(extra, [ts_off + ts_acall, "yac_alloc"]) in
+  let _ = list_push(extra, [fl_off + nth(flr, 1), "yac_apply2"]) in
+  let _ = list_push(extra, [mp_off + nth(mpr, 1), "yac_map"]) in
+  let _ = list_push(extra, [mp_off + nth(mpr, 2), "yac_apply1"]) in
+  let _ = list_push(extra, [mp_off + nth(mpr, 3), "yac_alloc"]) in
+  let _ = patches_extend(extra, patches) in
   let _ = resolve(extra) in
+  let _ = log_i("emit", "code_len", bytes_len(b)) in
+  let _ = log("emit", "done") in
   [b, funOffsRev2]

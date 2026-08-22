@@ -1,10 +1,10 @@
 /* log.yac — structured progress logging for the self-hosted compiler.
  *
  * Format (one line):
- *   [<HH:MM:SS>] [<module>] <msg>
+ *   [<HH:MM:SS.mmm>] [<module>] <msg>
  *
  * Example:
- *   [12:25:30] [yc] src_len=54
+ *   [12:25:30.012] [yc] src_len=54
  *
  * API:
  *   log(mod, msg)       — string message

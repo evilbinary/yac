@@ -426,10 +426,14 @@ let lower_body(anf, st) =
 
 /* ---- public API ---- */
 let compile_top(items) =
+  let _ = log("lower", "compile_top begin") in
   let nitems = len(items) in
+  let _ = log_i("lower", "nitems", nitems) in
   let iter(i, env, counter, funs, funcnt, entry_insns, result_slot) =
     if i >= nitems then [env, counter, funs, funcnt, entry_insns, result_slot]
     else
+      let _ =
+        if i == 0 or ((i % 50) == 0) then log_i("lower", "item", i) else 0 in
       let r = lower_body(nth(items, i), [entry_insns, env, counter, funs, funcnt]) in
       iter(i + 1, nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5),
            nth(r, 0), nth(r, 1)) in
@@ -437,10 +441,12 @@ let compile_top(items) =
   let entry_insns = nth(st, 4) in
   let result_slot = nth(st, 5) in
   let funs = nth(st, 2) in
+  let _ = log_i("lower", "nfuns", len(funs)) in
   let nslots = nth(st, 1) in
   let entry = ["fun", "_start", 0, 0,
                insn_push(
                  insn_extend(insn_push(list_new(), ["prologue", nslots, 0]),
                              entry_insns),
                  ["exit", result_slot])] in
+  let _ = log("lower", "compile_top done") in
   ["prog", cons(entry, reverse(funs)), "_start"]
