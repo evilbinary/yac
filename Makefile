@@ -17,7 +17,9 @@ $(BUILD)/%.o: src/%.c $(wildcard src/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 test: $(BIN)
-	sh tests/run_tests.sh
+	./yac tests/run.yac
+
+test-boot: test
 
 prop: $(BIN)
 	sh tests/prop.sh
@@ -30,4 +32,4 @@ clean:
 	rm -rf $(BUILD)
 	rm -f src/*.o
 
-.PHONY: all clean test prop
+.PHONY: all clean test test-boot prop
