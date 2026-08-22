@@ -243,11 +243,11 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,emit,elf,backend,encode_x64,driver_*}.yac`；
-测试套件 `tests/selfhost_{lexer,parser,anf,elf,emit,e2e,yc}.sh`（`make test`）；L5 用 `tests/selfhost_l5.sh`（约 1.5min，未进 `make test`）。
-**下一步（M4）**：L4/L5 已通。剩余精确 GC（M6）与将 `selfhost_l5.sh` 纳入日常测试（约 1.5min）。
+测试套件 `tests/selfhost_{lexer,parser,anf,elf,emit,e2e,yc,bootstrap}.sh`（`make test` 含 L5：`yac`→`yc_A`→`yc_B` 与同一套 e2e）。
+**下一步**：精确 GC（M6）。
 GitHub 推送已通过 SSH 远程 + 代理 `http://127.0.0.1:10809` 解决。
 
-**近期完成（perf）**：全量 bundle 自编译 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）；`make test` 50/50。
+**近期完成（perf）**：全量 bundle 自编译 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）；`make test` 含 L5 bootstrap。
 
 ### 10.2 计划（按用户确定的路线图）
 
@@ -515,9 +515,9 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 **仍待**：
 1. **精确 GC**：`gc_collect` 现为 no-op（保守扫描曾破坏 `saved_argc`/`saved_argv`）；栈图在 M6。
 
-**L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o out.bin]`。
+**L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。
 
-**L5 已通**：`yc_A` 编译 bundle → `yc_B`（~35s）；`yc_B` 编 `42`/`fact(5)` 与 `yc_A` 产物**逐字节相同**。`tests/selfhost_l5.sh`。`yc_A` 与 `yc_B` 自身 ELF 不必相同（引导器 vs 原生编出）。
+**L5 已通**：`tests/selfhost_bootstrap.sh`（`make test`）：`yac` 编 bundle → `yc_A`，同一套 e2e 再跑 `yc_A`；`yc_A` 编 bundle → `yc_B`，e2e 再跑 `yc_B`；`yc_A`/`yc_B` 对同一输入 ELF **逐字节相同**。`yc_A` 与 `yc_B` 自身不必相同（引导器 vs 原生编出）。
 
 **关键修复**：
 - **letif 丢函数**：then 臂 `letfun` 未并入 funs，闭包 fnptr 变成 `_start`。

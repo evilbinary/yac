@@ -1,10 +1,14 @@
 /* yc.yac — self-hosted compiler driver (M4).
  *
  * Usage:
- *   yc <input.yac> [-o output.bin]
+ *   yc <input.yac> [-o output]
+ *
+ * Default output is the input path with `.yac` stripped (no `.bin`):
+ *   yc fact.yac          → fact
+ *   yc src-self/yc.yac   → src-self/yc
  *
  * Under the C interpreter the bundle path is an extra positional arg:
- *   yc bundle.yac <input.yac> [-o output.bin]
+ *   yac bundle.yac <input.yac> [-o output]
  * The last positional argument is always the input source file.
  *
  * Bundle:
@@ -13,17 +17,20 @@
  */
 
 let usage(_) =
-  let _ = print("usage: yc <file.yac> [-o output.bin]") in 0
+  let _ = print("usage: yc <file.yac> [-o output]") in 0
 
+/* nested ifs: `and` is not short-circuit; str_ref on a short name would fault */
 let ends_with_yac(s) =
   let n = str_len(s) in
-  n >= 4 and str_ref(s, n - 4) == 46 and str_ref(s, n - 3) == 121 and
-  str_ref(s, n - 2) == 97 and str_ref(s, n - 1) == 99
+  if n < 4 then false
+  else if str_ref(s, n - 4) != 46 then false
+  else if str_ref(s, n - 3) != 121 then false
+  else if str_ref(s, n - 2) != 97 then false
+  else str_ref(s, n - 1) == 99
 
 let default_out(inpath) =
-  if ends_with_yac(inpath) then
-    str_cat(str_slice(inpath, 0, str_len(inpath) - 4), ".bin")
-  else str_cat(inpath, ".bin")
+  if ends_with_yac(inpath) then str_slice(inpath, 0, str_len(inpath) - 4)
+  else inpath
 
 /* parse argv[1..]: returns [outPath, positionals, err] (err=0 ok). */
 let parse_args(i, argc, out, pos) =

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# M4: yc.yac under the C interpreter compiles fact → native ELF.
+# M4: yc.yac under the C interpreter compiles fact → native ELF named `fact`.
 set -u
 cd "$(dirname "$0")/.."
 TMP=build/yc_tmp
@@ -10,15 +10,19 @@ cat src-self/log.yac src-self/lexer.yac src-self/parser.yac src-self/anf.yac \
     src-self/emit.yac src-self/backend.yac src-self/lower.yac \
     src-self/yc.yac > "$TMP/yc_bundle.yac"
 
-printf '%s\n' 'let f(n) = if n <= 1 then 1 else n * f(n - 1) in f(5)' > "$TMP/in.yac"
+printf '%s\n' 'let f(n) = if n <= 1 then 1 else n * f(n - 1) in f(5)' > "$TMP/fact.yac"
 
-./yac "$TMP/yc_bundle.yac" "$TMP/in.yac" -o "$TMP/out.bin" >/dev/null 2>&1 || true
-if [ ! -x "$TMP/out.bin" ] && [ ! -f "$TMP/out.bin" ]; then
-  echo "FAIL: yc.yac did not write out.bin"
+./yac "$TMP/yc_bundle.yac" "$TMP/fact.yac" -o "$TMP/fact" >/dev/null 2>&1 || true
+if [ ! -f "$TMP/fact" ]; then
+  echo "FAIL: yc.yac did not write fact"
   exit 1
 fi
-chmod +x "$TMP/out.bin"
-"$TMP/out.bin"
+if [ -f "$TMP/fact.bin" ]; then
+  echo "FAIL: wrote fact.bin; output should be named fact"
+  exit 1
+fi
+chmod +x "$TMP/fact"
+"$TMP/fact"
 rc=$?
 if [ "$rc" = "120" ]; then
   echo "PASS: yc.yac fact(5)=120"

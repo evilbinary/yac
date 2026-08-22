@@ -257,13 +257,22 @@ else
     fail=$((fail + 1)); echo "FAIL: self-hosted LIR codegen suite ($emfail failures)"
 fi
 
-# self-hosted compiler M3.3: full source -> ELF end-to-end
+# self-hosted compiler M3.3: full source -> ELF end-to-end (yac pipeline)
 sh tests/selfhost_e2e.sh
 e2efail=$?
 if [ $e2efail -eq 0 ]; then
     pass=$((pass + 1)); echo "PASS: self-hosted source-to-ELF e2e suite"
 else
     fail=$((fail + 1)); echo "FAIL: self-hosted source-to-ELF e2e suite ($e2efail failures)"
+fi
+
+# L4/L5: yac → yc_A → yc_B; same e2e on yc_A and yc_B; A/B ELFs identical
+SKIP_YAC_E2E=1 sh tests/selfhost_bootstrap.sh
+bsfail=$?
+if [ $bsfail -eq 0 ]; then
+    pass=$((pass + 1)); echo "PASS: self-hosted yc_A/yc_B bootstrap"
+else
+    fail=$((fail + 1)); echo "FAIL: self-hosted yc_A/yc_B bootstrap (rc=$bsfail)"
 fi
 
 # self-hosted compiler: per-function unit tests (Python-driven)
