@@ -1,0 +1,1 @@
+let g = fun (a, b) -> a >= 3.14 and not (a < b)

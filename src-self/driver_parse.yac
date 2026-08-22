@@ -1,8 +1,8 @@
 /* driver_parse.yac — tokenize + parse a file, dump the AST (M2).
  * Reads build/parse_tmp/in.yac, prints the parsed AST (a nested List, which
- * value_to_string renders recursively). Used by tests/selfhost_parser.sh.
+ * value_to_string renders recursively). Used by tests/boot/run.yac.
  */
-let src = read_file("build/parse_tmp/in.yac");
+let src = read_file("build/test_tmp/parin.yac");
 let toks = tokenize(src);
 let prog = parse_program(toks, 0, []);
 print prog;

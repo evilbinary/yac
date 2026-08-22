@@ -1,0 +1,1 @@
+let f(a, b, c, d, e, g) = a + b + c + d + e + g in f(1, 2, 3, 4, 5, 6)

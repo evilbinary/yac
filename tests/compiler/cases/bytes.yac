@@ -1,0 +1,1 @@
+let b = bytes_new() in let _ = bytes_append(b, 65) in let _ = bytes_append(b, 66) in bytes_ref(b, 1)

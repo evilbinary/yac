@@ -1,6 +1,6 @@
 /* driver_elf.yac — test the ELF packer with a hardcoded exit(42) program.
  * Builds the code bytes, packs an ELF, writes build/elf_tmp/out, and prints
- * the file length. Used by tests/selfhost_elf.sh.
+ * the file length. Used by tests/boot/run.yac.
  */
 /* exit(42): mov rax,60; mov rdi,42; syscall */
 let code = bytes_new()
@@ -21,7 +21,7 @@ let _ = bytes_append(code, 0)
 let _ = bytes_append(code, 15)   /* 0f */
 let _ = bytes_append(code, 5)    /* 05 syscall */
 let elf = pack_elf(code)
-let _ = write_file("build/elf_tmp/out.bin", elf)
+let _ = write_file("build/test_tmp/elf.bin", elf)
 print bytes_len(elf)
 print ""
 0

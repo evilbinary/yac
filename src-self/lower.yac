@@ -173,7 +173,7 @@ let prim_names = ["cons", "len", "nth", "tail", "append", "print",
                   "time_ms", "time_str", "argc", "argv",
                   "bytes_new", "bytes_len", "bytes_append", "bytes_extend", "bytes_ref", "bytes_put",
                   "bytes_to_str", "list_new", "list_push", "list_rev",
-                  "read_file", "write_file", "band", "bor", "bxor", "bshl", "bshr"]
+                  "read_file", "write_file", "system", "popen", "band", "bor", "bxor", "bshl", "bshr"]
 let is_prim_name(w) = in_list(w, prim_names)
 
 /* ---- environment ---- */

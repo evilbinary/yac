@@ -1,0 +1,1 @@
+let mk(x) = fun(n) -> n + x in mk(10)(5)

@@ -1,0 +1,1 @@
+str_len(str_cat("ab", "cd"))

@@ -1,0 +1,5 @@
+-- line comment
+let a = 1 -- trailing
+/* block
+   comment */
+let b = 2

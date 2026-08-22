@@ -3,8 +3,9 @@
  * Usage: concat(lexer.yac, this) -> run with ./yac. Reads the input file,
  * tokenizes it, and prints "kind text" per token so the test can compare.
  * The input file path is fixed so the driver is self-contained.
+ * Used by tests/boot/run.yac.
  */
-let src = read_file("build/shlex_tmp/lexin.yac");
+let src = read_file("build/test_tmp/lexin.yac");
 let toks = tokenize(src);
 let show(n) = if n >= len(toks) then 0 else
   let t = nth(toks, n) in

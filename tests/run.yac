@@ -1,0 +1,214 @@
+/* tests/run.yac — yac tests yac.
+ * Layout: tests/interp, tests/compiler/cases, tests/boot
+ *
+ *   ./yac tests/run.yac   interp + boot frontend + L4 + L5
+ */
+let TMP = "build/test_tmp"
+let BUNDLE = "build/test_tmp/yc_bundle.yac"
+let INTERP = "tests/interp/"
+let CASES = "tests/compiler/cases/"
+
+let ip(f) = str_cat(INTERP, f)
+let case_src(name) = str_cat(CASES, str_cat(name, ".yac"))
+
+let sh_quote(s) = str_cat("'", str_cat(s, "'"))
+
+let join_cmd(xs) =
+  let rec(i, acc) =
+    if i >= len(xs) then acc
+    else if i == 0 then rec(1, sh_quote(nth(xs, 0)))
+    else rec(i + 1, str_cat(acc, str_cat(" ", sh_quote(nth(xs, i))))) in
+  rec(0, "")
+
+let run(argv) = popen(join_cmd(argv), "")
+
+let chomp(s) =
+  let n = str_len(s) in
+  if n == 0 then s
+  else if str_ref(s, n - 1) == 10 then str_slice(s, 0, n - 1)
+  else s
+
+let check(st, name, want, got) =
+  let pass = nth(st, 0) in
+  let fail = nth(st, 1) in
+  if want == got then
+    let _ = print(str_cat("PASS: ", name)) in
+    [pass + 1, fail]
+  else
+    let _ = print(str_cat("FAIL: ", name)) in
+    let _ = print(str_cat("  expected: ", want)) in
+    let _ = print(str_cat("  actual:   ", got)) in
+    [pass, fail + 1]
+
+let contains(s, sub) =
+  let n = str_len(s) in
+  let m = str_len(sub) in
+  let rec(i) =
+    if i + m > n then false
+    else if str_slice(s, i, m) == sub then true
+    else rec(i + 1) in
+  if m == 0 then true
+  else if m > n then false
+  else rec(0)
+
+let interp_eq(st, name, flags, path, want) =
+  let argv = append(["./yac"], append(flags, [path])) in
+  let r = run(argv) in
+  check(st, name, want, chomp(nth(r, 1)))
+
+let interp_par(st, name, flags, path) =
+  let a = run(["./yac", path]) in
+  let b = run(append(["./yac"], append(flags, [path]))) in
+  check(st, name, chomp(nth(a, 1)), chomp(nth(b, 1)))
+
+let interp_err(st, name, flags, path, needle) =
+  let argv = append(["./yac"], append(flags, [path])) in
+  let r = run(argv) in
+  let blob = str_cat(nth(r, 1), nth(r, 2)) in
+  let ok =
+    if nth(r, 0) == 0 then false
+    else contains(blob, needle) in
+  if ok then check(st, name, "1", "1")
+  else check(st, name, needle, blob)
+
+let cat_files(xs, dest) =
+  let rec(i, acc) =
+    if i >= len(xs) then write_file(dest, acc)
+    else rec(i + 1, str_cat(acc, read_file(nth(xs, i)))) in
+  rec(0, "")
+
+let compiler_one(st, yc, c) =
+  let name = nth(c, 0) in
+  let kind = nth(c, 1) in
+  let want = nth(c, 2) in
+  let bin = str_cat(TMP, str_cat("/c_", name)) in
+  let cr = run(append(yc, [case_src(name), "-o", bin])) in
+  if nth(run(["test", "-f", bin]), 0) != 0 then
+    check(st, str_cat("compiler ", name), "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
+  else
+    let _ = run(["chmod", "+x", bin]) in
+    let r = run([bin]) in
+    if kind == "rc" then check(st, str_cat("compiler ", name), want, int_to_str(nth(r, 0)))
+    else check(st, str_cat("compiler ", name), want, chomp(nth(r, 1)))
+
+let COMPILER_CASES = [
+  ["l4_42", "rc", "42"], ["l4_letfun", "rc", "42"], ["add", "rc", "3"],
+  ["let", "rc", "6"], ["precedence", "rc", "7"], ["div", "rc", "3"], ["mod", "rc", "2"],
+  ["if_true", "rc", "7"], ["if_false", "rc", "9"], ["func_call", "rc", "10"],
+  ["recursion", "rc", "120"], ["args2", "rc", "9"], ["args3", "rc", "6"], ["args6", "rc", "21"],
+  ["capture", "rc", "15"], ["multi_capture", "rc", "13"], ["capture_2args", "rc", "103"],
+  ["higher", "rc", "7"], ["curry", "rc", "7"], ["return_clo", "rc", "15"],
+  ["list_len", "rc", "3"], ["list_nth", "rc", "20"], ["list_cons", "rc", "3"],
+  ["foldl", "rc", "10"], ["map_len", "rc", "3"], ["map_nth", "rc", "4"], ["filter", "rc", "2"],
+  ["append", "rc", "4"], ["drop", "rc", "3"], ["str_len", "rc", "3"], ["str_ref", "rc", "105"],
+  ["str_cat", "rc", "4"], ["band", "rc", "3"], ["bytes", "rc", "66"],
+  ["int_to_str", "rc", "50"], ["str_slice", "rc", "99"], ["bytes_to_str", "rc", "90"],
+  ["str_eq", "rc", "1"], ["str_neq", "rc", "0"], ["bool", "rc", "7"], ["and", "rc", "5"],
+  ["foldl_prim", "rc", "10"], ["map_prim", "rc", "4"], ["is_kw", "rc", "1"],
+  ["empty_params", "rc", "42"], ["print_int", "out", "123"],
+  ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"]]
+
+let compiler_all(st, yc) =
+  foldl(fun(s, c) -> compiler_one(s, yc, c), st, COMPILER_CASES)
+
+let exists_rc(p) = nth(run(["test", "-f", p]), 0)
+
+let cat_bundle(_) =
+  cat_files(["src-self/log.yac", "src-self/lexer.yac", "src-self/parser.yac",
+             "src-self/anf.yac", "src-self/encode_x64.yac", "src-self/elf.yac",
+             "src-self/lir.yac", "src-self/emit.yac", "src-self/backend.yac",
+             "src-self/lower.yac", "src-self/yc.yac"], BUNDLE)
+
+let interp_step(st, row) =
+  let k = nth(row, 0) in
+  if k == "eq" then
+    interp_eq(st, nth(row, 1), nth(row, 2), nth(row, 3), nth(row, 4))
+  else if k == "par" then
+    interp_par(st, nth(row, 1), nth(row, 2), nth(row, 3))
+  else interp_err(st, nth(row, 1), nth(row, 2), nth(row, 3), nth(row, 4))
+
+let interp_suite(st) =
+  foldl(interp_step, st, [
+    ["eq", "factorial", [], ip("fact.yac"), "3628800"],
+    ["eq", "fibonacci", [], ip("fib.yac"), "832040"],
+    ["eq", "higher-order", [], ip("higher.yac"), "7"],
+    ["eq", "types", [], ip("types.yac"), "hello\n3.5\ntrue\n()\n42"],
+    ["eq", "tco", [], ip("tco.yac"), "0"],
+    ["eq", "lexical closure", [], ip("closure.yac"), "2"],
+    ["eq", "float arithmetic", [], ip("float.yac"), "1e+10\n\n0.0025\n\n100000\n\n1.5e-300\n\n3000\n\n103\n\n3.5\n\ntrue\n\ntrue\n\n"],
+    ["eq", "list primitives", [], ip("list.yac"), "3\n20\n[0, 1, 2]\n[1, 2, 3]\n[2, 4, 6]\n[2, 3]\n10\n2\n[1, [2, 3], x]\n[]\ntrue\n42"],
+    ["eq", "bignum arithmetic", [], ip("bignum.yac"), "263130836933693530167218012160000000\n\n93326215443944152681699238856266700490715968264381621468592963895217599993229915608941463976156518286253697920827223758251185210916864000000000000000000000000\n\n788657867364790503552363213932185062295135977687173263294742533244359449963403342920304284011984623904177212138919638830257642790242637105061926624952829931113462857270763317237396988943922445621451664240254033291864131227428294853277524242407573903240321257405579568660226031904170324062351700858796178922222789623703897374720000000000000000000000000000000000000000000000000\n\n2432902008176640000\n\n109027350432000\n\n256411097818451356681764864000000\n\n0\n\n9223372036854775808\n\n-9223372036854775808\n\n55340232221128654848\n\n-60828186403426756087225216332129537688755283137921024000000000000\n\n4344870457387625434801801166580681263482520224137216000000000000\n\n0\n\n18446744073709551616\n\n1000000000000000000000000000000000000000000\n\n370370367037037036703703703670\n\ntrue\n\ntrue\n\ntrue\n\ntrue\n\nfalse\n\ntrue\n\ntrue\n\ntrue\n\nfalse\n\n[1, 4, 9]\n\n100000000000000000000000000000000000000000000000000000000000000000\n\n7\n\n2\n\n"],
+    ["eq", "compiler primitives", [], ip("compiler_prims.yac"), "5\n\nfoobar\n\nbcd\n\n65\n\n67\n\n4\n\n65\n\n0\n\n4\n\n4\n\n200\n\n7\n\n128\n\n5\n\n12\n\n-1\n\n256\n\n1\n\n16\n\n4\n\n65\n\n0\n\n9\n\n"],
+    ["par", "cps compiler primitives", ["--cps"], ip("compiler_prims.yac"), ""],
+    ["par", "cps factorial", ["--cps"], ip("fact.yac"), ""],
+    ["par", "cps fibonacci", ["--cps"], ip("fib.yac"), ""],
+    ["par", "cps higher-order", ["--cps"], ip("higher.yac"), ""],
+    ["par", "cps types", ["--cps"], ip("types.yac"), ""],
+    ["par", "cps tco", ["--cps"], ip("tco.yac"), ""],
+    ["par", "cps lexical closure", ["--cps"], ip("closure.yac"), ""],
+    ["par", "cps float arithmetic", ["--cps"], ip("float.yac"), ""],
+    ["par", "cps list primitives", ["--cps"], ip("list.yac"), ""],
+    ["par", "cps bignum arithmetic", ["--cps"], ip("bignum.yac"), ""],
+    ["par", "--both factorial", ["--both"], ip("fact.yac"), ""],
+    ["par", "uncps factorial", ["--uncps"], ip("fact.yac"), ""],
+    ["par", "uncps fibonacci", ["--uncps"], ip("fib.yac"), ""],
+    ["par", "uncps higher-order", ["--uncps"], ip("higher.yac"), ""],
+    ["par", "uncps lexical closure", ["--uncps"], ip("closure.yac"), ""],
+    ["par", "uncps tco", ["--uncps"], ip("tco.yac"), ""],
+    ["par", "uncps list primitives", ["--uncps"], ip("list.yac"), ""],
+    ["par", "uncps bignum arithmetic", ["--uncps"], ip("bignum.yac"), ""],
+    ["err", "callcc rejected by un-CPS", ["--uncps"], ip("callcc.yac"), "cannot un-CPS"],
+    ["err", "unbound variable detected", [], ip("unbound.yac"), "unbound variable 'y'"],
+    ["err", "callcc rejected by ANF machine", [], ip("callcc.yac"), "CPS mode"],
+    ["eq", "callcc runs under CPS", ["--cps"], ip("callcc.yac"), "42"],
+    ["eq", "callcc early exit", ["--cps"], ip("callcc2.yac"), "999"],
+    ["eq", "callcc capture + use", ["--cps"], ip("callcc3.yac"), "42"],
+    ["eq", "callcc inside function", ["--cps"], ip("callcc4.yac"), "999"]])
+
+let iso_one(st, ya, yb, name) =
+  let a = str_cat(TMP, str_cat("/isoA_", name)) in
+  let b = str_cat(TMP, str_cat("/isoB_", name)) in
+  let _ = run([ya, case_src(name), "-o", a]) in
+  let _ = run([yb, case_src(name), "-o", b]) in
+  check(st, str_cat("boot iso ", name), "0", int_to_str(nth(run(["cmp", "-s", a, b]), 0)))
+
+let boot_suite(st) =
+  let ya = str_cat(TMP, "/yc_A") in
+  let yb = str_cat(TMP, "/yc_B") in
+  let _ = run(["rm", "-f", ya, str_cat(ya, ".bin"), yb, str_cat(yb, ".bin")]) in
+  let _ = run(["./yac", BUNDLE, BUNDLE, "-o", ya]) in
+  let st1 = check(st, "boot yc_A exists", "0", int_to_str(exists_rc(ya))) in
+  let st2 = check(st1, "boot yc_A not .bin", "1", int_to_str(exists_rc(str_cat(ya, ".bin")))) in
+  let _ = run(["chmod", "+x", ya]) in
+  let stA = compiler_all(st2, [ya]) in
+  let _ = run([ya, BUNDLE, "-o", yb]) in
+  let st3 = check(stA, "boot yc_B exists", "0", int_to_str(exists_rc(yb))) in
+  let st4 = check(st3, "boot yc_B not .bin", "1", int_to_str(exists_rc(str_cat(yb, ".bin")))) in
+  let _ = run(["chmod", "+x", yb]) in
+  let stB = compiler_all(st4, [yb]) in
+  let psrc = str_cat(TMP, "/p42.yac") in
+  let pbin = str_cat(TMP, "/p42") in
+  let _ = write_file(psrc, "42\n") in
+  let _ = run(["rm", "-f", pbin, str_cat(pbin, ".bin")]) in
+  let _ = run([ya, psrc]) in
+  let st5 = check(stB, "boot default name p42", "0", int_to_str(exists_rc(pbin))) in
+  let st6 = check(st5, "boot default not p42.bin", "1", int_to_str(exists_rc(str_cat(pbin, ".bin")))) in
+  let _ = run(["chmod", "+x", pbin]) in
+  let st7 = check(st6, "boot default p42 rc", "42", int_to_str(nth(run([pbin]), 0))) in
+  foldl(fun(s, c) -> iso_one(s, ya, yb, nth(c, 0)), st7, COMPILER_CASES)
+
+let main =
+  let _ = run(["mkdir", "-p", TMP]) in
+  let st0 = interp_suite([0, 0]) in
+  let br = run(["./yac", "tests/boot/run.yac"]) in
+  let _ = print(chomp(nth(br, 1))) in
+  let st1 = check(st0, "boot frontend", "0", int_to_str(nth(br, 0))) in
+  let _ = cat_bundle(0) in
+  let st2 = compiler_all(st1, ["./yac", BUNDLE]) in
+  let st3 = boot_suite(st2) in
+  let _ = print("") in
+  let _ = print(str_cat(int_to_str(nth(st3, 0)),
+                 str_cat(" passed, ",
+                   str_cat(int_to_str(nth(st3, 1)), " failed")))) in
+  if nth(st3, 1) == 0 then 0 else exit(1)
+in main

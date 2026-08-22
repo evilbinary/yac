@@ -1,0 +1,1 @@
+let b = bytes_new() in let _ = bytes_append(b, 90) in str_ref(bytes_to_str(b), 0)

@@ -1,0 +1,1 @@
+let foldl(f, acc, xs) = if len(xs) == 0 then acc else foldl(f, f(acc, nth(xs, 0)), tail(xs)) in foldl(fun(a, x) -> a + x, 0, [1, 2, 3, 4])

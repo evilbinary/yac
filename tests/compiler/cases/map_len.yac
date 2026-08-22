@@ -1,0 +1,1 @@
+let map(f, xs) = if len(xs) == 0 then [] else cons(f(nth(xs, 0)), map(f, tail(xs))) in let inc(n) = n + 1 in len(map(inc, [1, 2, 3]))

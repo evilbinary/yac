@@ -1,0 +1,1 @@
+str_ref(str_slice("abcdef", 2, 3), 0)

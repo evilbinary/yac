@@ -1,0 +1,1 @@
+let add(a) = fun(b) -> a + b in let g = add(3) in g(4)

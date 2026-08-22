@@ -1,0 +1,1 @@
+let twice(f, x) = f(f(x)) in let inc(n) = n + 1 in twice(inc, 5)

@@ -1,0 +1,1 @@
+let gt1(x) = x > 1 in let filter(f, xs) = if len(xs) == 0 then [] else let x = nth(xs, 0) in let keep = f(x) in let rest = filter(f, tail(xs)) in if keep then cons(x, rest) else rest in len(filter(gt1, [1, 2, 3, 0]))
