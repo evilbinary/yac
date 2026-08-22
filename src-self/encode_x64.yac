@@ -510,6 +510,9 @@ let mov_rcx_rdx(b) =
 /* cmp rcx, rax  (48 39 c1) */
 let cmp_rcx_rax(b) =
   let _ = e8(b, 72) in let _ = e8(b, 57) in e8(b, 193)
+/* cmp rdx, rcx  (48 39 ca) */
+let cmp_rdx_rcx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 57) in e8(b, 202)
 /* mov dword [rbx+disp8], ecx  (48 89 4b disp8) */
 let mov_mem_rbx_disp8_rcx(b, d) =
   let _ = e8(b, 72) in
@@ -563,12 +566,23 @@ let mov_rax_rdx_dil(b) =
   let _ = e8(b, 136) in
   let _ = e8(b, 60) in
   e8(b, 16)
+/* mov [rax+rdx], al  (88 04 10) */
+let mov_rax_rdx_al(b) =
+  let _ = e8(b, 136) in
+  let _ = e8(b, 4) in
+  e8(b, 16)
 /* movzx eax, byte [rax+rdx]  (0f b6 04 10) */
 let movzx_eax_rax_rdx(b) =
   let _ = e8(b, 15) in
   let _ = e8(b, 182) in
   let _ = e8(b, 4) in
   e8(b, 16)
+/* movzx eax, byte [rdi+rdx]  (0f b6 04 17) */
+let movzx_eax_rdi_rdx(b) =
+  let _ = e8(b, 15) in
+  let _ = e8(b, 182) in
+  let _ = e8(b, 4) in
+  e8(b, 23)
 /* inc qword [rax+disp8]  (48 ff 40 disp) */
 let inc_mem_rax_disp8(b, d) =
   let _ = e8(b, 72) in

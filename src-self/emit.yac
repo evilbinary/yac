@@ -659,16 +659,16 @@ let gen_argv(d) =
   let _ = mov_rax_disp8_rdx(b, 24) in
   let _ = xor_rdx_rdx(b) in
   let cpy = bytes_len(b) in
-  let _ = mov_r64_mem_rbp(b, 0, 232) in
-  let _ = mov_r64_mem_rbp(b, 2, 240) in
-  let _ = cmp_rcx_rax(b) in
-  let _ = jcc_rel32(b, 4, 0) in
+  let _ = mov_r64_mem_rbp(b, 2, 240) in   /* rcx = len */
+  let _ = cmp_rdx_rcx(b) in
+  let _ = jcc_rel32(b, 3, 0) in          /* jae cpyend */
   let jcpy = bytes_len(b) - 4 in
-  let _ = mov_r64_mem_rbp(b, 7, 248) in
-  let _ = movzx_eax_rax_rdx(b) in
-  let _ = mov_r64_mem_rbp(b, 3, 232) in
+  let _ = mov_r64_mem_rbp(b, 7, 248) in  /* rdi = src cstr */
+  let _ = movzx_eax_rdi_rdx(b) in
+  let _ = mov_r64_mem_rbp(b, 3, 232) in  /* rbx = dst obj */
+  let _ = mov_r64_r64(b, 0, 3) in
   let _ = add_rax_imm32(b, 32) in
-  let _ = mov_rax_rdx_dil(b) in
+  let _ = mov_rax_rdx_al(b) in
   let _ = inc_rdx(b) in
   let _ = jmp_rel32(b, 0) in
   let jbcpy = bytes_len(b) - 4 in
