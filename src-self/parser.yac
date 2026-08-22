@@ -167,7 +167,7 @@ let parse_expr(toks, i, min_prec) =
         let bound0 = nth(br, 0) in
         let k = nth(br, 1) in
         let bound1 =
-          if len(params) > 0 then ["fun", params, bound0] else bound0 in
+          if has_params then ["fun", params, bound0] else bound0 in
         if is_kw(k, "in") then
           let bodyr = parse_expr(toks, k + 1, 0) in
           [["let", name, bound1, nth(bodyr, 0)], nth(bodyr, 1)]

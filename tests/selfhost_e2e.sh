@@ -84,6 +84,8 @@ run_e2e "e2e map prim" 'nth(map(fun(x) -> x + 1, [1, 2, 3]), 2)' '4'
 run_e2e "e2e is_kw" 'let w = "let" in foldl(fun(a, k) -> if a then true else w == k, false, ["if", "let", "in"])' '1'
 python3 -c "open('$TMP/big70k.txt','wb').write(b'x'*70000)"
 run_e2e "e2e read_file 70k" "if str_len(read_file(\"$TMP/big70k.txt\")) == 70000 then 42 else 1" '42'
+run_e2e "e2e empty params" 'let f() = 42 in f()' '42'
+run_e2e "e2e block comment" $'/*\n * star line\n */\n42' '42'
 
 # print (decimal output) — compare stdout, not exit code
 run_print() {

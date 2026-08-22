@@ -243,8 +243,8 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,emit,elf,backend,encode_x64,driver_*}.yac`；
-测试套件 `tests/selfhost_{lexer,parser,anf,elf,emit,e2e,yc}.sh`（`make test`）。
-**下一步（M4）**：L4 原生 `yc_A` 已能编译 `42` / `letfun` / `fact(5)=120`。剩余 L5 同构（`yc_A` 再编 `yc.yac` → `yc_B`）与精确 GC。
+测试套件 `tests/selfhost_{lexer,parser,anf,elf,emit,e2e,yc}.sh`（`make test`）；L5 用 `tests/selfhost_l5.sh`（约 1.5min，未进 `make test`）。
+**下一步（M4）**：L4/L5 已通。剩余精确 GC（M6）与将 `selfhost_l5.sh` 纳入日常测试（约 1.5min）。
 GitHub 推送已通过 SSH 远程 + 代理 `http://127.0.0.1:10809` 解决。
 
 **近期完成（perf）**：全量 bundle 自编译 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）；`make test` 50/50。
@@ -257,7 +257,7 @@ GitHub 推送已通过 SSH 远程 + 代理 `http://127.0.0.1:10809` 解决。
 | 阶段  | 内容                                                                                                                 | 验收                                   |
 | --- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
 | M3  | x86-64 后端：**整数子集端到端**（整数算术/比较/if/尾递归函数 → 可运行 ELF，输出与解释器一致）→ 随后**补齐闭包/GC/字符串/列表/全部原语**（见 §10.3）。**闭包与 GC 是必需项，不省略** | `yc` 编译 fact/fib/闭包/GC 程序 → 输出与解释器一致 |
-| M4  | 自举：`yc.yac` 编译 `yc.yac` → 原生 `yc`；L4 烟测 42/letfun/fact；L5 同构验证                                    | L4 ✅；L5 待做                            |
+| M4  | 自举：`yc.yac` 编译 `yc.yac` → 原生 `yc`；L4 烟测 42/letfun/fact；L5 `yc_A`/`yc_B` 对同一输入同构 | L4/L5 ✅ |
 | M5  | arm64 / riscv64 后端 + `--arch` 交叉编译（qemu 验证）                                                                        | 三架构同源跑通                              |
 | M6  | rt yac 化 + GC 栈图；迁移全测试到原生 `yc`                                                                                     | 弃用 C 解释器（完全自举）                       |
 | M7  | 完善 callcc / CPS（ANF→CPS 转换、续延原生实现）与 scheme 前端                                                                      | callcc / scheme 测试通过                 |
@@ -512,10 +512,16 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 6. **HO 原语**：`yac_apply1`/`yac_apply2` + 原生 `foldl`/`map`（含捕获）。
 7. **M4 起步**：`yc.yac` + `selfhost_yc.sh`；L4 烟测 `selfhost_l4_lex.sh`（原生 is_kw）。
 
-**仍待（完整 L4/L5）**：
-1. **L5 同构**：`yc_A` 再编译 `yc.yac` → `yc_B`，对同一输入产物逐字节相同。
-2. **精确 GC**：`gc_collect` 现为 no-op（保守扫描曾破坏 `saved_argc`/`saved_argv`）；栈图在 M6。
+**仍待**：
+1. **精确 GC**：`gc_collect` 现为 no-op（保守扫描曾破坏 `saved_argc`/`saved_argv`）；栈图在 M6。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o out.bin]`。
 
-**关键修复（letif 丢函数）**：then 分支里的 `letfun`（如 `anf_expr` 的 `build`/`argloop`）原先未并入 funs 列表，闭包 fnptr 解析失败变成 `_start`（0x400078），表现为再次进入 `parse_args`。else 现在从 `thenr` 的 funs 继续。空 stub 不再 emit。
+**L5 已通**：`yc_A` 编译 bundle → `yc_B`（~35s）；`yc_B` 编 `42`/`fact(5)` 与 `yc_A` 产物**逐字节相同**。`tests/selfhost_l5.sh`。`yc_A` 与 `yc_B` 自身 ELF 不必相同（引导器 vs 原生编出）。
+
+**关键修复**：
+- **letif 丢函数**：then 臂 `letfun` 未并入 funs，闭包 fnptr 变成 `_start`。
+- **`read_file` 64KiB 上限**：改为 `lseek` 按文件大小分配。
+- **TCO**：尾位置 `call`/`apply` 改为拆栈后 `jmp`（`lex` 约 4.5 万 token 不再爆栈）。
+- **`and` 非短路**：`skip_block_cm` 里 `* /` 判断在含 ` * ` 的块注释上误匹配；改为嵌套 `if`。
+- **空参 `let f() =`**：消耗 `)`；`has_params`（不要用 `len(params)>0`）才包装成 `fun`，否则 `f()` 会去调用整数。

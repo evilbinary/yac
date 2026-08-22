@@ -52,6 +52,7 @@ parse_case "lambda" 'fun (x) -> x + 1' '[[fun, [x], [binop, +, [var, x], [int, 1
 parse_case "lambda multi param" 'fun (a, b) -> a * b' '[[fun, [a, b], [binop, *, [var, a], [var, b]]]]'
 parse_case "let bind" 'let x = 5 in x + 1' '[[let, x, [int, 5], [binop, +, [var, x], [int, 1]]]]'
 parse_case "let fun" 'let f(x) = if x == 0 then 0 else f(x - 1)' '[[let, f, [fun, [x], [if, [binop, ==, [var, x], [int, 0]], [int, 0], [call, [var, f], [[binop, -, [var, x], [int, 1]]]]]], [unit]]]'
+parse_case "let empty params" 'let f() = 42 in f()' '[[let, f, [fun, [], [int, 42]], [call, [var, f], []]]]'
 parse_case "multi statement" 'let x = 1;
 let y = 2;
 x + y' '[[let, x, [int, 1], [unit]], [let, y, [int, 2], [unit]], [binop, +, [var, x], [var, y]]]'
