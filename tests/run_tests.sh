@@ -266,6 +266,15 @@ else
     fail=$((fail + 1)); echo "FAIL: self-hosted source-to-ELF e2e suite ($e2efail failures)"
 fi
 
+# self-hosted compiler: per-function unit tests (Python-driven)
+python3 tests/unit_selfhost.py >/dev/null 2>&1
+ufail=$?
+if [ $ufail -eq 0 ]; then
+    pass=$((pass + 1)); echo "PASS: self-hosted unit test suite"
+else
+    fail=$((fail + 1)); echo "FAIL: self-hosted unit test suite (rc=$ufail)"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]
