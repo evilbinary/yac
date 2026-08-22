@@ -538,6 +538,12 @@ let add_rax_imm32(b, v) =
   let _ = e8(b, 72) in
   let _ = e8(b, 5) in
   e32(b, v)
+/* add rdi, imm32  (48 81 c7 id32) */
+let add_rdi_imm32(b, v) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 129) in
+  let _ = e8(b, 199) in
+  e32(b, v)
 /* mov [rax+rdx], dil  (40 88 3c 10) */
 let mov_rax_rdx_dil(b) =
   let _ = e8(b, 64) in
@@ -691,6 +697,9 @@ let test_rdx_rdx(b) =
 /* mov rax, rsi */
 let mov_rax_rsi(b) =
   let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 240)
+/* mov rdi, rdx */
+let mov_rdi_rdx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 215)
 /* mov qword [rbx+disp8], imm32  (48 c7 43 disp8 id32) — set mark field */
 let mov_mem_rbx_disp8_imm32(b, disp8, imm) =
   let _ = e8(b, 72) in
@@ -704,6 +713,18 @@ let mov_rbx_mem_rbx(b) =
 /* mov rbx, [rax]  (48 8b 18) — load GC list head */
 let mov_rbx_mem_rax(b) =
   let _ = e8(b, 72) in let _ = e8(b, 139) in e8(b, 24)
+/* mov rax, [rax]  (48 8b 00) */
+let mov_rax_mem_rax(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 139) in e8(b, 0)
+/* mov [rax], rdi  (48 89 38) */
+let mov_mem_rax_rdi(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 56)
+/* mov [rax], rsi  (48 89 30) */
+let mov_mem_rax_rsi(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 48)
+/* mov rax, [rsi + rcx*8]  (48 8b 04 ce) */
+let mov_rax_mem_rsi_rcx8(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 4) in e8(b, 206)
 
 /* ---- closure object field writes ---- */
 

@@ -170,7 +170,7 @@ let in_list(name, lst) =
 let prim_names = ["cons", "len", "nth", "tail", "append", "print",
                   "map", "filter", "foldl", "foldr", "drop", "head",
                   "str_len", "str_cat", "str_ref", "str_slice", "int_to_str",
-                  "time_ms", "time_str",
+                  "time_ms", "time_str", "argc", "argv",
                   "bytes_new", "bytes_len", "bytes_append", "bytes_extend", "bytes_ref", "bytes_put",
                   "bytes_to_str", "list_new", "list_push", "list_rev",
                   "read_file", "write_file", "band", "bor", "bxor", "bshl", "bshr"]
@@ -387,6 +387,8 @@ let lower_body(anf, st) =
           else if fnname == "int_to_str" then ["int_to_str", dst, nth(slots, 0)]
           else if fnname == "time_ms" then ["time_ms", dst]
           else if fnname == "time_str" then ["time_str", dst]
+          else if fnname == "argc" then ["argc", dst]
+          else if fnname == "argv" then ["argv", dst, nth(slots, 0)]
           else if fnname == "bytes_to_str" then ["bytes_to_str", dst, nth(slots, 0)]
           else if fnname == "drop" then
             ["drop", dst, nth(slots, 0), nth(slots, 1)]

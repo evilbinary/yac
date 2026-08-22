@@ -602,6 +602,92 @@ let gen_append(d) =
   let _ = apply_patch(b, jz, retb) in
   [b, selfcall + 1, acall + 1]
 
+/* yac_argc() -> tagged argc. Reads saved_argc at GLOBALS+8. */
+let gen_argc(d) =
+  let b = bytes_new() in
+  let _ = mov_rax_imm64(b, 0) in
+  let gpat = bytes_len(b) - 8 in
+  let _ = mov_rax_mem_rax(b) in
+  let _ = shl_rax_1(b) in
+  let _ = ret(b) in
+  [b, gpat]
+
+/* yac_argv(index tagged in rdi) -> STR. Reads saved_argv at GLOBALS+16. */
+let gen_argv(d) =
+  let b = bytes_new() in
+  let _ = push_rbp(b) in
+  let _ = mov_rbp_rsp(b) in
+  let _ = sub_rsp_imm8(b, 48) in
+  let _ = mov_rax_rdi(b) in
+  let _ = sar_rax_1(b) in
+  let _ = mov_rcx_rax(b) in
+  let _ = mov_rax_imm64(b, 0) in
+  let acpat = bytes_len(b) - 8 in
+  let _ = mov_rax_mem_rax(b) in
+  let _ = cmp_rcx_rax(b) in
+  let _ = jcc_rel32(b, 6, 0) in
+  let jfail = bytes_len(b) - 4 in
+  let _ = mov_rax_imm64(b, 0) in
+  let avpat = bytes_len(b) - 8 in
+  let _ = mov_rax_mem_rax(b) in
+  let _ = mov_rsi_rax(b) in
+  let _ = mov_rax_mem_rsi_rcx8(b) in
+  let _ = mov_mem_rbp_r64(b, 248, 0) in
+  let _ = xor_rdx_rdx(b) in
+  let slen = bytes_len(b) in
+  let _ = mov_r64_mem_rbp(b, 7, 248) in
+  let _ = e8(b, 128) in let _ = e8(b, 60) in let _ = e8(b, 23) in let _ = e8(b, 0) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jslen = bytes_len(b) - 4 in
+  let _ = inc_rdx(b) in
+  let _ = jmp_rel32(b, 0) in
+  let jbslen = bytes_len(b) - 4 in
+  let _ = apply_patch(b, jbslen, slen) in
+  let slend = bytes_len(b) in
+  let _ = apply_patch(b, jslen, slend) in
+  let _ = mov_mem_rbp_r64(b, 240, 2) in
+  let _ = mov_rdi_rdx(b) in
+  let _ = add_rdi_imm32(b, 33) in
+  let acall = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = and_rax_1(b) in
+  let _ = mov_mem_rbp_r64(b, 232, 0) in
+  let _ = mov_rax_disp8_imm32(b, 8, 0) in
+  let _ = mov_rax_disp8_imm32(b, 16, 3) in
+  let _ = mov_rax_disp8_imm32(b, 20, 0) in
+  let _ = mov_r64_mem_rbp(b, 2, 240) in
+  let _ = mov_rax_disp8_rdx(b, 24) in
+  let _ = xor_rdx_rdx(b) in
+  let cpy = bytes_len(b) in
+  let _ = mov_r64_mem_rbp(b, 0, 232) in
+  let _ = mov_r64_mem_rbp(b, 2, 240) in
+  let _ = cmp_rcx_rax(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jcpy = bytes_len(b) - 4 in
+  let _ = mov_r64_mem_rbp(b, 7, 248) in
+  let _ = movzx_eax_rax_rdx(b) in
+  let _ = mov_r64_mem_rbp(b, 3, 232) in
+  let _ = add_rax_imm32(b, 32) in
+  let _ = mov_rax_rdx_dil(b) in
+  let _ = inc_rdx(b) in
+  let _ = jmp_rel32(b, 0) in
+  let jbcpy = bytes_len(b) - 4 in
+  let _ = apply_patch(b, jbcpy, cpy) in
+  let cpyend = bytes_len(b) in
+  let _ = apply_patch(b, jcpy, cpyend) in
+  let _ = mov_r64_mem_rbp(b, 0, 232) in
+  let _ = or_rax_1(b) in
+  let _ = mov_rsp_rbp(b) in
+  let _ = pop_rbp(b) in
+  let _ = ret(b) in
+  let fail = bytes_len(b) in
+  let _ = apply_patch(b, jfail, fail) in
+  let _ = xor_rax_rax(b) in
+  let _ = mov_rsp_rbp(b) in
+  let _ = pop_rbp(b) in
+  let _ = ret(b) in
+  [b, acpat, avpat, acall + 1]
+
 /* yac_read_file(path STR in rdi) -> STR in rax. Reads up to 65536 bytes.
  * Returns [bytes, allocCallRelPos]. */
 let gen_read_file(d) =
@@ -1388,12 +1474,20 @@ let emit_insn(st, insn, is_entry) =
       let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
       /* imm8 for sub/add rsp is signed (-128..127); frames >= 128 need imm32 */
       if is_entry then
+        let _ = mov_rax_imm64(b, 0) in
+        let ac_save = bytes_len(b) - 8 in
+        let _ = mov_mem_rax_rdi(b) in
+        let _ = mov_rax_imm64(b, 0) in
+        let av_save = bytes_len(b) - 8 in
+        let _ = mov_mem_rax_rsi(b) in
         let _ = mov_rbp_rsp(b) in
         let nbytes = bshl(nlocals, 3) in
         let _ =
           if nbytes > 127 then sub_rsp_imm32(b, nbytes)
           else sub_rsp_imm8(b, band(nbytes, 255)) in
-        [b, cur, labels, patches]
+        [b, cur, labels,
+         cons(["saved_argv", av_save],
+              cons(["saved_argc", ac_save], patches))]
       else
         let _ = push_rbp(b) in
         let _ = mov_rbp_rsp(b) in
@@ -1637,6 +1731,20 @@ let emit_insn(st, insn, is_entry) =
       let _ = call_rel32(b, 0) in
       let _ = emit_store_rax_slot(b, dst) in
       [b, cur, labels, cons([callstart + 1, "time_str"], patches)]
+    else if k == "argc" then
+      let dst = nth(insn, 1) in
+      let callstart = bytes_len(b) in
+      let _ = call_rel32(b, 0) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, cons([callstart + 1, "yac_argc"], patches)]
+    else if k == "argv" then
+      let dst = nth(insn, 1) in
+      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+      let _ = mov_rdi_rax(b) in
+      let callstart = bytes_len(b) in
+      let _ = call_rel32(b, 0) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, cons([callstart + 1, "yac_argv"], patches)]
     else if k == "closure" then
       /* closure dst fnName [capSlots]:
        * alloc object [next][mark][fnptr][nenv][env...], tag, store.
@@ -2318,6 +2426,12 @@ let emit_program(prog) =
   let gcr = gen_gc(0) in
   let _ = b_append(b, nth(gcr, 0)) in
   let gc_headaddr = nth(gcr, 1) in
+  let agr = gen_argc(0) in
+  let ag_off = bytes_len(b) in
+  let _ = b_append(b, nth(agr, 0)) in
+  let avr = gen_argv(0) in
+  let av_off = bytes_len(b) in
+  let _ = b_append(b, nth(avr, 0)) in
   let funOffsRev2 = cons(["gc_collect", gc_off],
                          cons(["yac_map", mp_off],
                               cons(["yac_foldl", fl_off],
@@ -2340,21 +2454,19 @@ let emit_program(prog) =
                                                                                                                    cons(["yac_tail", tail_off],
                                                                                                                         cons(["yac_nth", nth_off],
                                                                                                                              cons(["yac_len", len_off],
-                                                                                                                                  cons(["time_str", ts_off],
-                                                                                                                                       cons(["time_ms", tm_off],
-                                                                                                                                            cons(["print_int", pi_off], funOffsRev))))))))))))))))))))))))) in
+                                                                                                                                  cons(["yac_argv", av_off],
+                                                                                                                                       cons(["yac_argc", ag_off],
+                                                                                                                                            cons(["time_str", ts_off],
+                                                                                                                                                 cons(["time_ms", tm_off],
+                                                                                                                                                      cons(["print_int", pi_off], funOffsRev))))))))))))))))))))))))))) in
   let LOAD_VADDR = 4194304 in  /* 0x400000 */
   let TEXT_OFF = 120 in       /* ELF header + phdr size */
-  /* append a small writable data area for GC globals (the linked-list head). */
+  /* writable globals: gc head, saved_argc, saved_argv (8 bytes each). */
   let data_start = bytes_len(b) in
-  let _ = bytes_append(b, 0) in  /* 8 zero bytes: head = NULL */
-  let _ = bytes_append(b, 0) in
-  let _ = bytes_append(b, 0) in
-  let _ = bytes_append(b, 0) in
-  let _ = bytes_append(b, 0) in
-  let _ = bytes_append(b, 0) in
-  let _ = bytes_append(b, 0) in
-  let _ = bytes_append(b, 0) in
+  let fill_data(i) =
+    if i >= 24 then 0
+    else let _ = bytes_append(b, 0) in fill_data(i + 1) in
+  let _ = fill_data(0) in
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
   let funOffsMap = emit_map_from_list(funOffsRev2) in
   let resolve(ps) =
@@ -2373,6 +2485,12 @@ let emit_program(prog) =
           else if kind == "gc_head" then
             let pos = nth(p, 1) in
             apply_u64(b, pos, GLOBALS_BASE)
+          else if kind == "saved_argc" then
+            let pos = nth(p, 1) in
+            apply_u64(b, pos, GLOBALS_BASE + 8)
+          else if kind == "saved_argv" then
+            let pos = nth(p, 1) in
+            apply_u64(b, pos, GLOBALS_BASE + 16)
           else
             let pos = nth(p, 0) in
             let tname = nth(p, 1) in
@@ -2400,6 +2518,10 @@ let emit_program(prog) =
   let _ = list_push(extra, [mp_off + nth(mpr, 1), "yac_map"]) in
   let _ = list_push(extra, [mp_off + nth(mpr, 2), "yac_apply1"]) in
   let _ = list_push(extra, [mp_off + nth(mpr, 3), "yac_alloc"]) in
+  let _ = list_push(extra, ["saved_argc", ag_off + nth(agr, 1)]) in
+  let _ = list_push(extra, ["saved_argv", av_off + nth(avr, 2)]) in
+  let _ = list_push(extra, ["saved_argc", av_off + nth(avr, 1)]) in
+  let _ = list_push(extra, [av_off + nth(avr, 3), "yac_alloc"]) in
   let _ = patches_extend(extra, patches) in
   let _ = log("emit", "resolve") in
   let _ = resolve(extra) in

@@ -1,29 +1,85 @@
 /* yc.yac — self-hosted compiler driver (M4).
  *
- * Reads build/yc_tmp/in.yac, writes build/yc_tmp/out.bin.
+ * Usage:
+ *   yc <input.yac> [-o output.bin]
+ *
+ * Under the C interpreter the bundle path is an extra positional arg:
+ *   yc bundle.yac <input.yac> [-o output.bin]
+ * The last positional argument is always the input source file.
+ *
  * Bundle:
  *   cat src-self/{log,lexer,parser,anf,encode_x64,elf,lir,emit,backend,lower,yc}.yac \
- *     > build/yc_tmp/yc_bundle.yac && ./yac build/yc_tmp/yc_bundle.yac
+ *     > build/yc_tmp/yc_bundle.yac
  */
-let _ = log("yc", "start")
-let src = read_file("build/yc_tmp/in.yac")
-let _ = log_i("yc", "src_len", str_len(src))
-let _ = log("yc", "tokenize begin")
-let toks = tokenize(src)
-let _ = log_i("yc", "ntoks", len(toks))
-let _ = log("yc", "parse begin")
-let prog = parse_program(toks, 0, [])
-let _ = log_i("yc", "nprog", len(prog))
-let _ = log("yc", "anf begin")
-let anf_item(item) =
+
+let usage(_) =
+  let _ = print("usage: yc <file.yac> [-o output.bin]") in 0
+
+let ends_with_yac(s) =
+  let n = str_len(s) in
+  n >= 4 and str_ref(s, n - 4) == 46 and str_ref(s, n - 3) == 121 and
+  str_ref(s, n - 2) == 97 and str_ref(s, n - 1) == 99
+
+let default_out(inpath) =
+  if ends_with_yac(inpath) then
+    str_cat(str_slice(inpath, 0, str_len(inpath) - 4), ".bin")
+  else str_cat(inpath, ".bin")
+
+/* parse argv[1..]: returns [outPath, positionals, err] (err=0 ok). */
+let parse_args(i, argc, out, pos) =
+  if i >= argc then [out, pos, 0]
+  else
+    let a = argv(i) in
+    if a == "-h" or a == "--help" then
+      let _ = usage(0) in [out, pos, 0]
+    else if a == "-o" then
+      if i + 1 >= argc then [out, pos, 2]
+      else parse_args(i + 2, argc, argv(i + 1), pos)
+    else if str_len(a) > 0 and str_ref(a, 0) == 45 then
+      [out, pos, 2]
+    else parse_args(i + 1, argc, out, append(pos, [a]))
+
+let anf_top(item) =
   let r = anf_expr(item, 0) in
   [nth(r, 0), nth(r, 1)]
-let anf_list = map(anf_item, prog)
-let _ = log_i("yc", "nanf", len(anf_list))
-let lir = compile_top(anf_list)
-let elf = backend_compile(lir)
-let _ = log_i("yc", "elf_len", bytes_len(elf))
-let _ = log("yc", "write")
-let _ = write_file("build/yc_tmp/out.bin", elf) in
-let __ = log("yc", "done") in
-0
+
+let compile_file(inpath, outpath) =
+  let _ = log("yc", "start") in
+  let src = read_file(inpath) in
+  let _ = log_i("yc", "src_len", str_len(src)) in
+  let _ = log("yc", "tokenize begin") in
+  let toks = tokenize(src) in
+  let _ = log_i("yc", "ntoks", len(toks)) in
+  let _ = log("yc", "parse begin") in
+  let prog = parse_program(toks, 0, []) in
+  let _ = log_i("yc", "nprog", len(prog)) in
+  let _ = log("yc", "anf begin") in
+  let anf_list = map(anf_top, prog) in
+  let _ = log_i("yc", "nanf", len(anf_list)) in
+  let lir = compile_top(anf_list) in
+  let elf = backend_compile(lir) in
+  let _ = log_i("yc", "elf_len", bytes_len(elf)) in
+  let _ = log("yc", "write") in
+  let _ = write_file(outpath, elf) in
+  let _ = log("yc", "done") in
+  0
+
+let main =
+  let argc_n = argc() in
+  if argc_n < 2 then
+    let _ = usage(0) in 2
+  else
+    let pr = parse_args(1, argc_n, "", []) in
+    let err = nth(pr, 2) in
+    if err != 0 then
+      let _ = print("error: bad arguments") in err
+    else
+      let pos = nth(pr, 1) in
+      if len(pos) == 0 then
+        let _ = usage(0) in 2
+      else
+        let inpath = nth(pos, len(pos) - 1) in
+        let out_opt = nth(pr, 0) in
+        let outpath = if out_opt == "" then default_out(inpath) else out_opt in
+        compile_file(inpath, outpath)
+let _ = main in main

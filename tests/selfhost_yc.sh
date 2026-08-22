@@ -12,7 +12,7 @@ cat src-self/log.yac src-self/lexer.yac src-self/parser.yac src-self/anf.yac \
 
 printf '%s\n' 'let f(n) = if n <= 1 then 1 else n * f(n - 1) in f(5)' > "$TMP/in.yac"
 
-./yac "$TMP/yc_bundle.yac" >/dev/null 2>&1 || true
+./yac "$TMP/yc_bundle.yac" "$TMP/in.yac" -o "$TMP/out.bin" >/dev/null 2>&1 || true
 if [ ! -x "$TMP/out.bin" ] && [ ! -f "$TMP/out.bin" ]; then
   echo "FAIL: yc.yac did not write out.bin"
   exit 1

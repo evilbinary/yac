@@ -514,5 +514,5 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 **仍待（完整 L4/L5）**：
 1. **yc_A 运行时**：解释器编出全量 `yc_A`（~416KB）后，跑任意输入会在 `map(anf_item, prog)` 附近死循环；小驱动编出的原生二进制正常（fact=120）。L5 同构被此阻塞。
-2. **argv**：C 解释器有 `argc`/`argv` 原语，原生 rt 尚未接入；`yc.yac` 仍硬编码 `build/yc_tmp/in.yac`。
+2. **argv**：`yc.yac` 用 `argc`/`argv` 解析 `yc <file.yac> [-o out.bin]`；C 解释器转发额外参数；原生 rt 在 `_start` 保存 `argc`/`argv` 并提供 `yac_argc`/`yac_argv`。
 3. **selfhost_l4_lex**：bundle 需含 `log.yac`（已修）。

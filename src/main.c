@@ -290,14 +290,10 @@ int main(int argc, char **argv) {
             limit_nodes = strtoul(argv[++i], NULL, 10);
         }
         else if (argv[i][0] == '-') {
-            fprintf(stderr, "unknown option: %s\n", argv[i]);
-            usage(argv[0]);
-            return 2;
+            /* Unrecognized flags (e.g. yc -o out.bin) are forwarded via argc()/argv(). */
         } else if (!file) file = argv[i];
         else {
-            fprintf(stderr, "unexpected argument: %s\n", argv[i]);
-            usage(argv[0]);
-            return 2;
+            /* extra positionals are forwarded to argc()/argv() in the program */
         }
     }
     if (!file && !load_rt && !repl_mode && !resume_path) {
