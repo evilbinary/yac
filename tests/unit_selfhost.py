@@ -240,6 +240,79 @@ def test_encode():
     enc("mov_r64_r64", "let _ = mov_r64_r64(b, 0, 1);", "72\n137\n200")
 
 
+
+
+# ---------------------------------------------------------------------------
+# emit.yac + backend.yac — LIR->ELF
+# ---------------------------------------------------------------------------
+
+def test_backend():
+    # backend_compile produces a valid ELF (magic 0x7f 'E' 'L' 'F', class 2)
+    d = """
+let prog = ["prog",
+  [["fun", "_start", 0, 0,
+    [["prologue", 2],
+     ["mov_imm", 1, 21],
+     ["exit", 1]]]],
+  "_start"];
+let elf = backend_compile(prog);
+print bytes_ref(elf, 0);
+print "";
+print bytes_ref(elf, 1);
+print "";
+print bytes_ref(elf, 2);
+print "";
+print bytes_ref(elf, 3);
+print "";
+print bytes_ref(elf, 4);
+print "";
+0;
+"""
+    check("backend: ELF magic", ["encode_x64.yac", "elf.yac", "emit.yac", "backend.yac"],
+          d, "127\n\n69\n\n76\n\n70\n\n2\n\n0")
+    # gen_print_int emits the recursive decimal printer (objdump-verified prefix)
+    d2 = """
+let b = gen_print_int(0);
+print bytes_len(b);
+print "";
+print bytes_ref(b, 0);
+print "";
+print bytes_ref(b, 1);
+print "";
+print bytes_ref(b, 8);
+print "";
+0;
+"""
+    check("backend: gen_print_int", ["encode_x64.yac", "elf.yac", "emit.yac", "backend.yac"],
+          d2, "91\n\n85\n\n72\n\n72\n\n0")
+
+
+# ---------------------------------------------------------------------------
+
+
+
+# ---------------------------------------------------------------------------
+# lower.yac — compile_top (source ANF -> LIR program)
+# ---------------------------------------------------------------------------
+
+def test_compile_top():
+    d = """
+let src = "1 + 2";
+let toks = tokenize(src);
+let prog = parse_program(toks, 0, []);
+let r = anf_expr(nth(prog, 0), 0);
+let lir = compile_top([ [nth(r,0), nth(r,1)] ]);
+print nth(lir, 0);
+print "";
+print len(nth(lir, 1));
+print "";
+0;
+"""
+    check("compile_top: prog kind", SRC["lower"], d, "prog\n\n1\n\n0")
+
+
+# ---------------------------------------------------------------------------
+
 def main():
     test_lir()
     test_lexer()
@@ -248,6 +321,8 @@ def main():
     test_anf()
     test_lower()
     test_encode()
+    test_backend()
+    test_compile_top()
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0
 
