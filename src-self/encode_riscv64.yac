@@ -1,0 +1,86 @@
+/* encode_riscv64.yac — RV64I (+ MUL) instruction words. */
+
+let rv_u32(b, w) =
+  let _ = bytes_append(b, band(w, 255)) in
+  let _ = bytes_append(b, band(bshr(w, 8), 255)) in
+  let _ = bytes_append(b, band(bshr(w, 16), 255)) in
+  let _ = bytes_append(b, band(bshr(w, 24), 255)) in
+  0
+
+let rv_addi(b, rd, rs1, imm) =
+  rv_u32(b, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + bshl(rd, 7) + 19)
+
+let rv_add(b, rd, rs1, rs2) =
+  rv_u32(b, bshl(rs2, 20) + bshl(rs1, 15) + bshl(rd, 7) + 51)
+
+let rv_sub(b, rd, rs1, rs2) =
+  rv_u32(b, 1073741824 + bshl(rs2, 20) + bshl(rs1, 15) + bshl(rd, 7) + 51)
+
+let rv_and(b, rd, rs1, rs2) =
+  rv_u32(b, bshl(rs2, 20) + bshl(rs1, 15) + 28672 + bshl(rd, 7) + 51)
+
+let rv_or(b, rd, rs1, rs2) =
+  rv_u32(b, bshl(rs2, 20) + bshl(rs1, 15) + 24576 + bshl(rd, 7) + 51)
+
+let rv_sll(b, rd, rs1, rs2) =
+  rv_u32(b, bshl(rs2, 20) + bshl(rs1, 15) + 4096 + bshl(rd, 7) + 51)
+
+let rv_sra(b, rd, rs1, rs2) =
+  rv_u32(b, 1073741824 + bshl(rs2, 20) + bshl(rs1, 15) + 20480 + bshl(rd, 7) + 51)
+
+let rv_mul(b, rd, rs1, rs2) =
+  rv_u32(b, 33554432 + bshl(rs2, 20) + bshl(rs1, 15) + bshl(rd, 7) + 51)
+
+let rv_lui(b, rd, imm20) =
+  rv_u32(b, bshl(band(imm20, 1048575), 12) + bshl(rd, 7) + 55)
+
+let rv_ld(b, rd, rs1, imm) =
+  rv_u32(b, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + 12288 + bshl(rd, 7) + 3)
+
+let rv_sd(b, rs2, rs1, imm) =
+  let i = band(imm, 4095) in
+  rv_u32(b, bshl(bshr(i, 5), 25) + bshl(rs2, 20) + bshl(rs1, 15) + 12288 +
+           bshl(band(i, 31), 7) + 35)
+
+let rv_beq(b, rs1, rs2, imm13) =
+  let i = band(imm13, 8191) in
+  let b12 = band(bshr(i, 12), 1) in
+  let b10_5 = band(bshr(i, 5), 63) in
+  let b4_1 = band(bshr(i, 1), 15) in
+  let b11 = band(bshr(i, 11), 1) in
+  rv_u32(b, bshl(b12, 31) + bshl(b10_5, 25) + bshl(rs2, 20) + bshl(rs1, 15) +
+           bshl(b4_1, 8) + bshl(b11, 7) + 99)
+
+let rv_bne(b, rs1, rs2, imm13) =
+  let i = band(imm13, 8191) in
+  let b12 = band(bshr(i, 12), 1) in
+  let b10_5 = band(bshr(i, 5), 63) in
+  let b4_1 = band(bshr(i, 1), 15) in
+  let b11 = band(bshr(i, 11), 1) in
+  rv_u32(b, bshl(b12, 31) + bshl(b10_5, 25) + bshl(rs2, 20) + bshl(rs1, 15) +
+           4096 + bshl(b4_1, 8) + bshl(b11, 7) + 99)
+
+let rv_jal(b, rd, imm21) =
+  let i = band(imm21, 2097151) in
+  let b20 = band(bshr(i, 20), 1) in
+  let b10_1 = band(bshr(i, 1), 1023) in
+  let b11 = band(bshr(i, 11), 1) in
+  let b19_12 = band(bshr(i, 12), 255) in
+  rv_u32(b, bshl(b20, 31) + bshl(b10_1, 21) + bshl(b11, 20) + bshl(b19_12, 12) +
+           bshl(rd, 7) + 111)
+
+let rv_jalr(b, rd, rs1, imm) =
+  rv_u32(b, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + bshl(rd, 7) + 103)
+
+let rv_ecall(b) = rv_u32(b, 115)
+
+let rv_unimp(b) = rv_u32(b, 0)
+
+let rv_li(b, rd, v) =
+  let hi = band(bshr(v + 2048, 12), 1048575) in
+  let lo = band(v, 4095) in
+  let lo_s = if lo > 2047 then lo - 4096 else lo in
+  if hi == 0 then rv_addi(b, rd, 0, lo_s)
+  else
+    let _ = rv_lui(b, rd, hi) in
+    if lo_s == 0 then 0 else rv_addi(b, rd, rd, lo_s)

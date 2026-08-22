@@ -1,7 +1,8 @@
 /* yc.yac — self-hosted compiler driver (M4).
  *
  * Usage:
- *   yc <input.yac> [-o output] [--arch x86_64]
+ *   yc <input.yac> [-o output] [--arch x86_64|arm64|riscv64]
+ *                    [--format elf|pe|macho] [--shared]
  *
  * Default output is the input path with `.yac` stripped (no `.bin`):
  *   yc fact.yac          → fact
@@ -12,7 +13,7 @@
  * The last positional argument is always the input source file.
  *
  * Bundle:
- *   cat src-self/{log,pass,target,lexer,parser,anf,encode_x64,elf,lir,emit,backend,lower,yc}.yac \
+ *   cat src-self/{log,pass,target,lexer,parser,anf,encode_x64,encode_arm64,encode_riscv64,elf,pe,macho,pack,lir,emit,emit_arm64,emit_riscv64,backend,lower,yc}.yac \
  *     > build/yc_tmp/yc_bundle.yac
  *
  * PIPELINE: src -lex-> tok -parse-> ast -anf-> anf -lower-> lir -emit-> pack
@@ -20,7 +21,9 @@
  */
 
 let usage(_) =
-  let _ = print("usage: yc <file.yac> [-o output] [--arch x86_64]") in 0
+  let _ = print("usage: yc <file.yac> [-o out] [--arch x86_64|arm64|riscv64]") in
+  let _ = print("              [--format elf|pe|macho] [--shared]") in
+  0
 
 /* nested ifs: `and` is not short-circuit; str_ref on a short name would fault */
 let ends_with_yac(s) =
@@ -35,22 +38,31 @@ let default_out(inpath) =
   if ends_with_yac(inpath) then str_slice(inpath, 0, str_len(inpath) - 4)
   else inpath
 
-/* parse argv[1..]: returns [outPath, positionals, err, arch]. */
-let parse_args(i, argc, out, pos, arch) =
-  if i >= argc then [out, pos, 0, arch]
+/* parse argv: [out, pos, err, spec] spec=[arch, format, kind] */
+let parse_args(i, argc, out, pos, spec) =
+  if i >= argc then [out, pos, 0, spec]
   else
     let a = argv(i) in
     if a == "-h" or a == "--help" then
-      let _ = usage(0) in [out, pos, 0, arch]
+      let _ = usage(0) in [out, pos, 0, spec]
     else if a == "-o" then
-      if i + 1 >= argc then [out, pos, 2, arch]
-      else parse_args(i + 2, argc, argv(i + 1), pos, arch)
+      if i + 1 >= argc then [out, pos, 2, spec]
+      else parse_args(i + 2, argc, argv(i + 1), pos, spec)
     else if a == "--arch" then
-      if i + 1 >= argc then [out, pos, 2, arch]
-      else parse_args(i + 2, argc, out, pos, argv(i + 1))
+      if i + 1 >= argc then [out, pos, 2, spec]
+      else parse_args(i + 2, argc, out, pos,
+                      [argv(i + 1), nth(spec, 1), nth(spec, 2)])
+    else if a == "--format" then
+      if i + 1 >= argc then [out, pos, 2, spec]
+      else parse_args(i + 2, argc, out, pos,
+                      [nth(spec, 0), argv(i + 1), nth(spec, 2)])
+    else if a == "--shared" then
+      parse_args(i + 1, argc, out, pos, [nth(spec, 0), nth(spec, 1), "dylib"])
+    else if a == "--dylib" then
+      parse_args(i + 1, argc, out, pos, [nth(spec, 0), nth(spec, 1), "dylib"])
     else if str_len(a) > 0 and str_ref(a, 0) == 45 then
-      [out, pos, 2, arch]
-    else parse_args(i + 1, argc, out, append(pos, [a]), arch)
+      [out, pos, 2, spec]
+    else parse_args(i + 1, argc, out, append(pos, [a]), spec)
 
 let anf_top(item) =
   let r = anf_expr(item, 0) in
@@ -82,19 +94,21 @@ let pass_lower(anf_list) = compile_top(anf_list)
 
 let pass_emit_t(t, lir) =
   let a = target_arch(t) in
-  if a == "x86_64" then
-    let _ = log("yc", "emit begin") in
-    let r = emit_program(lir) in
-    let code = nth(r, 0) in
-    let _ = log_i("yc", "code_len", bytes_len(code)) in
-    code
-  else
-    let _ = print(str_cat("yc: emit not implemented for ", a)) in
-    exit(1)
+  let _ = log("yc", "emit begin") in
+  let r =
+    if a == "x86_64" then
+      emit_program_at(lir, target_vaddr(t), target_text_off(t))
+    else if a == "arm64" then
+      emit_program_arm64(lir, target_vaddr(t), target_text_off(t))
+    else
+      emit_program_riscv64(lir, target_vaddr(t), target_text_off(t)) in
+  let code = nth(r, 0) in
+  let _ = log_i("yc", "code_len", bytes_len(code)) in
+  code
 
 let pass_pack_t(t, code) =
   let _ = log("yc", "pack") in
-  pack_elf_arch(code, target_emachine(t))
+  pack_image(t, code)
 
 let make_pipeline(t) =
   [mk_pass("lex", pass_lex),
@@ -120,7 +134,7 @@ let main =
   if argc_n < 2 then
     let _ = usage(0) in 2
   else
-    let pr = parse_args(1, argc_n, "", [], "x86_64") in
+    let pr = parse_args(1, argc_n, "", [], ["x86_64", "elf", "exec"]) in
     let err = nth(pr, 2) in
     if err != 0 then
       let _ = print("error: bad arguments") in err
@@ -129,10 +143,15 @@ let main =
       if len(pos) == 0 then
         let _ = usage(0) in 2
       else
-        let t = target_by_name(nth(pr, 3)) in
-        if t == 0 then
-          let _ = print(str_cat("error: unknown --arch ", nth(pr, 3))) in 2
+        let spec = nth(pr, 3) in
+        let an = parse_arch_name(nth(spec, 0)) in
+        let fn = parse_format_name(nth(spec, 1)) in
+        if an == "" then
+          let _ = print(str_cat("error: unknown --arch ", nth(spec, 0))) in 2
+        else if fn == "" then
+          let _ = print(str_cat("error: unknown --format ", nth(spec, 1))) in 2
         else
+          let t = mk_target(an, fn, nth(spec, 2)) in
           let inpath = nth(pos, len(pos) - 1) in
           let out_opt = nth(pr, 0) in
           let outpath = if out_opt == "" then default_out(inpath) else out_opt in

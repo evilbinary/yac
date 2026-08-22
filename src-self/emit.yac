@@ -2419,7 +2419,7 @@ let patches_extend(dst, src) =
     else let _ = list_push(dst, nth(src, i)) in loop(i + 1) in
   loop(0)
 
-let emit_program(prog) =
+let emit_program_at(prog, load_vaddr, text_off) =
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
   let _ = log_i("emit", "nfun", nfun) in
@@ -2561,8 +2561,8 @@ let emit_program(prog) =
                                                                                                                                             cons(["time_str", ts_off],
                                                                                                                                                  cons(["time_ms", tm_off],
                                                                                                                                                       cons(["print_int", pi_off], funOffsRev))))))))))))))))))))))))))) in
-  let LOAD_VADDR = 4194304 in  /* 0x400000 */
-  let TEXT_OFF = 120 in       /* ELF header + phdr size */
+  let LOAD_VADDR = load_vaddr in
+  let TEXT_OFF = text_off in
   /* writable globals: gc head, saved_argc, saved_argv (8 bytes each). */
   let data_start = bytes_len(b) in
   let fill_data(i) =
@@ -2630,3 +2630,5 @@ let emit_program(prog) =
   let _ = log_i("emit", "code_len", bytes_len(b)) in
   let _ = log("emit", "done") in
   [b, funOffsRev2]
+
+let emit_program(prog) = emit_program_at(prog, 4194304, 120)

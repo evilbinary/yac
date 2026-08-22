@@ -1,0 +1,102 @@
+/* pe.yac — PE32+ (EXE or DLL). Headers occupy text_off (512) bytes; .text follows.
+ * ImageBase = vaddr so emit absolute patches match.
+ */
+
+let pe_le16(b, v, i) =
+  let _ = bytes_put(b, i + 0, band(v, 255)) in
+  let _ = bytes_put(b, i + 1, band(bshr(v, 8), 255)) in
+  0
+
+let pe_le32(b, v, i) =
+  let _ = pe_le16(b, band(v, 65535), i) in
+  let _ = pe_le16(b, bshr(v, 16), i + 2) in
+  0
+
+let pe_le64(b, v, i) =
+  let _ = pe_le32(b, band(v, 4294967295), i) in
+  let _ = pe_le32(b, bshr(v, 32), i + 4) in
+  0
+
+let pack_pe_target(t, code) =
+  let machine = target_pe_machine(t) in
+  let vaddr = target_vaddr(t) in
+  let text_off = target_text_off(t) in
+  let shared = target_shared(t) in
+  let code_len = bytes_len(code) in
+  let align = 512 in
+  let raw = text_off + code_len in
+  let pad =
+    if (raw % align) == 0 then raw
+    else raw + (align - (raw % align)) in
+  let chars = if shared then 8226 else 34 in
+  let out = bytes_new() in
+  let _ = bytes_put(out, pad - 1, 0) in
+  let _ = bytes_put(out, 0, 77) in
+  let _ = bytes_put(out, 1, 90) in
+  let _ = pe_le32(out, 128, 60) in
+  let _ = bytes_put(out, 128, 80) in
+  let _ = bytes_put(out, 129, 69) in
+  let _ = bytes_put(out, 130, 0) in
+  let _ = bytes_put(out, 131, 0) in
+  let _ = pe_le16(out, machine, 132) in
+  let _ = pe_le16(out, 1, 134) in
+  let _ = pe_le32(out, 0, 136) in
+  let _ = pe_le32(out, 0, 140) in
+  let _ = pe_le32(out, 0, 144) in
+  let _ = pe_le16(out, 240, 148) in
+  let _ = pe_le16(out, chars, 150) in
+  let _ = pe_le16(out, 523, 152) in
+  let _ = bytes_put(out, 154, 0) in
+  let _ = bytes_put(out, 155, 0) in
+  let _ = pe_le32(out, code_len, 156) in
+  let _ = pe_le32(out, 0, 160) in
+  let _ = pe_le32(out, 0, 164) in
+  let _ = pe_le32(out, text_off, 168) in
+  let _ = pe_le32(out, text_off, 172) in
+  let _ = pe_le64(out, vaddr, 176) in
+  let _ = pe_le32(out, align, 184) in
+  let _ = pe_le32(out, align, 188) in
+  let _ = pe_le16(out, 4, 192) in
+  let _ = pe_le16(out, 0, 194) in
+  let _ = pe_le16(out, 0, 196) in
+  let _ = pe_le16(out, 0, 198) in
+  let _ = pe_le16(out, 4, 200) in
+  let _ = pe_le16(out, 0, 202) in
+  let _ = pe_le32(out, 0, 204) in
+  let _ = pe_le32(out, pad, 208) in
+  let _ = pe_le32(out, text_off, 212) in
+  let _ = pe_le32(out, 0, 216) in
+  let _ = pe_le16(out, 3, 220) in
+  let _ = pe_le16(out, 0, 222) in
+  let _ = pe_le64(out, 1048576, 224) in
+  let _ = pe_le64(out, 4096, 232) in
+  let _ = pe_le64(out, 1048576, 240) in
+  let _ = pe_le64(out, 4096, 248) in
+  let _ = pe_le32(out, 0, 256) in
+  let _ = pe_le32(out, 16, 260) in
+  let filldd(i) =
+    if i >= 16 then 0
+    else
+      let _ = pe_le32(out, 0, 264 + i * 8) in
+      let _ = pe_le32(out, 0, 268 + i * 8) in
+      filldd(i + 1) in
+  let _ = filldd(0) in
+  let _ = bytes_put(out, 392, 46) in
+  let _ = bytes_put(out, 393, 116) in
+  let _ = bytes_put(out, 394, 101) in
+  let _ = bytes_put(out, 395, 120) in
+  let _ = bytes_put(out, 396, 116) in
+  let _ = bytes_put(out, 397, 0) in
+  let _ = bytes_put(out, 398, 0) in
+  let _ = bytes_put(out, 399, 0) in
+  let _ = pe_le32(out, code_len, 400) in
+  let _ = pe_le32(out, text_off, 404) in
+  let _ = pe_le32(out, code_len, 408) in
+  let _ = pe_le32(out, text_off, 412) in
+  let _ = pe_le32(out, 0, 416) in
+  let _ = pe_le32(out, 0, 420) in
+  let _ = pe_le16(out, 0, 424) in
+  let _ = pe_le16(out, 0, 426) in
+  let _ = pe_le32(out, 1610612768, 428) in
+  let _ = bytes_extend(out, code) in
+  out

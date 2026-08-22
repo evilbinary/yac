@@ -1,23 +1,68 @@
-/* target.yac — machine selected for emit + pack (multi-arch).
+/* target.yac — arch + container + image kind (shared by emit and pack).
  *
- * LIR is shared. emit-<arch> and ELF e_machine come from the target.
- * ["target", archName, emachine]
- *   emachine: ELF e_machine (EM_X86_64=62, EM_AARCH64=183, EM_RISCV=243)
+ * ["target", arch, format, kind, emachine, pe_machine,
+ *            macho_cputype, macho_cpusub, vaddr, text_off]
  *
- * emit_arm64 / emit_riscv64 are not in the bundle yet; emit_for rejects them.
+ * arch:   x86_64 | arm64 | riscv64
+ * format: elf | pe | macho
+ * kind:   exec | dylib
+ *
+ * vaddr/text_off must match the packer so absolute patches in emit land
+ * in .text. ELF exec keeps the historical 0x400000+120 layout.
  */
 
-let ARCH_X64 = ["target", "x86_64", 62]
-let ARCH_ARM64 = ["target", "arm64", 183]
-let ARCH_RISCV64 = ["target", "riscv64", 243]
+let T_VADDR = 4194304
 
 let target_arch(t) = nth(t, 1)
-let target_emachine(t) = nth(t, 2)
+let target_format(t) = nth(t, 2)
+let target_kind(t) = nth(t, 3)
+let target_emachine(t) = nth(t, 4)
+let target_pe_machine(t) = nth(t, 5)
+let target_macho_cputype(t) = nth(t, 6)
+let target_macho_cpusub(t) = nth(t, 7)
+let target_vaddr(t) = nth(t, 8)
+let target_text_off(t) = nth(t, 9)
+let target_shared(t) = target_kind(t) == "dylib"
 
-let target_by_name(s) =
-  if s == "x86_64" then ARCH_X64
-  else if s == "x64" then ARCH_X64
-  else if s == "arm64" then ARCH_ARM64
-  else if s == "aarch64" then ARCH_ARM64
-  else if s == "riscv64" then ARCH_RISCV64
+let arch_ids(arch) =
+  if arch == "x86_64" then [62, 34404, 16777223, 3]
+  else if arch == "arm64" then [183, 43620, 16777228, 0]
+  else if arch == "riscv64" then [243, 20580, 16777457, 0]
   else 0
+
+let layout_off(format, kind) =
+  if format == "elf" then
+    if kind == "dylib" then 192 else 120
+  else if format == "pe" then 512
+  else 4096
+
+let mk_target(arch, format, kind) =
+  let ids = arch_ids(arch) in
+  if ids == 0 then 0
+  else if format == "elf" then
+    ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
+     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(format, kind)]
+  else if format == "pe" then
+    ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
+     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(format, kind)]
+  else if format == "macho" then
+    ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
+     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(format, kind)]
+  else 0
+
+let target_by_name(s) = mk_target(s, "elf", "exec")
+
+let parse_arch_name(s) =
+  if s == "x86_64" then "x86_64"
+  else if s == "x64" then "x86_64"
+  else if s == "arm64" then "arm64"
+  else if s == "aarch64" then "arm64"
+  else if s == "riscv64" then "riscv64"
+  else ""
+
+let parse_format_name(s) =
+  if s == "elf" then "elf"
+  else if s == "pe" then "pe"
+  else if s == "macho" then "macho"
+  else if s == "mach-o" then "macho"
+  else ""

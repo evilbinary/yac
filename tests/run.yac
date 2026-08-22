@@ -116,9 +116,12 @@ let exists_rc(p) = nth(run(["test", "-f", p]), 0)
 let cat_bundle(_) =
   cat_files(["src-self/log.yac", "src-self/pass.yac", "src-self/target.yac",
              "src-self/lexer.yac", "src-self/parser.yac", "src-self/anf.yac",
-             "src-self/encode_x64.yac", "src-self/elf.yac", "src-self/lir.yac",
-             "src-self/emit.yac", "src-self/backend.yac", "src-self/lower.yac",
-             "src-self/yc.yac"],
+             "src-self/encode_x64.yac", "src-self/encode_arm64.yac",
+             "src-self/encode_riscv64.yac", "src-self/elf.yac", "src-self/pe.yac",
+             "src-self/macho.yac", "src-self/pack.yac", "src-self/lir.yac",
+             "src-self/emit.yac", "src-self/emit_arm64.yac",
+             "src-self/emit_riscv64.yac", "src-self/backend.yac",
+             "src-self/lower.yac", "src-self/yc.yac"],
             BUNDLE)
 
 let interp_step(st, row) =

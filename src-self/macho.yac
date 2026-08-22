@@ -1,0 +1,89 @@
+/* macho.yac — 64-bit Mach-O (MH_EXECUTE or MH_DYLIB).
+ * Headers padded to text_off (4096); __text follows. vmaddr = vaddr.
+ */
+
+let mo_le32(b, v, i) =
+  let _ = bytes_put(b, i + 0, band(v, 255)) in
+  let _ = bytes_put(b, i + 1, band(bshr(v, 8), 255)) in
+  let _ = bytes_put(b, i + 2, band(bshr(v, 16), 255)) in
+  let _ = bytes_put(b, i + 3, band(bshr(v, 24), 255)) in
+  0
+
+let mo_le64(b, v, i) =
+  let _ = mo_le32(b, band(v, 4294967295), i) in
+  let _ = mo_le32(b, bshr(v, 32), i + 4) in
+  0
+
+let mo_name16(b, i, s) =
+  let n = str_len(s) in
+  let loop(j) =
+    if j >= 16 then 0
+    else
+      let ch = if j < n then str_ref(s, j) else 0 in
+      let _ = bytes_put(b, i + j, ch) in
+      loop(j + 1) in
+  loop(0)
+
+let pack_macho_target(t, code) =
+  let cputype = target_macho_cputype(t) in
+  let cpusub = target_macho_cpusub(t) in
+  let vaddr = target_vaddr(t) in
+  let text_off = target_text_off(t) in
+  let shared = target_shared(t) in
+  let code_len = bytes_len(code) in
+  let filesz = text_off + code_len in
+  let out = bytes_new() in
+  let _ = bytes_put(out, text_off - 1, 0) in
+  let _ = bytes_put(out, 0, 207) in
+  let _ = bytes_put(out, 1, 250) in
+  let _ = bytes_put(out, 2, 237) in
+  let _ = bytes_put(out, 3, 254) in
+  let _ = mo_le32(out, cputype, 4) in
+  let _ = mo_le32(out, cpusub, 8) in
+  let filetype = if shared then 6 else 2 in
+  let _ = mo_le32(out, filetype, 12) in
+  let ncmds = 2 in
+  let sizeofcmds = if shared then 192 else 176 in
+  let _ = mo_le32(out, ncmds, 16) in
+  let _ = mo_le32(out, sizeofcmds, 20) in
+  let _ = mo_le32(out, 1, 24) in
+  let _ = mo_le32(out, 0, 28) in
+  let _ = mo_le32(out, 25, 32) in
+  let _ = mo_le32(out, 152, 36) in
+  let _ = mo_name16(out, 40, "__TEXT") in
+  let _ = mo_le64(out, vaddr, 56) in
+  let _ = mo_le64(out, filesz, 64) in
+  let _ = mo_le64(out, 0, 72) in
+  let _ = mo_le64(out, filesz, 80) in
+  let _ = mo_le32(out, 7, 88) in
+  let _ = mo_le32(out, 7, 92) in
+  let _ = mo_le32(out, 1, 96) in
+  let _ = mo_le32(out, 0, 100) in
+  let _ = mo_name16(out, 104, "__text") in
+  let _ = mo_name16(out, 120, "__TEXT") in
+  let _ = mo_le64(out, vaddr + text_off, 136) in
+  let _ = mo_le64(out, code_len, 144) in
+  let _ = mo_le32(out, text_off, 152) in
+  let _ = mo_le32(out, 4, 156) in
+  let _ = mo_le32(out, 0, 160) in
+  let _ = mo_le32(out, 0, 164) in
+  let _ = mo_le32(out, 2147484672, 168) in
+  let _ = mo_le32(out, 0, 172) in
+  let _ = mo_le32(out, 0, 176) in
+  let _ = mo_le32(out, 0, 180) in
+  let _ =
+    if shared then
+      let _ = mo_le32(out, 13, 184) in
+      let _ = mo_le32(out, 40, 188) in
+      let _ = mo_le32(out, 24, 192) in
+      let _ = mo_le32(out, 0, 196) in
+      let _ = mo_le32(out, 65536, 200) in
+      let _ = mo_le32(out, 65536, 204) in
+      mo_name16(out, 208, "libyac.dylib")
+    else
+      let _ = mo_le32(out, 2147483688, 184) in
+      let _ = mo_le32(out, 24, 188) in
+      let _ = mo_le64(out, text_off, 192) in
+      mo_le64(out, 0, 200) in
+  let _ = bytes_extend(out, code) in
+  out

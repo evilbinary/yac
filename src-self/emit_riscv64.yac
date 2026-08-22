@@ -1,0 +1,176 @@
+/* emit_riscv64.yac — Linux RV64 emit of integer LIR. Other ops: unimp. */
+
+let rv_slot(b, slot, store, r) =
+  let off = 0 - bshl(slot + 1, 3) in
+  let _ = rv_addi(b, 5, 8, off) in
+  if store then rv_sd(b, r, 5, 0) else rv_ld(b, r, 5, 0)
+
+let rv_apply_jal(b, pos, target, rd) =
+  let imm = target - pos in
+  let i = band(imm, 2097151) in
+  let b20 = band(bshr(i, 20), 1) in
+  let b10_1 = band(bshr(i, 1), 1023) in
+  let b11 = band(bshr(i, 11), 1) in
+  let b19_12 = band(bshr(i, 12), 255) in
+  let w = bshl(b20, 31) + bshl(b10_1, 21) + bshl(b11, 20) + bshl(b19_12, 12) +
+          bshl(rd, 7) + 111 in
+  let _ = bytes_put(b, pos, band(w, 255)) in
+  let _ = bytes_put(b, pos + 1, band(bshr(w, 8), 255)) in
+  let _ = bytes_put(b, pos + 2, band(bshr(w, 16), 255)) in
+  let _ = bytes_put(b, pos + 3, band(bshr(w, 24), 255)) in
+  0
+
+let emit_insn_rv(st, insn, is_entry) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let k = nth(insn, 0) in
+  if k == "prologue" then
+    let nlocals = nth(insn, 1) in
+    let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
+    let nbytes = bshl(nlocals + 1, 3) in
+    let _ =
+      if is_entry then rv_addi(b, 8, 2, 0)
+      else
+        let _ = rv_addi(b, 2, 2, 0 - 16) in
+        let _ = rv_sd(b, 1, 2, 8) in
+        let _ = rv_sd(b, 8, 2, 0) in
+        rv_addi(b, 8, 2, 16) in
+    let _ = rv_addi(b, 2, 2, 0 - nbytes) in
+    let storep(j) =
+      if j >= nparams then 0
+      else if j >= 8 then 0
+      else
+        let _ = rv_slot(b, j + 1, true, 10 + j) in
+        storep(j + 1) in
+    let _ = storep(0) in
+    [b, cur, labels, patches]
+  else if k == "mov_imm" then
+    let _ = rv_li(b, 6, nth(insn, 2)) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_sll(b, 6, 6, 7) in
+    let _ = rv_slot(b, nth(insn, 1), true, 6) in
+    [b, cur, labels, patches]
+  else if k == "mov" then
+    let _ = rv_slot(b, nth(insn, 2), false, 6) in
+    let _ = rv_slot(b, nth(insn, 1), true, 6) in
+    [b, cur, labels, patches]
+  else if k == "binop" then
+    let op = nth(insn, 1) in
+    let _ = rv_slot(b, nth(insn, 3), false, 6) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_sra(b, 6, 6, 7) in
+    let _ = rv_slot(b, nth(insn, 4), false, 28) in
+    let _ = rv_sra(b, 28, 28, 7) in
+    let _ =
+      if op == "+" then rv_add(b, 6, 6, 28)
+      else if op == "-" then rv_sub(b, 6, 6, 28)
+      else if op == "*" then rv_mul(b, 6, 6, 28)
+      else if op == "&" then rv_and(b, 6, 6, 28)
+      else if op == "|" then rv_or(b, 6, 6, 28)
+      else rv_add(b, 6, 6, 28) in
+    let _ = rv_sll(b, 6, 6, 7) in
+    let _ = rv_slot(b, nth(insn, 2), true, 6) in
+    [b, cur, labels, patches]
+  else if k == "label" then
+    [b, cur, cons([nth(insn, 1), bytes_len(b)], labels), patches]
+  else if k == "jmp" then
+    let pos = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    [b, cur, labels, cons(["jal", pos, nth(insn, 1)], patches)]
+  else if k == "br" then
+    let _ = rv_slot(b, nth(insn, 1), false, 6) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_sra(b, 6, 6, 7) in
+    let pz = bytes_len(b) in
+    let _ = rv_beq(b, 6, 0, 8) in
+    let pt = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let pf = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    [b, cur, labels,
+     cons(["jal", pt, nth(insn, 2)],
+          cons(["jal", pf, nth(insn, 3)], patches))]
+  else if k == "call" then
+    let args = nth(insn, 3) in
+    let na = len(args) in
+    let load(j) =
+      if j >= na then 0
+      else if j >= 8 then 0
+      else
+        let _ = rv_slot(b, nth(args, j), false, 10 + j) in
+        load(j + 1) in
+    let _ = load(0) in
+    let pos = bytes_len(b) in
+    let _ = rv_jal(b, 1, 0) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    [b, cur, labels, cons(["jalra", pos, nth(insn, 2)], patches)]
+  else if k == "ret" then
+    let _ = rv_slot(b, nth(insn, 1), false, 10) in
+    if is_entry then
+      let _ = rv_jalr(b, 0, 1, 0) in [b, cur, labels, patches]
+    else
+      let _ = rv_addi(b, 2, 8, 0 - 16) in
+      let _ = rv_ld(b, 1, 2, 8) in
+      let _ = rv_ld(b, 8, 2, 0) in
+      let _ = rv_addi(b, 2, 2, 16) in
+      let _ = rv_jalr(b, 0, 1, 0) in
+      [b, cur, labels, patches]
+  else if k == "exit" then
+    let _ = rv_slot(b, nth(insn, 1), false, 10) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_sra(b, 10, 10, 7) in
+    let _ = rv_addi(b, 17, 0, 93) in
+    let _ = rv_ecall(b) in
+    [b, cur, labels, patches]
+  else
+    let _ = rv_unimp(b) in
+    [b, cur, labels, patches]
+
+let rv_lookup(xs, name) =
+  let n = len(xs) in
+  let scan(i) =
+    if i < 0 then 0
+    else if nth(nth(xs, i), 0) == name then nth(nth(xs, i), 1)
+    else scan(i - 1) in
+  scan(n - 1)
+
+let emit_program_riscv64(prog, load_vaddr, text_off) =
+  let funs = nth(prog, 1) in
+  let nfun = len(funs) in
+  let entry = nth(prog, 2) in
+  let out = bytes_new() in
+  let emit_fun(i, st, fo) =
+    if i >= nfun then [st, fo]
+    else
+      let f = nth(funs, i) in
+      let name = nth(f, 1) in
+      let is_entry = name == entry in
+      let fstart = bytes_len(nth(st, 0)) in
+      let st0 = [nth(st, 0), 0, nth(st, 2), nth(st, 3)] in
+      let insns = nth(f, 4) in
+      let run(j, s) =
+        if j >= len(insns) then s
+        else run(j + 1, emit_insn_rv(s, nth(insns, j), is_entry)) in
+      let s1 = run(0, st0) in
+      emit_fun(i + 1, s1, cons([name, fstart], fo)) in
+  let r1 = emit_fun(0, [out, 0, [], []], []) in
+  let st = nth(r1, 0) in
+  let fo = nth(r1, 1) in
+  let b = nth(st, 0) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let resolve(i) =
+    if i < 0 then 0
+    else
+      let p = nth(patches, i) in
+      let pos = nth(p, 1) in
+      let lab = nth(p, 2) in
+      let targ = rv_lookup(labels, lab) in
+      let targ2 = if targ == 0 then rv_lookup(fo, lab) else targ in
+      let rd = if nth(p, 0) == "jalra" then 1 else 0 in
+      let _ = rv_apply_jal(b, pos, targ2, rd) in
+      resolve(i - 1) in
+  let _ = resolve(len(patches) - 1) in
+  [b, fo]

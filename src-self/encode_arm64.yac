@@ -1,0 +1,104 @@
+/* encode_arm64.yac — AArch64 instruction words (little-endian). */
+
+let a64_u32(b, w) =
+  let _ = bytes_append(b, band(w, 255)) in
+  let _ = bytes_append(b, band(bshr(w, 8), 255)) in
+  let _ = bytes_append(b, band(bshr(w, 16), 255)) in
+  let _ = bytes_append(b, band(bshr(w, 24), 255)) in
+  0
+
+/* 0xD2800000 MOVZ Xd,#imm,LSL #(hw*16) */
+let a64_movz(b, rd, imm16, hw) =
+  a64_u32(b, 3531603968 + bshl(hw, 21) + bshl(band(imm16, 65535), 5) + rd)
+
+/* 0xF2800000 MOVK */
+let a64_movk(b, rd, imm16, hw) =
+  a64_u32(b, 4068474880 + bshl(hw, 21) + bshl(band(imm16, 65535), 5) + rd)
+
+let a64_mov_imm64(b, rd, v) =
+  let _ = a64_movz(b, rd, band(v, 65535), 0) in
+  let _ = a64_movk(b, rd, band(bshr(v, 16), 65535), 1) in
+  let _ = a64_movk(b, rd, band(bshr(v, 32), 65535), 2) in
+  a64_movk(b, rd, band(bshr(v, 48), 65535), 3)
+
+/* 0x91000000 ADD Xd,Xn,#imm12 */
+let a64_add_imm(b, rd, rn, imm12) =
+  a64_u32(b, 2432696320 + bshl(band(imm12, 4095), 10) + bshl(rn, 5) + rd)
+
+/* 0xD1000000 SUB Xd,Xn,#imm12 */
+let a64_sub_imm(b, rd, rn, imm12) =
+  a64_u32(b, 3506438144 + bshl(band(imm12, 4095), 10) + bshl(rn, 5) + rd)
+
+/* 0x8B000000 ADD Xd,Xn,Xm */
+let a64_add_reg(b, rd, rn, rm) =
+  a64_u32(b, 2332033024 + bshl(rm, 16) + bshl(rn, 5) + rd)
+
+/* 0xCB000000 SUB Xd,Xn,Xm */
+let a64_sub_reg(b, rd, rn, rm) =
+  a64_u32(b, 3405774848 + bshl(rm, 16) + bshl(rn, 5) + rd)
+
+/* 0x9B007C00 MUL */
+let a64_mul(b, rd, rn, rm) =
+  a64_u32(b, 2600475648 + bshl(rm, 16) + bshl(rn, 5) + rd)
+
+/* 0x8A000000 AND */
+let a64_and_reg(b, rd, rn, rm) =
+  a64_u32(b, 2315255808 + bshl(rm, 16) + bshl(rn, 5) + rd)
+
+/* 0xAA000000 ORR Xd,Xn,Xm */
+let a64_orr_reg(b, rd, rn, rm) =
+  a64_u32(b, 2852126720 + bshl(rm, 16) + bshl(rn, 5) + rd)
+
+/* MOV Xd,Xm = ORR Xd,XZR,Xm  0xAA0003E0 */
+let a64_mov_reg(b, rd, rm) =
+  a64_u32(b, 2852127712 + bshl(rm, 16) + rd)
+
+let a64_lsl1(b, rd, rn) = a64_add_reg(b, rd, rn, rn)
+
+/* ASR #1 : SBFM 0x9340FC00 */
+let a64_asr1(b, rd, rn) =
+  a64_u32(b, 2470476800 + bshl(rn, 5) + rd)
+
+/* CMP Xn,Xm = SUBS XZR,Xn,Xm  0xEB00001F */
+let a64_cmp_reg(b, rn, rm) =
+  a64_u32(b, 3942645760 + bshl(rm, 16) + bshl(rn, 5) + 31)
+
+/* STUR Xt,[Xn,#simm9]  0xF8000000 */
+let a64_stur(b, rt, rn, simm9) =
+  let imm = band(simm9, 511) in
+  a64_u32(b, 4160749568 + bshl(imm, 12) + bshl(rn, 5) + rt)
+
+/* LDUR  0xF8400000 */
+let a64_ldur(b, rt, rn, simm9) =
+  let imm = band(simm9, 511) in
+  a64_u32(b, 4164943872 + bshl(imm, 12) + bshl(rn, 5) + rt)
+
+/* STP X29,X30,[SP,#-16]!  0xA9BF7BFD */
+let a64_stp_fp_lr(b) = a64_u32(b, 2848234493)
+
+/* LDP X29,X30,[SP],#16  0xA8C17BFD */
+let a64_ldp_fp_lr(b) = a64_u32(b, 2830007293)
+
+let a64_ret(b) = a64_u32(b, 3596551104)
+
+/* B  0x14000000 */
+let a64_b(b, imm26) = a64_u32(b, 335544320 + band(imm26, 67108863))
+
+let a64_b_cond(b, cond, imm19) =
+  a64_u32(b, 1409286144 + bshl(band(imm19, 524287), 5) + band(cond, 15))
+
+/* B.EQ  0x54000000 */
+let a64_b_eq(b, imm19) =
+  a64_u32(b, 1409286144 + bshl(band(imm19, 524287), 5))
+
+let a64_b_ne(b, imm19) =
+  a64_u32(b, 1409286145 + bshl(band(imm19, 524287), 5))
+
+/* BL  0x94000000 */
+let a64_bl(b, imm26) = a64_u32(b, 2483027968 + band(imm26, 67108863))
+
+/* SVC #0  0xD4000001 */
+let a64_svc(b) = a64_u32(b, 3556769793)
+
+/* BRK #0  0xD4200000 */
+let a64_brk(b) = a64_u32(b, 3558866944)
