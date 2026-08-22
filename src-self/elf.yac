@@ -91,11 +91,6 @@ let pack_elf(code) =
   let _ = bytes_put(out, 119, 0) in /* ensure capacity 120+ */
   let _ = elf_header(out, entry, text_off) in
   let _ = elf_phdr(out, file_size) in
-  /* copy code bytes after the headers */
-  let copy(i) =
-    if i >= code_len then 0
-    else
-      let _ = bytes_put(out, text_off + i, bytes_ref(code, i)) in
-      copy(i + 1) in
-  let _ = copy(0) in
+  /* bulk-append .text (avoid O(n) recursion depth in native code) */
+  let _ = bytes_extend(out, code) in
   out

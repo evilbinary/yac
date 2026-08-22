@@ -1973,9 +1973,9 @@ let emit_insn(st, insn, is_entry) =
       let dst = nth(insn, 1) in
       let _ = emit_load_rax_slot(b, nth(insn, 2)) in
       let _ = and_rax_1(b) in
-      let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
-      let _ = mov_r64_r64(b, 2, 7) in
-      let _ = e8(b, 72) in let _ = e8(b, 209) in let _ = e8(b, 250) in
+      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+      let _ = mov_rdx_rax(b) in
+      let _ = sar_rdx_1(b) in
       let _ = add_rax_imm32(b, 40) in
       let _ = movzx_eax_rax_rdx(b) in
       let _ = shl_rax_1(b) in
@@ -1985,13 +1985,25 @@ let emit_insn(st, insn, is_entry) =
       let dst = nth(insn, 1) in
       let _ = emit_load_rax_slot(b, nth(insn, 2)) in
       let _ = and_rax_1(b) in
-      let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
-      let _ = mov_r64_r64(b, 2, 7) in
-      let _ = e8(b, 72) in let _ = e8(b, 209) in let _ = e8(b, 250) in
-      let _ = emit_load_rdi_slot(b, nth(insn, 4)) in
-      let _ = e8(b, 72) in let _ = e8(b, 209) in let _ = e8(b, 255) in
+      let _ = mov_rbx_rax(b) in
+      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+      let _ = mov_rdx_rax(b) in
+      let _ = sar_rdx_1(b) in
+      let _ = emit_load_rax_slot(b, nth(insn, 4)) in
+      let _ = mov_rdi_rax(b) in
+      let _ = sar_rdi_1(b) in
+      let _ = mov_rax_rbx(b) in
       let _ = add_rax_imm32(b, 40) in
       let _ = mov_rax_rdx_dil(b) in
+      let _ = mov_rcx_rdx(b) in
+      let _ = inc_rcx(b) in
+      let _ = mov_rax_rbx_disp8(b, 24) in
+      let _ = cmp_rcx_rax(b) in
+      let _ = jcc_rel32(b, 6, 0) in
+      let jskip = bytes_len(b) - 4 in
+      let _ = mov_mem_rbx_disp8_rcx(b, 24) in
+      let skip = bytes_len(b) in
+      let _ = apply_patch(b, jskip, skip) in
       let _ = xor_rax_rax(b) in
       let _ = emit_store_rax_slot(b, dst) in
       [b, cur, labels, patches]

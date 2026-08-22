@@ -244,8 +244,10 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,emit,elf,backend,encode_x64,driver_*}.yac`；
 测试套件 `tests/selfhost_{lexer,parser,anf,elf,emit,e2e,yc}.sh`（`make test`）。
-**下一步（M4）**：补齐编译器自举所需剩余 PRIMS → L4（解释器产出原生 `yc_A`）→ L5 同构。
+**下一步（M4）**：L4 解释器产出原生 `yc_A`（已能编出 ~416KB ELF）→ 修 `yc_A` 运行时正确性 → L5 同构 → argv 接入原生 rt。
 GitHub 推送已通过 SSH 远程 + 代理 `http://127.0.0.1:10809` 解决。
+
+**近期完成（perf）**：全量 bundle 自编译 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）；`make test` 50/50。
 
 ### 10.2 计划（按用户确定的路线图）
 
@@ -510,4 +512,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 6. **HO 原语**：`yac_apply1`/`yac_apply2` + 原生 `foldl`/`map`（含捕获）。
 7. **M4 起步**：`yc.yac` + `selfhost_yc.sh`；L4 烟测 `selfhost_l4_lex.sh`（原生 is_kw）。
 
-**仍待（完整 L4/L5）**：argv；整份 `lexer.yac` 等大源经 selfhost lower 仍有边界问题；原生 `yc_A` 自编译同构。
+**仍待（完整 L4/L5）**：
+1. **yc_A 运行时**：解释器编出全量 `yc_A`（~416KB）后，跑任意输入会在 `map(anf_item, prog)` 附近死循环；小驱动编出的原生二进制正常（fact=120）。L5 同构被此阻塞。
+2. **argv**：C 解释器有 `argc`/`argv` 原语，原生 rt 尚未接入；`yc.yac` 仍硬编码 `build/yc_tmp/in.yac`。
+3. **selfhost_l4_lex**：bundle 需含 `log.yac`（已修）。

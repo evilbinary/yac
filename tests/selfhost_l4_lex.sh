@@ -6,7 +6,7 @@ TMP=build/l4_iskw_tmp
 mkdir -p "$TMP"
 fail=0
 
-SRC='src-self/lexer.yac src-self/parser.yac src-self/anf.yac src-self/encode_x64.yac src-self/elf.yac src-self/lir.yac src-self/emit.yac src-self/backend.yac src-self/lower.yac'
+SRC='src-self/log.yac src-self/lexer.yac src-self/parser.yac src-self/anf.yac src-self/encode_x64.yac src-self/elf.yac src-self/lir.yac src-self/emit.yac src-self/backend.yac src-self/lower.yac'
 
 run_case() {
   local name="$1" prog="$2" want="$3"

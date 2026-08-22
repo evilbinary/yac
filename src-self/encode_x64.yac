@@ -476,6 +476,12 @@ let mov_rbx_mem_rbp(b, d) =
 /* sar rbx, 1  (48 d1 fb) */
 let sar_rbx_1(b) =
   let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 251)
+/* sar rdx, 1  (48 d1 fa) */
+let sar_rdx_1(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 250)
+/* sar rdi, 1  (48 d1 ff) */
+let sar_rdi_1(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 255)
 /* and rax, rbx  (48 21 d8) */
 let and_rax_rbx(b) =
   let _ = e8(b, 72) in let _ = e8(b, 33) in e8(b, 216)
@@ -485,6 +491,18 @@ let or_rax_rbx(b) =
 /* mov rcx, rbx  (48 89 d9) */
 let mov_rcx_rbx(b) =
   let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 217)
+/* mov rcx, rdx  (48 89 d1) */
+let mov_rcx_rdx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 209)
+/* cmp rcx, rax  (48 39 c1) */
+let cmp_rcx_rax(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 57) in e8(b, 193)
+/* mov dword [rbx+disp8], ecx  (48 89 4b disp8) */
+let mov_mem_rbx_disp8_rcx(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  let _ = e8(b, 75) in
+  e8(b, band(d, 255))
 /* shl rax, cl  (48 d3 e0) */
 let shl_rax_cl(b) =
   let _ = e8(b, 72) in let _ = e8(b, 211) in e8(b, 224)
