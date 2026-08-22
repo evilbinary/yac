@@ -114,10 +114,11 @@ let compiler_all(st, yc) =
 let exists_rc(p) = nth(run(["test", "-f", p]), 0)
 
 let cat_bundle(_) =
-  cat_files(["src-self/log.yac", "src-self/lexer.yac", "src-self/parser.yac",
-             "src-self/anf.yac", "src-self/encode_x64.yac", "src-self/elf.yac",
-             "src-self/lir.yac", "src-self/emit.yac", "src-self/backend.yac",
-             "src-self/lower.yac", "src-self/yc.yac"], BUNDLE)
+  cat_files(["src-self/log.yac", "src-self/pass.yac", "src-self/lexer.yac",
+             "src-self/parser.yac", "src-self/anf.yac", "src-self/encode_x64.yac",
+             "src-self/elf.yac", "src-self/lir.yac", "src-self/emit.yac",
+             "src-self/backend.yac", "src-self/lower.yac", "src-self/yc.yac"],
+            BUNDLE)
 
 let interp_step(st, row) =
   let k = nth(row, 0) in

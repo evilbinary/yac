@@ -1,0 +1,25 @@
+/* pass.yac — run the compiler's pass list.
+ *
+ * Pass: ["pass", name, fn]   fn : value -> value
+ *
+ * The list lives in yc.yac (not tests):
+ *   src -lex-> tok -parse-> ast -anf-> anf -lower-> lir -emit-> pack
+ * Later ANF opts go between "anf" and "lower". pack is the container
+ * (pack_elf today; other formats swap that pass).
+ */
+
+let mk_pass(name, fn) = ["pass", name, fn]
+
+let pass_name(p) = nth(p, 1)
+let pass_fn(p) = nth(p, 2)
+
+let run_pass(p, x) =
+  let fn = pass_fn(p) in
+  fn(x)
+
+let run_passes(ps, x) =
+  let n = len(ps) in
+  let loop(i, cur) =
+    if i >= n then cur
+    else loop(i + 1, run_pass(nth(ps, i), cur)) in
+  loop(0, x)

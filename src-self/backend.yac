@@ -1,17 +1,11 @@
-/* backend.yac — drive emit + elf to produce a runnable executable (M3.2).
- *
- * Takes a LIR program ["prog", [fun...], entryName]. The entry function is
- * emitted as the first function and becomes `_start` (no prologue/epilogue;
- * its ["exit", slot] makes the exit syscall). Non-entry functions get a
- * standard prologue and end with ret.
- *
- * API: backend_compile(lirProg) -> bytes (the ELF executable).
+/* backend.yac — emit then pack_elf for emit/elf drivers.
+ * yc.yac runs those as two PIPELINE passes instead of this helper.
  */
 let backend_compile(prog) =
   let _ = log("backend", "emit begin") in
   let r = emit_program(prog) in
   let _ = log_i("backend", "code_len", bytes_len(nth(r, 0))) in
-  let _ = log("backend", "pack_elf") in
-  let elf = pack_elf(nth(r, 0)) in
+  let _ = log("backend", "pack") in
+  let bin = pack_elf(nth(r, 0)) in
   let _ = log("backend", "done") in
-  elf
+  bin

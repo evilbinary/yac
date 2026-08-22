@@ -12,8 +12,12 @@
  * The last positional argument is always the input source file.
  *
  * Bundle:
- *   cat src-self/{log,lexer,parser,anf,encode_x64,elf,lir,emit,backend,lower,yc}.yac \
+ *   cat src-self/{log,pass,lexer,parser,anf,encode_x64,elf,lir,emit,backend,lower,yc}.yac \
  *     > build/yc_tmp/yc_bundle.yac
+ *
+ * PIPELINE: src -lex-> tok -parse-> ast -anf-> anf -lower-> lir -emit-> pack
+ * Insert ANF opts between "anf" and "lower". pack is the container
+ * (pack_elf today; later macho/pe/raw swap that pass).
  */
 
 let usage(_) =
@@ -54,24 +58,53 @@ let anf_all(i, prog, acc) =
   if i >= len(prog) then acc
   else anf_all(i + 1, prog, append(acc, [anf_top(nth(prog, i))]))
 
+let pass_lex(src) =
+  let _ = log("yc", "tokenize begin") in
+  let toks = tokenize(src) in
+  let _ = log_i("yc", "ntoks", len(toks)) in
+  toks
+
+let pass_parse(toks) =
+  let _ = log("yc", "parse begin") in
+  let prog = parse_program(toks, 0, []) in
+  let _ = log_i("yc", "nprog", len(prog)) in
+  prog
+
+let pass_anf(prog) =
+  let _ = log("yc", "anf begin") in
+  let anf_list = anf_all(0, prog, []) in
+  let _ = log_i("yc", "nanf", len(anf_list)) in
+  anf_list
+
+let pass_lower(anf_list) = compile_top(anf_list)
+
+let pass_emit(lir) =
+  let _ = log("yc", "emit begin") in
+  let r = emit_program(lir) in
+  let code = nth(r, 0) in
+  let _ = log_i("yc", "code_len", bytes_len(code)) in
+  code
+
+let pass_pack(code) =
+  let _ = log("yc", "pack") in
+  pack_elf(code)
+
+let PIPELINE =
+  [mk_pass("lex", pass_lex),
+   mk_pass("parse", pass_parse),
+   mk_pass("anf", pass_anf),
+   mk_pass("lower", pass_lower),
+   mk_pass("emit", pass_emit),
+   mk_pass("pack", pass_pack)]
+
 let compile_file(inpath, outpath) =
   let _ = log("yc", "start") in
   let src = read_file(inpath) in
   let _ = log_i("yc", "src_len", str_len(src)) in
-  let _ = log("yc", "tokenize begin") in
-  let toks = tokenize(src) in
-  let _ = log_i("yc", "ntoks", len(toks)) in
-  let _ = log("yc", "parse begin") in
-  let prog = parse_program(toks, 0, []) in
-  let _ = log_i("yc", "nprog", len(prog)) in
-  let _ = log("yc", "anf begin") in
-  let anf_list = anf_all(0, prog, []) in
-  let _ = log_i("yc", "nanf", len(anf_list)) in
-  let lir = compile_top(anf_list) in
-  let elf = backend_compile(lir) in
-  let _ = log_i("yc", "elf_len", bytes_len(elf)) in
+  let bin = run_passes(PIPELINE, src) in
+  let _ = log_i("yc", "bin_len", bytes_len(bin)) in
   let _ = log("yc", "write") in
-  let _ = write_file(outpath, elf) in
+  let _ = write_file(outpath, bin) in
   let _ = log("yc", "done") in
   0
 
