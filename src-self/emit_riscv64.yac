@@ -1448,6 +1448,39 @@ let emit_rv_i_prim(st, insn) =
     let _ = rv_unimp(b) in
     [b, cur, labels, patches]
 
+let emit_rv_i_memcpy(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = rv_slot(b, nth(insn, 1), false, 10) in
+  let _ = rv_untag_ptr(b, 10) in
+  let _ = rv_slot(b, nth(insn, 2), false, 11) in
+  let _ = rv_addi(b, 7, 0, 1) in
+  let _ = rv_sra(b, 11, 11, 7) in
+  let _ = rv_add(b, 10, 10, 11) in
+  let _ = rv_slot(b, nth(insn, 3), false, 11) in
+  let _ = rv_untag_ptr(b, 11) in
+  let _ = rv_slot(b, nth(insn, 4), false, 12) in
+  let _ = rv_sra(b, 12, 12, 7) in
+  let _ = rv_add(b, 11, 11, 12) in
+  let _ = rv_slot(b, nth(insn, 5), false, 12) in
+  let _ = rv_sra(b, 12, 12, 7) in
+  let loop = bytes_len(b) in
+  let jeq = bytes_len(b) in
+  let _ = rv_beq(b, 12, 0, 0) in
+  let _ = rv_lbu(b, 13, 11, 0) in
+  let _ = rv_sb(b, 13, 10, 0) in
+  let _ = rv_addi(b, 10, 10, 1) in
+  let _ = rv_addi(b, 11, 11, 1) in
+  let _ = rv_addi(b, 12, 12, 0 - 1) in
+  let jb = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let done = bytes_len(b) in
+  let _ = rv_patch_b(b, jeq, done) in
+  let _ = rv_apply_jal(b, jb, loop, 0) in
+  [b, cur, labels, patches]
+
 let emit_insn_rv(st, insn, is_entry) =
   let k = nth(insn, 0) in
   if k == "closure" or k == "apply" or k == "tailapply" then
@@ -1463,6 +1496,7 @@ let emit_insn_rv(st, insn, is_entry) =
        or k == "write1" or k == "clock" or k == "glob" or k == "time_ms"
        or k == "time_str" or k == "argc" or k == "argv" then
     emit_rv_i_heap(st, insn)
+  else if k == "memcpy" then emit_rv_i_memcpy(st, insn)
   else emit_rv_i_prim(st, insn)
 
 

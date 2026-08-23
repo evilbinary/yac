@@ -84,7 +84,9 @@ let l_ld8(d, p, off) = ["ld8", d, p, off]
 let l_st8(p, off, v) = ["st8", p, off, v]
 /* Kernel OS bits: write1 writes one untagged byte (char slot) to stdout.
  * clock fills two tagged-int slots from clock_gettime (clockid immediate).
- * glob 1 = saved_argc (tagged). argv C strings stay handwritten. */
+ * glob 1 = saved_argc (tagged). argv C strings stay handwritten.
+ * memcpy copies n tagged-int bytes from src+soff to dst+doff (obj ptrs). */
 let l_write1(s) = ["write1", s]
 let l_clock(dsec, dnsec, clockid) = ["clock", dsec, dnsec, clockid]
 let l_glob(d, which) = ["glob", d, which]
+let l_memcpy(dst, doff, src, soff, n) = ["memcpy", dst, doff, src, soff, n]

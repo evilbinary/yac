@@ -1740,6 +1740,31 @@ let emit_x86_i_prim(st, insn) =
     [b, cur, labels, cons([acall + 1, "yac_write_file"], patches)]
   else st
 
+/* memcpy dst doff src soff n: copy n bytes (tagged ints) between objects. */
+let emit_x86_i_memcpy(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rdi_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = sar_rax_1(b) in
+  let _ = add_rdi_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rsi_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 4)) in
+  let _ = sar_rax_1(b) in
+  let _ = add_rsi_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 5)) in
+  let _ = sar_rax_1(b) in
+  let _ = mov_rcx_rax(b) in
+  let _ = cld(b) in
+  let _ = rep_movsb(b) in
+  [b, cur, labels, patches]
+
 /* emit one instruction; st = [bytes, cur, labelsRev, patchesRev].
  * Helpers keep this frame small (huge emit_insn miscompiles under L5). */
 let emit_insn(st, insn, is_entry) =
@@ -1761,6 +1786,7 @@ let emit_insn(st, insn, is_entry) =
          or k == "write1" or k == "clock" or k == "glob" or k == "time_ms"
          or k == "time_str" or k == "argc" or k == "argv" then
       emit_x86_i_heap(st, insn)
+    else if k == "memcpy" then emit_x86_i_memcpy(st, insn)
     else emit_x86_i_prim(st, insn) in
   let newlen = bytes_len(nth(done, 0)) in
   [nth(done, 0), cur + (newlen - len0), nth(done, 2), nth(done, 3)]

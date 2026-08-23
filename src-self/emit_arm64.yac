@@ -1442,6 +1442,39 @@ let emit_a64_i_prim(st, insn) =
     let _ = a64_brk(b) in
     [b, cur, labels, patches]
 
+let emit_a64_i_memcpy(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  let _ = a64_untag_ptr(b, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 1) in
+  let _ = a64_asr1(b, 1, 1) in
+  let _ = a64_add_reg(b, 0, 0, 1) in
+  let _ = a64_slot(b, nth(insn, 3), false, 2) in
+  let _ = a64_untag_ptr(b, 2) in
+  let _ = a64_slot(b, nth(insn, 4), false, 3) in
+  let _ = a64_asr1(b, 3, 3) in
+  let _ = a64_add_reg(b, 1, 2, 3) in
+  let _ = a64_slot(b, nth(insn, 5), false, 2) in
+  let _ = a64_asr1(b, 2, 2) in
+  let loop = bytes_len(b) in
+  let _ = a64_cmp_imm(b, 2, 0) in
+  let jeq = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_ldrb(b, 3, 1) in
+  let _ = a64_strb(b, 3, 0) in
+  let _ = a64_add_imm(b, 0, 0, 1) in
+  let _ = a64_add_imm(b, 1, 1, 1) in
+  let _ = a64_sub_imm(b, 2, 2, 1) in
+  let jb = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let done = bytes_len(b) in
+  let _ = a64_patch_bcond(b, jeq, done) in
+  let _ = a64_apply_b26(b, jb, loop) in
+  [b, cur, labels, patches]
+
 let emit_insn_a64(st, insn, is_entry) =
   let k = nth(insn, 0) in
   if k == "closure" or k == "apply" or k == "tailapply" then
@@ -1457,6 +1490,7 @@ let emit_insn_a64(st, insn, is_entry) =
        or k == "write1" or k == "clock" or k == "glob" or k == "time_ms"
        or k == "time_str" or k == "argc" or k == "argv" then
     emit_a64_i_heap(st, insn)
+  else if k == "memcpy" then emit_a64_i_memcpy(st, insn)
   else emit_a64_i_prim(st, insn)
 
 

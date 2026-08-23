@@ -388,6 +388,17 @@ let mov_rdx_rax(b) =
 /* mov rcx <- rax (48 89 c1) */
 let mov_rcx_rax(b) =
   let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 193)
+/* add rdi, rax  (48 01 c7) */
+let add_rdi_rax(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 1) in e8(b, 199)
+/* add rsi, rax  (48 01 c6) */
+let add_rsi_rax(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 1) in e8(b, 198)
+/* cld (fc) — forward rep movsb */
+let cld(b) = e8(b, 252)
+/* rep movsb (f3 a4) */
+let rep_movsb(b) =
+  let _ = e8(b, 243) in e8(b, 164)
 /* mov r8  <- rax (49 89 c0) */
 let mov_r8_rax(b) =
   let _ = e8(b, 73) in let _ = e8(b, 137) in e8(b, 192)

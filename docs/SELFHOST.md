@@ -244,11 +244,11 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,elf,pe,macho,pack,backend,encode_*,yc}.yac`。
 全量：`./yac tests/run.yac`（C：interp_suite + 引导 `yc_A`；原生 `yc_A`：compiler/qemu/boot 前端部分；`yc_B` + L5 iso）。
-**下一步**：拆 `emit_insn`（已拆成 `emit_*_i_{core,heap,clos,prim}`）；memcpy 热路径可接到小函数里。cps/callcc 仍走 C，不要跳 M7。
+**下一步**：cps/callcc 仍走 C，不要跳 M7。
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
 
-`runtime.yac` 用 LIR 实现列表/字符串/bytes 以及 `print_int`、`print_val`（列表/`[]`/裸字符串，对齐 C `value_to_string`）、`time_ms`/`time_str`、`yac_argc`、`gc_collect`（转调 `yac_gc`）。kernel 指令：`write1`、`clock`、`glob`、`is_int`（偶数为 int）。`compile_top` 产出 **25** 个 fun（`_start` + 24 runtime；手写 helper 不占 fun 表）。
+`runtime.yac` 用 LIR 实现列表/字符串/bytes 以及 `print_int`、`print_val`（列表/`[]`/裸字符串，对齐 C `value_to_string`）、`time_ms`/`time_str`、`yac_argc`、`gc_collect`（转调 `yac_gc`）。kernel 指令：`write1`、`clock`、`glob`、`is_int`（偶数为 int）、`memcpy`（x86 `rep movsb`；arm64/riscv64 字节循环，独立小函数）。`compile_top` 产出 **25** 个 fun（`_start` + 24 runtime；手写 helper 不占 fun 表）。
 
 **无法再迁进 LIR 的手写 `gen_*`**（`emit_program_at` 末尾追加）：
 
@@ -261,7 +261,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **已知编译器限制**：小程序里 33 元列表 / 33 个 `let` 都正常；**编译器自己的 `_start`（bundle 几百条顶层 let 合成一帧）里**放 33 元 LIR cons 字面量会被错编（`bytes_to_str` → SIGSEGV 139）。对策：`runtime.yac` 的 insn 列表做成 `rt_*_ins(_)` 小函数。`emit_insn` 已拆成按 op 分组的小函数；不要再把大块逻辑塞回 dispatcher。
 
-**近期完成（perf）**：全量 bundle 自编译曾 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）。`emit_insn` 已按 core/heap/clos/prim 拆开；memcpy 热路径可以接到小函数，不要塞进 dispatcher。
+**近期完成（perf）**：全量 bundle 自编译曾 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）。`emit_insn` 已按 core/heap/clos/prim 拆开。`str_cat` / `str_slice` / `bytes_extend` / `bytes_to_str` 走 kernel `memcpy`（x86 `rep movsb`）。
 
 ### 10.2 计划（按用户确定的路线图）
 
