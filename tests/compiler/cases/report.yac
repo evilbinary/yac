@@ -1,0 +1,9 @@
+let total(xs) = foldl(fun(a, p) -> a + nth(p, 1), 0, xs) in
+let npass(xs) = foldl(fun(a, p) -> if nth(p, 1) >= 60 then a + 1 else a, 0, xs) in
+let kv(k, n) = str_cat(str_cat(k, "="), int_to_str(n)) in
+let sp(a, b) = str_cat(str_cat(a, " "), b) in
+let report(xs) =
+  let n = len(xs) in
+  let s = total(xs) in
+  sp(sp(sp(kv("n", n), kv("sum", s)), kv("avg", s / n)), kv("pass", npass(xs))) in
+print report([["ann", 90], ["bob", 70], ["cy", 100], ["dot", 40]])
