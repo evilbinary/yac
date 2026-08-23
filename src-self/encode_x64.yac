@@ -517,6 +517,12 @@ let and_rax_rbx(b) =
 /* or rax, rbx  (48 09 d8) */
 let or_rax_rbx(b) =
   let _ = e8(b, 72) in let _ = e8(b, 9) in e8(b, 216)
+/* xor rax, rbx  (48 31 d8) */
+let xor_rax_rbx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 49) in e8(b, 216)
+/* not rax  (48 f7 d0) */
+let not_rax(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 247) in e8(b, 208)
 /* mov rcx, rbx  (48 89 d9) */
 let mov_rcx_rbx(b) =
   let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 217)

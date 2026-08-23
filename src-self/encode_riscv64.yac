@@ -32,6 +32,12 @@ let rv_or(b, rd, rs1, rs2) =
 let rv_sll(b, rd, rs1, rs2) =
   rv_u32(b, bshl(rs2, 20) + bshl(rs1, 15) + 4096 + bshl(rd, 7) + 51)
 
+let rv_srl(b, rd, rs1, rs2) =
+  rv_u32(b, bshl(rs2, 20) + bshl(rs1, 15) + 20480 + bshl(rd, 7) + 51)
+
+let rv_xori(b, rd, rs1, imm) =
+  rv_u32(b, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + 16384 + bshl(rd, 7) + 19)
+
 let rv_sra(b, rd, rs1, rs2) =
   rv_u32(b, 1073741824 + bshl(rs2, 20) + bshl(rs1, 15) + 20480 + bshl(rd, 7) + 51)
 

@@ -173,7 +173,7 @@ let prim_names = ["cons", "len", "nth", "tail", "append", "print",
                   "time_ms", "time_str", "argc", "argv",
                   "bytes_new", "bytes_len", "bytes_append", "bytes_extend", "bytes_ref", "bytes_put",
                   "bytes_to_str", "list_new", "list_push", "list_rev",
-                  "read_file", "write_file", "system", "popen", "band", "bor", "bxor", "bshl", "bshr",
+                  "read_file", "write_file", "system", "popen", "band", "bor", "bxor", "bnot", "bshl", "bshr",
                   "gc_collect"]
 let is_prim_name(w) = in_list(w, prim_names)
 
@@ -427,6 +427,8 @@ let lower_body(anf, st, in_tail) =
           else if fnname == "gc_collect" then l_call(dst, "gc_collect", [])
           else if fnname == "band" then l_binop("&", dst, nth(slots, 0), nth(slots, 1))
           else if fnname == "bor" then l_binop("|", dst, nth(slots, 0), nth(slots, 1))
+          else if fnname == "bxor" then l_binop("^", dst, nth(slots, 0), nth(slots, 1))
+          else if fnname == "bnot" then l_binop("~", dst, nth(slots, 0), nth(slots, 0))
           else if fnname == "bshl" then l_binop("<<", dst, nth(slots, 0), nth(slots, 1))
           else if fnname == "bshr" then l_binop(">>", dst, nth(slots, 0), nth(slots, 1))
           else

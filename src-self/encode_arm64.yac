@@ -87,6 +87,16 @@ let a64_ldr(b, rt, rn, off) =
 
 let a64_lsl1(b, rd, rn) = a64_add_reg(b, rd, rn, rn)
 
+/* LSLV Xd,Xn,Xm  0x9AC02000 */
+let a64_lslv(b, rd, rn, rm) =
+  a64_u32(b, 2596282368 + bshl(rm, 16) + bshl(rn, 5) + rd)
+/* LSRV Xd,Xn,Xm  0x9AC02400 */
+let a64_lsrv(b, rd, rn, rm) =
+  a64_u32(b, 2596283392 + bshl(rm, 16) + bshl(rn, 5) + rd)
+/* MVN Xd,Xm = ORN Xd,XZR,Xm  0xAA2003E0 */
+let a64_mvn(b, rd, rm) =
+  a64_u32(b, 2854224864 + bshl(rm, 16) + rd)
+
 /* ASR #1: ADD Xd, XZR, Xn, ASR #1  (0x8B800400 + Rn<<16 + Rd). SBFM immediates are qemu-sensitive. */
 let a64_asr1(b, rd, rn) =
   a64_u32(b, 2340422656 + bshl(rn, 16) + 992 + rd)

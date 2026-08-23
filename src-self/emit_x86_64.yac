@@ -817,6 +817,8 @@ let emit_x86_i_core(st, insn, is_entry) =
       else if op == "*" then imul_rax_rbx(b)
       else if op == "&" then and_rax_rbx(b)
       else if op == "|" then or_rax_rbx(b)
+      else if op == "^" then xor_rax_rbx(b)
+      else if op == "~" then not_rax(b)
       else if op == "<<" then
         let _ = mov_rcx_rbx(b) in
         shl_rax_cl(b)
