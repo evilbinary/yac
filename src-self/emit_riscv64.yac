@@ -17,20 +17,52 @@ let rv_untag_ptr(b, rd) =
   let _ = rv_addi(b, 29, 0, 0 - 2) in
   rv_and(b, rd, rd, 29)
 
+/* yac_alloc(n in a0) -> a0 raw ptr. brk; if that fails, mmap ANON. */
 let gen_alloc_rv(_) =
   let b = bytes_new() in
   let _ = rv_addi(b, 2, 2, 0 - 16) in
   let _ = rv_sd(b, 1, 2, 8) in
   let _ = rv_addi(b, 28, 10, 0) in
+  let _ = rv_addi(b, 10, 0, 0) in
+  let _ = rv_addi(b, 17, 0, 214) in
+  let _ = rv_ecall(b) in
+  let _ = rv_addi(b, 29, 10, 0) in
+  let _ = rv_add(b, 10, 29, 28) in
+  let _ = rv_addi(b, 17, 0, 214) in
+  let _ = rv_ecall(b) in
+  let _ = rv_add(b, 5, 29, 28) in
+  let jz = bytes_len(b) in
+  let _ = rv_beq(b, 10, 0, 0) in
+  let jlt = bytes_len(b) in
+  let _ = rv_blt(b, 10, 0, 0) in
+  let jlo = bytes_len(b) in
+  let _ = rv_bltu(b, 10, 5, 0) in
+  let _ = rv_addi(b, 10, 29, 0) in
+  let jok = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let mmap = bytes_len(b) in
+  let _ = rv_patch_b(b, jz, mmap) in
+  let _ = rv_patch_b(b, jlt, mmap) in
+  let _ = rv_patch_b(b, jlo, mmap) in
+  let _ = rv_addi(b, 11, 28, 0) in
+  let _ = rv_addi(b, 10, 0, 0) in
+  let _ = rv_addi(b, 12, 0, 3) in
+  let _ = rv_addi(b, 13, 0, 34) in
+  let _ = rv_addi(b, 14, 0, 0 - 1) in
+  let _ = rv_addi(b, 15, 0, 0) in
+  let _ = rv_addi(b, 17, 0, 222) in
+  let _ = rv_ecall(b) in
+  let link = bytes_len(b) in
+  let imm = link - jok in
+  let i = band(imm, 2097151) in
+  let _ = rv_u32_at(b, jok,
+    bshl(band(bshr(i, 20), 1), 31) + bshl(band(bshr(i, 1), 1023), 21) +
+    bshl(band(bshr(i, 11), 1), 20) + bshl(band(bshr(i, 12), 255), 12) + 111) in
   let headpos = bytes_len(b) in
   let _ = rv_li32_pair(b, 6, 0) in
   let _ = rv_ld(b, 7, 6, 0) in
-  let _ = rv_ld(b, 29, 6, 24) in
-  let _ = rv_add(b, 5, 29, 28) in
-  let _ = rv_sd(b, 5, 6, 24) in
-  let _ = rv_sd(b, 7, 29, 0) in
-  let _ = rv_sd(b, 29, 6, 0) in
-  let _ = rv_addi(b, 10, 29, 0) in
+  let _ = rv_sd(b, 7, 10, 0) in
+  let _ = rv_sd(b, 10, 6, 0) in
   let _ = rv_ld(b, 1, 2, 8) in
   let _ = rv_addi(b, 2, 2, 16) in
   let _ = rv_jalr(b, 0, 1, 0) in
@@ -1237,7 +1269,6 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
-  let _ = apply_u64(b, data_start + 24, GLOBALS_BASE + 32) in
   let patches2 =
     cons(["gc_head", alc_off + nth(alcr, 1)],
          cons(["jalra", rf_off + nth(rfr, 1), "yac_alloc"],

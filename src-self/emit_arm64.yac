@@ -14,7 +14,7 @@ let a64_untag_ptr(b, rd) =
   let _ = a64_mov_imm64(b, 10, 0 - 2) in
   a64_and_reg(b, rd, rd, 10)
 
-/* yac_alloc(n in x0) -> x0 raw ptr. brk(2); link gc_head. Returns [bytes, headMovPos]. */
+/* yac_alloc(n in x0) -> x0 raw ptr. brk; if that fails, mmap ANON. link gc_head. */
 let gen_alloc_a64(_) =
   let b = bytes_new() in
   let _ = a64_sub_imm(b, 31, 31, 32) in
@@ -29,6 +29,34 @@ let gen_alloc_a64(_) =
   let _ = a64_add_reg(b, 0, 20, 19) in
   let _ = a64_movz(b, 8, 214, 0) in
   let _ = a64_svc(b) in
+  let _ = a64_add_reg(b, 9, 20, 19) in
+  let _ = a64_cmp_reg(b, 0, 31) in
+  let jz = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let jlt = bytes_len(b) in
+  let _ = a64_b_cond(b, 11, 0) in
+  let _ = a64_cmp_reg(b, 0, 9) in
+  let jlo = bytes_len(b) in
+  let _ = a64_b_cond(b, 3, 0) in
+  let _ = a64_mov_reg(b, 0, 20) in
+  let jok = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let mmap = bytes_len(b) in
+  let _ = a64_patch_bcond(b, jz, mmap) in
+  let _ = a64_patch_bcond(b, jlt, mmap) in
+  let _ = a64_patch_bcond(b, jlo, mmap) in
+  let _ = a64_mov_reg(b, 1, 19) in
+  let _ = a64_movz(b, 0, 0, 0) in
+  let _ = a64_movz(b, 2, 3, 0) in
+  let _ = a64_movz(b, 3, 34, 0) in
+  let _ = a64_mov_imm64(b, 4, 0 - 1) in
+  let _ = a64_movz(b, 5, 0, 0) in
+  let _ = a64_movz(b, 8, 222, 0) in
+  let _ = a64_svc(b) in
+  let link = bytes_len(b) in
+  let rel = bshr(link - jok, 2) in
+  let _ = a64_u32_at(b, jok, 335544320 + band(rel, 67108863)) in
+  let _ = a64_mov_reg(b, 20, 0) in
   let headpos = bytes_len(b) in
   let _ = a64_mov_imm64(b, 0, 0) in
   let _ = a64_ldur(b, 1, 0, 0) in
