@@ -90,3 +90,59 @@ let l_write1(s) = ["write1", s]
 let l_clock(dsec, dnsec, clockid) = ["clock", dsec, dnsec, clockid]
 let l_glob(d, which) = ["glob", d, which]
 let l_memcpy(dst, doff, src, soff, n) = ["memcpy", dst, doff, src, soff, n]
+
+/* Rewrite a suffix self-call whose dest is moved into the ret slot.
+ * Only `call` (not apply). C lower also only tailcalls the same gname;
+ * tailcalling nested parse_binloop from parse_expr hangs yc_A on the bundle. */
+let tco_find(insns, i, slot) =
+  if i < 0 then 0 - 1
+  else
+    let ins = nth(insns, i) in
+    let k = nth(ins, 0) in
+    if k == "ret" then tco_find(insns, i - 1, nth(ins, 1))
+    else if k == "label" then tco_find(insns, i - 1, slot)
+    else if k == "mov" then
+      if nth(ins, 1) == slot then tco_find(insns, i - 1, nth(ins, 2))
+      else 0 - 1
+    else if k == "call" then
+      if nth(ins, 1) != slot then 0 - 1
+      else if len(nth(ins, 3)) > 6 then 0 - 1
+      else i
+    else 0 - 1
+
+let tco_one(ins) =
+  let k = nth(ins, 0) in
+  if k == "call" then l_tailcall(nth(ins, 1), nth(ins, 2), nth(ins, 3))
+  else if k == "apply" then
+    l_tailapply(nth(ins, 1), nth(ins, 2), nth(ins, 3), nth(ins, 4))
+  else ins
+
+let tco_copy(insns, idx, j, acc) =
+  let n = len(insns) in
+  if j >= n then acc
+  else
+    let ins = nth(insns, j) in
+    let nxt = if j == idx then tco_one(ins) else ins in
+    let _ = list_push(acc, nxt) in
+    tco_copy(insns, idx, j + 1, acc)
+
+let tco_fun(f) =
+  let insns = nth(f, 4) in
+  let n = len(insns) in
+  if n < 2 then f
+  else
+    let idx = tco_find(insns, n - 1, 0) in
+    if idx == 0 - 1 then f
+    else l_fun(nth(f, 1), nth(f, 2), nth(f, 3),
+               tco_copy(insns, idx, 0, list_new()), nth(f, 5))
+
+let tco_prog(p) =
+  let funs = nth(p, 1) in
+  let n = len(funs) in
+  let out = list_new() in
+  let loop(i) =
+    if i >= n then out
+    else
+      let _ = list_push(out, tco_fun(nth(funs, i))) in
+      loop(i + 1) in
+  l_prog(loop(0), nth(p, 2))

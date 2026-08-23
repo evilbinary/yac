@@ -528,7 +528,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 8. **M5**：arm64/riscv64 与 x86 同源 `COMPILER_CASES`（qemu）。emit 跳过空 fun stub；`cmp ==` 走 `yac_str_eq`；`print` 区分 int/STR。`yac_alloc`：`brk`，失败则 `mmap` ANON。
 
 **仍待**：
-1. **M6 L6**：compiler/qemu 只经原生 `yc_A`；boot 的 lex/parse/anf/elf/emit/encode 用 `yc_A` 编跑。`bxor`/`bnot`/`bshl`/`bshr` 三架构。boot **harness**（`tests/boot/run.yac`）仍走 C。cps/callcc/float/bignum 仍走 C。`yc_A`/`yc_B` iso 仍在。
+1. **M6 L6**：compiler/qemu 只经原生 `yc_A`；boot 的 lex/parse/anf/elf/emit/encode 用 `yc_A` 编跑。`bxor`/`bnot`/`bshl`/`bshr` 三架构。`loop(100000)` TCO（LIR 后缀 `call`→`tailcall`，C 与 `yc_A` 同构）。boot **harness**（`tests/boot/run.yac`）仍走 C。cps/callcc/float/bignum 仍走 C。`yc_A`/`yc_B` iso 仍在。
 2. **`--emit-asm` / `regalloc.yac` / M7 callcc**：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。
@@ -538,6 +538,6 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 **关键修复**：
 - **letif 丢函数**：then 臂 `letfun` 未并入 funs，闭包 fnptr 变成 `_start`。
 - **`read_file` 64KiB 上限**：改为 `lseek` 按文件大小分配。
-- **TCO**：尾位置 `call`/`apply` 改为拆栈后 `jmp`（`lex` 约 4.5 万 token 不再爆栈）。
+- **TCO**：只改**同名**后缀 `call` 为拆栈 `jmp`（不要 `apply`、不要 `parse_program`/`parse_expr`）。`tco_prog` 仅对单条 top-level；C lower `maybe_tailcall` 同样只认当前 gname。`loop(100000)` 用例。
 - **`and` 非短路**：`skip_block_cm` 里 `* /` 判断在含 ` * ` 的块注释上误匹配；改为嵌套 `if`。
 - **空参 `let f() =`**：消耗 `)`；`has_params`（不要用 `len(params)>0`）才包装成 `fun`，否则 `f()` 会去调用整数。

@@ -111,7 +111,7 @@ let COMPILER_CASES = [
   ["print_list", "out", "[1, [2, 3], x]\n[]"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
-  ["io_rw", "rc", "2"], ["gc_loop", "rc", "42"]]
+  ["io_rw", "rc", "2"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"]]
 
 let compiler_all(st, yc) =
   foldl(fun(s, c) -> compiler_one(s, yc, c), st, COMPILER_CASES)
@@ -135,7 +135,7 @@ let ARCH_INT_CASES = [
   ["print_list", "out", "[1, [2, 3], x]\n[]"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
-  ["io_rw", "rc", "2"], ["gc_loop", "rc", "42"]]
+  ["io_rw", "rc", "2"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"]]
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
