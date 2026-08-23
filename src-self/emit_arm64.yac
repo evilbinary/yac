@@ -109,6 +109,187 @@ let a64_leave(b) =
   let _ = a64_ldp_fp_lr(b) in
   a64_ret(b)
 
+/* yac_gc: mark tagged slots [x29+16, stack_hi), unlink unmarked.
+ * x19=&gc_head x20=stack_hi x21=cursor. [bytes, headpos, shipos]. */
+let gen_gc_a64(_) =
+  let b = bytes_new() in
+  let _ = a64_stp_fp_lr(b) in
+  let _ = a64_mov_sp(b, 29, 31) in
+  let _ = a64_sub_imm(b, 31, 31, 64) in
+  let _ = a64_stur(b, 19, 31, 0) in
+  let _ = a64_stur(b, 20, 31, 8) in
+  let _ = a64_stur(b, 21, 31, 16) in
+  let headpos = bytes_len(b) in
+  let _ = a64_mov_imm64(b, 0, 0) in
+  let _ = a64_mov_reg(b, 19, 0) in
+  let shipos = bytes_len(b) in
+  let _ = a64_mov_imm64(b, 0, 0) in
+  let _ = a64_ldur(b, 20, 0, 0) in
+  let _ = a64_ldur(b, 21, 19, 0) in
+  let jcl = bytes_len(b) in
+  let _ = a64_cmp_reg(b, 21, 31) in
+  let pcl = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_movz(b, 9, 0, 0) in
+  let _ = a64_stur(b, 9, 21, 8) in
+  let _ = a64_ldur(b, 21, 21, 0) in
+  let jclb = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let _ = a64_apply_b26(b, jclb, jcl) in
+  let _ = a64_patch_bcond(b, pcl, bytes_len(b)) in
+  let _ = a64_add_imm(b, 21, 29, 16) in
+  let jsc = bytes_len(b) in
+  let _ = a64_cmp_reg(b, 21, 20) in
+  let pscd = bytes_len(b) in
+  let _ = a64_b_cond(b, 2, 0) in
+  let _ = a64_ldur(b, 0, 21, 0) in
+  let _ = a64_stur(b, 21, 31, 24) in
+  let cscan = bytes_len(b) in
+  let _ = a64_bl(b, 0) in
+  let _ = a64_ldur(b, 21, 31, 24) in
+  let _ = a64_add_imm(b, 21, 21, 8) in
+  let jscb = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let _ = a64_apply_b26(b, jscb, jsc) in
+  let _ = a64_patch_bcond(b, pscd, bytes_len(b)) in
+  let _ = a64_movz(b, 2, 0, 0) in
+  let _ = a64_ldur(b, 21, 19, 0) in
+  let jsw = bytes_len(b) in
+  let _ = a64_cmp_reg(b, 21, 31) in
+  let pswd = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_ldur(b, 1, 21, 0) in
+  let _ = a64_ldur(b, 0, 21, 8) in
+  let _ = a64_cmp_reg(b, 0, 31) in
+  let pdead = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_mov_reg(b, 2, 21) in
+  let _ = a64_mov_reg(b, 21, 1) in
+  let jliveb = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let _ = a64_apply_b26(b, jliveb, jsw) in
+  let _ = a64_patch_bcond(b, pdead, bytes_len(b)) in
+  let _ = a64_cmp_reg(b, 2, 31) in
+  let pfirst = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_stur(b, 1, 2, 0) in
+  let _ = a64_mov_reg(b, 21, 1) in
+  let junlb = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let _ = a64_apply_b26(b, junlb, jsw) in
+  let _ = a64_patch_bcond(b, pfirst, bytes_len(b)) in
+  let _ = a64_stur(b, 1, 19, 0) in
+  let _ = a64_mov_reg(b, 21, 1) in
+  let jfstb = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let _ = a64_apply_b26(b, jfstb, jsw) in
+  let _ = a64_patch_bcond(b, pswd, bytes_len(b)) in
+  let _ = a64_ldur(b, 19, 31, 0) in
+  let _ = a64_ldur(b, 20, 31, 8) in
+  let _ = a64_ldur(b, 21, 31, 16) in
+  let _ = a64_leave(b) in
+  let mark = bytes_len(b) in
+  let _ = a64_apply_bl(b, cscan, mark) in
+  let _ = a64_movz(b, 10, 1, 0) in
+  let _ = a64_and_reg(b, 9, 0, 10) in
+  let _ = a64_cmp_reg(b, 9, 31) in
+  let pme = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_cmp_imm(b, 0, 1) in
+  let pme2 = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_untag_ptr(b, 0) in
+  let _ = a64_mov_reg(b, 1, 0) in
+  let _ = a64_ldur(b, 21, 19, 0) in
+  let jmf = bytes_len(b) in
+  let _ = a64_cmp_reg(b, 21, 31) in
+  let pmf = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_cmp_reg(b, 21, 1) in
+  let pmh = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_ldur(b, 21, 21, 0) in
+  let jmfb = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let _ = a64_apply_b26(b, jmfb, jmf) in
+  let _ = a64_patch_bcond(b, pmh, bytes_len(b)) in
+  let _ = a64_ldur(b, 0, 21, 8) in
+  let _ = a64_cmp_reg(b, 0, 31) in
+  let palr = bytes_len(b) in
+  let _ = a64_b_ne(b, 0) in
+  let _ = a64_movz(b, 9, 1, 0) in
+  let _ = a64_stur(b, 9, 21, 8) in
+  let _ = a64_ldur(b, 0, 21, 16) in
+  let _ = a64_cmp_imm(b, 0, 2) in
+  let pcons = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_cmp_imm(b, 0, 5) in
+  let plbuf = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_cmp_imm(b, 0, 3) in
+  let pstr = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_cmp_imm(b, 0, 4) in
+  let pbyt = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_ldur(b, 3, 21, 24) in
+  let _ = a64_add_imm(b, 4, 21, 32) in
+  let jcap = bytes_len(b) in
+  let _ = a64_cmp_reg(b, 3, 31) in
+  let pcapd = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_stur(b, 21, 31, 32) in
+  let _ = a64_stur(b, 3, 31, 40) in
+  let _ = a64_stur(b, 4, 31, 48) in
+  let _ = a64_stur(b, 30, 31, 56) in
+  let _ = a64_ldur(b, 0, 4, 0) in
+  let ccap = bytes_len(b) in
+  let _ = a64_bl(b, 0) in
+  let _ = a64_ldur(b, 30, 31, 56) in
+  let _ = a64_ldur(b, 4, 31, 48) in
+  let _ = a64_ldur(b, 3, 31, 40) in
+  let _ = a64_ldur(b, 21, 31, 32) in
+  let _ = a64_add_imm(b, 4, 4, 8) in
+  let _ = a64_sub_imm(b, 3, 3, 1) in
+  let jcapb = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let _ = a64_apply_b26(b, jcapb, jcap) in
+  let _ = a64_apply_bl(b, ccap, mark) in
+  let _ = a64_patch_bcond(b, pcapd, bytes_len(b)) in
+  let pmr1 = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let consa = bytes_len(b) in
+  let _ = a64_patch_bcond(b, pcons, consa) in
+  let _ = a64_stur(b, 21, 31, 32) in
+  let _ = a64_stur(b, 30, 31, 40) in
+  let _ = a64_ldur(b, 0, 21, 24) in
+  let ccar = bytes_len(b) in
+  let _ = a64_bl(b, 0) in
+  let _ = a64_ldur(b, 30, 31, 40) in
+  let _ = a64_ldur(b, 21, 31, 32) in
+  let _ = a64_ldur(b, 0, 21, 32) in
+  let ptail1 = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let lbufa = bytes_len(b) in
+  let _ = a64_patch_bcond(b, plbuf, lbufa) in
+  let _ = a64_ldur(b, 0, 21, 32) in
+  let ptail2 = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let mret = bytes_len(b) in
+  let _ = a64_patch_bcond(b, pme, mret) in
+  let _ = a64_patch_bcond(b, pme2, mret) in
+  let _ = a64_patch_bcond(b, pmf, mret) in
+  let _ = a64_patch_bcond(b, palr, mret) in
+  let _ = a64_patch_bcond(b, pstr, mret) in
+  let _ = a64_patch_bcond(b, pbyt, mret) in
+  let _ = a64_apply_b26(b, pmr1, mret) in
+  let _ = a64_apply_bl(b, ccar, mark) in
+  let _ = a64_apply_b26(b, ptail1, mark) in
+  let _ = a64_apply_b26(b, ptail2, mark) in
+  let _ = a64_ret(b) in
+  [b, headpos, shipos]
+
+
 let a64_clamp0(b) =
   let _ = a64_cmp_reg(b, 0, 31) in
   let p = bytes_len(b) in
@@ -570,6 +751,13 @@ let emit_insn_a64(st, insn, is_entry) =
       else
         let _ = a64_stp_fp_lr(b) in
         a64_mov_sp(b, 29, 31) in
+    let patches3 =
+      if is_entry then
+        let sh_save = bytes_len(b) in
+        let _ = a64_mov_imm64(b, 0, 0) in
+        let _ = a64_stur(b, 29, 0, 0) in
+        cons(["stack_hi", sh_save], patches2)
+      else patches2 in
     let _ = a64_sub_imm(b, 31, 31, nbytes) in
     let storep(j) =
       if j >= nparams then 0
@@ -578,7 +766,7 @@ let emit_insn_a64(st, insn, is_entry) =
         let _ = a64_slot(b, j + 1, true, j) in
         storep(j + 1) in
     let _ = storep(0) in
-    [b, cur, labels, patches2]
+    [b, cur, labels, patches3]
   else if k == "mov_imm" then
     let _ = a64_mov_imm64(b, 0, nth(insn, 2)) in
     let _ = a64_lsl1(b, 0, 0) in
@@ -1239,7 +1427,8 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let av_off = bytes_len(b) in
   let _ = b_append(b, nth(avr, 0)) in
   let gc_off = bytes_len(b) in
-  let _ = a64_ret(b) in
+  let gcr = gen_gc_a64(0) in
+  let _ = b_append(b, nth(gcr, 0)) in
   let fo = cons(["yac_apply1", a1_off],
                 cons(["yac_apply2", a2_off],
                      cons(["yac_write_file", wf_off],
@@ -1249,16 +1438,18 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
                                     cons(["yac_argv", av_off], fo0))))))) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 24 then 0
+    if i >= 32 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
   let patches2 =
     cons(["gc_head", alc_off + nth(alcr, 1)],
+         cons(["gc_head", gc_off + nth(gcr, 1)],
+              cons(["stack_hi", gc_off + nth(gcr, 2)],
          cons(["bl", rf_off + nth(rfr, 1), "yac_alloc"],
               cons(["bl", av_off + nth(avr, 3), "yac_alloc"],
                    cons(["saved_argc", av_off + nth(avr, 1)],
-                        cons(["saved_argv", av_off + nth(avr, 2)], patches))))) in
+                        cons(["saved_argv", av_off + nth(avr, 2)], patches))))))) in
   let resolve(i) =
     if i < 0 then 0
     else
@@ -1269,6 +1460,8 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
           a64_mov_imm64_at(b, nth(p, 1), 0, GLOBALS_BASE + 8)
         else if kind == "saved_argv" then
           a64_mov_imm64_at(b, nth(p, 1), 0, GLOBALS_BASE + 16)
+        else if kind == "stack_hi" then
+          a64_mov_imm64_at(b, nth(p, 1), 0, GLOBALS_BASE + 24)
         else if kind == "gc_head" then
           a64_mov_imm64_at(b, nth(p, 1), 0, GLOBALS_BASE)
         else if kind == "closurefn" then
