@@ -764,7 +764,7 @@ let a64_cmp_maybe_str(b, op, patches) =
   let _ = a64_apply_b26(b, jdone, bytes_len(b)) in
   cons(["bl", scall, "yac_str_eq"], patches)
 
-let emit_insn_a64(st, insn, is_entry) =
+let emit_a64_i_core(st, insn, is_entry) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
@@ -907,7 +907,34 @@ let emit_insn_a64(st, insn, is_entry) =
     let _ = a64_movz(b, 8, 93, 0) in
     let _ = a64_svc(b) in
     [b, cur, labels, patches]
-  else if k == "obj_kind" then
+  else if k == "tailcall" then
+    let fn = nth(insn, 2) in
+    let args = nth(insn, 3) in
+    let na = len(args) in
+    let load(j) =
+      if j >= na then 0
+      else if j >= 8 then 0
+      else
+        let _ = a64_slot(b, nth(args, j), false, j) in
+        load(j + 1) in
+    let _ = load(0) in
+    let _ =
+      if is_entry then 0
+      else
+        let _ = a64_mov_sp(b, 31, 29) in
+        a64_ldp_fp_lr(b) in
+    let pos = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    [b, cur, labels, cons(["b26", pos, fn], patches)]
+  else st
+
+let emit_a64_i_heap(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let k = nth(insn, 0) in
+  if k == "obj_kind" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_mov_imm64(b, 1, 0 - 2) in
     let _ = a64_and_reg(b, 0, 0, 1) in
@@ -1029,34 +1056,6 @@ let emit_insn_a64(st, insn, is_entry) =
     let _ = a64_tag(b, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     [b, cur, labels, cons(["bl", pos, "yac_alloc"], patches)]
-  else if k == "closure" then
-    let dst = nth(insn, 1) in
-    let fnName = nth(insn, 2) in
-    let caps = nth(insn, 3) in
-    let nenv = len(caps) in
-    let size = bshl(4 + nenv, 3) in
-    let _ = a64_mov_imm64(b, 0, size) in
-    let acall = bytes_len(b) in
-    let _ = a64_bl(b, 0) in
-    let _ = a64_untag_ptr(b, 0) in
-    let _ = a64_stur(b, 31, 0, 8) in
-    let fnpos = bytes_len(b) in
-    let _ = a64_mov_imm64(b, 1, 0) in
-    let _ = a64_stur(b, 1, 0, 16) in
-    let _ = a64_movz(b, 1, nenv, 0) in
-    let _ = a64_stur(b, 1, 0, 24) in
-    let storecap(i) =
-      if i >= nenv then 0
-      else
-        let _ = a64_slot(b, nth(caps, i), false, 1) in
-        let _ = a64_stur(b, 1, 0, 32 + bshl(i, 3)) in
-        storecap(i + 1) in
-    let _ = storecap(0) in
-    let _ = a64_tag(b, 0) in
-    let _ = a64_slot(b, dst, true, 0) in
-    [b, cur, labels,
-     cons(["bl", acall, "yac_alloc"],
-          cons(["closurefn", fnpos, fnName], patches))]
   else if k == "print" then
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
     let _ = a64_movz(b, 9, 1, 0) in
@@ -1086,25 +1085,54 @@ let emit_insn_a64(st, insn, is_entry) =
     let _ = a64_add_imm(b, 31, 31, 16) in
     [b, cur, labels, cons(["bl", c_int, "print_int"],
                           cons(["bl", c_val, "print_val"], patches))]
-  else if k == "tailcall" then
-    let fn = nth(insn, 2) in
-    let args = nth(insn, 3) in
-    let na = len(args) in
-    let load(j) =
-      if j >= na then 0
-      else if j >= 8 then 0
-      else
-        let _ = a64_slot(b, nth(args, j), false, j) in
-        load(j + 1) in
-    let _ = load(0) in
-    let _ =
-      if is_entry then 0
-      else
-        let _ = a64_mov_sp(b, 31, 29) in
-        a64_ldp_fp_lr(b) in
+  else if k == "argc" then
+    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_argc")]
+  else if k == "time_ms" then
+    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "time_ms")]
+  else if k == "time_str" then
+    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "time_str")]
+  else if k == "argv" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let pos = bytes_len(b) in
-    let _ = a64_b(b, 0) in
-    [b, cur, labels, cons(["b26", pos, fn], patches)]
+    let _ = a64_bl(b, 0) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    [b, cur, labels, cons(["bl", pos, "yac_argv"], patches)]
+  else st
+
+let emit_a64_i_clos(st, insn, is_entry) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let k = nth(insn, 0) in
+  if k == "closure" then
+    let dst = nth(insn, 1) in
+    let fnName = nth(insn, 2) in
+    let caps = nth(insn, 3) in
+    let nenv = len(caps) in
+    let size = bshl(4 + nenv, 3) in
+    let _ = a64_mov_imm64(b, 0, size) in
+    let acall = bytes_len(b) in
+    let _ = a64_bl(b, 0) in
+    let _ = a64_untag_ptr(b, 0) in
+    let _ = a64_stur(b, 31, 0, 8) in
+    let fnpos = bytes_len(b) in
+    let _ = a64_mov_imm64(b, 1, 0) in
+    let _ = a64_stur(b, 1, 0, 16) in
+    let _ = a64_movz(b, 1, nenv, 0) in
+    let _ = a64_stur(b, 1, 0, 24) in
+    let storecap(i) =
+      if i >= nenv then 0
+      else
+        let _ = a64_slot(b, nth(caps, i), false, 1) in
+        let _ = a64_stur(b, 1, 0, 32 + bshl(i, 3)) in
+        storecap(i + 1) in
+    let _ = storecap(0) in
+    let _ = a64_tag(b, 0) in
+    let _ = a64_slot(b, dst, true, 0) in
+    [b, cur, labels,
+     cons(["bl", acall, "yac_alloc"],
+          cons(["closurefn", fnpos, fnName], patches))]
   else if k == "apply" then
     let dst = nth(insn, 1) in
     let clos = nth(insn, 2) in
@@ -1186,7 +1214,15 @@ let emit_insn_a64(st, insn, is_entry) =
           a64_ldp_fp_lr(b) in
       let _ = a64_br(b, 16) in
       [b, cur, labels, patches]
-  else if k == "nil" then
+  else st
+
+let emit_a64_i_prim(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let k = nth(insn, 0) in
+  if k == "nil" then
     let _ = a64_movz(b, 0, 1, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     [b, cur, labels, patches]
@@ -1389,18 +1425,6 @@ let emit_insn_a64(st, insn, is_entry) =
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
     [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_map")]
-  else if k == "argc" then
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_argc")]
-  else if k == "time_ms" then
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "time_ms")]
-  else if k == "time_str" then
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "time_str")]
-  else if k == "argv" then
-    let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    let pos = bytes_len(b) in
-    let _ = a64_bl(b, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, cons(["bl", pos, "yac_argv"], patches)]
   else if k == "read_file" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let pos = bytes_len(b) in
@@ -1417,6 +1441,25 @@ let emit_insn_a64(st, insn, is_entry) =
   else
     let _ = a64_brk(b) in
     [b, cur, labels, patches]
+
+let emit_insn_a64(st, insn, is_entry) =
+  let k = nth(insn, 0) in
+  if k == "closure" or k == "apply" or k == "tailapply" then
+    emit_a64_i_clos(st, insn, is_entry)
+  else if k == "prologue" or k == "mov_imm" or k == "mov" or k == "binop"
+       or k == "cmp" or k == "icmp" or k == "label" or k == "call"
+       or k == "tailcall" or k == "jmp" or k == "br" or k == "ret"
+       or k == "exit" then
+    emit_a64_i_core(st, insn, is_entry)
+  else if k == "obj_kind" or k == "obj_ld" or k == "obj_st" or k == "tag"
+       or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
+       or k == "alloc_s" or k == "ld8" or k == "st8" or k == "print"
+       or k == "write1" or k == "clock" or k == "glob" or k == "time_ms"
+       or k == "time_str" or k == "argc" or k == "argv" then
+    emit_a64_i_heap(st, insn)
+  else emit_a64_i_prim(st, insn)
+
+
 
 let a64_lookup(labels, name) =
   let n = len(labels) in

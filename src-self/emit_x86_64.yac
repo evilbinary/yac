@@ -739,197 +739,181 @@ let gen_apply1(d) =
   let _ = apply_patch(b, j5, lc) in
   b
 
-/* emit one instruction; st = [bytes, cur, labelsRev, patchesRev]. */
-let emit_insn(st, insn, is_entry) =
+let emit_x86_i_core(st, insn, is_entry) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
   let k = nth(insn, 0) in
-  let len0 = bytes_len(b) in
-  let done =
-    if k == "prologue" then
-      let nlocals = nth(insn, 1) in
-      let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
-      /* imm8 for sub/add rsp is signed (-128..127); frames >= 128 need imm32 */
-      if is_entry then
-        /* Linux _start: [rsp]=argc, [rsp+8]=argv (not rdi/rsi). */
-        let _ = mov_rdi_mem_rsp(b) in
-        let _ = mov_rax_imm64(b, 0) in
-        let ac_save = bytes_len(b) - 8 in
-        let _ = mov_mem_rax_rdi(b) in
-        let _ = lea_rsi_rsp8(b) in
-        let _ = mov_rax_imm64(b, 0) in
-        let av_save = bytes_len(b) - 8 in
-        let _ = mov_mem_rax_rsi(b) in
-        let _ = mov_rbp_rsp(b) in
-        let _ = mov_rax_imm64(b, 0) in
-        let sh_save = bytes_len(b) - 8 in
-        let _ = mov_mem_rax_rbp(b) in
-        let nbytes = bshl(nlocals + 1, 3) in
-        let _ =
-          if nbytes > 127 then sub_rsp_imm32(b, nbytes)
-          else sub_rsp_imm8(b, band(nbytes, 255)) in
-        [b, cur, labels,
-         cons(["stack_hi", sh_save],
-              cons(["saved_argv", av_save],
-                   cons(["saved_argc", ac_save], patches)))]
-      else
-        let _ = push_rbp(b) in
-        let _ = mov_rbp_rsp(b) in
-        let nbytes = bshl(nlocals + 1, 3) in
-        let _ =
-          if nbytes > 127 then sub_rsp_imm32(b, nbytes)
-          else sub_rsp_imm8(b, band(nbytes, 255)) in
-        let storeparams(j) =
-          if j >= nparams then 0
-          else if j < 6 then
-            let _ = emit_store_param(b, j, j + 1) in
-            storeparams(j + 1)
-          else
-            /* stack arg: [rbp + 16 + 8*(j-6)] */
-            let off = 16 + bshl(j - 6, 3) in
-            let _ = mov_r64_mem_rbp32(b, 0, off) in
-            let _ = emit_store_rax_slot(b, j + 1) in
-            storeparams(j + 1) in
-        let _ = storeparams(0) in
-        [b, cur, labels, patches]
-    else if k == "mov_imm" then
-      /* tag: store n<<1 */
-      let _ = mov_r64_imm(b, 0, nth(insn, 2)) in
+  if k == "prologue" then
+    let nlocals = nth(insn, 1) in
+    let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
+    /* imm8 for sub/add rsp is signed (-128..127); frames >= 128 need imm32 */
+    if is_entry then
+      /* Linux _start: [rsp]=argc, [rsp+8]=argv (not rdi/rsi). */
+      let _ = mov_rdi_mem_rsp(b) in
+      let _ = mov_rax_imm64(b, 0) in
+      let ac_save = bytes_len(b) - 8 in
+      let _ = mov_mem_rax_rdi(b) in
+      let _ = lea_rsi_rsp8(b) in
+      let _ = mov_rax_imm64(b, 0) in
+      let av_save = bytes_len(b) - 8 in
+      let _ = mov_mem_rax_rsi(b) in
+      let _ = mov_rbp_rsp(b) in
+      let _ = mov_rax_imm64(b, 0) in
+      let sh_save = bytes_len(b) - 8 in
+      let _ = mov_mem_rax_rbp(b) in
+      let nbytes = bshl(nlocals + 1, 3) in
+      let _ =
+        if nbytes > 127 then sub_rsp_imm32(b, nbytes)
+        else sub_rsp_imm8(b, band(nbytes, 255)) in
+      [b, cur, labels,
+       cons(["stack_hi", sh_save],
+            cons(["saved_argv", av_save],
+                 cons(["saved_argc", ac_save], patches)))]
+    else
+      let _ = push_rbp(b) in
+      let _ = mov_rbp_rsp(b) in
+      let nbytes = bshl(nlocals + 1, 3) in
+      let _ =
+        if nbytes > 127 then sub_rsp_imm32(b, nbytes)
+        else sub_rsp_imm8(b, band(nbytes, 255)) in
+      let storeparams(j) =
+        if j >= nparams then 0
+        else if j < 6 then
+          let _ = emit_store_param(b, j, j + 1) in
+          storeparams(j + 1)
+        else
+          /* stack arg: [rbp + 16 + 8*(j-6)] */
+          let off = 16 + bshl(j - 6, 3) in
+          let _ = mov_r64_mem_rbp32(b, 0, off) in
+          let _ = emit_store_rax_slot(b, j + 1) in
+          storeparams(j + 1) in
+      let _ = storeparams(0) in
+      [b, cur, labels, patches]
+  else if k == "mov_imm" then
+    /* tag: store n<<1 */
+    let _ = mov_r64_imm(b, 0, nth(insn, 2)) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    [b, cur, labels, patches]
+  else if k == "mov" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    [b, cur, labels, patches]
+  else if k == "binop" then
+    /* untag both operands, compute, retag */
+    let op = nth(insn, 1) in
+    let dst = nth(insn, 2) in
+    let a = nth(insn, 3) in
+    let bop = nth(insn, 4) in
+    let _ = emit_load_rax_slot(b, a) in
+    let _ = sar_rax_1(b) in
+    let _ = emit_load_rbx_slot(b, bop) in
+    let _ = sar_rbx_1(b) in
+    let c =
+      if op == "+" then add_rax_rbx(b)
+      else if op == "-" then sub_rax_rbx(b)
+      else if op == "*" then imul_rax_rbx(b)
+      else if op == "&" then and_rax_rbx(b)
+      else if op == "|" then or_rax_rbx(b)
+      else if op == "<<" then
+        let _ = mov_rcx_rbx(b) in
+        shl_rax_cl(b)
+      else if op == ">>" then
+        let _ = mov_rcx_rbx(b) in
+        shr_rax_cl(b)
+      else if op == "and" then and_rax_rbx(b)
+      else if op == "or" then or_rax_rbx(b)
+      else if op == "/" then
+        let _ = cqo(b) in
+        idiv_rbx(b)
+      else if op == "%" then
+        let _ = cqo(b) in
+        let _ = idiv_rbx(b) in
+        mov_r64_r64(b, 0, 2)
+      else 0 in
+    let _ = c in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, patches]
+  else if k == "cmp" then
+    let op = nth(insn, 1) in
+    let dst = nth(insn, 2) in
+    let a = nth(insn, 3) in
+    let bop = nth(insn, 4) in
+    if (op == "==" or op == "!=") then
+      let _ = emit_load_rax_slot(b, a) in
+      let _ = push_r64(b, 0) in
+      let _ = emit_load_rax_slot(b, bop) in
+      let _ = push_r64(b, 0) in
+      /* stack: [rsp]=b [rsp+8]=a */
+      let _ = mov_rax_mem_rsp8(b) in
+      let _ = cmp_rax_imm8(b, 1) in
+      let _ = jcc_rel32(b, 4, 0) in
+      let jnil1 = bytes_len(b) - 4 in
+      let _ = test_rax_1(b) in
+      let _ = jcc_rel32(b, 4, 0) in
+      let jz1 = bytes_len(b) - 4 in
+      let _ = mov_rax_mem_rsp(b) in
+      let _ = cmp_rax_imm8(b, 1) in
+      let _ = jcc_rel32(b, 4, 0) in
+      let jnil2 = bytes_len(b) - 4 in
+      let _ = test_rax_1(b) in
+      let _ = jcc_rel32(b, 4, 0) in
+      let jz2 = bytes_len(b) - 4 in
+      let _ = mov_rax_mem_rsp8(b) in
+      let _ = and_rax_1(b) in
+      let _ = mov_rax_rax_disp8(b, 16) in
+      let _ = cmp_rax_imm8(b, 3) in
+      let _ = jcc_rel32(b, 5, 0) in
+      let jne1 = bytes_len(b) - 4 in
+      let _ = mov_rax_mem_rsp(b) in
+      let _ = and_rax_1(b) in
+      let _ = mov_rax_rax_disp8(b, 16) in
+      let _ = cmp_rax_imm8(b, 3) in
+      let _ = jcc_rel32(b, 5, 0) in
+      let jne2 = bytes_len(b) - 4 in
+      let _ = mov_rax_mem_rsp8(b) in
+      let _ = mov_rdi_rax(b) in
+      let _ = mov_rax_mem_rsp(b) in
+      let _ = mov_rsi_rax(b) in
+      let scall = bytes_len(b) in
+      let _ = call_rel32(b, 0) in
+      let _ = add_rsp_imm8(b, 16) in
+      let _ =
+        if op == "!=" then
+          let _ = sar_rax_1(b) in
+          let _ = e8(b, 72) in let _ = e8(b, 247) in let _ = e8(b, 208) in
+          let _ = e8(b, 36) in let _ = e8(b, 1) in
+          shl_rax_1(b)
+        else 0 in
+      let _ = jmp_rel32(b, 0) in
+      let jdone = bytes_len(b) - 4 in
+      let intp = bytes_len(b) in
+      let _ = apply_patch(b, jz1, intp) in
+      let _ = apply_patch(b, jz2, intp) in
+      let _ = apply_patch(b, jnil1, intp) in
+      let _ = apply_patch(b, jnil2, intp) in
+      let _ = apply_patch(b, jne1, intp) in
+      let _ = apply_patch(b, jne2, intp) in
+      let _ = mov_rax_mem_rsp8(b) in
+      let _ = sar_rax_1(b) in
+      let _ = mov_rbx_mem_rsp(b) in
+      let _ = sar_rbx_1(b) in
+      let _ = cmp_rax_rbx(b) in
+      let _ = setcc_r8(b, cc_of(op)) in
+      let _ = movzx_eax_al(b) in
       let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-      [b, cur, labels, patches]
-    else if k == "mov" then
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-      [b, cur, labels, patches]
-    else if k == "binop" then
-      /* untag both operands, compute, retag */
-      let op = nth(insn, 1) in
-      let dst = nth(insn, 2) in
-      let a = nth(insn, 3) in
-      let bop = nth(insn, 4) in
+      let _ = add_rsp_imm8(b, 16) in
+      let done = bytes_len(b) in
+      let _ = apply_patch(b, jdone, done) in
+      let _ = emit_store_rax_slot(b, dst) in
+      [b, cur, labels, cons([scall + 1, "yac_str_eq"], patches)]
+    else
       let _ = emit_load_rax_slot(b, a) in
       let _ = sar_rax_1(b) in
       let _ = emit_load_rbx_slot(b, bop) in
-      let _ = sar_rbx_1(b) in
-      let c =
-        if op == "+" then add_rax_rbx(b)
-        else if op == "-" then sub_rax_rbx(b)
-        else if op == "*" then imul_rax_rbx(b)
-        else if op == "&" then and_rax_rbx(b)
-        else if op == "|" then or_rax_rbx(b)
-        else if op == "<<" then
-          let _ = mov_rcx_rbx(b) in
-          shl_rax_cl(b)
-        else if op == ">>" then
-          let _ = mov_rcx_rbx(b) in
-          shr_rax_cl(b)
-        else if op == "and" then and_rax_rbx(b)
-        else if op == "or" then or_rax_rbx(b)
-        else if op == "/" then
-          let _ = cqo(b) in
-          idiv_rbx(b)
-        else if op == "%" then
-          let _ = cqo(b) in
-          let _ = idiv_rbx(b) in
-          mov_r64_r64(b, 0, 2)
-        else 0 in
-      let _ = c in
-      let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, patches]
-    else if k == "cmp" then
-      let op = nth(insn, 1) in
-      let dst = nth(insn, 2) in
-      let a = nth(insn, 3) in
-      let bop = nth(insn, 4) in
-      if (op == "==" or op == "!=") then
-        let _ = emit_load_rax_slot(b, a) in
-        let _ = push_r64(b, 0) in
-        let _ = emit_load_rax_slot(b, bop) in
-        let _ = push_r64(b, 0) in
-        /* stack: [rsp]=b [rsp+8]=a */
-        let _ = mov_rax_mem_rsp8(b) in
-        let _ = cmp_rax_imm8(b, 1) in
-        let _ = jcc_rel32(b, 4, 0) in
-        let jnil1 = bytes_len(b) - 4 in
-        let _ = test_rax_1(b) in
-        let _ = jcc_rel32(b, 4, 0) in
-        let jz1 = bytes_len(b) - 4 in
-        let _ = mov_rax_mem_rsp(b) in
-        let _ = cmp_rax_imm8(b, 1) in
-        let _ = jcc_rel32(b, 4, 0) in
-        let jnil2 = bytes_len(b) - 4 in
-        let _ = test_rax_1(b) in
-        let _ = jcc_rel32(b, 4, 0) in
-        let jz2 = bytes_len(b) - 4 in
-        let _ = mov_rax_mem_rsp8(b) in
-        let _ = and_rax_1(b) in
-        let _ = mov_rax_rax_disp8(b, 16) in
-        let _ = cmp_rax_imm8(b, 3) in
-        let _ = jcc_rel32(b, 5, 0) in
-        let jne1 = bytes_len(b) - 4 in
-        let _ = mov_rax_mem_rsp(b) in
-        let _ = and_rax_1(b) in
-        let _ = mov_rax_rax_disp8(b, 16) in
-        let _ = cmp_rax_imm8(b, 3) in
-        let _ = jcc_rel32(b, 5, 0) in
-        let jne2 = bytes_len(b) - 4 in
-        let _ = mov_rax_mem_rsp8(b) in
-        let _ = mov_rdi_rax(b) in
-        let _ = mov_rax_mem_rsp(b) in
-        let _ = mov_rsi_rax(b) in
-        let scall = bytes_len(b) in
-        let _ = call_rel32(b, 0) in
-        let _ = add_rsp_imm8(b, 16) in
-        let _ =
-          if op == "!=" then
-            let _ = sar_rax_1(b) in
-            let _ = e8(b, 72) in let _ = e8(b, 247) in let _ = e8(b, 208) in
-            let _ = e8(b, 36) in let _ = e8(b, 1) in
-            shl_rax_1(b)
-          else 0 in
-        let _ = jmp_rel32(b, 0) in
-        let jdone = bytes_len(b) - 4 in
-        let intp = bytes_len(b) in
-        let _ = apply_patch(b, jz1, intp) in
-        let _ = apply_patch(b, jz2, intp) in
-        let _ = apply_patch(b, jnil1, intp) in
-        let _ = apply_patch(b, jnil2, intp) in
-        let _ = apply_patch(b, jne1, intp) in
-        let _ = apply_patch(b, jne2, intp) in
-        let _ = mov_rax_mem_rsp8(b) in
-        let _ = sar_rax_1(b) in
-        let _ = mov_rbx_mem_rsp(b) in
-        let _ = sar_rbx_1(b) in
-        let _ = cmp_rax_rbx(b) in
-        let _ = setcc_r8(b, cc_of(op)) in
-        let _ = movzx_eax_al(b) in
-        let _ = shl_rax_1(b) in
-        let _ = add_rsp_imm8(b, 16) in
-        let done = bytes_len(b) in
-        let _ = apply_patch(b, jdone, done) in
-        let _ = emit_store_rax_slot(b, dst) in
-        [b, cur, labels, cons([scall + 1, "yac_str_eq"], patches)]
-      else
-        let _ = emit_load_rax_slot(b, a) in
-        let _ = sar_rax_1(b) in
-        let _ = emit_load_rbx_slot(b, bop) in
-        let _ = sar_rbx_1(b) in
-        let _ = cmp_rax_rbx(b) in
-        let _ = setcc_r8(b, cc_of(op)) in
-        let _ = movzx_eax_al(b) in
-        let _ = shl_rax_1(b) in
-        let _ = emit_store_rax_slot(b, dst) in
-        [b, cur, labels, patches]
-    else if k == "icmp" then
-      let op = nth(insn, 1) in
-      let dst = nth(insn, 2) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = sar_rax_1(b) in
-      let _ = emit_load_rbx_slot(b, nth(insn, 4)) in
       let _ = sar_rbx_1(b) in
       let _ = cmp_rax_rbx(b) in
       let _ = setcc_r8(b, cc_of(op)) in
@@ -937,444 +921,350 @@ let emit_insn(st, insn, is_entry) =
       let _ = shl_rax_1(b) in
       let _ = emit_store_rax_slot(b, dst) in
       [b, cur, labels, patches]
-    else if k == "label" then
-      let nm = nth(insn, 1) in
-      [b, cur, cons([nm, cur], labels), patches]
-    else if k == "call" then
-      /* call fn(argSlots...): load args to rdi,rsi,rdx,rcx,r8,r9; call; store. */
-      let dst = nth(insn, 1) in
-      let fn = nth(insn, 2) in
-      let args = nth(insn, 3) in
-      let nargs = len(args) in
-      let loadarg(j) =
-        if j >= nargs then 0
-        else
-          let _ = emit_load_rax_slot(b, nth(args, j)) in
-          let _ =
-            if j == 0 then mov_rdi_rax(b)
-            else if j == 1 then mov_rsi_rax(b)
-            else if j == 2 then mov_rdx_rax(b)
-            else if j == 3 then mov_rcx_rax(b)
-            else if j == 4 then mov_r8_rax(b)
-            else mov_r9_rax(b) in
-          loadarg(j + 1) in
-      let _ = loadarg(0) in
-      let callstart = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([callstart + 1, fn], patches)]
-    else if k == "tailcall" then
-      /* TCO: load args, tear down frame, jmp (no extra stack). */
-      let fn = nth(insn, 2) in
-      let args = nth(insn, 3) in
-      let nargs = len(args) in
-      let loadarg(j) =
-        if j >= nargs then 0
-        else
-          let _ = emit_load_rax_slot(b, nth(args, j)) in
-          let _ =
-            if j == 0 then mov_rdi_rax(b)
-            else if j == 1 then mov_rsi_rax(b)
-            else if j == 2 then mov_rdx_rax(b)
-            else if j == 3 then mov_rcx_rax(b)
-            else if j == 4 then mov_r8_rax(b)
-            else mov_r9_rax(b) in
-          loadarg(j + 1) in
-      let _ = loadarg(0) in
+  else if k == "icmp" then
+    let op = nth(insn, 1) in
+    let dst = nth(insn, 2) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = sar_rax_1(b) in
+    let _ = emit_load_rbx_slot(b, nth(insn, 4)) in
+    let _ = sar_rbx_1(b) in
+    let _ = cmp_rax_rbx(b) in
+    let _ = setcc_r8(b, cc_of(op)) in
+    let _ = movzx_eax_al(b) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, patches]
+  else if k == "label" then
+    let nm = nth(insn, 1) in
+    [b, cur, cons([nm, cur], labels), patches]
+  else if k == "call" then
+    /* call fn(argSlots...): load args to rdi,rsi,rdx,rcx,r8,r9; call; store. */
+    let dst = nth(insn, 1) in
+    let fn = nth(insn, 2) in
+    let args = nth(insn, 3) in
+    let nargs = len(args) in
+    let loadarg(j) =
+      if j >= nargs then 0
+      else
+        let _ = emit_load_rax_slot(b, nth(args, j)) in
+        let _ =
+          if j == 0 then mov_rdi_rax(b)
+          else if j == 1 then mov_rsi_rax(b)
+          else if j == 2 then mov_rdx_rax(b)
+          else if j == 3 then mov_rcx_rax(b)
+          else if j == 4 then mov_r8_rax(b)
+          else mov_r9_rax(b) in
+        loadarg(j + 1) in
+    let _ = loadarg(0) in
+    let callstart = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([callstart + 1, fn], patches)]
+  else if k == "tailcall" then
+    /* TCO: load args, tear down frame, jmp (no extra stack). */
+    let fn = nth(insn, 2) in
+    let args = nth(insn, 3) in
+    let nargs = len(args) in
+    let loadarg(j) =
+      if j >= nargs then 0
+      else
+        let _ = emit_load_rax_slot(b, nth(args, j)) in
+        let _ =
+          if j == 0 then mov_rdi_rax(b)
+          else if j == 1 then mov_rsi_rax(b)
+          else if j == 2 then mov_rdx_rax(b)
+          else if j == 3 then mov_rcx_rax(b)
+          else if j == 4 then mov_r8_rax(b)
+          else mov_r9_rax(b) in
+        loadarg(j + 1) in
+    let _ = loadarg(0) in
+    let _ = mov_rsp_rbp(b) in
+    let _ = pop_rbp(b) in
+    let jmpstart = bytes_len(b) in
+    let _ = jmp_rel32(b, 0) in
+    [b, cur, labels, cons([jmpstart + 1, fn], patches)]
+  else if k == "jmp" then
+    /* jmp_rel32: e9 + rel32; rel32 field at len0+1 */
+    let jpos = bytes_len(b) in
+    let _ = jmp_rel32(b, 0) in
+    [b, cur, labels, cons([jpos + 1, nth(insn, 1)], patches)]
+  else if k == "br" then
+    let cond = nth(insn, 1) in
+    let tl = nth(insn, 2) in
+    let fl = nth(insn, 3) in
+    let _ = emit_load_rax_slot(b, cond) in
+    let _ = test_rax_rax(b) in
+    let jcc_at = bytes_len(b) in
+    let _ = jcc_rel32(b, 4, 0) in  /* 0f 84 + rel32 */
+    let jmp_at = bytes_len(b) in
+    let _ = jmp_rel32(b, 0) in     /* e9 + rel32 */
+    [b, cur, labels,
+     cons([jcc_at + 2, fl], cons([jmp_at + 1, tl], patches))]
+  else if k == "ret" then
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    if is_entry then let _ = ret(b) in [b, cur, labels, patches]
+    else
       let _ = mov_rsp_rbp(b) in
       let _ = pop_rbp(b) in
-      let jmpstart = bytes_len(b) in
-      let _ = jmp_rel32(b, 0) in
-      [b, cur, labels, cons([jmpstart + 1, fn], patches)]
-    else if k == "jmp" then
-      /* jmp_rel32: e9 + rel32; rel32 field at len0+1 */
-      let _ = jmp_rel32(b, 0) in
-      [b, cur, labels, cons([len0 + 1, nth(insn, 1)], patches)]
-    else if k == "br" then
-      let cond = nth(insn, 1) in
-      let tl = nth(insn, 2) in
-      let fl = nth(insn, 3) in
-      let _ = emit_load_rax_slot(b, cond) in
-      let _ = test_rax_rax(b) in
-      let jcc_at = bytes_len(b) in
-      let _ = jcc_rel32(b, 4, 0) in  /* 0f 84 + rel32 */
-      let jmp_at = bytes_len(b) in
-      let _ = jmp_rel32(b, 0) in     /* e9 + rel32 */
-      [b, cur, labels,
-       cons([jcc_at + 2, fl], cons([jmp_at + 1, tl], patches))]
-    else if k == "ret" then
-      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-      if is_entry then let _ = ret(b) in [b, cur, labels, patches]
+      let _ = ret(b) in
+      [b, cur, labels, patches]
+  else if k == "exit" then
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = sar_rax_1(b) in   /* untag */
+    let _ = mov_rdi_rax(b) in
+    let _ = mov_r64_imm(b, 0, 60) in
+    let _ = syscall(b) in
+    [b, cur, labels, patches]
+  else st
+
+let emit_x86_i_heap(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let k = nth(insn, 0) in
+  if k == "obj_kind" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rax_rax_disp8(b, 16) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, patches]
+  else if k == "obj_ld" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rax_rax_disp8(b, nth(insn, 3)) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, patches]
+  else if k == "obj_st" then
+    let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rax_disp8_rdi(b, nth(insn, 2)) in
+    [b, cur, labels, patches]
+  else if k == "tag" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    [b, cur, labels, patches]
+  else if k == "is_int" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = test_rax_1(b) in
+    let _ = setcc_r8(b, cc_of("==")) in
+    let _ = movzx_eax_al(b) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    [b, cur, labels, patches]
+  else if k == "alloc" then
+    let _ = mov_rdi_imm(b, nth(insn, 2)) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = or_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    [b, cur, labels, cons([acall + 1, "yac_alloc"], patches)]
+  else if k == "obj_sti" then
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rax_disp8_imm32(b, nth(insn, 2), nth(insn, 3)) in
+    let _ = mov_rax_disp8_imm32(b, nth(insn, 2) + 4, 0) in
+    [b, cur, labels, patches]
+  else if k == "obj_st_int" then
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = sar_rax_1(b) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rax_disp8_rdi(b, nth(insn, 2)) in
+    [b, cur, labels, patches]
+  else if k == "alloc_s" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = sar_rax_1(b) in
+    let _ = mov_rdi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = or_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    [b, cur, labels, cons([acall + 1, "yac_alloc"], patches)]
+  else if k == "ld8" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rbx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rdx_rax(b) in
+    let _ = sar_rdx_1(b) in
+    let _ = mov_rax_rbx(b) in
+    let _ = movzx_eax_rax_rdx(b) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    [b, cur, labels, patches]
+  else if k == "st8" then
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rbx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdx_rax(b) in
+    let _ = sar_rdx_1(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = sar_rdi_1(b) in
+    let _ = mov_rax_rbx(b) in
+    let _ = mov_rax_rdx_dil(b) in
+    [b, cur, labels, patches]
+  else if k == "print" then
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = test_rax_1(b) in
+    let _ = jcc_rel32(b, 5, 0) in
+    let jptr = bytes_len(b) - 4 in
+    let _ = mov_rdi_rax(b) in
+    let c_int = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = jmp_rel32(b, 0) in
+    let jend = bytes_len(b) - 4 in
+    let ptroff = bytes_len(b) in
+    let _ = apply_patch(b, jptr, ptroff) in
+    let _ = mov_rdi_rax(b) in
+    let c_val = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let endoff = bytes_len(b) in
+    let _ = apply_patch(b, jend, endoff) in
+    let _ = emit_newline(b) in
+    [b, cur, labels, cons([c_int + 1, "print_int"],
+                          cons([c_val + 1, "print_val"], patches))]
+  else if k == "write1" then
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = sar_rax_1(b) in
+    let _ = sub_rsp_imm8(b, 8) in
+    let _ = mov_mem_rsp_al(b) in
+    let _ = mov_rsi_rsp(b) in
+    let _ = mov_rdx_imm(b, 1) in
+    let _ = mov_rdi_imm(b, 1) in
+    let _ = mov_r64_imm(b, 0, 1) in
+    let _ = syscall(b) in
+    let _ = add_rsp_imm8(b, 8) in
+    [b, cur, labels, patches]
+  else if k == "clock" then
+    let _ = sub_rsp_imm8(b, 16) in
+    let _ = mov_rdi_imm(b, nth(insn, 3)) in
+    let _ = lea_rsi_rsp(b) in
+    let _ = mov_r64_imm(b, 0, 228) in
+    let _ = syscall(b) in
+    let _ = mov_rax_mem_rsp(b) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    let _ = mov_rax_mem_rsp8(b) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 2)) in
+    let _ = add_rsp_imm8(b, 16) in
+    [b, cur, labels, patches]
+  else if k == "glob" then
+    let _ = mov_rax_imm64(b, 0) in
+    let gpat = bytes_len(b) - 8 in
+    let _ = mov_rax_mem_rax(b) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    let which = nth(insn, 2) in
+    let gkind = if which == 1 then "saved_argc" else "saved_argv" in
+    [b, cur, labels, cons([gkind, gpat], patches)]
+  else if k == "time_ms" then
+    let dst = nth(insn, 1) in
+    let callstart = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([callstart + 1, "time_ms"], patches)]
+  else if k == "time_str" then
+    let dst = nth(insn, 1) in
+    let callstart = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([callstart + 1, "time_str"], patches)]
+  else if k == "argc" then
+    let dst = nth(insn, 1) in
+    let callstart = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([callstart + 1, "yac_argc"], patches)]
+  else if k == "argv" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let callstart = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([callstart + 1, "yac_argv"], patches)]
+  else st
+
+let emit_x86_i_clos(st, insn, is_entry) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let k = nth(insn, 0) in
+  if k == "closure" then
+    /* closure dst fnName [capSlots]:
+     * alloc object [next][mark][fnptr][nenv][env...], tag, store.
+     * yac_alloc links the object into the global GC list (sets [next]).
+     * Offsets: next=0 mark=8 fnptr=16 nenv=24 env=32. */
+    let dst = nth(insn, 1) in
+    let fnName = nth(insn, 2) in
+    let caps = nth(insn, 3) in
+    let nenv = len(caps) in
+    let size = (4 + nenv) * 8 in
+    let _ = mov_rdi_imm(b, size) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = and_rax_1(b) in    /* alloc returns raw ptr; ensure untagged */
+    let _ = mov_rax_disp8_imm32(b, 8, 0) in   /* mark = 0 */
+    let _ = mov_rax_disp8_imm32(b, 16, 0) in  /* fnptr placeholder */
+    let fnpos = bytes_len(b) - 4 in
+    let _ = mov_rax_disp8_imm32(b, 20, 0) in  /* high 32 of fnptr (must be 0) */
+    let _ = mov_rax_disp8_imm32(b, 24, nenv) in
+    let _ = mov_rax_disp8_imm32(b, 28, 0) in  /* clear high dword of nenv qword */
+    let storecap(i) =
+      if i >= nenv then 0
       else
-        let _ = mov_rsp_rbp(b) in
-        let _ = pop_rbp(b) in
-        let _ = ret(b) in
-        [b, cur, labels, patches]
-    else if k == "exit" then
-      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-      let _ = sar_rax_1(b) in   /* untag */
-      let _ = mov_rdi_rax(b) in
-      let _ = mov_r64_imm(b, 0, 60) in
-      let _ = syscall(b) in
-      [b, cur, labels, patches]
-    else if k == "obj_kind" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rax_rax_disp8(b, 16) in
-      let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, patches]
-    else if k == "obj_ld" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rax_rax_disp8(b, nth(insn, 3)) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, patches]
-    else if k == "obj_st" then
-      let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
-      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rax_disp8_rdi(b, nth(insn, 2)) in
-      [b, cur, labels, patches]
-    else if k == "tag" then
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-      [b, cur, labels, patches]
-    else if k == "is_int" then
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = test_rax_1(b) in
-      let _ = setcc_r8(b, cc_of("==")) in
-      let _ = movzx_eax_al(b) in
-      let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-      [b, cur, labels, patches]
-    else if k == "alloc" then
-      let _ = mov_rdi_imm(b, nth(insn, 2)) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = or_rax_1(b) in
-      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-      [b, cur, labels, cons([acall + 1, "yac_alloc"], patches)]
-    else if k == "obj_sti" then
-      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rax_disp8_imm32(b, nth(insn, 2), nth(insn, 3)) in
-      let _ = mov_rax_disp8_imm32(b, nth(insn, 2) + 4, 0) in
-      [b, cur, labels, patches]
-    else if k == "obj_st_int" then
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = sar_rax_1(b) in
-      let _ = mov_rdi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rax_disp8_rdi(b, nth(insn, 2)) in
-      [b, cur, labels, patches]
-    else if k == "alloc_s" then
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = sar_rax_1(b) in
-      let _ = mov_rdi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = or_rax_1(b) in
-      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-      [b, cur, labels, cons([acall + 1, "yac_alloc"], patches)]
-    else if k == "ld8" then
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rbx_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rdx_rax(b) in
-      let _ = sar_rdx_1(b) in
-      let _ = mov_rax_rbx(b) in
-      let _ = movzx_eax_rax_rdx(b) in
-      let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-      [b, cur, labels, patches]
-    else if k == "st8" then
-      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rbx_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdx_rax(b) in
-      let _ = sar_rdx_1(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rdi_rax(b) in
-      let _ = sar_rdi_1(b) in
-      let _ = mov_rax_rbx(b) in
-      let _ = mov_rax_rdx_dil(b) in
-      [b, cur, labels, patches]
-    else if k == "print" then
-      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-      let _ = test_rax_1(b) in
-      let _ = jcc_rel32(b, 5, 0) in
-      let jptr = bytes_len(b) - 4 in
-      let _ = mov_rdi_rax(b) in
-      let c_int = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = jmp_rel32(b, 0) in
-      let jend = bytes_len(b) - 4 in
-      let ptroff = bytes_len(b) in
-      let _ = apply_patch(b, jptr, ptroff) in
-      let _ = mov_rdi_rax(b) in
-      let c_val = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let endoff = bytes_len(b) in
-      let _ = apply_patch(b, jend, endoff) in
-      let _ = emit_newline(b) in
-      [b, cur, labels, cons([c_int + 1, "print_int"],
-                            cons([c_val + 1, "print_val"], patches))]
-    else if k == "write1" then
-      let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-      let _ = sar_rax_1(b) in
-      let _ = sub_rsp_imm8(b, 8) in
-      let _ = mov_mem_rsp_al(b) in
-      let _ = mov_rsi_rsp(b) in
-      let _ = mov_rdx_imm(b, 1) in
-      let _ = mov_rdi_imm(b, 1) in
-      let _ = mov_r64_imm(b, 0, 1) in
-      let _ = syscall(b) in
-      let _ = add_rsp_imm8(b, 8) in
-      [b, cur, labels, patches]
-    else if k == "clock" then
-      let _ = sub_rsp_imm8(b, 16) in
-      let _ = mov_rdi_imm(b, nth(insn, 3)) in
-      let _ = lea_rsi_rsp(b) in
-      let _ = mov_r64_imm(b, 0, 228) in
-      let _ = syscall(b) in
-      let _ = mov_rax_mem_rsp(b) in
-      let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-      let _ = mov_rax_mem_rsp8(b) in
-      let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, nth(insn, 2)) in
-      let _ = add_rsp_imm8(b, 16) in
-      [b, cur, labels, patches]
-    else if k == "glob" then
-      let _ = mov_rax_imm64(b, 0) in
-      let gpat = bytes_len(b) - 8 in
-      let _ = mov_rax_mem_rax(b) in
-      let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-      let which = nth(insn, 2) in
-      let gkind = if which == 1 then "saved_argc" else "saved_argv" in
-      [b, cur, labels, cons([gkind, gpat], patches)]
-    else if k == "time_ms" then
-      let dst = nth(insn, 1) in
-      let callstart = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([callstart + 1, "time_ms"], patches)]
-    else if k == "time_str" then
-      let dst = nth(insn, 1) in
-      let callstart = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([callstart + 1, "time_str"], patches)]
-    else if k == "argc" then
-      let dst = nth(insn, 1) in
-      let callstart = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([callstart + 1, "yac_argc"], patches)]
-    else if k == "argv" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let callstart = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([callstart + 1, "yac_argv"], patches)]
-    else if k == "closure" then
-      /* closure dst fnName [capSlots]:
-       * alloc object [next][mark][fnptr][nenv][env...], tag, store.
-       * yac_alloc links the object into the global GC list (sets [next]).
-       * Offsets: next=0 mark=8 fnptr=16 nenv=24 env=32. */
-      let dst = nth(insn, 1) in
-      let fnName = nth(insn, 2) in
-      let caps = nth(insn, 3) in
-      let nenv = len(caps) in
-      let size = (4 + nenv) * 8 in
-      let _ = mov_rdi_imm(b, size) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = and_rax_1(b) in    /* alloc returns raw ptr; ensure untagged */
-      let _ = mov_rax_disp8_imm32(b, 8, 0) in   /* mark = 0 */
-      let _ = mov_rax_disp8_imm32(b, 16, 0) in  /* fnptr placeholder */
-      let fnpos = bytes_len(b) - 4 in
-      let _ = mov_rax_disp8_imm32(b, 20, 0) in  /* high 32 of fnptr (must be 0) */
-      let _ = mov_rax_disp8_imm32(b, 24, nenv) in
-      let _ = mov_rax_disp8_imm32(b, 28, 0) in  /* clear high dword of nenv qword */
-      let storecap(i) =
-        if i >= nenv then 0
-        else
-          let _ = emit_load_rdi_slot(b, nth(caps, i)) in
-          let _ = mov_rax_disp8_rdi(b, 32 + i * 8) in
-          storecap(i + 1) in
-      let _ = storecap(0) in
-      let _ = or_rax_1(b) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels,
-       cons([acall + 1, "yac_alloc"],
-            cons(["closurefn", fnpos, fnName], patches))]
-    else if k == "apply" then
-      /* apply dst closSlot ncap [argSlots]:
-       * ncap >= 0: load that many caps (compile-time).
-       * ncap < 0: read nenv from the object at runtime (jump table). */
-      let dst = nth(insn, 1) in
-      let clos = nth(insn, 2) in
-      let ncap = nth(insn, 3) in
-      let args = nth(insn, 4) in
-      let nargs = len(args) in
-      if ncap >= 0 then
-        let ntot = ncap + nargs in
-        let nstack = if ntot > 6 then ntot - 6 else 0 in
-        /* push stack args (indices ntot-1 .. 6), reloading clos as needed */
-        let push_flat(i) =
-          if i < 6 then 0
-          else
-            let _ =
-              if i < ncap then
-                let _ = emit_load_rax_slot(b, clos) in
-                let _ = and_rax_1(b) in
-                let _ = mov_rax_rax_disp8(b, 32 + i * 8) in
-                push_r64(b, 0)
-              else
-                let _ = emit_load_rax_slot(b, nth(args, i - ncap)) in
-                push_r64(b, 0) in
-            push_flat(i - 1) in
-        let _ = push_flat(ntot - 1) in
-        let _ = emit_load_rax_slot(b, clos) in
-        let _ = and_rax_1(b) in
-        let _ = mov_rbx_rax_disp8(b, 16) in
-        let _ = push_r64(b, 3) in
-        let nreg = if ntot < 6 then ntot else 6 in
-        let load_reg(i) =
-          if i >= nreg then 0
-          else if i < ncap then
-            let _ = emit_load_rax_slot(b, clos) in
-            let _ = and_rax_1(b) in
-            let _ = mov_argreg_rax_disp8(b, i, 32 + i * 8) in
-            load_reg(i + 1)
-          else
-            let _ = emit_load_rax_slot(b, nth(args, i - ncap)) in
-            let _ = mov_rax_to_argreg(b, i) in
-            load_reg(i + 1) in
-        let _ = load_reg(0) in
-        let _ = pop_r64(b, 3) in
-        let _ = call_rbx(b) in
-        let _ =
-          if nstack == 0 then 0
-          else if bshl(nstack, 3) > 127 then add_rsp_imm32(b, bshl(nstack, 3))
-          else add_rsp_imm8(b, bshl(nstack, 3)) in
-        let _ = emit_store_rax_slot(b, dst) in
-        [b, cur, labels, patches]
-      else
-        /* dynamic nenv: build jump table and patch local labels immediately */
-        let nargs = len(args) in
-        let pushargs(j) =
-          if j < 0 then 0
-          else
-            let _ = emit_load_rax_slot(b, nth(args, j)) in
-            let _ = push_r64(b, 0) in
-            pushargs(j - 1) in
-        let _ = pushargs(nargs - 1) in
-        let _ = emit_load_rax_slot(b, clos) in
-        let _ = and_rax_1(b) in
-        let _ = mov_rbx_rax_disp8(b, 16) in
-        let _ = mov_r11d_rax_disp8(b, 24) in
-        let loadcap(i) =
-          if i >= 6 then 0
-          else
-            let _ = cmp_r11_imm8(b, i) in
-            let _ = e8(b, 126) in
-            let offpos = bytes_len(b) in
-            let _ = e8(b, 0) in
-            let m0 = bytes_len(b) in
-            let _ = mov_argreg_rax_disp8(b, i, 32 + i * 8) in
-            let m1 = bytes_len(b) in
-            let _ = bytes_put(b, offpos, m1 - m0) in
-            loadcap(i + 1) in
-        let _ = loadcap(0) in
-        /* record je/jmp patch sites (rel32 field positions) */
-        let _ = cmp_r11_imm8(b, 0) in
-        let _ = jcc_rel32(b, 4, 0) in
-        let r0 = bytes_len(b) - 4 in
-        let _ = cmp_r11_imm8(b, 1) in
-        let _ = jcc_rel32(b, 4, 0) in
-        let r1 = bytes_len(b) - 4 in
-        let _ = cmp_r11_imm8(b, 2) in
-        let _ = jcc_rel32(b, 4, 0) in
-        let r2 = bytes_len(b) - 4 in
-        let _ = cmp_r11_imm8(b, 3) in
-        let _ = jcc_rel32(b, 4, 0) in
-        let r3 = bytes_len(b) - 4 in
-        let _ = cmp_r11_imm8(b, 4) in
-        let _ = jcc_rel32(b, 4, 0) in
-        let r4 = bytes_len(b) - 4 in
-        let _ = jmp_rel32(b, 0) in
-        let r5 = bytes_len(b) - 4 in
-        let popusers(base) =
-          let loop(j) =
-            if j >= nargs then 0
-            else
-              let _ = pop_argreg(b, base + j) in
-              loop(j + 1) in
-          loop(0) in
-        /* arms: pop then jmp to LC; record arm starts and jmp sites */
-        let a0 = bytes_len(b) in
-        let _ = popusers(0) in
-        let _ = jmp_rel32(b, 0) in
-        let j0 = bytes_len(b) - 4 in
-        let a1 = bytes_len(b) in
-        let _ = popusers(1) in
-        let _ = jmp_rel32(b, 0) in
-        let j1 = bytes_len(b) - 4 in
-        let a2 = bytes_len(b) in
-        let _ = popusers(2) in
-        let _ = jmp_rel32(b, 0) in
-        let j2 = bytes_len(b) - 4 in
-        let a3 = bytes_len(b) in
-        let _ = popusers(3) in
-        let _ = jmp_rel32(b, 0) in
-        let j3 = bytes_len(b) - 4 in
-        let a4 = bytes_len(b) in
-        let _ = popusers(4) in
-        let _ = jmp_rel32(b, 0) in
-        let j4 = bytes_len(b) - 4 in
-        let a5 = bytes_len(b) in
-        let _ = popusers(5) in
-        let _ = jmp_rel32(b, 0) in
-        let j5 = bytes_len(b) - 4 in
-        let lc = bytes_len(b) in
-        let _ = call_rbx(b) in
-        let _ = emit_store_rax_slot(b, dst) in
-        /* patch all local rel32s now */
-        let _ = apply_patch(b, r0, a0) in
-        let _ = apply_patch(b, r1, a1) in
-        let _ = apply_patch(b, r2, a2) in
-        let _ = apply_patch(b, r3, a3) in
-        let _ = apply_patch(b, r4, a4) in
-        let _ = apply_patch(b, r5, a5) in
-        let _ = apply_patch(b, j0, lc) in
-        let _ = apply_patch(b, j1, lc) in
-        let _ = apply_patch(b, j2, lc) in
-        let _ = apply_patch(b, j3, lc) in
-        let _ = apply_patch(b, j4, lc) in
-        let _ = apply_patch(b, j5, lc) in
-        [b, cur, labels, patches]
-    else if k == "tailapply" then
-      let clos = nth(insn, 2) in
-      let ncap = nth(insn, 3) in
-      let args = nth(insn, 4) in
-      let nargs = len(args) in
+        let _ = emit_load_rdi_slot(b, nth(caps, i)) in
+        let _ = mov_rax_disp8_rdi(b, 32 + i * 8) in
+        storecap(i + 1) in
+    let _ = storecap(0) in
+    let _ = or_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels,
+     cons([acall + 1, "yac_alloc"],
+          cons(["closurefn", fnpos, fnName], patches))]
+  else if k == "apply" then
+    /* apply dst closSlot ncap [argSlots]:
+     * ncap >= 0: load that many caps (compile-time).
+     * ncap < 0: read nenv from the object at runtime (jump table). */
+    let dst = nth(insn, 1) in
+    let clos = nth(insn, 2) in
+    let ncap = nth(insn, 3) in
+    let args = nth(insn, 4) in
+    let nargs = len(args) in
+    if ncap >= 0 then
       let ntot = ncap + nargs in
-      let nreg = if ntot < 6 then ntot else 6 in
+      let nstack = if ntot > 6 then ntot - 6 else 0 in
+      /* push stack args (indices ntot-1 .. 6), reloading clos as needed */
+      let push_flat(i) =
+        if i < 6 then 0
+        else
+          let _ =
+            if i < ncap then
+              let _ = emit_load_rax_slot(b, clos) in
+              let _ = and_rax_1(b) in
+              let _ = mov_rax_rax_disp8(b, 32 + i * 8) in
+              push_r64(b, 0)
+            else
+              let _ = emit_load_rax_slot(b, nth(args, i - ncap)) in
+              push_r64(b, 0) in
+          push_flat(i - 1) in
+      let _ = push_flat(ntot - 1) in
       let _ = emit_load_rax_slot(b, clos) in
       let _ = and_rax_1(b) in
       let _ = mov_rbx_rax_disp8(b, 16) in
+      let _ = push_r64(b, 3) in
+      let nreg = if ntot < 6 then ntot else 6 in
       let load_reg(i) =
         if i >= nreg then 0
         else if i < ncap then
@@ -1387,344 +1277,495 @@ let emit_insn(st, insn, is_entry) =
           let _ = mov_rax_to_argreg(b, i) in
           load_reg(i + 1) in
       let _ = load_reg(0) in
-      let _ = mov_rsp_rbp(b) in
-      let _ = pop_rbp(b) in
-      let _ = jmp_rbx(b) in
+      let _ = pop_r64(b, 3) in
+      let _ = call_rbx(b) in
+      let _ =
+        if nstack == 0 then 0
+        else if bshl(nstack, 3) > 127 then add_rsp_imm32(b, bshl(nstack, 3))
+        else add_rsp_imm8(b, bshl(nstack, 3)) in
+      let _ = emit_store_rax_slot(b, dst) in
       [b, cur, labels, patches]
-    else if k == "nil" then
-      /* nil = tagged null = 1 */
-      let _ = mov_r64_imm(b, 0, 1) in
-      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-      [b, cur, labels, patches]
-    else if k == "cons" then
-      /* cons dst head tail: alloc [next][mark][kind=2][head][tail] */
-      let dst = nth(insn, 1) in
-      let hd = nth(insn, 2) in
-      let tl = nth(insn, 3) in
-      let _ = mov_rdi_imm(b, 40) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rax_disp8_imm32(b, 8, 0) in    /* mark */
-      let _ = mov_rax_disp8_imm32(b, 16, 2) in   /* kind = LIST */
-      let _ = mov_rax_disp8_imm32(b, 20, 0) in
-      let _ = emit_load_rdi_slot(b, hd) in
-      let _ = mov_rax_disp8_rdi(b, 24) in
-      let _ = emit_load_rdi_slot(b, tl) in
-      let _ = mov_rax_disp8_rdi(b, 32) in
-      let _ = or_rax_1(b) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_alloc"], patches)]
-    else if k == "len" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_len"], patches)]
-    else if k == "nth" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rsi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_nth"], patches)]
-    else if k == "tail" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_tail"], patches)]
-    else if k == "append" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rsi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_append"], patches)]
-    else if k == "list_rev" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_list_rev"], patches)]
-    else if k == "list_new" then
-      let dst = nth(insn, 1) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_list_new"], patches)]
-    else if k == "list_push" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rsi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_list_push"], patches)]
-    else if k == "strlit" then
-      /* STR: [next][mark][kind=3][len][bytes...]; size 8-aligned */
-      let dst = nth(insn, 1) in
-      let s = nth(insn, 2) in
-      let n = str_len(s) in
-      let raw = 32 + n + 1 in
-      let size = bshl(bshr(raw + 7, 3), 3) in
-      let _ = mov_rdi_imm(b, size) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rax_disp8_imm32(b, 8, 0) in
-      let _ = mov_rax_disp8_imm32(b, 16, 3) in
-      let _ = mov_rax_disp8_imm32(b, 20, 0) in
-      let _ = mov_rax_disp8_imm32(b, 24, n) in
-      let _ = mov_rax_disp8_imm32(b, 28, 0) in
-      let copy(i) =
-        if i >= n then 0
+    else
+      /* dynamic nenv: build jump table and patch local labels immediately */
+      let nargs = len(args) in
+      let pushargs(j) =
+        if j < 0 then 0
         else
-          let _ = mov_rax_disp8_imm8(b, 32 + i, str_ref(s, i)) in
-          copy(i + 1) in
-      let _ = copy(0) in
-      let _ = mov_rax_disp8_imm8(b, 32 + n, 0) in
-      let _ = or_rax_1(b) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_alloc"], patches)]
-    else if k == "str_len" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = test_rax_rax(b) in
-      let _ = jcc_rel32(b, 4, 0) in
-      let jz0 = bytes_len(b) - 4 in
-      let _ = cmp_rax_imm8(b, 1) in
-      let _ = jcc_rel32(b, 4, 0) in
-      let jnil = bytes_len(b) - 4 in
+          let _ = emit_load_rax_slot(b, nth(args, j)) in
+          let _ = push_r64(b, 0) in
+          pushargs(j - 1) in
+      let _ = pushargs(nargs - 1) in
+      let _ = emit_load_rax_slot(b, clos) in
       let _ = and_rax_1(b) in
-      let _ = mov_rax_rax_disp8(b, 24) in
-      let _ = shl_rax_1(b) in
+      let _ = mov_rbx_rax_disp8(b, 16) in
+      let _ = mov_r11d_rax_disp8(b, 24) in
+      let loadcap(i) =
+        if i >= 6 then 0
+        else
+          let _ = cmp_r11_imm8(b, i) in
+          let _ = e8(b, 126) in
+          let offpos = bytes_len(b) in
+          let _ = e8(b, 0) in
+          let m0 = bytes_len(b) in
+          let _ = mov_argreg_rax_disp8(b, i, 32 + i * 8) in
+          let m1 = bytes_len(b) in
+          let _ = bytes_put(b, offpos, m1 - m0) in
+          loadcap(i + 1) in
+      let _ = loadcap(0) in
+      /* record je/jmp patch sites (rel32 field positions) */
+      let _ = cmp_r11_imm8(b, 0) in
+      let _ = jcc_rel32(b, 4, 0) in
+      let r0 = bytes_len(b) - 4 in
+      let _ = cmp_r11_imm8(b, 1) in
+      let _ = jcc_rel32(b, 4, 0) in
+      let r1 = bytes_len(b) - 4 in
+      let _ = cmp_r11_imm8(b, 2) in
+      let _ = jcc_rel32(b, 4, 0) in
+      let r2 = bytes_len(b) - 4 in
+      let _ = cmp_r11_imm8(b, 3) in
+      let _ = jcc_rel32(b, 4, 0) in
+      let r3 = bytes_len(b) - 4 in
+      let _ = cmp_r11_imm8(b, 4) in
+      let _ = jcc_rel32(b, 4, 0) in
+      let r4 = bytes_len(b) - 4 in
       let _ = jmp_rel32(b, 0) in
-      let jdone = bytes_len(b) - 4 in
-      let zlen = bytes_len(b) in
-      let _ = apply_patch(b, jz0, zlen) in
-      let _ = apply_patch(b, jnil, zlen) in
-      let _ = xor_rax_rax(b) in
-      let done = bytes_len(b) in
-      let _ = apply_patch(b, jdone, done) in
+      let r5 = bytes_len(b) - 4 in
+      let popusers(base) =
+        let loop(j) =
+          if j >= nargs then 0
+          else
+            let _ = pop_argreg(b, base + j) in
+            loop(j + 1) in
+        loop(0) in
+      /* arms: pop then jmp to LC; record arm starts and jmp sites */
+      let a0 = bytes_len(b) in
+      let _ = popusers(0) in
+      let _ = jmp_rel32(b, 0) in
+      let j0 = bytes_len(b) - 4 in
+      let a1 = bytes_len(b) in
+      let _ = popusers(1) in
+      let _ = jmp_rel32(b, 0) in
+      let j1 = bytes_len(b) - 4 in
+      let a2 = bytes_len(b) in
+      let _ = popusers(2) in
+      let _ = jmp_rel32(b, 0) in
+      let j2 = bytes_len(b) - 4 in
+      let a3 = bytes_len(b) in
+      let _ = popusers(3) in
+      let _ = jmp_rel32(b, 0) in
+      let j3 = bytes_len(b) - 4 in
+      let a4 = bytes_len(b) in
+      let _ = popusers(4) in
+      let _ = jmp_rel32(b, 0) in
+      let j4 = bytes_len(b) - 4 in
+      let a5 = bytes_len(b) in
+      let _ = popusers(5) in
+      let _ = jmp_rel32(b, 0) in
+      let j5 = bytes_len(b) - 4 in
+      let lc = bytes_len(b) in
+      let _ = call_rbx(b) in
       let _ = emit_store_rax_slot(b, dst) in
+      /* patch all local rel32s now */
+      let _ = apply_patch(b, r0, a0) in
+      let _ = apply_patch(b, r1, a1) in
+      let _ = apply_patch(b, r2, a2) in
+      let _ = apply_patch(b, r3, a3) in
+      let _ = apply_patch(b, r4, a4) in
+      let _ = apply_patch(b, r5, a5) in
+      let _ = apply_patch(b, j0, lc) in
+      let _ = apply_patch(b, j1, lc) in
+      let _ = apply_patch(b, j2, lc) in
+      let _ = apply_patch(b, j3, lc) in
+      let _ = apply_patch(b, j4, lc) in
+      let _ = apply_patch(b, j5, lc) in
       [b, cur, labels, patches]
-    else if k == "str_ref" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = and_rax_1(b) in
-      let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
-      let _ = mov_r64_r64(b, 2, 7) in
-      let _ = e8(b, 72) in let _ = e8(b, 209) in let _ = e8(b, 250) in
-      let _ = add_rax_imm32(b, 32) in
-      let _ = movzx_eax_rax_rdx(b) in
-      let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, patches]
-    else if k == "bytes_new" then
-      /* BYTES: [next][mark][kind=4][len][cap][data...] initial cap=1048576 */
-      let dst = nth(insn, 1) in
-      let _ = mov_rdi_imm(b, 40 + 1048576) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rax_disp8_imm32(b, 8, 0) in
-      let _ = mov_rax_disp8_imm32(b, 16, 4) in
-      let _ = mov_rax_disp8_imm32(b, 20, 0) in
-      let _ = mov_rax_disp8_imm32(b, 24, 0) in
-      let _ = mov_rax_disp8_imm32(b, 28, 0) in
-      let _ = mov_rax_disp8_imm32(b, 32, 1048576) in
-      let _ = mov_rax_disp8_imm32(b, 36, 0) in
-      let _ = or_rax_1(b) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_alloc"], patches)]
-    else if k == "bytes_len" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rax_rax_disp8(b, 24) in
-      let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, patches]
-    else if k == "bytes_ref" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rbx_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rdx_rax(b) in
-      let _ = sar_rdx_1(b) in
-      let _ = mov_rax_rbx(b) in
-      let _ = add_rax_imm32(b, 40) in
-      let _ = movzx_eax_rax_rdx(b) in
-      let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, patches]
-    else if k == "bytes_put" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rbx_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rdx_rax(b) in
-      let _ = sar_rdx_1(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 4)) in
-      let _ = mov_rdi_rax(b) in
-      let _ = sar_rdi_1(b) in
-      let _ = mov_rax_rbx(b) in
-      let _ = add_rax_imm32(b, 40) in
-      let _ = mov_rax_rdx_dil(b) in
-      let _ = mov_rcx_rdx(b) in
-      let _ = inc_rcx(b) in
-      let _ = mov_rax_rbx_disp8(b, 24) in
-      let _ = cmp_rcx_rax(b) in
-      let _ = jcc_rel32(b, 6, 0) in
-      let jskip = bytes_len(b) - 4 in
-      let _ = mov_mem_rbx_disp8_rcx(b, 24) in
-      let skip = bytes_len(b) in
-      let _ = apply_patch(b, jskip, skip) in
-      let _ = xor_rax_rax(b) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, patches]
-    else if k == "bytes_append" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = and_rax_1(b) in
-      let _ = push_r64(b, 0) in
-      let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
-      let _ = e8(b, 72) in let _ = e8(b, 209) in let _ = e8(b, 255) in
-      let _ = pop_r64(b, 0) in
-      let _ = mov_rdx_rax_disp8(b, 24) in
-      let _ = push_r64(b, 0) in
-      let _ = add_rax_imm32(b, 40) in
-      let _ = e8(b, 72) in let _ = e8(b, 1) in let _ = e8(b, 208) in
-      let _ = e8(b, 64) in let _ = e8(b, 136) in let _ = e8(b, 56) in
-      let _ = pop_r64(b, 0) in
-      let _ = inc_mem_rax_disp8(b, 24) in
-      let _ = or_rax_1(b) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, patches]
-    else if k == "bytes_extend" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rsi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_bytes_extend"], patches)]
-    else if k == "str_cat" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rsi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_str_cat"], patches)]
-    else if k == "str_slice" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rsi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 4)) in
-      let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 194) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_str_slice"], patches)]
-    else if k == "int_to_str" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_int_to_str"], patches)]
-    else if k == "bytes_to_str" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_bytes_to_str"], patches)]
-    else if k == "drop" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rsi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_drop"], patches)]
-    else if k == "foldl" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rsi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 4)) in
-      let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 194) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_foldl"], patches)]
-    else if k == "map" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rsi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_map"], patches)]
-    else if k == "read_file" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_read_file"], patches)]
-    else if k == "write_file" then
-      let dst = nth(insn, 1) in
-      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-      let _ = mov_rdi_rax(b) in
-      let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-      let _ = mov_rsi_rax(b) in
-      let acall = bytes_len(b) in
-      let _ = call_rel32(b, 0) in
-      let _ = emit_store_rax_slot(b, dst) in
-      [b, cur, labels, cons([acall + 1, "yac_write_file"], patches)]
-    else [b, cur, labels, patches] in
-  /* update cur by the ACTUAL bytes appended */
-  let newlen = bytes_len(b) in
+  else if k == "tailapply" then
+    let clos = nth(insn, 2) in
+    let ncap = nth(insn, 3) in
+    let args = nth(insn, 4) in
+    let nargs = len(args) in
+    let ntot = ncap + nargs in
+    let nreg = if ntot < 6 then ntot else 6 in
+    let _ = emit_load_rax_slot(b, clos) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rbx_rax_disp8(b, 16) in
+    let load_reg(i) =
+      if i >= nreg then 0
+      else if i < ncap then
+        let _ = emit_load_rax_slot(b, clos) in
+        let _ = and_rax_1(b) in
+        let _ = mov_argreg_rax_disp8(b, i, 32 + i * 8) in
+        load_reg(i + 1)
+      else
+        let _ = emit_load_rax_slot(b, nth(args, i - ncap)) in
+        let _ = mov_rax_to_argreg(b, i) in
+        load_reg(i + 1) in
+    let _ = load_reg(0) in
+    let _ = mov_rsp_rbp(b) in
+    let _ = pop_rbp(b) in
+    let _ = jmp_rbx(b) in
+    [b, cur, labels, patches]
+  else st
+
+let emit_x86_i_prim(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let k = nth(insn, 0) in
+  if k == "nil" then
+    /* nil = tagged null = 1 */
+    let _ = mov_r64_imm(b, 0, 1) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    [b, cur, labels, patches]
+  else if k == "cons" then
+    /* cons dst head tail: alloc [next][mark][kind=2][head][tail] */
+    let dst = nth(insn, 1) in
+    let hd = nth(insn, 2) in
+    let tl = nth(insn, 3) in
+    let _ = mov_rdi_imm(b, 40) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rax_disp8_imm32(b, 8, 0) in    /* mark */
+    let _ = mov_rax_disp8_imm32(b, 16, 2) in   /* kind = LIST */
+    let _ = mov_rax_disp8_imm32(b, 20, 0) in
+    let _ = emit_load_rdi_slot(b, hd) in
+    let _ = mov_rax_disp8_rdi(b, 24) in
+    let _ = emit_load_rdi_slot(b, tl) in
+    let _ = mov_rax_disp8_rdi(b, 32) in
+    let _ = or_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_alloc"], patches)]
+  else if k == "len" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_len"], patches)]
+  else if k == "nth" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rsi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_nth"], patches)]
+  else if k == "tail" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_tail"], patches)]
+  else if k == "append" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rsi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_append"], patches)]
+  else if k == "list_rev" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_list_rev"], patches)]
+  else if k == "list_new" then
+    let dst = nth(insn, 1) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_list_new"], patches)]
+  else if k == "list_push" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rsi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_list_push"], patches)]
+  else if k == "strlit" then
+    /* STR: [next][mark][kind=3][len][bytes...]; size 8-aligned */
+    let dst = nth(insn, 1) in
+    let s = nth(insn, 2) in
+    let n = str_len(s) in
+    let raw = 32 + n + 1 in
+    let size = bshl(bshr(raw + 7, 3), 3) in
+    let _ = mov_rdi_imm(b, size) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rax_disp8_imm32(b, 8, 0) in
+    let _ = mov_rax_disp8_imm32(b, 16, 3) in
+    let _ = mov_rax_disp8_imm32(b, 20, 0) in
+    let _ = mov_rax_disp8_imm32(b, 24, n) in
+    let _ = mov_rax_disp8_imm32(b, 28, 0) in
+    let copy(i) =
+      if i >= n then 0
+      else
+        let _ = mov_rax_disp8_imm8(b, 32 + i, str_ref(s, i)) in
+        copy(i + 1) in
+    let _ = copy(0) in
+    let _ = mov_rax_disp8_imm8(b, 32 + n, 0) in
+    let _ = or_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_alloc"], patches)]
+  else if k == "str_len" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = test_rax_rax(b) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let jz0 = bytes_len(b) - 4 in
+    let _ = cmp_rax_imm8(b, 1) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let jnil = bytes_len(b) - 4 in
+    let _ = and_rax_1(b) in
+    let _ = mov_rax_rax_disp8(b, 24) in
+    let _ = shl_rax_1(b) in
+    let _ = jmp_rel32(b, 0) in
+    let jdone = bytes_len(b) - 4 in
+    let zlen = bytes_len(b) in
+    let _ = apply_patch(b, jz0, zlen) in
+    let _ = apply_patch(b, jnil, zlen) in
+    let _ = xor_rax_rax(b) in
+    let done = bytes_len(b) in
+    let _ = apply_patch(b, jdone, done) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, patches]
+  else if k == "str_ref" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = and_rax_1(b) in
+    let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
+    let _ = mov_r64_r64(b, 2, 7) in
+    let _ = e8(b, 72) in let _ = e8(b, 209) in let _ = e8(b, 250) in
+    let _ = add_rax_imm32(b, 32) in
+    let _ = movzx_eax_rax_rdx(b) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, patches]
+  else if k == "bytes_new" then
+    /* BYTES: [next][mark][kind=4][len][cap][data...] initial cap=1048576 */
+    let dst = nth(insn, 1) in
+    let _ = mov_rdi_imm(b, 40 + 1048576) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rax_disp8_imm32(b, 8, 0) in
+    let _ = mov_rax_disp8_imm32(b, 16, 4) in
+    let _ = mov_rax_disp8_imm32(b, 20, 0) in
+    let _ = mov_rax_disp8_imm32(b, 24, 0) in
+    let _ = mov_rax_disp8_imm32(b, 28, 0) in
+    let _ = mov_rax_disp8_imm32(b, 32, 1048576) in
+    let _ = mov_rax_disp8_imm32(b, 36, 0) in
+    let _ = or_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_alloc"], patches)]
+  else if k == "bytes_len" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rax_rax_disp8(b, 24) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, patches]
+  else if k == "bytes_ref" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rbx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rdx_rax(b) in
+    let _ = sar_rdx_1(b) in
+    let _ = mov_rax_rbx(b) in
+    let _ = add_rax_imm32(b, 40) in
+    let _ = movzx_eax_rax_rdx(b) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, patches]
+  else if k == "bytes_put" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rbx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rdx_rax(b) in
+    let _ = sar_rdx_1(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 4)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = sar_rdi_1(b) in
+    let _ = mov_rax_rbx(b) in
+    let _ = add_rax_imm32(b, 40) in
+    let _ = mov_rax_rdx_dil(b) in
+    let _ = mov_rcx_rdx(b) in
+    let _ = inc_rcx(b) in
+    let _ = mov_rax_rbx_disp8(b, 24) in
+    let _ = cmp_rcx_rax(b) in
+    let _ = jcc_rel32(b, 6, 0) in
+    let jskip = bytes_len(b) - 4 in
+    let _ = mov_mem_rbx_disp8_rcx(b, 24) in
+    let skip = bytes_len(b) in
+    let _ = apply_patch(b, jskip, skip) in
+    let _ = xor_rax_rax(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, patches]
+  else if k == "bytes_append" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = and_rax_1(b) in
+    let _ = push_r64(b, 0) in
+    let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
+    let _ = e8(b, 72) in let _ = e8(b, 209) in let _ = e8(b, 255) in
+    let _ = pop_r64(b, 0) in
+    let _ = mov_rdx_rax_disp8(b, 24) in
+    let _ = push_r64(b, 0) in
+    let _ = add_rax_imm32(b, 40) in
+    let _ = e8(b, 72) in let _ = e8(b, 1) in let _ = e8(b, 208) in
+    let _ = e8(b, 64) in let _ = e8(b, 136) in let _ = e8(b, 56) in
+    let _ = pop_r64(b, 0) in
+    let _ = inc_mem_rax_disp8(b, 24) in
+    let _ = or_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, patches]
+  else if k == "bytes_extend" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rsi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_bytes_extend"], patches)]
+  else if k == "str_cat" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rsi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_str_cat"], patches)]
+  else if k == "str_slice" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rsi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 4)) in
+    let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 194) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_str_slice"], patches)]
+  else if k == "int_to_str" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_int_to_str"], patches)]
+  else if k == "bytes_to_str" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_bytes_to_str"], patches)]
+  else if k == "drop" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rsi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_drop"], patches)]
+  else if k == "foldl" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rsi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 4)) in
+    let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 194) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_foldl"], patches)]
+  else if k == "map" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rsi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_map"], patches)]
+  else if k == "read_file" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_read_file"], patches)]
+  else if k == "write_file" then
+    let dst = nth(insn, 1) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rsi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = emit_store_rax_slot(b, dst) in
+    [b, cur, labels, cons([acall + 1, "yac_write_file"], patches)]
+  else st
+
+/* emit one instruction; st = [bytes, cur, labelsRev, patchesRev].
+ * Helpers keep this frame small (huge emit_insn miscompiles under L5). */
+let emit_insn(st, insn, is_entry) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let k = nth(insn, 0) in
+  let len0 = bytes_len(b) in
+  let done =
+    if k == "closure" or k == "apply" or k == "tailapply" then
+      emit_x86_i_clos(st, insn, is_entry)
+    else if k == "prologue" or k == "mov_imm" or k == "mov" or k == "binop"
+         or k == "cmp" or k == "icmp" or k == "label" or k == "call"
+         or k == "tailcall" or k == "jmp" or k == "br" or k == "ret"
+         or k == "exit" then
+      emit_x86_i_core(st, insn, is_entry)
+    else if k == "obj_kind" or k == "obj_ld" or k == "obj_st" or k == "tag"
+         or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
+         or k == "alloc_s" or k == "ld8" or k == "st8" or k == "print"
+         or k == "write1" or k == "clock" or k == "glob" or k == "time_ms"
+         or k == "time_str" or k == "argc" or k == "argv" then
+      emit_x86_i_heap(st, insn)
+    else emit_x86_i_prim(st, insn) in
+  let newlen = bytes_len(nth(done, 0)) in
   [nth(done, 0), cur + (newlen - len0), nth(done, 2), nth(done, 3)]
 
 
-/* Resolve patches that target labels defined in this function; keep the rest
- * (calls to other funs / runtime). Labels are not unique across functions.
- * Index-based to avoid O(n²) drop. */
 let resolve_local_labels(b, labels, patches) =
   let n = len(patches) in
   let keep = list_new() in
