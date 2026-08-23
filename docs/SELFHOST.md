@@ -244,17 +244,17 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,elf,pe,macho,pack,backend,encode_*,yc}.yac`。
 全量：`./yac tests/run.yac`（interp + boot + interp/`yc_A`/`yc_B` 编译用例 + L5 iso）。
-**下一步**：M6 栈图 GC；不要把大块逻辑塞进 `emit_insn`（见下）。
+**下一步**：M6 其余（arm64/riscv64 同步真实 `yac_gc`、空闲链表）；不要把大块逻辑塞进 `emit_insn`（见下）。
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
 
-`runtime.yac` 用 LIR 实现列表/字符串/bytes 以及 `print_int`、`time_ms`/`time_str`、`yac_argc`、`gc_collect`（仍 no-op）。kernel 指令：`write1`、`clock`、`glob`（x86-64 / arm64 / riscv64）。`compile_top` 产出 **24** 个 fun（`_start` + 23 runtime；手写 helper 不占 fun 表）。
+`runtime.yac` 用 LIR 实现列表/字符串/bytes 以及 `print_int`、`time_ms`/`time_str`、`yac_argc`、`gc_collect`（转调 `yac_gc`）。kernel 指令：`write1`、`clock`、`glob`（x86-64 / arm64 / riscv64）。`compile_top` 产出 **24** 个 fun（`_start` + 23 runtime；手写 helper 不占 fun 表）。
 
 **无法再迁进 LIR 的手写 `gen_*`**（`emit_program_at` 末尾追加）：
 
 | 函数 | 原因 |
 | --- | --- |
-| `gen_alloc` | `brk` + 对 `gc_head` 的绝对地址 patch |
+| `gen_alloc` / `gen_gc` | `brk`、`gc_head`/`stack_hi`；标记-清除不进 LIR |
 | `gen_read_file` / `gen_write_file` | 多步 syscall，指针与 tagged int 混用 |
 | `gen_argv` | Linux `char**` 指针可为奇数，不能当 tagged int 暂存 |
 | `gen_apply1` / `gen_apply2` | 动态 `nenv` 跳表 + SysV 寄存器 |
@@ -272,7 +272,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | --- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
 | M3  | x86-64 后端：**整数子集端到端**（整数算术/比较/if/尾递归函数 → 可运行 ELF，输出与解释器一致）→ 随后**补齐闭包/GC/字符串/列表/全部原语**（见 §10.3）。**闭包与 GC 是必需项，不省略** | `yc` 编译 fact/fib/闭包/GC 程序 → 输出与解释器一致 |
 | M4  | 自举：`yc.yac` 编译 `yc.yac` → 原生 `yc`；L4 烟测 42/letfun/fact；L5 `yc_A`/`yc_B` 对同一输入同构 | L4/L5 ✅ |
-| M5  | arm64 / riscv64 后端 + `--arch` 交叉编译（qemu 验证）                                                                        | 三架构同源跑通                              |
+| M5  | arm64 / riscv64 后端 + `--arch` 交叉编译（qemu 验证）                                                                        | 三架构同源跑通 ✅ |
 | M6  | rt yac 化 + GC 栈图；迁移全测试到原生 `yc`                                                                                     | 弃用 C 解释器（完全自举）                       |
 | M7  | 完善 callcc / CPS（ANF→CPS 转换、续延原生实现）与 scheme 前端                                                                      | callcc / scheme 测试通过                 |
 
@@ -525,11 +525,11 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 5. **IO**：`read_file` / `write_file`；位运算；`and`/`or`；bool 字面量。
 6. **HO 原语**：`yac_apply1`/`yac_apply2` + 原生 `foldl`/`map`（含捕获）。
 7. **M4 起步**：`yc.yac` + `selfhost_yc.sh`；L4 烟测 `selfhost_l4_lex.sh`（原生 is_kw）。
+8. **M5**：arm64/riscv64 与 x86 同源 `COMPILER_CASES`（qemu）。emit 跳过空 fun stub；`cmp ==` 走 `yac_str_eq`；`print` 区分 int/STR。`yac_alloc`：`brk`，失败则 `mmap` ANON。
 
 **仍待**：
-1. **精确 GC**：`gc_collect` 现为 LIR no-op（保守扫描曾破坏 `saved_argc`/`saved_argv`）；栈图在 M6。
-2. **M5**：arm64/riscv64 与 x86 同源 compiler cases（含返回的捕获闭包 `curry`/`return_clo`、字符串 `==`、`bytes_to_str`）。emit 跳过空 fun stub（与 x86 一致），否则 `l_call`/`closurefn` 会打到内层函数。arm64/riscv64 `yac_alloc`：`brk`，失败则 `mmap` ANON（qemu-user 上 `brk`/`sbrk` 常 SIGSEGV）。
-3. **`--emit-asm` / `regalloc.yac` / M7 callcc**：未做。
+1. **M6 精确 GC**：x86 `yac_gc` 扫描 tagged 栈槽 `[rbp+16, stack_hi)`，跟随 cons/listbuf/闭包捕获，从 `gc_head` 摘未标记对象（不归还 brk）。`stack_hi` 在 `_start` 保存。`gc_collect` 转调它。arm64/riscv64 仍是 `ret` 桩。
+2. **`--emit-asm` / `regalloc.yac` / M7 callcc**：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。
 

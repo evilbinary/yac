@@ -1238,12 +1238,15 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let avr = gen_argv_a64(0) in
   let av_off = bytes_len(b) in
   let _ = b_append(b, nth(avr, 0)) in
+  let gc_off = bytes_len(b) in
+  let _ = a64_ret(b) in
   let fo = cons(["yac_apply1", a1_off],
                 cons(["yac_apply2", a2_off],
                      cons(["yac_write_file", wf_off],
                           cons(["yac_read_file", rf_off],
                                cons(["yac_alloc", alc_off],
-                                    cons(["yac_argv", av_off], fo0)))))) in
+                                    cons(["yac_gc", gc_off],
+                                    cons(["yac_argv", av_off], fo0))))))) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
     if i >= 24 then 0

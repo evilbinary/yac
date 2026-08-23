@@ -415,7 +415,7 @@ let rt_print_int_ins(_) =
 
 let rt_gc_ins(_) =
   [l_prologue(4, 0),
-   l_mov_imm(1, 0),
+   l_call(1, "yac_gc", []),
    l_ret(1)]
 
 let rt_argc_ins(_) =
