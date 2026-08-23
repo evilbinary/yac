@@ -91,10 +91,33 @@ let a64_asr1(b, rd, rn) =
 let a64_cmp_reg(b, rn, rm) =
   a64_u32(b, 3942645760 + bshl(rm, 16) + bshl(rn, 5) + 31)
 
+/* CMP Xn,#imm12 = SUBS XZR,Xn,#imm  0xF100001F */
+let a64_cmp_imm(b, rn, imm12) =
+  a64_u32(b, 4043309087 + bshl(band(imm12, 4095), 10) + bshl(rn, 5))
+
 /* LDRB Wt,[Xn]  0x39400000 */
 let a64_ldrb(b, rt, rn) = a64_u32(b, 960495616 + bshl(rn, 5) + rt)
 /* STRB Wt,[Xn]  0x39000000 */
 let a64_strb(b, rt, rn) = a64_u32(b, 956301312 + bshl(rn, 5) + rt)
+/* LDRB Wt,[Xn,Xm]  0x38606800 */
+let a64_ldrb_reg(b, rt, rn, rm) =
+  a64_u32(b, 945842176 + bshl(rm, 16) + bshl(rn, 5) + rt)
+/* STRB Wt,[Xn,Xm]  0x38206800 */
+let a64_strb_reg(b, rt, rn, rm) =
+  a64_u32(b, 941647872 + bshl(rm, 16) + bshl(rn, 5) + rt)
+/* LDR Xt,[Xn,Xm,LSL #3]  0xF8607800 */
+let a64_ldr_lsl3(b, rt, rn, rm) =
+  a64_u32(b, 4167071744 + bshl(rm, 16) + bshl(rn, 5) + rt)
+
+let a64_word(b, pos) =
+  bytes_ref(b, pos) + bshl(bytes_ref(b, pos + 1), 8) +
+  bshl(bytes_ref(b, pos + 2), 16) + bshl(bytes_ref(b, pos + 3), 24)
+
+/* Rewrite B.cond at pos so it lands on target. */
+let a64_patch_bcond(b, pos, target) =
+  let cond = band(a64_word(b, pos), 15) in
+  let rel = bshr(target - pos, 2) in
+  a64_u32_at(b, pos, 1409286144 + bshl(band(rel, 524287), 5) + cond)
 
 /* STUR Xt,[Xn,#simm9]  0xF8000000 */
 let a64_stur(b, rt, rn, simm9) =
@@ -129,6 +152,12 @@ let a64_b_ne(b, imm19) =
 
 /* BL  0x94000000 */
 let a64_bl(b, imm26) = a64_u32(b, 2483027968 + band(imm26, 67108863))
+
+/* BLR Xn  0xD63F0000 | (Rn<<5) */
+let a64_blr(b, rn) = a64_u32(b, 3594452992 + bshl(rn, 5))
+
+/* BR Xn  0xD61F0000 | (Rn<<5) */
+let a64_br(b, rn) = a64_u32(b, 3592355840 + bshl(rn, 5))
 
 /* SVC #0  0xD4000001 */
 let a64_svc(b) = a64_u32(b, 3556769793)

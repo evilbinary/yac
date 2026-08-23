@@ -83,7 +83,8 @@ let pack_elf_exec(code, machine, vaddr, text_off) =
   let _ = bytes_put(out, text_off - 1, 0) in
   let _ = elf_header(out, entry, machine, 2, 1, 0) in
   let _ = elf_phdr_load(out, 64, PH_TYPE_LOAD, PH_FLAGS_RWX, 0, vaddr) in
-  let _ = elf_phdr_sizes(out, 64, file_size, file_size, PAGE) in
+  /* Extra BSS so RISC-V (and others) can bump-alloc without brk. */
+  let _ = elf_phdr_sizes(out, 64, file_size, file_size + 131072, PAGE) in
   let _ = bytes_extend(out, code) in
   out
 

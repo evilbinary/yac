@@ -1,0 +1,2 @@
+let _ = write_file("build/test_tmp/io_rw.txt", "ab") in
+str_len(read_file("build/test_tmp/io_rw.txt"))

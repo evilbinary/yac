@@ -107,17 +107,31 @@ let COMPILER_CASES = [
   ["foldl_prim", "rc", "10"], ["map_prim", "rc", "4"], ["is_kw", "rc", "1"],
   ["empty_params", "rc", "42"], ["print_int", "out", "123"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
-  ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"]]
+  ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
+  ["io_rw", "rc", "2"]]
 
 let compiler_all(st, yc) =
   foldl(fun(s, c) -> compiler_one(s, yc, c), st, COMPILER_CASES)
 
-/* Integer subset: no heap and no calls (closures still need alloc on arm64/riscv64). */
+/* Same as COMPILER_CASES minus: curry/return_clo (dyn apply nenv>=1),
+ * str_eq/is_kw/report (cmp== string path not in arm/riscv emit yet). */
 let ARCH_INT_CASES = [
-  ["l4_42", "rc", "42"], ["add", "rc", "3"],
+  ["l4_42", "rc", "42"], ["l4_letfun", "rc", "42"], ["add", "rc", "3"],
   ["let", "rc", "6"], ["precedence", "rc", "7"], ["div", "rc", "3"], ["mod", "rc", "2"],
-  ["if_true", "rc", "7"], ["if_false", "rc", "9"],
-  ["band", "rc", "3"], ["bool", "rc", "7"], ["and", "rc", "5"], ["seq", "rc", "42"]]
+  ["if_true", "rc", "7"], ["if_false", "rc", "9"], ["func_call", "rc", "10"],
+  ["recursion", "rc", "120"], ["args2", "rc", "9"], ["args3", "rc", "6"], ["args6", "rc", "21"],
+  ["capture", "rc", "15"], ["multi_capture", "rc", "13"], ["capture_2args", "rc", "103"],
+  ["higher", "rc", "7"],
+  ["list_len", "rc", "3"], ["list_nth", "rc", "20"], ["list_cons", "rc", "3"],
+  ["foldl", "rc", "10"], ["map_len", "rc", "3"], ["map_nth", "rc", "4"], ["filter", "rc", "2"],
+  ["append", "rc", "4"], ["drop", "rc", "3"], ["str_len", "rc", "3"], ["str_ref", "rc", "105"],
+  ["str_cat", "rc", "4"], ["band", "rc", "3"], ["bytes", "rc", "66"],
+  ["int_to_str", "rc", "50"], ["str_slice", "rc", "99"], ["bytes_to_str", "rc", "90"],
+  ["str_neq", "rc", "0"], ["bool", "rc", "7"], ["and", "rc", "5"],
+  ["foldl_prim", "rc", "10"], ["map_prim", "rc", "4"],
+  ["empty_params", "rc", "42"], ["print_int", "out", "123"],
+  ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
+  ["seq", "rc", "42"], ["io_rw", "rc", "2"]]
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0

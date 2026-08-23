@@ -81,6 +81,40 @@ let rv_beq(b, rs1, rs2, imm13) =
   rv_u32(b, bshl(b12, 31) + bshl(b10_5, 25) + bshl(rs2, 20) + bshl(rs1, 15) +
            bshl(b4_1, 8) + bshl(b11, 7) + 99)
 
+let rv_word(b, pos) =
+  bytes_ref(b, pos) + bshl(bytes_ref(b, pos + 1), 8) +
+  bshl(bytes_ref(b, pos + 2), 16) + bshl(bytes_ref(b, pos + 3), 24)
+
+let rv_bxx(b, rs1, rs2, imm13, f3) =
+  let i = band(imm13, 8191) in
+  let b12 = band(bshr(i, 12), 1) in
+  let b10_5 = band(bshr(i, 5), 63) in
+  let b4_1 = band(bshr(i, 1), 15) in
+  let b11 = band(bshr(i, 11), 1) in
+  rv_u32(b, bshl(b12, 31) + bshl(b10_5, 25) + bshl(rs2, 20) + bshl(rs1, 15) +
+           bshl(f3, 12) + bshl(b4_1, 8) + bshl(b11, 7) + 99)
+
+let rv_blt(b, rs1, rs2, imm13) = rv_bxx(b, rs1, rs2, imm13, 4)
+let rv_bge(b, rs1, rs2, imm13) = rv_bxx(b, rs1, rs2, imm13, 5)
+let rv_bltu(b, rs1, rs2, imm13) = rv_bxx(b, rs1, rs2, imm13, 6)
+let rv_bgeu(b, rs1, rs2, imm13) = rv_bxx(b, rs1, rs2, imm13, 7)
+
+let rv_patch_b(b, pos, target) =
+  let w = rv_word(b, pos) in
+  let rs1 = band(bshr(w, 15), 31) in
+  let rs2 = band(bshr(w, 20), 31) in
+  let f3 = band(bshr(w, 12), 7) in
+  let i = band(target - pos, 8191) in
+  let b12 = band(bshr(i, 12), 1) in
+  let b10_5 = band(bshr(i, 5), 63) in
+  let b4_1 = band(bshr(i, 1), 15) in
+  let b11 = band(bshr(i, 11), 1) in
+  rv_u32_at(b, pos, bshl(b12, 31) + bshl(b10_5, 25) + bshl(rs2, 20) + bshl(rs1, 15) +
+            bshl(f3, 12) + bshl(b4_1, 8) + bshl(b11, 7) + 99)
+
+let rv_slli(b, rd, rs1, sh) =
+  rv_u32(b, bshl(band(sh, 63), 20) + bshl(rs1, 15) + 4096 + bshl(rd, 7) + 19)
+
 let rv_bne(b, rs1, rs2, imm13) =
   let i = band(imm13, 8191) in
   let b12 = band(bshr(i, 12), 1) in
