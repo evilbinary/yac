@@ -7,6 +7,13 @@ let rv_u32(b, w) =
   let _ = bytes_append(b, band(bshr(w, 24), 255)) in
   0
 
+let rv_u32_at(b, pos, w) =
+  let _ = bytes_put(b, pos, band(w, 255)) in
+  let _ = bytes_put(b, pos + 1, band(bshr(w, 8), 255)) in
+  let _ = bytes_put(b, pos + 2, band(bshr(w, 16), 255)) in
+  let _ = bytes_put(b, pos + 3, band(bshr(w, 24), 255)) in
+  0
+
 let rv_addi(b, rd, rs1, imm) =
   rv_u32(b, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + bshl(rd, 7) + 19)
 
@@ -30,6 +37,21 @@ let rv_sra(b, rd, rs1, rs2) =
 
 let rv_mul(b, rd, rs1, rs2) =
   rv_u32(b, 33554432 + bshl(rs2, 20) + bshl(rs1, 15) + bshl(rd, 7) + 51)
+
+let rv_div(b, rd, rs1, rs2) =
+  rv_u32(b, 33554432 + bshl(rs2, 20) + bshl(rs1, 15) + 16384 + bshl(rd, 7) + 51)
+
+let rv_rem(b, rd, rs1, rs2) =
+  rv_u32(b, 33554432 + bshl(rs2, 20) + bshl(rs1, 15) + 24576 + bshl(rd, 7) + 51)
+
+let rv_xor(b, rd, rs1, rs2) =
+  rv_u32(b, bshl(rs2, 20) + bshl(rs1, 15) + 16384 + bshl(rd, 7) + 51)
+
+let rv_slt(b, rd, rs1, rs2) =
+  rv_u32(b, bshl(rs2, 20) + bshl(rs1, 15) + 8192 + bshl(rd, 7) + 51)
+
+let rv_sltiu(b, rd, rs1, imm) =
+  rv_u32(b, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + 12288 + bshl(rd, 7) + 19)
 
 let rv_lui(b, rd, imm20) =
   rv_u32(b, bshl(band(imm20, 1048575), 12) + bshl(rd, 7) + 55)
@@ -92,3 +114,18 @@ let rv_li(b, rd, v) =
   else
     let _ = rv_lui(b, rd, hi) in
     if lo_s == 0 then 0 else rv_addi(b, rd, rd, lo_s)
+
+/* Always LUI+ADDI (8 bytes) so absolute addresses can be patched in place. */
+let rv_li32_pair(b, rd, v) =
+  let hi = band(bshr(v + 2048, 12), 1048575) in
+  let lo = band(v, 4095) in
+  let lo_s = if lo > 2047 then lo - 4096 else lo in
+  let _ = rv_lui(b, rd, hi) in
+  rv_addi(b, rd, rd, lo_s)
+
+let rv_li32_at(b, pos, rd, v) =
+  let hi = band(bshr(v + 2048, 12), 1048575) in
+  let lo = band(v, 4095) in
+  let lo_s = if lo > 2047 then lo - 4096 else lo in
+  let _ = rv_u32_at(b, pos, bshl(band(hi, 1048575), 12) + bshl(rd, 7) + 55) in
+  rv_u32_at(b, pos + 4, bshl(band(lo_s, 4095), 20) + bshl(rd, 15) + bshl(rd, 7) + 19)

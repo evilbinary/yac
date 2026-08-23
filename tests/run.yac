@@ -112,6 +112,48 @@ let COMPILER_CASES = [
 let compiler_all(st, yc) =
   foldl(fun(s, c) -> compiler_one(s, yc, c), st, COMPILER_CASES)
 
+/* Integer subset: no heap and no calls (closures still need alloc on arm64/riscv64). */
+let ARCH_INT_CASES = [
+  ["l4_42", "rc", "42"], ["add", "rc", "3"],
+  ["let", "rc", "6"], ["precedence", "rc", "7"], ["div", "rc", "3"], ["mod", "rc", "2"],
+  ["if_true", "rc", "7"], ["if_false", "rc", "9"],
+  ["band", "rc", "3"], ["bool", "rc", "7"], ["and", "rc", "5"], ["seq", "rc", "42"]]
+
+let has_cmd(c) =
+  nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
+
+let qemu_cmd(arch) =
+  if arch == "arm64" then
+    if has_cmd("qemu-aarch64") then "qemu-aarch64"
+    else if has_cmd("qemu-aarch64-static") then "qemu-aarch64-static"
+    else ""
+  else if arch == "riscv64" then
+    if has_cmd("qemu-riscv64") then "qemu-riscv64"
+    else if has_cmd("qemu-riscv64-static") then "qemu-riscv64-static"
+    else ""
+  else ""
+
+let qemu_one(st, yc, qemu, arch, c) =
+  let name = nth(c, 0) in
+  let kind = nth(c, 1) in
+  let want = nth(c, 2) in
+  let tag = str_cat(arch, str_cat(" ", name)) in
+  let bin = str_cat(TMP, str_cat("/q_", str_cat(arch, str_cat("_", name)))) in
+  let cr = run(append(yc, [case_src(name), "-o", bin, "--arch", arch])) in
+  if nth(run(["test", "-f", bin]), 0) != 0 then
+    check(st, tag, "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
+  else
+    let _ = run(["chmod", "+x", bin]) in
+    let r = run([qemu, bin]) in
+    if kind == "rc" then check(st, tag, want, int_to_str(nth(r, 0)))
+    else check(st, tag, want, chomp(nth(r, 1)))
+
+let qemu_arch(st, yc, arch) =
+  let q = qemu_cmd(arch) in
+  if q == "" then
+    let _ = print(str_cat("SKIP: qemu ", arch)) in st
+  else foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st, ARCH_INT_CASES)
+
 let exists_rc(p) = nth(run(["test", "-f", p]), 0)
 
 let cat_bundle(_) =
@@ -213,7 +255,9 @@ let main =
   let st1 = check(st0, "boot frontend", "0", int_to_str(nth(br, 0))) in
   let _ = cat_bundle(0) in
   let st2 = compiler_all(st1, ["./yac", BUNDLE]) in
-  let st3 = boot_suite(st2) in
+  let stQ = qemu_arch(st2, ["./yac", BUNDLE], "arm64") in
+  let stR = qemu_arch(stQ, ["./yac", BUNDLE], "riscv64") in
+  let st3 = boot_suite(stR) in
   let _ = print("") in
   let _ = print(str_cat(int_to_str(nth(st3, 0)),
                  str_cat(" passed, ",

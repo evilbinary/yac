@@ -244,11 +244,11 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,elf,pe,macho,pack,backend,encode_*,yc}.yac`。
 全量：`./yac tests/run.yac`（interp + boot + interp/`yc_A`/`yc_B` 编译用例 + L5 iso）。
-**下一步**：M5 补齐 arm64/riscv64（含 kernel LIR）；M6 栈图 GC；不要把大块逻辑塞进 `emit_insn`（见下）。
+**下一步**：M5 补 alloc/IO/apply（三架构）；M6 栈图 GC；不要把大块逻辑塞进 `emit_insn`（见下）。
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
 
-`runtime.yac` 用 LIR 实现列表/字符串/bytes 以及 `print_int`、`time_ms`/`time_str`、`yac_argc`、`gc_collect`（仍 no-op）。kernel 指令：`write1`、`clock`、`glob`（x86-64）。`compile_top` 产出 **24** 个 fun（`_start` + 23 runtime；手写 helper 不占 fun 表）。
+`runtime.yac` 用 LIR 实现列表/字符串/bytes 以及 `print_int`、`time_ms`/`time_str`、`yac_argc`、`gc_collect`（仍 no-op）。kernel 指令：`write1`、`clock`、`glob`（x86-64 / arm64 / riscv64）。`compile_top` 产出 **24** 个 fun（`_start` + 23 runtime；手写 helper 不占 fun 表）。
 
 **无法再迁进 LIR 的手写 `gen_*`**（`emit_program_at` 末尾追加）：
 
@@ -528,7 +528,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 **仍待**：
 1. **精确 GC**：`gc_collect` 现为 LIR no-op（保守扫描曾破坏 `saved_argc`/`saved_argv`）；栈图在 M6。
-2. **M5**：arm64/riscv64 仅整数子集；缺 `write1`/`clock`/`glob`、alloc/IO/apply 与 qemu 验收。
+2. **M5**：arm64/riscv64 整数无调用子集（`/` `%`、icmp、kernel `write1`/`clock`/`glob`、入口 argc、16 字节对齐栈、`SP` 用 ADD 不是 ORR）。`tests/run.yac` 在有 `qemu-aarch64-static`/`qemu-riscv64-static` 时跑 `ARCH_INT_CASES`。函数/print 仍要 alloc，未做。
 3. **`--emit-asm` / `regalloc.yac` / M7 callcc**：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。

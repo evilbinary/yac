@@ -1,5 +1,9 @@
 /* emit_riscv64.yac — Linux RV64 emit of integer LIR. Other ops: unimp. */
 
+let rv_frame_bytes(nlocals) =
+  let nbytes = bshl(nlocals + 1, 3) in
+  bshl(bshr(nbytes + 15, 4), 4)
+
 let rv_slot(b, slot, store, r) =
   let off = 0 - bshl(slot + 1, 3) in
   let _ = rv_addi(b, 5, 8, off) in
@@ -29,7 +33,20 @@ let emit_insn_rv(st, insn, is_entry) =
   if k == "prologue" then
     let nlocals = nth(insn, 1) in
     let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
-    let nbytes = bshl(nlocals + 1, 3) in
+    let nbytes = rv_frame_bytes(nlocals) in
+    let patches2 =
+      if is_entry then
+        let _ = rv_ld(b, 28, 2, 0) in
+        let ac_save = bytes_len(b) in
+        let _ = rv_li32_pair(b, 6, 0) in
+        let _ = rv_sd(b, 28, 6, 0) in
+        let _ = rv_addi(b, 28, 2, 8) in
+        let av_save = bytes_len(b) in
+        let _ = rv_li32_pair(b, 6, 0) in
+        let _ = rv_sd(b, 28, 6, 0) in
+        cons(["saved_argv", av_save],
+             cons(["saved_argc", ac_save], patches))
+      else patches in
     let _ =
       if is_entry then rv_addi(b, 8, 2, 0)
       else
@@ -45,7 +62,7 @@ let emit_insn_rv(st, insn, is_entry) =
         let _ = rv_slot(b, j + 1, true, 10 + j) in
         storep(j + 1) in
     let _ = storep(0) in
-    [b, cur, labels, patches]
+    [b, cur, labels, patches2]
   else if k == "mov_imm" then
     let _ = rv_li(b, 6, nth(insn, 2)) in
     let _ = rv_addi(b, 7, 0, 1) in
@@ -69,7 +86,40 @@ let emit_insn_rv(st, insn, is_entry) =
       else if op == "*" then rv_mul(b, 6, 6, 28)
       else if op == "&" then rv_and(b, 6, 6, 28)
       else if op == "|" then rv_or(b, 6, 6, 28)
+      else if op == "and" then rv_and(b, 6, 6, 28)
+      else if op == "or" then rv_or(b, 6, 6, 28)
+      else if op == "/" then rv_div(b, 6, 6, 28)
+      else if op == "%" then rv_rem(b, 6, 6, 28)
       else rv_add(b, 6, 6, 28) in
+    let _ = rv_sll(b, 6, 6, 7) in
+    let _ = rv_slot(b, nth(insn, 2), true, 6) in
+    [b, cur, labels, patches]
+  else if k == "cmp" or k == "icmp" then
+    let op = nth(insn, 1) in
+    let _ = rv_slot(b, nth(insn, 3), false, 6) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_sra(b, 6, 6, 7) in
+    let _ = rv_slot(b, nth(insn, 4), false, 28) in
+    let _ = rv_sra(b, 28, 28, 7) in
+    let _ =
+      if op == "==" then
+        let _ = rv_xor(b, 6, 6, 28) in
+        rv_sltiu(b, 6, 6, 1)
+      else if op == "!=" then
+        let _ = rv_xor(b, 6, 6, 28) in
+        let _ = rv_sltiu(b, 6, 6, 1) in
+        rv_xor(b, 6, 6, 7)
+      else if op == "<" then rv_slt(b, 6, 6, 28)
+      else if op == "<=" then
+        let _ = rv_slt(b, 6, 28, 6) in
+        rv_sltiu(b, 6, 6, 1)
+      else if op == ">" then rv_slt(b, 6, 28, 6)
+      else if op == ">=" then
+        let _ = rv_slt(b, 6, 6, 28) in
+        rv_sltiu(b, 6, 6, 1)
+      else
+        let _ = rv_xor(b, 6, 6, 28) in
+        rv_sltiu(b, 6, 6, 1) in
     let _ = rv_sll(b, 6, 6, 7) in
     let _ = rv_slot(b, nth(insn, 2), true, 6) in
     [b, cur, labels, patches]
@@ -191,6 +241,44 @@ let emit_insn_rv(st, insn, is_entry) =
     let _ = rv_add(b, 10, 10, 11) in
     let _ = rv_sb(b, 12, 10, 0) in
     [b, cur, labels, patches]
+  else if k == "write1" then
+    let _ = rv_slot(b, nth(insn, 1), false, 6) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_sra(b, 6, 6, 7) in
+    let _ = rv_addi(b, 2, 2, 0 - 16) in
+    let _ = rv_sb(b, 6, 2, 0) in
+    let _ = rv_addi(b, 10, 0, 1) in
+    let _ = rv_addi(b, 11, 2, 0) in
+    let _ = rv_addi(b, 12, 0, 1) in
+    let _ = rv_addi(b, 17, 0, 64) in
+    let _ = rv_ecall(b) in
+    let _ = rv_addi(b, 2, 2, 16) in
+    [b, cur, labels, patches]
+  else if k == "clock" then
+    let _ = rv_addi(b, 2, 2, 0 - 16) in
+    let _ = rv_addi(b, 10, 0, nth(insn, 3)) in
+    let _ = rv_addi(b, 11, 2, 0) in
+    let _ = rv_addi(b, 17, 0, 113) in
+    let _ = rv_ecall(b) in
+    let _ = rv_ld(b, 6, 2, 0) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_sll(b, 6, 6, 7) in
+    let _ = rv_slot(b, nth(insn, 1), true, 6) in
+    let _ = rv_ld(b, 6, 2, 8) in
+    let _ = rv_sll(b, 6, 6, 7) in
+    let _ = rv_slot(b, nth(insn, 2), true, 6) in
+    let _ = rv_addi(b, 2, 2, 16) in
+    [b, cur, labels, patches]
+  else if k == "glob" then
+    let gpos = bytes_len(b) in
+    let _ = rv_li32_pair(b, 6, 0) in
+    let _ = rv_ld(b, 6, 6, 0) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_sll(b, 6, 6, 7) in
+    let _ = rv_slot(b, nth(insn, 1), true, 6) in
+    let which = nth(insn, 2) in
+    let gkind = if which == 1 then "saved_argc" else "saved_argv" in
+    [b, cur, labels, cons([gkind, gpos], patches)]
   else
     let _ = rv_unimp(b) in
     [b, cur, labels, patches]
@@ -228,16 +316,29 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let b = nth(st, 0) in
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
+  let data_start = bytes_len(b) in
+  let fill_data(i) =
+    if i >= 24 then 0
+    else let _ = bytes_append(b, 0) in fill_data(i + 1) in
+  let _ = fill_data(0) in
+  let GLOBALS_BASE = load_vaddr + text_off + data_start in
   let resolve(i) =
     if i < 0 then 0
     else
       let p = nth(patches, i) in
-      let pos = nth(p, 1) in
-      let lab = nth(p, 2) in
-      let targ = rv_lookup(labels, lab) in
-      let targ2 = if targ == 0 then rv_lookup(fo, lab) else targ in
-      let rd = if nth(p, 0) == "jalra" then 1 else 0 in
-      let _ = rv_apply_jal(b, pos, targ2, rd) in
+      let kind = nth(p, 0) in
+      let _ =
+        if kind == "saved_argc" then
+          rv_li32_at(b, nth(p, 1), 6, GLOBALS_BASE + 8)
+        else if kind == "saved_argv" then
+          rv_li32_at(b, nth(p, 1), 6, GLOBALS_BASE + 16)
+        else
+          let pos = nth(p, 1) in
+          let lab = nth(p, 2) in
+          let targ = rv_lookup(labels, lab) in
+          let targ2 = if targ == 0 then rv_lookup(fo, lab) else targ in
+          let rd = if kind == "jalra" then 1 else 0 in
+          rv_apply_jal(b, pos, targ2, rd) in
       resolve(i - 1) in
   let _ = resolve(len(patches) - 1) in
   [b, fo]

@@ -7,6 +7,13 @@ let a64_u32(b, w) =
   let _ = bytes_append(b, band(bshr(w, 24), 255)) in
   0
 
+let a64_u32_at(b, pos, w) =
+  let _ = bytes_put(b, pos, band(w, 255)) in
+  let _ = bytes_put(b, pos + 1, band(bshr(w, 8), 255)) in
+  let _ = bytes_put(b, pos + 2, band(bshr(w, 16), 255)) in
+  let _ = bytes_put(b, pos + 3, band(bshr(w, 24), 255)) in
+  0
+
 /* 0xD2800000 MOVZ Xd,#imm,LSL #(hw*16) */
 let a64_movz(b, rd, imm16, hw) =
   a64_u32(b, 3531603968 + bshl(hw, 21) + bshl(band(imm16, 65535), 5) + rd)
@@ -14,6 +21,12 @@ let a64_movz(b, rd, imm16, hw) =
 /* 0xF2800000 MOVK */
 let a64_movk(b, rd, imm16, hw) =
   a64_u32(b, 4068474880 + bshl(hw, 21) + bshl(band(imm16, 65535), 5) + rd)
+
+let a64_mov_imm64_at(b, pos, rd, v) =
+  let _ = a64_u32_at(b, pos, 3531603968 + bshl(band(v, 65535), 5) + rd) in
+  let _ = a64_u32_at(b, pos + 4, 4068474880 + bshl(1, 21) + bshl(band(bshr(v, 16), 65535), 5) + rd) in
+  let _ = a64_u32_at(b, pos + 8, 4068474880 + bshl(2, 21) + bshl(band(bshr(v, 32), 65535), 5) + rd) in
+  a64_u32_at(b, pos + 12, 4068474880 + bshl(3, 21) + bshl(band(bshr(v, 48), 65535), 5) + rd)
 
 let a64_mov_imm64(b, rd, v) =
   let _ = a64_movz(b, rd, band(v, 65535), 0) in
@@ -39,7 +52,15 @@ let a64_sub_reg(b, rd, rn, rm) =
 
 /* 0x9B007C00 MUL */
 let a64_mul(b, rd, rn, rm) =
-  a64_u32(b, 2600475648 + bshl(rm, 16) + bshl(rn, 5) + rd)
+  a64_u32(b, 2600500224 + bshl(rm, 16) + bshl(rn, 5) + rd)
+
+/* 0x9AC00C00 SDIV */
+let a64_sdiv(b, rd, rn, rm) =
+  a64_u32(b, 2596277248 + bshl(rm, 16) + bshl(rn, 5) + rd)
+
+/* 0x9B008000 MSUB  Xd = Xa - Xn*Xm */
+let a64_msub(b, rd, rn, rm, ra) =
+  a64_u32(b, 2600501248 + bshl(rm, 16) + bshl(ra, 10) + bshl(rn, 5) + rd)
 
 /* 0x8A000000 AND */
 let a64_and_reg(b, rd, rn, rm) =
@@ -49,15 +70,22 @@ let a64_and_reg(b, rd, rn, rm) =
 let a64_orr_reg(b, rd, rn, rm) =
   a64_u32(b, 2852126720 + bshl(rm, 16) + bshl(rn, 5) + rd)
 
-/* MOV Xd,Xm = ORR Xd,XZR,Xm  0xAA0003E0 */
+/* MOV Xd,Xm = ORR Xd,XZR,Xm  0xAA0003E0 — Xm must not be SP. */
 let a64_mov_reg(b, rd, rm) =
   a64_u32(b, 2852127712 + bshl(rm, 16) + rd)
 
+/* MOV involving SP is ADD #0 (ORR treats 31 as XZR). */
+let a64_mov_sp(b, rd, rn) = a64_add_imm(b, rd, rn, 0)
+
+/* LDR Xt,[Xn,#off] unsigned, off multiple of 8. */
+let a64_ldr(b, rt, rn, off) =
+  a64_u32(b, 4181721088 + bshl(band(bshr(off, 3), 4095), 10) + bshl(rn, 5) + rt)
+
 let a64_lsl1(b, rd, rn) = a64_add_reg(b, rd, rn, rn)
 
-/* ASR #1 : SBFM 0x9340FC00 */
+/* ASR #1: ADD Xd, XZR, Xn, ASR #1  (0x8B800400 + Rn<<16 + Rd). SBFM immediates are qemu-sensitive. */
 let a64_asr1(b, rd, rn) =
-  a64_u32(b, 2470476800 + bshl(rn, 5) + rd)
+  a64_u32(b, 2340422656 + bshl(rn, 16) + 992 + rd)
 
 /* CMP Xn,Xm = SUBS XZR,Xn,Xm  0xEB00001F */
 let a64_cmp_reg(b, rn, rm) =
@@ -79,10 +107,10 @@ let a64_ldur(b, rt, rn, simm9) =
   a64_u32(b, 4164943872 + bshl(imm, 12) + bshl(rn, 5) + rt)
 
 /* STP X29,X30,[SP,#-16]!  0xA9BF7BFD */
-let a64_stp_fp_lr(b) = a64_u32(b, 2848234493)
+let a64_stp_fp_lr(b) = a64_u32(b, 2847898621)
 
 /* LDP X29,X30,[SP],#16  0xA8C17BFD */
-let a64_ldp_fp_lr(b) = a64_u32(b, 2830007293)
+let a64_ldp_fp_lr(b) = a64_u32(b, 2831252477)
 
 let a64_ret(b) = a64_u32(b, 3596551104)
 
