@@ -244,7 +244,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,elf,pe,macho,pack,backend,encode_*,yc}.yac`。
 全量：`./yac tests/run.yac`（interp + boot + interp/`yc_A`/`yc_B` 编译用例 + L5 iso）。
-**下一步**：M6 空闲链表 / 归还 brk；不要把大块逻辑塞进 `emit_insn`（见下）。
+**下一步**：M6 归还 brk（可选）；不要把大块逻辑塞进 `emit_insn`（见下）。
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
 
@@ -528,7 +528,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 8. **M5**：arm64/riscv64 与 x86 同源 `COMPILER_CASES`（qemu）。emit 跳过空 fun stub；`cmp ==` 走 `yac_str_eq`；`print` 区分 int/STR。`yac_alloc`：`brk`，失败则 `mmap` ANON。
 
 **仍待**：
-1. **M6 精确 GC**：x86/arm64/riscv64 `yac_gc` 扫描 tagged 栈槽 `[fp+16, stack_hi)`，跟随 cons/listbuf/闭包捕获，从 `gc_head` 摘未标记对象（不归还 brk）。`stack_hi` 在 `_start` 保存。`gc_collect` 转调它。
+1. **M6 精确 GC**：x86/arm64/riscv64 `yac_gc` 扫描 tagged 栈槽 `[fp+16, stack_hi)`，跟随 cons/listbuf/闭包捕获。未标记对象从 `gc_head` 摘到 `gc_free`（`GLOBALS+32`）。尺寸写在对象前 8 字节（**不要**占用 mark@+8）。`yac_alloc` first-fit 复用，否则 `brk`/`mmap` `n+8`。不归还 brk。
 2. **`--emit-asm` / `regalloc.yac` / M7 callcc**：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。

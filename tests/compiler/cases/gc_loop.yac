@@ -1,8 +1,10 @@
-/* Throwaway cons cells; live result is an int. GC must not smash the frame. */
+/* Throwaway cons cells; live cons must survive reuse after collect. */
+let live = cons(40, cons(2, [])) in
 let rec(i, acc) =
   if i == 0 then acc
   else
     let _ = cons(1, cons(2, [])) in
     let _ = gc_collect() in
     rec(i - 1, acc) in
-rec(200, 42)
+let _ = rec(200, 0) in
+nth(live, 0) + nth(live, 1)

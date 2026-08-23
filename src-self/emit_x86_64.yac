@@ -50,31 +50,73 @@ let emit_store_param(b, j, k) =
     else if j == 4 then mov_mem_rbp32_r64(b, off, 8)
     else mov_mem_rbp32_r64(b, off, 9)
 
-/* yac_alloc(n in rdi) -> rax: brk n bytes and link into gc_head.
- * Returns [bytes, headaddrPatchPos]. */
+/* yac_alloc(n in rdi) -> rax raw ptr.
+ * Size lives at [obj-8], not in mark. First-fit gc_free (gc_head+32), else brk n+8. */
 let gen_alloc(d) =
   let b = bytes_new() in
-  let _ = e8(b, 87) in               /* push rdi (save n) */
-  let _ = mov_r64_imm(b, 0, 12) in   /* rax = 12 (brk) */
-  let _ = mov_rdi_imm(b, 0) in
-  let _ = syscall(b) in              /* rax = cur heap top */
-  let _ = mov_rbx_rax(b) in          /* rbx = cur */
-  let _ = e8(b, 95) in               /* pop rdi (n) */
-  let _ = lea_rdi_rbx_rdi(b) in      /* rdi = cur + n */
-  let _ = mov_r64_imm(b, 0, 12) in
-  let _ = syscall(b) in              /* brk(cur+n) */
-  let _ = mov_rax_rbx(b) in          /* rax = cur (allocation start) */
-  let _ = mov_rax_imm64(b, 0) in     /* rax = &head (patched) */
+  let _ = e8(b, 87) in
+  let _ = mov_rax_imm64(b, 0) in
   let headaddr = bytes_len(b) - 8 in
+  let _ = mov_rbx_rax(b) in
+  let _ = add_rax_imm8(b, 32) in
   let _ = mov_rdx_mem_rax(b) in
+  let _ = xor_rcx_rcx(b) in
+  let jfl = bytes_len(b) in
+  let _ = test_rdx_rdx(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let pmiss = bytes_len(b) - 4 in
+  let _ = cmp_mem_rdx_m8_rdi(b) in
+  let _ = jcc_rel32(b, 3, 0) in
+  let phit = bytes_len(b) - 4 in
+  let _ = mov_rcx_rdx(b) in
+  let _ = mov_rdx_mem_rdx(b) in
+  let _ = jmp_rel32(b, 0) in
+  let jflb = bytes_len(b) - 4 in
+  let _ = apply_patch(b, jflb, jfl) in
+  let hit = bytes_len(b) in
+  let _ = apply_patch(b, phit, hit) in
+  let _ = mov_rsi_mem_rdx(b) in
+  let _ = test_rcx_rcx(b) in
+  let _ = jcc_rel32(b, 5, 0) in
+  let pnf = bytes_len(b) - 4 in
+  let _ = mov_mem_rax_rsi(b) in
+  let _ = jmp_rel32(b, 0) in
+  let pgot = bytes_len(b) - 4 in
+  let nf = bytes_len(b) in
+  let _ = apply_patch(b, pnf, nf) in
+  let _ = mov_mem_rcx_rsi(b) in
+  let got = bytes_len(b) in
+  let _ = apply_patch(b, pgot, got) in
+  let _ = e8(b, 95) in
+  let _ = mov_rsi_mem_rbx(b) in
+  let _ = mov_mem_rdx_rsi(b) in
   let _ = mov_mem_rbx_rdx(b) in
-  let _ = mov_mem_rax_rbx(b) in
-  let _ = mov_rax_rbx(b) in
+  let _ = mov_rax_rdx(b) in
+  let _ = ret(b) in
+  let miss = bytes_len(b) in
+  let _ = apply_patch(b, pmiss, miss) in
+  let _ = mov_r64_imm(b, 0, 12) in
+  let _ = mov_rdi_imm(b, 0) in
+  let _ = syscall(b) in
+  let _ = mov_rsi_rax(b) in
+  let _ = e8(b, 95) in
+  let _ = e8(b, 87) in
+  let _ = lea_rdi_rsi_rdi(b) in
+  let _ = lea_rdi_rdi_disp8(b, 8) in
+  let _ = mov_r64_imm(b, 0, 12) in
+  let _ = syscall(b) in
+  let _ = pop_r64(b, 1) in
+  let _ = mov_mem_rsi_rcx(b) in
+  let _ = lea_rdx_rsi_disp8(b, 8) in
+  let _ = mov_rsi_mem_rbx(b) in
+  let _ = mov_mem_rdx_rsi(b) in
+  let _ = mov_mem_rbx_rdx(b) in
+  let _ = mov_rax_rdx(b) in
   let _ = ret(b) in
   [b, headaddr]
 
 /* yac_gc: clear marks, recursive-mark tagged stack slots [rbp+16, stack_hi),
- * unlink unmarked from gc_head. Does not return memory to the OS.
+ * unlink unmarked from gc_head onto gc_free (head+32). Size stays at [obj-8].
  * [bytes, gc_head imm64 pos, stack_hi imm64 pos]. */
 let gen_gc(_) =
   let b = bytes_new() in
@@ -140,6 +182,11 @@ let gen_gc(_) =
   let _ = apply_patch(b, jliveb, jsw) in
   let dead = bytes_len(b) in
   let _ = apply_patch(b, pdead, dead) in
+  let _ = mov_rax_mem_rbp8(b) in
+  let _ = add_rax_imm8(b, 32) in
+  let _ = mov_rdx_mem_rax(b) in
+  let _ = mov_mem_rbx_rdx(b) in
+  let _ = mov_mem_rax_rbx(b) in
   let _ = test_rcx_rcx(b) in
   let _ = jcc_rel32(b, 4, 0) in
   let pfirst = bytes_len(b) - 4 in
@@ -1766,10 +1813,10 @@ let emit_program_at(prog, load_vaddr, text_off) =
                                                   cons(["yac_argv", av_off], funOffsRev))))))) in
   let LOAD_VADDR = load_vaddr in
   let TEXT_OFF = text_off in
-  /* writable globals: gc head, saved_argc, saved_argv, stack_hi. */
+  /* writable globals: gc_head, argc, argv, stack_hi, gc_free. */
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 32 then 0
+    if i >= 40 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in

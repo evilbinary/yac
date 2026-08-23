@@ -879,3 +879,28 @@ let dec_rcx(b) =
 /* mov [rax], rbp  (48 89 28) */
 let mov_mem_rax_rbp(b) =
   let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 40)
+/* cmp [rdx-8], rdi  (48 39 7a f8) — freelist size at header */
+let cmp_mem_rdx_m8_rdi(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 57) in let _ = e8(b, 122) in e8(b, 248)
+/* mov rdx, [rdx]  (48 8b 12) */
+let mov_rdx_mem_rdx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 139) in e8(b, 18)
+/* mov rsi, [rdx]  (48 8b 32) */
+let mov_rsi_mem_rdx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 139) in e8(b, 50)
+/* mov [rdx], rsi  (48 89 32) */
+let mov_mem_rdx_rsi(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 50)
+/* mov rax, rdx  (48 89 d0) */
+let mov_rax_rdx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 208)
+/* mov [rsi], rcx  (48 89 0e) */
+let mov_mem_rsi_rcx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 14)
+/* lea rdx, [rsi+disp8]  (48 8d 56 id8) */
+let lea_rdx_rsi_disp8(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 86) in
+  e8(b, band(d, 255))
+/* lea rdi, [rsi+rdi]  (48 8d 3c 3e) */
+let lea_rdi_rsi_rdi(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 60) in e8(b, 62)
