@@ -423,6 +423,86 @@ let rv_jal_rt(b, patches, dst, name) =
   let _ = rv_slot(b, dst, true, 10) in
   cons(["jalra", pos, name], patches)
 
+/* x6,x28 untagged; x7=1; tagged result in x6. */
+let rv_cmp_int(b, op) =
+  let _ =
+    if op == "==" then
+      let _ = rv_xor(b, 6, 6, 28) in
+      rv_sltiu(b, 6, 6, 1)
+    else if op == "!=" then
+      let _ = rv_xor(b, 6, 6, 28) in
+      let _ = rv_sltiu(b, 6, 6, 1) in
+      rv_xor(b, 6, 6, 7)
+    else if op == "<" then rv_slt(b, 6, 6, 28)
+    else if op == "<=" then
+      let _ = rv_slt(b, 6, 28, 6) in
+      rv_sltiu(b, 6, 6, 1)
+    else if op == ">" then rv_slt(b, 6, 28, 6)
+    else if op == ">=" then
+      let _ = rv_slt(b, 6, 6, 28) in
+      rv_sltiu(b, 6, 6, 1)
+    else
+      let _ = rv_xor(b, 6, 6, 28) in
+      rv_sltiu(b, 6, 6, 1) in
+  rv_sll(b, 6, 6, 7)
+
+let rv_cmp_maybe_str(b, op, patches) =
+  let _ = rv_addi(b, 2, 2, 0 - 16) in
+  let _ = rv_sd(b, 10, 2, 0) in
+  let _ = rv_sd(b, 11, 2, 8) in
+  let _ = rv_addi(b, 7, 0, 1) in
+  let jnil1 = bytes_len(b) in
+  let _ = rv_beq(b, 10, 7, 0) in
+  let _ = rv_and(b, 5, 10, 7) in
+  let jz1 = bytes_len(b) in
+  let _ = rv_beq(b, 5, 0, 0) in
+  let jnil2 = bytes_len(b) in
+  let _ = rv_beq(b, 11, 7, 0) in
+  let _ = rv_and(b, 5, 11, 7) in
+  let jz2 = bytes_len(b) in
+  let _ = rv_beq(b, 5, 0, 0) in
+  let _ = rv_ld(b, 10, 2, 0) in
+  let _ = rv_untag_ptr(b, 10) in
+  let _ = rv_ld(b, 5, 10, 16) in
+  let _ = rv_addi(b, 6, 0, 3) in
+  let jne1 = bytes_len(b) in
+  let _ = rv_bne(b, 5, 6, 0) in
+  let _ = rv_ld(b, 10, 2, 8) in
+  let _ = rv_untag_ptr(b, 10) in
+  let _ = rv_ld(b, 5, 10, 16) in
+  let jne2 = bytes_len(b) in
+  let _ = rv_bne(b, 5, 6, 0) in
+  let _ = rv_ld(b, 10, 2, 0) in
+  let _ = rv_ld(b, 11, 2, 8) in
+  let scall = bytes_len(b) in
+  let _ = rv_jal(b, 1, 0) in
+  let _ = rv_addi(b, 2, 2, 16) in
+  let _ =
+    if op == "!=" then
+      let _ = rv_addi(b, 7, 0, 1) in
+      let _ = rv_sra(b, 6, 10, 7) in
+      let _ = rv_xor(b, 6, 6, 7) in
+      rv_sll(b, 6, 6, 7)
+    else rv_addi(b, 6, 10, 0) in
+  let jdone = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let intp = bytes_len(b) in
+  let _ = rv_patch_b(b, jnil1, intp) in
+  let _ = rv_patch_b(b, jz1, intp) in
+  let _ = rv_patch_b(b, jnil2, intp) in
+  let _ = rv_patch_b(b, jz2, intp) in
+  let _ = rv_patch_b(b, jne1, intp) in
+  let _ = rv_patch_b(b, jne2, intp) in
+  let _ = rv_ld(b, 6, 2, 0) in
+  let _ = rv_ld(b, 28, 2, 8) in
+  let _ = rv_addi(b, 2, 2, 16) in
+  let _ = rv_addi(b, 7, 0, 1) in
+  let _ = rv_sra(b, 6, 6, 7) in
+  let _ = rv_sra(b, 28, 28, 7) in
+  let _ = rv_cmp_int(b, op) in
+  let _ = rv_apply_jal(b, jdone, bytes_len(b), 0) in
+  cons(["jalra", scall, "yac_str_eq"], patches)
+
 let emit_insn_rv(st, insn, is_entry) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
@@ -493,35 +573,33 @@ let emit_insn_rv(st, insn, is_entry) =
     let _ = rv_sll(b, 6, 6, 7) in
     let _ = rv_slot(b, nth(insn, 2), true, 6) in
     [b, cur, labels, patches]
-  else if k == "cmp" or k == "icmp" then
+  else if k == "icmp" then
     let op = nth(insn, 1) in
     let _ = rv_slot(b, nth(insn, 3), false, 6) in
     let _ = rv_addi(b, 7, 0, 1) in
     let _ = rv_sra(b, 6, 6, 7) in
     let _ = rv_slot(b, nth(insn, 4), false, 28) in
     let _ = rv_sra(b, 28, 28, 7) in
-    let _ =
-      if op == "==" then
-        let _ = rv_xor(b, 6, 6, 28) in
-        rv_sltiu(b, 6, 6, 1)
-      else if op == "!=" then
-        let _ = rv_xor(b, 6, 6, 28) in
-        let _ = rv_sltiu(b, 6, 6, 1) in
-        rv_xor(b, 6, 6, 7)
-      else if op == "<" then rv_slt(b, 6, 6, 28)
-      else if op == "<=" then
-        let _ = rv_slt(b, 6, 28, 6) in
-        rv_sltiu(b, 6, 6, 1)
-      else if op == ">" then rv_slt(b, 6, 28, 6)
-      else if op == ">=" then
-        let _ = rv_slt(b, 6, 6, 28) in
-        rv_sltiu(b, 6, 6, 1)
-      else
-        let _ = rv_xor(b, 6, 6, 28) in
-        rv_sltiu(b, 6, 6, 1) in
-    let _ = rv_sll(b, 6, 6, 7) in
+    let _ = rv_cmp_int(b, op) in
     let _ = rv_slot(b, nth(insn, 2), true, 6) in
     [b, cur, labels, patches]
+  else if k == "cmp" then
+    let op = nth(insn, 1) in
+    let patches2 =
+      if op == "==" or op == "!=" then
+        let _ = rv_slot(b, nth(insn, 3), false, 10) in
+        let _ = rv_slot(b, nth(insn, 4), false, 11) in
+        rv_cmp_maybe_str(b, op, patches)
+      else
+        let _ = rv_slot(b, nth(insn, 3), false, 6) in
+        let _ = rv_addi(b, 7, 0, 1) in
+        let _ = rv_sra(b, 6, 6, 7) in
+        let _ = rv_slot(b, nth(insn, 4), false, 28) in
+        let _ = rv_sra(b, 28, 28, 7) in
+        let _ = rv_cmp_int(b, op) in
+        patches in
+    let _ = rv_slot(b, nth(insn, 2), true, 6) in
+    [b, cur, labels, patches2]
   else if k == "label" then
     [b, cur, cons([nth(insn, 1), bytes_len(b)], labels), patches]
   else if k == "jmp" then
@@ -724,8 +802,29 @@ let emit_insn_rv(st, insn, is_entry) =
           cons(["closurefn", fnpos, fnName], patches))]
   else if k == "print" then
     let _ = rv_slot(b, nth(insn, 1), false, 10) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_and(b, 5, 10, 7) in
+    let jptr = bytes_len(b) in
+    let _ = rv_bne(b, 5, 0, 0) in
     let pos = bytes_len(b) in
     let _ = rv_jal(b, 1, 0) in
+    let jend = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let ptroff = bytes_len(b) in
+    let _ = rv_patch_b(b, jptr, ptroff) in
+    let _ = rv_untag_ptr(b, 10) in
+    let _ = rv_ld(b, 5, 10, 16) in
+    let _ = rv_addi(b, 6, 0, 3) in
+    let jskip = bytes_len(b) in
+    let _ = rv_bne(b, 5, 6, 0) in
+    let _ = rv_ld(b, 12, 10, 24) in
+    let _ = rv_addi(b, 11, 10, 32) in
+    let _ = rv_addi(b, 10, 0, 1) in
+    let _ = rv_addi(b, 17, 0, 64) in
+    let _ = rv_ecall(b) in
+    let nl = bytes_len(b) in
+    let _ = rv_patch_b(b, jskip, nl) in
+    let _ = rv_apply_jal(b, jend, nl, 0) in
     let _ = rv_addi(b, 2, 2, 0 - 16) in
     let _ = rv_addi(b, 6, 0, 10) in
     let _ = rv_sb(b, 6, 2, 0) in
@@ -1098,11 +1197,13 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
       let fstart = bytes_len(nth(st, 0)) in
       let st0 = [nth(st, 0), 0, nth(st, 2), nth(st, 3)] in
       let insns = nth(f, 4) in
-      let run(j, s) =
-        if j >= len(insns) then s
-        else run(j + 1, emit_insn_rv(s, nth(insns, j), is_entry)) in
-      let s1 = run(0, st0) in
-      emit_fun(i + 1, s1, cons([name, fstart], fo)) in
+      if len(insns) == 0 then emit_fun(i + 1, st, fo)
+      else
+        let run(j, s) =
+          if j >= len(insns) then s
+          else run(j + 1, emit_insn_rv(s, nth(insns, j), is_entry)) in
+        let s1 = run(0, st0) in
+        emit_fun(i + 1, s1, cons([name, fstart], fo)) in
   let r1 = emit_fun(0, [out, 0, [], []], []) in
   let st = nth(r1, 0) in
   let fo0 = nth(r1, 1) in

@@ -70,6 +70,10 @@ let a64_and_reg(b, rd, rn, rm) =
 let a64_orr_reg(b, rd, rn, rm) =
   a64_u32(b, 2852126720 + bshl(rm, 16) + bshl(rn, 5) + rd)
 
+/* 0xCA000000 EOR Xd,Xn,Xm */
+let a64_eor_reg(b, rd, rn, rm) =
+  a64_u32(b, 3388997632 + bshl(rm, 16) + bshl(rn, 5) + rd)
+
 /* MOV Xd,Xm = ORR Xd,XZR,Xm  0xAA0003E0 — Xm must not be SP. */
 let a64_mov_reg(b, rd, rm) =
   a64_u32(b, 2852127712 + bshl(rm, 16) + rd)

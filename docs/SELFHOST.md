@@ -528,7 +528,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 **仍待**：
 1. **精确 GC**：`gc_collect` 现为 LIR no-op（保守扫描曾破坏 `saved_argc`/`saved_argv`）；栈图在 M6。
-2. **M5**：arm64/riscv64 与 x86 同源：整数、闭包、`print`、动态 `apply1`/`apply2`（`nenv=0` 的 HO/`foldl`/`map`）、列表/字符串/bytes、`read_file`/`write_file`、`argv` helper。仍缺：返回的捕获闭包（`curry`/`return_clo`，`nenv>=1` 的 dyn apply）、`cmp ==` 的字符串路径（`str_eq`）。arm64 `brk` alloc；riscv64 BSS bump。
+2. **M5**：arm64/riscv64 与 x86 同源 compiler cases（含返回的捕获闭包 `curry`/`return_clo`、字符串 `==`）。emit 跳过空 fun stub（与 x86 一致），否则 `l_call`/`closurefn` 会打到内层函数。arm64 `brk` alloc；riscv64 BSS bump。
 3. **`--emit-asm` / `regalloc.yac` / M7 callcc**：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。
