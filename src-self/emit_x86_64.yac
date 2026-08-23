@@ -1560,9 +1560,10 @@ let emit_x86_i_prim(st, insn) =
     let _ = emit_store_rax_slot(b, dst) in
     [b, cur, labels, patches]
   else if k == "bytes_new" then
-    /* BYTES: [next][mark][kind=4][len][cap][data...] initial cap=1048576 */
+    /* BYTES: [next][mark][kind=4][len][cap][data...] initial cap=4MiB.
+     * Compiler text is ~1.05MiB; 1MiB cap overflowed and SIGSEGV'd in helpers. */
     let dst = nth(insn, 1) in
-    let _ = mov_rdi_imm(b, 40 + 1048576) in
+    let _ = mov_rdi_imm(b, 40 + 4194304) in
     let acall = bytes_len(b) in
     let _ = call_rel32(b, 0) in
     let _ = and_rax_1(b) in
@@ -1571,7 +1572,7 @@ let emit_x86_i_prim(st, insn) =
     let _ = mov_rax_disp8_imm32(b, 20, 0) in
     let _ = mov_rax_disp8_imm32(b, 24, 0) in
     let _ = mov_rax_disp8_imm32(b, 28, 0) in
-    let _ = mov_rax_disp8_imm32(b, 32, 1048576) in
+    let _ = mov_rax_disp8_imm32(b, 32, 4194304) in
     let _ = mov_rax_disp8_imm32(b, 36, 0) in
     let _ = or_rax_1(b) in
     let _ = emit_store_rax_slot(b, dst) in

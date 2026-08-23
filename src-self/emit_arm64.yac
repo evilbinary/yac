@@ -1306,7 +1306,7 @@ let emit_a64_i_prim(st, insn) =
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     [b, cur, labels, patches]
   else if k == "bytes_new" then
-    let _ = a64_mov_imm64(b, 0, 40 + 1048576) in
+    let _ = a64_mov_imm64(b, 0, 40 + 4194304) in
     let acall = bytes_len(b) in
     let _ = a64_bl(b, 0) in
     let _ = a64_untag_ptr(b, 0) in
@@ -1314,7 +1314,7 @@ let emit_a64_i_prim(st, insn) =
     let _ = a64_movz(b, 1, 4, 0) in
     let _ = a64_stur(b, 1, 0, 16) in
     let _ = a64_stur(b, 31, 0, 24) in
-    let _ = a64_mov_imm64(b, 1, 1048576) in
+    let _ = a64_mov_imm64(b, 1, 4194304) in
     let _ = a64_stur(b, 1, 0, 32) in
     let _ = a64_tag(b, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in

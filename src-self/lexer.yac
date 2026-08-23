@@ -5,7 +5,8 @@
  *   text:  lexeme string (str for strings is the decoded body)
  *   line:  1-based line number
  *
- * Pure functional: lex(src,pos,line,acc) -> reversed token list.
+ * lex pushes onto a list_new() buffer (O(1) append). C cons copies the
+ * whole array, so cons+reverse tokenize was O(n²) on the 90k-token bundle.
  * Exposes:
  *   tokenize(src) -> token list (last element is ["eof","",line])
  *   token_kind(t), token_text(t), token_line(t)
@@ -25,8 +26,6 @@ let is_kw(w) = foldl(fun (a,k) -> if a then true else w == k, false, kw_set)
 let slen(s) = str_len(s)
 let sat(s, i) = str_ref(s, i)
 let at_end(s, i) = i >= str_len(s)
-
-let reverse(xs) = list_rev(xs)
 
 /* skip spaces; returns new pos */
 let skip_sp(s, i, line) =
@@ -155,7 +154,7 @@ let is_punct(c) = c == 40 or c == 41 or c == 91 or c == 93 or c == 123 or
 /* main lex loop */
 let lex(s, i, line, acc) =
   if at_end(s, i) then
-    cons(mk_tok("eof", "", line), acc)
+    let _ = list_push(acc, mk_tok("eof", "", line)) in acc
   else if is_space(sat(s, i)) then
     let sp = skip_sp(s, i, line) in
     lex(s, nth(sp, 0), nth(sp, 1), acc)
@@ -170,33 +169,43 @@ let lex(s, i, line, acc) =
     let e =
       if starstar then skip_starstar_cm(s, i + 3, line)
       else skip_block_cm(s, i + 2, line) in
-    if e == 0 then cons(mk_tok("eof", "unterminated-comment", line), acc)
+    if e == 0 then
+      let _ = list_push(acc, mk_tok("eof", "unterminated-comment", line)) in acc
     else lex(s, e, line, acc)
   else if is_alpha(sat(s, i)) then
     let r = scan_ident(s, i, line) in
-    lex(s, nth(r, 1), line, cons(nth(r, 0), acc))
+    let _ = list_push(acc, nth(r, 0)) in
+    lex(s, nth(r, 1), line, acc)
   else if is_digit(sat(s, i)) then
     let r = scan_num(s, i, line) in
-    lex(s, nth(r, 1), line, cons(nth(r, 0), acc))
+    let _ = list_push(acc, nth(r, 0)) in
+    lex(s, nth(r, 1), line, acc)
   else if sat(s, i) == 34 then
     let r = scan_str(s, i + 1, line, 0, bytes_new()) in
-    if nth(nth(r, 0), 0) == "error" then cons(mk_tok("eof", "unterminated-string", line), acc)
-    else lex(s, nth(r, 1), line, cons(nth(r, 0), acc))
+    if nth(nth(r, 0), 0) == "error" then
+      let _ = list_push(acc, mk_tok("eof", "unterminated-string", line)) in acc
+    else
+      let _ = list_push(acc, nth(r, 0)) in
+      lex(s, nth(r, 1), line, acc)
   else if is_opchar(sat(s, i)) then
     let e = read_opchars(s, i) in
     let txt = str_slice(s, i, e - i) in
-    lex(s, e, line, cons(mk_tok("op", txt, line), acc))
+    let _ = list_push(acc, mk_tok("op", txt, line)) in
+    lex(s, e, line, acc)
   else if is_punct(sat(s, i)) then
     let c = sat(s, i) in
     let txt = str_slice(s, i, 1) in
-    lex(s, i + 1, line, cons(mk_tok(punct_kind(c), txt, line), acc))
+    let _ = list_push(acc, mk_tok(punct_kind(c), txt, line)) in
+    lex(s, i + 1, line, acc)
   else
-    /* unknown char: emit as punct so the parser reports it */
     let txt = str_slice(s, i, 1) in
-    lex(s, i + 1, line, cons(mk_tok("punct", txt, line), acc))
+    let _ = list_push(acc, mk_tok("punct", txt, line)) in
+    lex(s, i + 1, line, acc)
 
 /* public API */
-let tokenize(src) = reverse(lex(src, 0, 1, []))
+let tokenize(src) =
+  let acc = list_new() in
+  lex(src, 0, 1, acc)
 
 let token_kind(t) = nth(t, 0)
 let token_text(t) = nth(t, 1)

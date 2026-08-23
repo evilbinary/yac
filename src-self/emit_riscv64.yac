@@ -1310,7 +1310,7 @@ let emit_rv_i_prim(st, insn) =
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     [b, cur, labels, patches]
   else if k == "bytes_new" then
-    let _ = rv_li(b, 10, 40 + 1048576) in
+    let _ = rv_li(b, 10, 40 + 4194304) in
     let acall = bytes_len(b) in
     let _ = rv_jal(b, 1, 0) in
     let _ = rv_untag_ptr(b, 10) in
@@ -1318,7 +1318,7 @@ let emit_rv_i_prim(st, insn) =
     let _ = rv_addi(b, 11, 0, 4) in
     let _ = rv_sd(b, 11, 10, 16) in
     let _ = rv_sd(b, 0, 10, 24) in
-    let _ = rv_li(b, 11, 1048576) in
+    let _ = rv_li(b, 11, 4194304) in
     let _ = rv_sd(b, 11, 10, 32) in
     let _ = rv_tag(b, 10) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in

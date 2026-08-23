@@ -539,5 +539,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 - **letif 丢函数**：then 臂 `letfun` 未并入 funs，闭包 fnptr 变成 `_start`。
 - **`read_file` 64KiB 上限**：改为 `lseek` 按文件大小分配。
 - **TCO**：只改**同名**后缀 `call` 为拆栈 `jmp`（不要 `apply`、不要 `parse_program`/`parse_expr`）。`tco_prog` 仅对单条 top-level；C lower `maybe_tailcall` 同样只认当前 gname。`loop(100000)` 用例。
+- **编译速度**：`tokenize` 用 `list_push`（C 的 `cons` 会整表拷贝，90k token 是 O(n²)）。原生 listbuf `nth` 缓存相邻下标，解析不再每次从头走链表。
+- **bytes cap**：原生 `bytes_new` 初始 4MiB（原 1MiB）。编译器 text ~1.05MiB，append 不扩容会写穿堆，在 emit helpers 处 SIGSEGV。
 - **`and` 非短路**：`skip_block_cm` 里 `* /` 判断在含 ` * ` 的块注释上误匹配；改为嵌套 `if`。
 - **空参 `let f() =`**：消耗 `)`；`has_params`（不要用 `len(params)>0`）才包装成 `fun`，否则 `f()` 会去调用整数。
