@@ -75,17 +75,12 @@ let anf_one(st, c) =
   check(st, str_cat("anf ", nth(c, 0)), nth(c, 2), rchomp(native_out(str_cat(TMP, "/anf_run"))))
 
 let emit_one(st, c) =
-  let gen = str_cat("let prog = ",
-              str_cat(nth(c, 1),
-                ";\nlet elf = backend_compile(prog);\nlet _ = write_file(\"build/test_tmp/emit.bin\", elf);\n0;\n")) in
-  let _ = write_file(str_cat(TMP, "/emit_gen.yac"), gen) in
-  let _ = cat_files(["src-self/log.yac", "src-self/encode_x64.yac", "src-self/elf.yac",
-                     "src-self/emit.yac", "src-self/emit_x86_64.yac", "src-self/backend.yac",
-                     str_cat(TMP, "/emit_gen.yac")],
-                    str_cat(TMP, "/emit_run.yac")) in
-  let cr = run(["./yac", str_cat(TMP, "/emit_run.yac")]) in
+  let _ = write_file(str_cat(TMP, "/emitin.yac"), nth(c, 1)) in
+  let cr = run([str_cat(TMP, "/emit_run")]) in
   if nth(cr, 0) != 0 then
-    check(st, nth(c, 0), "0", str_cat("compile rc=", int_to_str(nth(cr, 0))))
+    check(st, nth(c, 0), "0", str_cat("emit_run rc=", int_to_str(nth(cr, 0))))
+  else if nth(run(["test", "-f", str_cat(TMP, "/emit.bin")]), 0) != 0 then
+    check(st, nth(c, 0), "wrote emit.bin", "missing")
   else
     let _ = run(["chmod", "+x", str_cat(TMP, "/emit.bin")]) in
     check(st, nth(c, 0), nth(c, 2), int_to_str(nth(run([str_cat(TMP, "/emit.bin")]), 0)))
@@ -197,7 +192,30 @@ let elf_suite(st) =
     check(st2, "ELF size 136", "136", int_to_str(str_len(elf)))
 
 let emit_suite(st) =
-  foldl(emit_one, st, [
+  let br = native_build(str_cat(TMP, "/emit_run.yac"), str_cat(TMP, "/emit_run")) in
+  if nth(br, 0) != 0 then
+    check(st, "emit_run yc_A", "ok", str_cat("yc_A rc=", int_to_str(nth(br, 0))))
+  else
+    let _ = write_file(str_cat(TMP, "/emitin.yac"),
+      "[\"prog\",[[\"fun\",\"_start\",0,0,[[\"prologue\",2],[\"mov_imm\",1,21],[\"exit\",1]]]],\"_start\"]") in
+    let mr = run([str_cat(TMP, "/emit_run")]) in
+    if nth(mr, 0) != 0 then
+      check(st, "backend ELF magic", "ok", str_cat("emit_run rc=", int_to_str(nth(mr, 0))))
+    else
+    let elf = read_file(str_cat(TMP, "/emit.bin")) in
+    let mag =
+      if str_len(elf) < 5 then "short"
+      else if str_ref(elf, 0) == 127 then
+        if str_ref(elf, 1) == 69 then
+          if str_ref(elf, 2) == 76 then
+            if str_ref(elf, 3) == 70 then
+              if str_ref(elf, 4) == 2 then "ok" else "bad e_ident"
+            else "bad e_ident"
+          else "bad e_ident"
+        else "bad e_ident"
+      else "bad e_ident" in
+    let st0 = check(st, "backend ELF magic", "ok", mag) in
+    foldl(emit_one, st0, [
     ["mul 5*6", "[\"prog\",[[\"fun\",\"_start\",0,0,[[\"prologue\",2],[\"mov_imm\",1,5],[\"mov_imm\",2,6],[\"binop\",\"*\",1,1,2],[\"exit\",1]]]],\"_start\"]", "30"],
     ["div 17/5", "[\"prog\",[[\"fun\",\"_start\",0,0,[[\"prologue\",3],[\"mov_imm\",1,17],[\"mov_imm\",2,5],[\"binop\",\"/\",3,1,2],[\"exit\",3]]]],\"_start\"]", "3"],
     ["mod 17%5", "[\"prog\",[[\"fun\",\"_start\",0,0,[[\"prologue\",3],[\"mov_imm\",1,17],[\"mov_imm\",2,5],[\"binop\",\"%\",3,1,2],[\"exit\",3]]]],\"_start\"]", "2"],
@@ -239,7 +257,6 @@ let unit_suite(st) =
     ["encode mov_rbp_rsp", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = mov_rbp_rsp(b);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "72\n137\n229\n0"],
     ["encode jmp_rel32", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = jmp_rel32(b, 0);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "233\n0\n0\n0\n0\n0"],
     ["encode mov_r64_r64", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = mov_r64_r64(b, 0, 1);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "72\n137\n200\n0"],
-    ["backend ELF magic", ["encode_x64.yac", "elf.yac", "emit.yac", "emit_x86_64.yac", "backend.yac"], "let prog = [\"prog\",\n  [[\"fun\", \"_start\", 0, 0,\n    [[\"prologue\", 2],\n     [\"mov_imm\", 1, 21],\n     [\"exit\", 1]]]],\n  \"_start\"];\nlet elf = backend_compile(prog);\nprint bytes_ref(elf, 0);\nprint \"\";\nprint bytes_ref(elf, 1);\nprint \"\";\nprint bytes_ref(elf, 2);\nprint \"\";\nprint bytes_ref(elf, 3);\nprint \"\";\nprint bytes_ref(elf, 4);\nprint \"\";\n0;\n", "127\n\n69\n\n76\n\n70\n\n2\n\n0", "i"],
     ["compile_top prog kind", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac", "runtime.yac", "lower.yac"], "let src = \"1 + 2\";\nlet toks = tokenize(src);\nlet prog = parse_program(toks, 0, []);\nlet r = anf_expr(nth(prog, 0), 0);\nlet lir = compile_top([ [nth(r,0), nth(r,1)] ]);\nprint nth(lir, 0);\nprint \"\";\nprint len(nth(lir, 1));\nprint \"\";\n0;\n", "prog\n\n25\n\n0"]])
 
 let main =
@@ -247,6 +264,13 @@ let main =
   let _ = cat_files(["src-self/lexer.yac", "src-self/driver_lex.yac"], str_cat(TMP, "/lex_run.yac")) in
   let _ = cat_files(["src-self/lexer.yac", "src-self/parser.yac", "src-self/driver_parse.yac"], str_cat(TMP, "/parse_run.yac")) in
   let _ = cat_files(["src-self/lexer.yac", "src-self/parser.yac", "src-self/anf.yac", "src-self/driver_anf.yac"], str_cat(TMP, "/anf_run.yac")) in
+  let _ = write_file(str_cat(TMP, "/log_stub.yac"), LOG_STUB) in
+  let _ = cat_files([str_cat(TMP, "/log_stub.yac"),
+                     "src-self/lexer.yac", "src-self/parser.yac",
+                     "src-self/encode_x64.yac", "src-self/elf.yac",
+                     "src-self/emit.yac", "src-self/emit_x86_64.yac",
+                     "src-self/backend.yac", "src-self/driver_emit.yac"],
+                    str_cat(TMP, "/emit_run.yac")) in
   let _ = native_build(str_cat(TMP, "/lex_run.yac"), str_cat(TMP, "/lex_run")) in
   let _ = native_build(str_cat(TMP, "/parse_run.yac"), str_cat(TMP, "/parse_run")) in
   let _ = native_build(str_cat(TMP, "/anf_run.yac"), str_cat(TMP, "/anf_run")) in

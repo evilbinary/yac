@@ -1,14 +1,34 @@
-/* driver_emit.yac — test LIR->ELF compilation: compute 5*6=30 as exit code. */
-let prog = ["prog",
-  [["fun", "_start", 0,
-    [["prologue", 2],
-     ["mov_imm", 1, 5],
-     ["mov_imm", 2, 6],
-     ["binop", "*", 1, 1, 2],
-     ["exit", 1]]]],
-  "_start"];
-let elf = backend_compile(prog);
-let _ = write_file("build/emit_tmp/out.bin", elf);
-print bytes_len(elf);
-print "";
+/* driver_emit.yac — read a LIR list from emitin.yac, emit+pack ELF.
+ * Used by tests/boot/run.yac (native emit_run, compiled once).
+ * Walk the parse AST with direct recursion (not map/apply).
+ */
+let str_to_int(s) =
+  let n = str_len(s) in
+  let isneg = if n > 0 then str_ref(s, 0) == 45 else false in
+  let start = if isneg then 1 else 0 in
+  let acc(i, v) =
+    if i >= n then v
+    else acc(i + 1, v * 10 + (str_ref(s, i) - 48)) in
+  let v = acc(start, 0) in
+  if isneg then 0 - v else v
+
+let ast_to_val(e) =
+  let k = nth(e, 0) in
+  if k == "int" then str_to_int(nth(e, 1))
+  else if k == "str" then nth(e, 1)
+  else if k == "list" then
+    let xs = nth(e, 1) in
+    let n = len(xs) in
+    let rec(i, acc) =
+      if i >= n then list_rev(acc)
+      else rec(i + 1, cons(ast_to_val(nth(xs, i)), acc)) in
+    rec(0, [])
+  else e
+
+let src = read_file("build/test_tmp/emitin.yac")
+let toks = tokenize(src)
+let ast = nth(parse_program(toks, 0, []), 0)
+let prog = ast_to_val(ast)
+let elf = backend_compile(prog)
+let _ = write_file("build/test_tmp/emit.bin", elf)
 0
