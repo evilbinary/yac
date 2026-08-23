@@ -1043,6 +1043,14 @@ let emit_insn(st, insn, is_entry) =
       let _ = shl_rax_1(b) in
       let _ = emit_store_rax_slot(b, nth(insn, 1)) in
       [b, cur, labels, patches]
+    else if k == "is_int" then
+      let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+      let _ = test_rax_1(b) in
+      let _ = setcc_r8(b, cc_of("==")) in
+      let _ = movzx_eax_al(b) in
+      let _ = shl_rax_1(b) in
+      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+      [b, cur, labels, patches]
     else if k == "alloc" then
       let _ = mov_rdi_imm(b, nth(insn, 2)) in
       let acall = bytes_len(b) in
@@ -1099,37 +1107,25 @@ let emit_insn(st, insn, is_entry) =
       let _ = mov_rax_rdx_dil(b) in
       [b, cur, labels, patches]
     else if k == "print" then
-      /* print slot: int -> print_int; STR (kind=3) -> write(1,data,len); newline */
       let _ = emit_load_rax_slot(b, nth(insn, 1)) in
       let _ = test_rax_1(b) in
-      let _ = jcc_rel32(b, 5, 0) in          /* jnz -> ptr */
+      let _ = jcc_rel32(b, 5, 0) in
       let jptr = bytes_len(b) - 4 in
-      /* tagged int: print_int is LIR (slot 1 tagged) */
       let _ = mov_rdi_rax(b) in
-      let callstart = bytes_len(b) in
+      let c_int = bytes_len(b) in
       let _ = call_rel32(b, 0) in
       let _ = jmp_rel32(b, 0) in
       let jend = bytes_len(b) - 4 in
       let ptroff = bytes_len(b) in
       let _ = apply_patch(b, jptr, ptroff) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rbx_rax(b) in
-      let _ = mov_rax_rbx_disp8(b, 16) in   /* kind */
-      let _ = cmp_rax_imm8(b, 3) in
-      let _ = jcc_rel32(b, 5, 0) in          /* jne -> skip write */
-      let jskip = bytes_len(b) - 4 in
-      let _ = mov_rax_rbx(b) in
-      let _ = mov_rdx_rax_disp8(b, 24) in   /* len */
-      let _ = add_rax_imm32(b, 32) in
-      let _ = mov_rsi_rax(b) in
-      let _ = mov_rdi_imm(b, 1) in
-      let _ = mov_r64_imm(b, 0, 1) in
-      let _ = syscall(b) in
-      let skipoff = bytes_len(b) in
-      let _ = apply_patch(b, jskip, skipoff) in
-      let _ = apply_patch(b, jend, skipoff) in
+      let _ = mov_rdi_rax(b) in
+      let c_val = bytes_len(b) in
+      let _ = call_rel32(b, 0) in
+      let endoff = bytes_len(b) in
+      let _ = apply_patch(b, jend, endoff) in
       let _ = emit_newline(b) in
-      [b, cur, labels, cons([callstart + 1, "print_int"], patches)]
+      [b, cur, labels, cons([c_int + 1, "print_int"],
+                            cons([c_val + 1, "print_val"], patches))]
     else if k == "write1" then
       let _ = emit_load_rax_slot(b, nth(insn, 1)) in
       let _ = sar_rax_1(b) in

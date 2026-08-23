@@ -934,6 +934,14 @@ let emit_insn_a64(st, insn, is_entry) =
     let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     [b, cur, labels, patches]
+  else if k == "is_int" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let _ = a64_movz(b, 9, 1, 0) in
+    let _ = a64_and_reg(b, 10, 0, 9) in
+    let _ = a64_eor_reg(b, 10, 10, 9) in
+    let _ = a64_lsl1(b, 0, 10) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    [b, cur, labels, patches]
   else if k == "obj_sti" then
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
     let _ = a64_mov_imm64(b, 1, 0 - 2) in
@@ -1056,24 +1064,16 @@ let emit_insn_a64(st, insn, is_entry) =
     let _ = a64_cmp_reg(b, 10, 31) in
     let jptr = bytes_len(b) in
     let _ = a64_b_ne(b, 0) in
-    let pos = bytes_len(b) in
+    let c_int = bytes_len(b) in
     let _ = a64_bl(b, 0) in
     let jend = bytes_len(b) in
     let _ = a64_b(b, 0) in
     let ptroff = bytes_len(b) in
     let _ = a64_patch_bcond(b, jptr, ptroff) in
-    let _ = a64_untag_ptr(b, 0) in
-    let _ = a64_ldur(b, 1, 0, 16) in
-    let _ = a64_cmp_imm(b, 1, 3) in
-    let jskip = bytes_len(b) in
-    let _ = a64_b_ne(b, 0) in
-    let _ = a64_ldur(b, 2, 0, 24) in
-    let _ = a64_add_imm(b, 1, 0, 32) in
-    let _ = a64_movz(b, 0, 1, 0) in
-    let _ = a64_movz(b, 8, 64, 0) in
-    let _ = a64_svc(b) in
+    let _ = a64_slot(b, nth(insn, 1), false, 0) in
+    let c_val = bytes_len(b) in
+    let _ = a64_bl(b, 0) in
     let nl = bytes_len(b) in
-    let _ = a64_patch_bcond(b, jskip, nl) in
     let _ = a64_apply_b26(b, jend, nl) in
     let _ = a64_sub_imm(b, 31, 31, 16) in
     let _ = a64_movz(b, 0, 10, 0) in
@@ -1084,7 +1084,8 @@ let emit_insn_a64(st, insn, is_entry) =
     let _ = a64_movz(b, 8, 64, 0) in
     let _ = a64_svc(b) in
     let _ = a64_add_imm(b, 31, 31, 16) in
-    [b, cur, labels, cons(["bl", pos, "print_int"], patches)]
+    [b, cur, labels, cons(["bl", c_int, "print_int"],
+                          cons(["bl", c_val, "print_val"], patches))]
   else if k == "tailcall" then
     let fn = nth(insn, 2) in
     let args = nth(insn, 3) in

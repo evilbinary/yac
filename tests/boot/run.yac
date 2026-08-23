@@ -68,11 +68,11 @@ let lex_one(st, c) =
 
 let parse_one(st, c) =
   let _ = write_file(str_cat(TMP, "/parin.yac"), nth(c, 1)) in
-  check(st, str_cat("parse ", nth(c, 0)), nth(c, 2), interp_out(str_cat(TMP, "/parse_run.yac")))
+  check(st, str_cat("parse ", nth(c, 0)), nth(c, 2), rchomp(native_out(str_cat(TMP, "/parse_run"))))
 
 let anf_one(st, c) =
   let _ = write_file(str_cat(TMP, "/anfin.yac"), nth(c, 1)) in
-  check(st, str_cat("anf ", nth(c, 0)), nth(c, 2), interp_out(str_cat(TMP, "/anf_run.yac")))
+  check(st, str_cat("anf ", nth(c, 0)), nth(c, 2), rchomp(native_out(str_cat(TMP, "/anf_run"))))
 
 let emit_one(st, c) =
   let gen = str_cat("let prog = ",
@@ -210,11 +210,11 @@ let emit_suite(st) =
 
 let unit_suite(st) =
   foldl(unit_one, st, [
-    ["lir mov_imm", ["lir.yac"], "print l_mov_imm(3, 5);\n0;\n", "[mov_imm, 3, 5]\n0", "i"],
-    ["lir binop", ["lir.yac"], "print l_binop(\"+\", 1, 2, 3);\n0;\n", "[binop, +, 1, 2, 3]\n0", "i"],
-    ["lir call", ["lir.yac"], "print l_call(4, \"f\", [1, 2]);\n0;\n", "[call, 4, f, [1, 2]]\n0", "i"],
-    ["lexer tokenize", ["lexer.yac"], "print tokenize(\"let x = 5 in x + 1\");\nprint \"\";\n0;\n", "[[kw, let, 1], [ident, x, 1], [op, =, 1], [num, 5, 1], [kw, in, 1], [ident, x, 1], [op, +, 1], [num, 1, 1], [eof, , 1]]\n\n0", "i"],
-    ["lexer scientific", ["lexer.yac"], "print tokenize(\"2.5e-3 + 1e10\");\nprint \"\";\n0;\n", "[[num, 2.5e-3, 1], [op, +, 1], [num, 1e10, 1], [eof, , 1]]\n\n0", "i"],
+    ["lir mov_imm", ["lir.yac"], "print l_mov_imm(3, 5);\n0;\n", "[mov_imm, 3, 5]\n0"],
+    ["lir binop", ["lir.yac"], "print l_binop(\"+\", 1, 2, 3);\n0;\n", "[binop, +, 1, 2, 3]\n0"],
+    ["lir call", ["lir.yac"], "print l_call(4, \"f\", [1, 2]);\n0;\n", "[call, 4, f, [1, 2]]\n0"],
+    ["lexer tokenize", ["lexer.yac"], "print tokenize(\"let x = 5 in x + 1\");\nprint \"\";\n0;\n", "[[kw, let, 1], [ident, x, 1], [op, =, 1], [num, 5, 1], [kw, in, 1], [ident, x, 1], [op, +, 1], [num, 1, 1], [eof, , 1]]\n\n0"],
+    ["lexer scientific", ["lexer.yac"], "print tokenize(\"2.5e-3 + 1e10\");\nprint \"\";\n0;\n", "[[num, 2.5e-3, 1], [op, +, 1], [num, 1e10, 1], [eof, , 1]]\n\n0"],
     ["elf pack_elf size", ["elf.yac"], "let b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet elf = pack_elf(b);\nprint bytes_len(elf);\nprint \"\";\nprint bytes_ref(elf, 0);\nprint \"\";\nprint bytes_ref(elf, 1);\nprint \"\";\nprint bytes_ref(elf, 4);\nprint \"\";\n0;\n", "121\n\n127\n\n69\n\n2\n\n0"],
     ["pe mz magic", ["target.yac", "pe.yac"], "let t = mk_target(\"x86_64\", \"pe\", \"exec\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet pe = pack_pe_target(t, b);\nprint bytes_ref(pe, 0);\nprint \"\";\nprint bytes_ref(pe, 1);\nprint \"\";\n0;\n", "77\n\n90\n\n0"],
     ["macho magic", ["target.yac", "macho.yac"], "let t = mk_target(\"x86_64\", \"macho\", \"exec\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet m = pack_macho_target(t, b);\nprint bytes_ref(m, 0);\nprint \"\";\nprint bytes_ref(m, 1);\nprint \"\";\n0;\n", "207\n\n250\n\n0"],
@@ -226,11 +226,11 @@ let unit_suite(st) =
     ["encode arm64 stp", ["encode_arm64.yac"], "let b = bytes_new();\nlet _ = a64_stp_fp_lr(b);\nprint bytes_ref(b, 0);\nprint \"\";\nprint bytes_ref(b, 1);\nprint \"\";\nprint bytes_ref(b, 2);\nprint \"\";\nprint bytes_ref(b, 3);\nprint \"\";\n0;\n", "253\n\n123\n\n191\n\n169\n\n0"],
     ["encode arm64 asr1", ["encode_arm64.yac"], "let b = bytes_new();\nlet _ = a64_asr1(b, 0, 0);\nprint bytes_ref(b, 0);\nprint \"\";\nprint bytes_ref(b, 1);\nprint \"\";\nprint bytes_ref(b, 2);\nprint \"\";\nprint bytes_ref(b, 3);\nprint \"\";\n0;\n", "224\n\n7\n\n128\n\n139\n\n0"],
     ["encode riscv addi", ["encode_riscv64.yac"], "let b = bytes_new();\nlet _ = rv_addi(b, 10, 0, 42);\nprint bytes_len(b);\nprint \"\";\n0;\n", "4\n\n0"],
-    ["parser precedence", ["lexer.yac", "parser.yac"], "let src = \"1 + 2 * 3\";\nlet toks = tokenize(src);\nlet prog = parse_program(toks, 0, []);\nprint prog;\n0;\n", "[[binop, +, [int, 1], [binop, *, [int, 2], [int, 3]]]]\n0", "i"],
-    ["parser let fun", ["lexer.yac", "parser.yac"], "let src = \"let f(x) = if x == 0 then 0 else f(x - 1)\";\nlet toks = tokenize(src);\nlet prog = parse_program(toks, 0, []);\nprint prog;\n0;\n", "[[let, f, [fun, [x], [if, [binop, ==, [var, x], [int, 0]], [int, 0], [call, [var, f], [[binop, -, [var, x], [int, 1]]]]]], [unit]]]\n0", "i"],
-    ["anf precedence", ["lexer.yac", "parser.yac", "anf.yac"], "let ast = [\"binop\", \"+\", [\"int\", \"1\"], [\"binop\", \"*\", [\"int\", \"2\"], [\"int\", \"3\"]]];\nlet r = anf_expr(ast, 0);\nprint [nth(r, 0), nth(r, 1)];\n0;\n", "[[[letbin, t0, *, [int, 2], [int, 3]], [letbin, t1, +, [int, 1], [var, t0]]], [var, t1]]\n0", "i"],
-    ["lower free_vars", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac", "runtime.yac", "lower.yac"], "let body = [ [[\"letbin\", \"t0\", \"+\", [\"var\",\"n\"], [\"var\",\"x\"]]], [\"var\",\"t0\"] ];\nprint free_vars(body, [\"n\"], []);\n0;\n", "[x]\n0", "i"],
-    ["lower free_vars nested", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac", "runtime.yac", "lower.yac"], "let body = [ [[\"letfun\",\"g\",[\"m\"], [ [[\"letbin\",\"s0\",\"+\",[\"var\",\"n\"],[\"var\",\"m\"]]], [\"var\",\"s0\"] ]]],\n              [\"var\",\"g\"] ];\nprint free_vars(body, [\"n\"], []);\n0;\n", "[]\n0", "i"],
+    ["parser precedence", ["lexer.yac", "parser.yac"], "let src = \"1 + 2 * 3\";\nlet toks = tokenize(src);\nlet prog = parse_program(toks, 0, []);\nprint prog;\n0;\n", "[[binop, +, [int, 1], [binop, *, [int, 2], [int, 3]]]]\n0"],
+    ["parser let fun", ["lexer.yac", "parser.yac"], "let src = \"let f(x) = if x == 0 then 0 else f(x - 1)\";\nlet toks = tokenize(src);\nlet prog = parse_program(toks, 0, []);\nprint prog;\n0;\n", "[[let, f, [fun, [x], [if, [binop, ==, [var, x], [int, 0]], [int, 0], [call, [var, f], [[binop, -, [var, x], [int, 1]]]]]], [unit]]]\n0"],
+    ["anf precedence", ["lexer.yac", "parser.yac", "anf.yac"], "let ast = [\"binop\", \"+\", [\"int\", \"1\"], [\"binop\", \"*\", [\"int\", \"2\"], [\"int\", \"3\"]]];\nlet r = anf_expr(ast, 0);\nprint [nth(r, 0), nth(r, 1)];\n0;\n", "[[[letbin, t0, *, [int, 2], [int, 3]], [letbin, t1, +, [int, 1], [var, t0]]], [var, t1]]\n0"],
+    ["lower free_vars", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac", "runtime.yac", "lower.yac"], "let body = [ [[\"letbin\", \"t0\", \"+\", [\"var\",\"n\"], [\"var\",\"x\"]]], [\"var\",\"t0\"] ];\nprint free_vars(body, [\"n\"], []);\n0;\n", "[x]\n0"],
+    ["lower free_vars nested", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac", "runtime.yac", "lower.yac"], "let body = [ [[\"letfun\",\"g\",[\"m\"], [ [[\"letbin\",\"s0\",\"+\",[\"var\",\"n\"],[\"var\",\"m\"]]], [\"var\",\"s0\"] ]]],\n              [\"var\",\"g\"] ];\nprint free_vars(body, [\"n\"], []);\n0;\n", "[]\n0"],
     ["lower str_to_int", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac", "runtime.yac", "lower.yac"], "print str_to_int(\"42\");\n0;\n", "42\n0"],
     ["encode mov_r64_imm rax", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = mov_r64_imm(b, 0, 60);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "72\n199\n192\n60\n0\n0\n0\n0"],
     ["encode push/pop rbp", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = push_rbp(b); let _ = pop_rbp(b);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "85\n93\n0"],
@@ -240,7 +240,7 @@ let unit_suite(st) =
     ["encode jmp_rel32", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = jmp_rel32(b, 0);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "233\n0\n0\n0\n0\n0"],
     ["encode mov_r64_r64", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = mov_r64_r64(b, 0, 1);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "72\n137\n200\n0"],
     ["backend ELF magic", ["encode_x64.yac", "elf.yac", "emit.yac", "emit_x86_64.yac", "backend.yac"], "let prog = [\"prog\",\n  [[\"fun\", \"_start\", 0, 0,\n    [[\"prologue\", 2],\n     [\"mov_imm\", 1, 21],\n     [\"exit\", 1]]]],\n  \"_start\"];\nlet elf = backend_compile(prog);\nprint bytes_ref(elf, 0);\nprint \"\";\nprint bytes_ref(elf, 1);\nprint \"\";\nprint bytes_ref(elf, 2);\nprint \"\";\nprint bytes_ref(elf, 3);\nprint \"\";\nprint bytes_ref(elf, 4);\nprint \"\";\n0;\n", "127\n\n69\n\n76\n\n70\n\n2\n\n0", "i"],
-    ["compile_top prog kind", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac", "runtime.yac", "lower.yac"], "let src = \"1 + 2\";\nlet toks = tokenize(src);\nlet prog = parse_program(toks, 0, []);\nlet r = anf_expr(nth(prog, 0), 0);\nlet lir = compile_top([ [nth(r,0), nth(r,1)] ]);\nprint nth(lir, 0);\nprint \"\";\nprint len(nth(lir, 1));\nprint \"\";\n0;\n", "prog\n\n24\n\n0"]])
+    ["compile_top prog kind", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac", "runtime.yac", "lower.yac"], "let src = \"1 + 2\";\nlet toks = tokenize(src);\nlet prog = parse_program(toks, 0, []);\nlet r = anf_expr(nth(prog, 0), 0);\nlet lir = compile_top([ [nth(r,0), nth(r,1)] ]);\nprint nth(lir, 0);\nprint \"\";\nprint len(nth(lir, 1));\nprint \"\";\n0;\n", "prog\n\n25\n\n0"]])
 
 let main =
   let _ = run(["mkdir", "-p", TMP]) in
@@ -248,6 +248,8 @@ let main =
   let _ = cat_files(["src-self/lexer.yac", "src-self/parser.yac", "src-self/driver_parse.yac"], str_cat(TMP, "/parse_run.yac")) in
   let _ = cat_files(["src-self/lexer.yac", "src-self/parser.yac", "src-self/anf.yac", "src-self/driver_anf.yac"], str_cat(TMP, "/anf_run.yac")) in
   let _ = native_build(str_cat(TMP, "/lex_run.yac"), str_cat(TMP, "/lex_run")) in
+  let _ = native_build(str_cat(TMP, "/parse_run.yac"), str_cat(TMP, "/parse_run")) in
+  let _ = native_build(str_cat(TMP, "/anf_run.yac"), str_cat(TMP, "/anf_run")) in
   let st0 = lex_suite([0, 0]) in
   let st1 = parse_suite(st0) in
   let st2 = anf_suite(st1) in

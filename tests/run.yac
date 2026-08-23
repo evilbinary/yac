@@ -3,7 +3,7 @@
  *
  *   ./yac tests/run.yac
  * C interpreter: this harness + interp_suite (cps/callcc/float/bignum) + bootstrap yc_A.
- * Native yc_A: compiler cases, qemu, boot frontend (where print is int/STR), yc_B/iso.
+ * Native yc_A: compiler cases, qemu, boot frontend (list print via print_val), yc_B/iso.
  */
 let TMP = "build/test_tmp"
 let BUNDLE = "build/test_tmp/yc_bundle.yac"
@@ -108,6 +108,7 @@ let COMPILER_CASES = [
   ["str_eq", "rc", "1"], ["str_neq", "rc", "0"], ["bool", "rc", "7"], ["and", "rc", "5"],
   ["foldl_prim", "rc", "10"], ["map_prim", "rc", "4"], ["is_kw", "rc", "1"],
   ["empty_params", "rc", "42"], ["print_int", "out", "123"],
+  ["print_list", "out", "[1, [2, 3], x]\n[]"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
   ["io_rw", "rc", "2"], ["gc_loop", "rc", "42"]]
@@ -131,6 +132,7 @@ let ARCH_INT_CASES = [
   ["str_eq", "rc", "1"], ["str_neq", "rc", "0"], ["bool", "rc", "7"], ["and", "rc", "5"],
   ["foldl_prim", "rc", "10"], ["map_prim", "rc", "4"], ["is_kw", "rc", "1"],
   ["empty_params", "rc", "42"], ["print_int", "out", "123"],
+  ["print_list", "out", "[1, [2, 3], x]\n[]"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
   ["io_rw", "rc", "2"], ["gc_loop", "rc", "42"]]

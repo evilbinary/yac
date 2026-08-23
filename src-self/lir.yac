@@ -71,6 +71,8 @@ let l_obj_kind(d, p) = ["obj_kind", d, p]
 let l_obj_ld(d, p, off) = ["obj_ld", d, p, off]
 let l_obj_st(p, off, s) = ["obj_st", p, off, s]
 let l_tag(d, s) = ["tag", d, s]
+/* is_int: tagged 2 if slot is even (int/bool), 0 if odd (ptr/nil). */
+let l_is_int(d, s) = ["is_int", d, s]
 /* nbytes is an untagged immediate (not l_mov_imm). Result is a tagged ptr.
  * obj_sti writes a zero-extended 32-bit immediate (kind/mark/len).
  * obj_st_int stores untagged bits of a tagged int slot. */

@@ -248,7 +248,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
 
-`runtime.yac` 用 LIR 实现列表/字符串/bytes 以及 `print_int`、`time_ms`/`time_str`、`yac_argc`、`gc_collect`（转调 `yac_gc`）。kernel 指令：`write1`、`clock`、`glob`（x86-64 / arm64 / riscv64）。`compile_top` 产出 **24** 个 fun（`_start` + 23 runtime；手写 helper 不占 fun 表）。
+`runtime.yac` 用 LIR 实现列表/字符串/bytes 以及 `print_int`、`print_val`（列表/`[]`/裸字符串，对齐 C `value_to_string`）、`time_ms`/`time_str`、`yac_argc`、`gc_collect`（转调 `yac_gc`）。kernel 指令：`write1`、`clock`、`glob`、`is_int`（偶数为 int）。`compile_top` 产出 **25** 个 fun（`_start` + 24 runtime；手写 helper 不占 fun 表）。
 
 **无法再迁进 LIR 的手写 `gen_*`**（`emit_program_at` 末尾追加）：
 
