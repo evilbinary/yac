@@ -1,7 +1,9 @@
 /* tests/run.yac — yac tests yac.
  * Layout: tests/interp, tests/compiler/cases, tests/boot
  *
- *   ./yac tests/run.yac   interp + boot frontend + L4 + L5
+ *   ./yac tests/run.yac
+ * C interpreter: this harness + interp_suite (cps/callcc/float/bignum) + bootstrap yc_A.
+ * Native yc_A: compiler cases, qemu, boot frontend (where print is int/STR), yc_B/iso.
  */
 let TMP = "build/test_tmp"
 let BUNDLE = "build/test_tmp/yc_bundle.yac"
@@ -236,17 +238,13 @@ let iso_one(st, ya, yb, name) =
   let _ = run([yb, case_src(name), "-o", b]) in
   check(st, str_cat("boot iso ", name), "0", int_to_str(nth(run(["cmp", "-s", a, b]), 0)))
 
-let boot_suite(st) =
-  let ya = str_cat(TMP, "/yc_A") in
+let boot_suite(st, ya) =
   let yb = str_cat(TMP, "/yc_B") in
-  let _ = run(["rm", "-f", ya, str_cat(ya, ".bin"), yb, str_cat(yb, ".bin")]) in
-  let _ = run(["./yac", BUNDLE, BUNDLE, "-o", ya]) in
+  let _ = run(["rm", "-f", yb, str_cat(yb, ".bin")]) in
   let st1 = check(st, "boot yc_A exists", "0", int_to_str(exists_rc(ya))) in
   let st2 = check(st1, "boot yc_A not .bin", "1", int_to_str(exists_rc(str_cat(ya, ".bin")))) in
-  let _ = run(["chmod", "+x", ya]) in
-  let stA = compiler_all(st2, [ya]) in
   let _ = run([ya, BUNDLE, "-o", yb]) in
-  let st3 = check(stA, "boot yc_B exists", "0", int_to_str(exists_rc(yb))) in
+  let st3 = check(st2, "boot yc_B exists", "0", int_to_str(exists_rc(yb))) in
   let st4 = check(st3, "boot yc_B not .bin", "1", int_to_str(exists_rc(str_cat(yb, ".bin")))) in
   let _ = run(["chmod", "+x", yb]) in
   let stB = compiler_all(st4, [yb]) in
@@ -263,15 +261,19 @@ let boot_suite(st) =
 
 let main =
   let _ = run(["mkdir", "-p", TMP]) in
+  let _ = cat_bundle(0) in
+  let ya = str_cat(TMP, "/yc_A") in
+  let _ = run(["rm", "-f", ya, str_cat(ya, ".bin")]) in
+  let _ = run(["./yac", BUNDLE, BUNDLE, "-o", ya]) in
+  let _ = run(["chmod", "+x", ya]) in
   let st0 = interp_suite([0, 0]) in
   let br = run(["./yac", "tests/boot/run.yac"]) in
   let _ = print(chomp(nth(br, 1))) in
   let st1 = check(st0, "boot frontend", "0", int_to_str(nth(br, 0))) in
-  let _ = cat_bundle(0) in
-  let st2 = compiler_all(st1, ["./yac", BUNDLE]) in
-  let stQ = qemu_arch(st2, ["./yac", BUNDLE], "arm64") in
-  let stR = qemu_arch(stQ, ["./yac", BUNDLE], "riscv64") in
-  let st3 = boot_suite(stR) in
+  let st2 = compiler_all(st1, [ya]) in
+  let stQ = qemu_arch(st2, [ya], "arm64") in
+  let stR = qemu_arch(stQ, [ya], "riscv64") in
+  let st3 = boot_suite(stR, ya) in
   let _ = print("") in
   let _ = print(str_cat(int_to_str(nth(st3, 0)),
                  str_cat(" passed, ",
