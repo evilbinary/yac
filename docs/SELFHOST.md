@@ -259,7 +259,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | `gen_argv` | Linux `char**` 指针可为奇数，不能当 tagged int 暂存 |
 | `gen_apply1` / `gen_apply2` | 动态 `nenv` 跳表 + SysV 寄存器 |
 
-**已知编译器限制**：单个编译函数里约 33 个 ANF `let`、或 `_start` 里过长的 LIR cons 字面量，会被 `yc_A` 错编（segfault / iso 漂）。`bytes_to_str` 用 `rt_bts_a`…`d` 小函数 `list_push` 再 `list_rev` 两次。`rep movsb` memcpy 在解释器下正确，但一进 `emit_insn` 或被 runtime 使用，L5 iso 就全挂（A/B 对 memcpy 编码不一致）。字符串热路径仍走 `ld8` 循环。
+**已知编译器限制**：小程序里 33 元列表 / 33 个 `let` 都正常；**编译器自己的 `_start`（bundle 几百条顶层 let 合成一帧）里**放 33 元 LIR cons 字面量会被错编（`bytes_to_str` → SIGSEGV 139）。对策：`runtime.yac` 的 insn 列表做成 `rt_*_ins(_)` 小函数。`rep movsb` memcpy 在解释器下正确，但一进巨大的 `emit_insn`，L5 iso 会漂。字符串热路径仍走 `ld8` 循环。
 
 **近期完成（perf）**：全量 bundle 自编译曾 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）。memcpy 热路径要等 `emit_insn` 拆文件之后再接。
 

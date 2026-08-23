@@ -125,6 +125,7 @@ let parse_suite(st) =
     ["let fun", "let f(x) = if x == 0 then 0 else f(x - 1)", "[[let, f, [fun, [x], [if, [binop, ==, [var, x], [int, 0]], [int, 0], [call, [var, f], [[binop, -, [var, x], [int, 1]]]]]], [unit]]]"],
     ["let empty params", "let f() = 42 in f()", "[[let, f, [fun, [], [int, 42]], [call, [var, f], []]]]"],
     ["multi statement", "let x = 1;\nlet y = 2;\nx + y", "[[let, x, [int, 1], [unit]], [let, y, [int, 2], [unit]], [binop, +, [var, x], [var, y]]]"],
+    ["newline statements", "1\n2", "[[int, 1], [int, 2]]"],
     ["factorial", "let fact(n) = if n <= 1 then 1 else n * fact(n - 1)\nprint fact(5)", "[[let, fact, [fun, [n], [if, [binop, <=, [var, n], [int, 1]], [int, 1], [binop, *, [var, n], [call, [var, fact], [[binop, -, [var, n], [int, 1]]]]]]], [unit]], [print, [call, [var, fact], [[int, 5]]]]]"]])
 
 let anf_suite(st) =

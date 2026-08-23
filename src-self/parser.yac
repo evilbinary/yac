@@ -131,10 +131,12 @@ let parse_expr(toks, i, min_prec) =
       parse_app(nth(r, 1), ["call", head, nth(r, 0)])
     else if kk(j) == "ident" or kk(j) == "num" or kk(j) == "str" or
             kk(j) == "lparen" or kk(j) == "lbrk" or is_kw(j, "fun") then
-      /* fn arg  (single space-separated argument) */
-      let r = parse_expr(toks, j, 0) in
-      if is_err(nth(r, 0)) then [head, j]
-      else parse_app(nth(r, 1), ["call", head, [nth(r, 0)]])
+      /* fn arg  (same line only; newline starts the next statement) */
+      if nth(nth(toks, j), 2) != nth(nth(toks, j - 1), 2) then [head, j]
+      else
+        let r = parse_expr(toks, j, 0) in
+        if is_err(nth(r, 0)) then [head, j]
+        else parse_app(nth(r, 1), ["call", head, [nth(r, 0)]])
     else [head, j] in
 
   /* ---- if ---- */

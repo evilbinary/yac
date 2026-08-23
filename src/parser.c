@@ -286,6 +286,7 @@ static Ast *parse_app(Parser *p) {
     Ast **args = NULL;
     int nargs = 0, cap = 0;
 
+    int app_line = p->toks[p->pos - 1].line;
     while (atom_start(peek(p)->kind)) {
         if (at(p, TK_LPAREN) && paren_is_arg_list(p)) {
             advance(p); /* consume '(' */
@@ -312,8 +313,10 @@ static Ast *parse_app(Parser *p) {
                 free(args);
                 return NULL;
             }
+            app_line = p->toks[p->pos - 1].line;
             continue;
         }
+        if (peek(p)->line != app_line) break;
         Ast *arg = parse_atom(p);
         if (!arg) {
             free(args);
@@ -324,6 +327,7 @@ static Ast *parse_app(Parser *p) {
             args = (Ast **)realloc(args, (size_t)cap * sizeof(Ast *));
         }
         args[nargs++] = arg;
+        app_line = p->toks[p->pos - 1].line;
     }
 
     if (nargs == 0) {

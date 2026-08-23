@@ -4,9 +4,13 @@
  * plus ordinary control LIR. cons still goes through emit (yac_alloc).
  * Layout (qword): next=0 mark=8 kind=16 car/len=24 cdr/head=32 (listbuf tail=40).
  * nil is tagged 1. kind 2 = cons, kind 5 = listbuf.
+ *
+ * Insn lists are thunks (rt_*_ins(_)) so big cons literals are not built
+ * inside yc's _start. A 33-element literal in that huge frame is mis-emitted
+ * (yc_A bytes_to_str → SIGSEGV); the same literal in a small function is fine.
  */
 
-let rt_tail_ins =
+let rt_tail_ins(_) =
   [l_prologue(6, 1),
    l_nil(2),
    l_icmp("==", 3, 1, 2),
@@ -17,7 +21,7 @@ let rt_tail_ins =
    l_obj_ld(4, 1, 32),
    l_ret(4)]
 
-let rt_len_ins =
+let rt_len_ins(_) =
   [l_prologue(14, 1),
    l_nil(2),
    l_icmp("==", 3, 1, 2),
@@ -48,7 +52,7 @@ let rt_len_ins =
    l_label("l_done"),
    l_ret(11)]
 
-let rt_nth_ins =
+let rt_nth_ins(_) =
   [l_prologue(16, 2),
    l_nil(3),
    l_icmp("==", 4, 1, 3),
@@ -80,7 +84,7 @@ let rt_nth_ins =
    l_obj_ld(13, 8, 24),
    l_ret(13)]
 
-let rt_list_rev_ins =
+let rt_list_rev_ins(_) =
   [l_prologue(12, 1),
    l_nil(2),
    l_icmp("==", 3, 1, 2),
@@ -107,7 +111,7 @@ let rt_list_rev_ins =
    l_label("rv_done"),
    l_ret(7)]
 
-let rt_append_ins =
+let rt_append_ins(_) =
   [l_prologue(10, 2),
    l_nil(3),
    l_icmp("==", 4, 1, 3),
@@ -121,7 +125,7 @@ let rt_append_ins =
    l_cons(8, 7, 6),
    l_ret(8)]
 
-let rt_drop_ins =
+let rt_drop_ins(_) =
   [l_prologue(8, 2),
    l_label("dr_loop"),
    l_mov_imm(3, 0),
@@ -139,7 +143,7 @@ let rt_drop_ins =
    l_label("dr_done"),
    l_ret(1)]
 
-let rt_list_new_ins =
+let rt_list_new_ins(_) =
   [l_prologue(4, 0),
    l_alloc(1, 48),
    l_obj_sti(1, 8, 0),
@@ -150,7 +154,7 @@ let rt_list_new_ins =
    l_obj_st(1, 40, 2),
    l_ret(1)]
 
-let rt_list_push_ins =
+let rt_list_push_ins(_) =
   [l_prologue(12, 2),
    l_nil(3),
    l_cons(4, 2, 3),
@@ -174,7 +178,7 @@ let rt_list_push_ins =
    l_mov_imm(11, 0),
    l_ret(11)]
 
-let rt_foldl_ins =
+let rt_foldl_ins(_) =
   [l_prologue(8, 3),
    l_nil(4),
    l_icmp("==", 5, 3, 4),
@@ -187,7 +191,7 @@ let rt_foldl_ins =
    l_apply(2, 1, 0 - 1, [2, 6]),
    l_tailcall(2, "yac_foldl", [1, 2, 3])]
 
-let rt_map_ins =
+let rt_map_ins(_) =
   [l_prologue(12, 2),
    l_nil(3),
    l_icmp("==", 4, 2, 3),
@@ -202,7 +206,7 @@ let rt_map_ins =
    l_cons(9, 7, 8),
    l_ret(9)]
 
-let rt_str_eq_ins =
+let rt_str_eq_ins(_) =
   [l_prologue(16, 2),
    l_obj_ld(3, 1, 24),
    l_tag(3, 3),
@@ -236,7 +240,7 @@ let rt_str_eq_ins =
    l_binop("+", 7, 7, 11),
    l_jmp("se_loop")]
 
-let rt_str_cat_ins =
+let rt_str_cat_ins(_) =
   [l_prologue(18, 2),
    l_obj_ld(3, 1, 24),
    l_tag(3, 3),
@@ -287,7 +291,7 @@ let rt_str_cat_ins =
    l_st8(8, 12, 13),
    l_ret(8)]
 
-let rt_str_slice_ins =
+let rt_str_slice_ins(_) =
   [l_prologue(16, 3),
    l_mov_imm(4, 33),
    l_binop("+", 4, 3, 4),
@@ -321,7 +325,7 @@ let rt_str_slice_ins =
    l_st8(6, 10, 11),
    l_ret(6)]
 
-let rt_str_chr_ins =
+let rt_str_chr_ins(_) =
   [l_prologue(8, 1),
    l_alloc(2, 40),
    l_obj_sti(2, 8, 0),
@@ -335,7 +339,7 @@ let rt_str_chr_ins =
    l_st8(2, 5, 6),
    l_ret(2)]
 
-let rt_int_to_str_ins =
+let rt_int_to_str_ins(_) =
   [l_prologue(12, 1),
    l_mov_imm(2, 0),
    l_icmp("==", 3, 1, 2),
@@ -361,7 +365,7 @@ let rt_int_to_str_ins =
    l_call(10, "yac_str_cat", [8, 9]),
    l_ret(10)]
 
-let rt_bytes_extend_ins =
+let rt_bytes_extend_ins(_) =
   [l_prologue(14, 2),
    l_obj_ld(3, 2, 24),
    l_tag(3, 3),
@@ -392,7 +396,7 @@ let rt_bytes_extend_ins =
    l_obj_st_int(1, 24, 6),
    l_ret(1)]
 
-let rt_print_int_ins =
+let rt_print_int_ins(_) =
   [l_prologue(10, 1),
    l_mov_imm(2, 10),
    l_binop("/", 3, 1, 2),
@@ -409,17 +413,17 @@ let rt_print_int_ins =
    l_mov_imm(8, 0),
    l_ret(8)]
 
-let rt_gc_ins =
+let rt_gc_ins(_) =
   [l_prologue(4, 0),
    l_mov_imm(1, 0),
    l_ret(1)]
 
-let rt_argc_ins =
+let rt_argc_ins(_) =
   [l_prologue(4, 0),
    l_glob(1, 1),
    l_ret(1)]
 
-let rt_time_ms_ins =
+let rt_time_ms_ins(_) =
   [l_prologue(10, 0),
    l_clock(1, 2, 1),
    l_mov_imm(3, 1000),
@@ -429,7 +433,7 @@ let rt_time_ms_ins =
    l_binop("+", 7, 4, 6),
    l_ret(7)]
 
-let rt_two_digit_ins =
+let rt_two_digit_ins(_) =
   [l_prologue(12, 1),
    l_mov_imm(2, 10),
    l_binop("/", 3, 1, 2),
@@ -442,7 +446,7 @@ let rt_two_digit_ins =
    l_call(8, "yac_str_cat", [6, 7]),
    l_ret(8)]
 
-let rt_time_str_ins =
+let rt_time_str_ins(_) =
   [l_prologue(18, 0),
    l_clock(1, 2, 0),
    l_mov_imm(3, 86400),
@@ -464,74 +468,62 @@ let rt_time_str_ins =
    l_call(8, "yac_str_cat", [7, 13]),
    l_ret(8)]
 
-/* Small fillers: ~33 ANF lets in one compiled fun is mis-emitted. */
-let rt_bts_a(ins) =
-  let _ = list_push(ins, l_prologue(16, 1)) in
-  let _ = list_push(ins, l_obj_ld(2, 1, 24)) in
-  let _ = list_push(ins, l_tag(2, 2)) in
-  let _ = list_push(ins, l_mov_imm(3, 33)) in
-  let _ = list_push(ins, l_binop("+", 3, 2, 3)) in
-  let _ = list_push(ins, l_mov_imm(4, 7)) in
-  let _ = list_push(ins, l_binop("+", 3, 3, 4)) in
-  let _ = list_push(ins, l_mov_imm(4, 3)) in
-  ins
-
-let rt_bts_b(ins) =
-  let _ = list_push(ins, l_binop(">>", 3, 3, 4)) in
-  let _ = list_push(ins, l_binop("<<", 3, 3, 4)) in
-  let _ = list_push(ins, l_alloc_s(5, 3)) in
-  let _ = list_push(ins, l_obj_sti(5, 8, 0)) in
-  let _ = list_push(ins, l_obj_sti(5, 16, 3)) in
-  let _ = list_push(ins, l_obj_st_int(5, 24, 2)) in
-  let _ = list_push(ins, l_mov_imm(6, 32)) in
-  let _ = list_push(ins, l_mov_imm(7, 40)) in
-  ins
-
-let rt_bts_c(ins) =
-  let _ = list_push(ins, l_mov_imm(11, 0)) in
-  let _ = list_push(ins, l_label("bt_l")) in
-  let _ = list_push(ins, l_icmp("==", 8, 11, 2)) in
-  let _ = list_push(ins, l_br(8, "bt_z", "bt_c")) in
-  let _ = list_push(ins, l_label("bt_c")) in
-  let _ = list_push(ins, l_binop("+", 12, 7, 11)) in
-  let _ = list_push(ins, l_ld8(8, 1, 12)) in
-  let _ = list_push(ins, l_binop("+", 13, 6, 11)) in
-  ins
-
-let rt_bts_d(ins) =
-  let _ = list_push(ins, l_st8(5, 13, 8)) in
-  let _ = list_push(ins, l_mov_imm(8, 1)) in
-  let _ = list_push(ins, l_binop("+", 11, 11, 8)) in
-  let _ = list_push(ins, l_jmp("bt_l")) in
-  let _ = list_push(ins, l_label("bt_z")) in
-  let _ = list_push(ins, l_binop("+", 9, 6, 2)) in
-  let _ = list_push(ins, l_mov_imm(10, 0)) in
-  let _ = list_push(ins, l_st8(5, 9, 10)) in
-  let _ = list_push(ins, l_ret(5)) in
-  ins
+let rt_bytes_to_str_ins(_) =
+  [l_prologue(16, 1),
+   l_obj_ld(2, 1, 24),
+   l_tag(2, 2),
+   l_mov_imm(3, 33),
+   l_binop("+", 3, 2, 3),
+   l_mov_imm(4, 7),
+   l_binop("+", 3, 3, 4),
+   l_mov_imm(4, 3),
+   l_binop(">>", 3, 3, 4),
+   l_binop("<<", 3, 3, 4),
+   l_alloc_s(5, 3),
+   l_obj_sti(5, 8, 0),
+   l_obj_sti(5, 16, 3),
+   l_obj_st_int(5, 24, 2),
+   l_mov_imm(6, 32),
+   l_mov_imm(7, 40),
+   l_mov_imm(11, 0),
+   l_label("bt_l"),
+   l_icmp("==", 8, 11, 2),
+   l_br(8, "bt_z", "bt_c"),
+   l_label("bt_c"),
+   l_binop("+", 12, 7, 11),
+   l_ld8(8, 1, 12),
+   l_binop("+", 13, 6, 11),
+   l_st8(5, 13, 8),
+   l_mov_imm(8, 1),
+   l_binop("+", 11, 11, 8),
+   l_jmp("bt_l"),
+   l_label("bt_z"),
+   l_binop("+", 9, 6, 2),
+   l_mov_imm(10, 0),
+   l_st8(5, 9, 10),
+   l_ret(5)]
 
 let runtime_funs(_) =
-  let bts = list_rev(list_rev(rt_bts_d(rt_bts_c(rt_bts_b(rt_bts_a(list_new())))))) in
-  [l_fun("yac_tail", 1, 0, rt_tail_ins, "yac_tail"),
-   l_fun("yac_len", 1, 0, rt_len_ins, "yac_len"),
-   l_fun("yac_nth", 2, 0, rt_nth_ins, "yac_nth"),
-   l_fun("yac_list_rev", 1, 0, rt_list_rev_ins, "yac_list_rev"),
-   l_fun("yac_append", 2, 0, rt_append_ins, "yac_append"),
-   l_fun("yac_drop", 2, 0, rt_drop_ins, "yac_drop"),
-   l_fun("yac_list_new", 0, 0, rt_list_new_ins, "yac_list_new"),
-   l_fun("yac_list_push", 2, 0, rt_list_push_ins, "yac_list_push"),
-   l_fun("yac_foldl", 3, 0, rt_foldl_ins, "yac_foldl"),
-   l_fun("yac_map", 2, 0, rt_map_ins, "yac_map"),
-   l_fun("yac_str_eq", 2, 0, rt_str_eq_ins, "yac_str_eq"),
-   l_fun("yac_str_cat", 2, 0, rt_str_cat_ins, "yac_str_cat"),
-   l_fun("yac_str_slice", 3, 0, rt_str_slice_ins, "yac_str_slice"),
-   l_fun("yac_str_chr", 1, 0, rt_str_chr_ins, "yac_str_chr"),
-   l_fun("yac_int_to_str", 1, 0, rt_int_to_str_ins, "yac_int_to_str"),
-   l_fun("yac_bytes_extend", 2, 0, rt_bytes_extend_ins, "yac_bytes_extend"),
-   l_fun("yac_bytes_to_str", 1, 0, bts, "yac_bytes_to_str"),
-   l_fun("print_int", 1, 0, rt_print_int_ins, "print_int"),
-   l_fun("gc_collect", 0, 0, rt_gc_ins, "gc_collect"),
-   l_fun("yac_argc", 0, 0, rt_argc_ins, "yac_argc"),
-   l_fun("time_ms", 0, 0, rt_time_ms_ins, "time_ms"),
-   l_fun("yac_two_digit", 1, 0, rt_two_digit_ins, "yac_two_digit"),
-   l_fun("time_str", 0, 0, rt_time_str_ins, "time_str")]
+  [l_fun("yac_tail", 1, 0, rt_tail_ins(0), "yac_tail"),
+   l_fun("yac_len", 1, 0, rt_len_ins(0), "yac_len"),
+   l_fun("yac_nth", 2, 0, rt_nth_ins(0), "yac_nth"),
+   l_fun("yac_list_rev", 1, 0, rt_list_rev_ins(0), "yac_list_rev"),
+   l_fun("yac_append", 2, 0, rt_append_ins(0), "yac_append"),
+   l_fun("yac_drop", 2, 0, rt_drop_ins(0), "yac_drop"),
+   l_fun("yac_list_new", 0, 0, rt_list_new_ins(0), "yac_list_new"),
+   l_fun("yac_list_push", 2, 0, rt_list_push_ins(0), "yac_list_push"),
+   l_fun("yac_foldl", 3, 0, rt_foldl_ins(0), "yac_foldl"),
+   l_fun("yac_map", 2, 0, rt_map_ins(0), "yac_map"),
+   l_fun("yac_str_eq", 2, 0, rt_str_eq_ins(0), "yac_str_eq"),
+   l_fun("yac_str_cat", 2, 0, rt_str_cat_ins(0), "yac_str_cat"),
+   l_fun("yac_str_slice", 3, 0, rt_str_slice_ins(0), "yac_str_slice"),
+   l_fun("yac_str_chr", 1, 0, rt_str_chr_ins(0), "yac_str_chr"),
+   l_fun("yac_int_to_str", 1, 0, rt_int_to_str_ins(0), "yac_int_to_str"),
+   l_fun("yac_bytes_extend", 2, 0, rt_bytes_extend_ins(0), "yac_bytes_extend"),
+   l_fun("yac_bytes_to_str", 1, 0, rt_bytes_to_str_ins(0), "yac_bytes_to_str"),
+   l_fun("print_int", 1, 0, rt_print_int_ins(0), "print_int"),
+   l_fun("gc_collect", 0, 0, rt_gc_ins(0), "gc_collect"),
+   l_fun("yac_argc", 0, 0, rt_argc_ins(0), "yac_argc"),
+   l_fun("time_ms", 0, 0, rt_time_ms_ins(0), "time_ms"),
+   l_fun("yac_two_digit", 1, 0, rt_two_digit_ins(0), "yac_two_digit"),
+   l_fun("time_str", 0, 0, rt_time_str_ins(0), "time_str")]
