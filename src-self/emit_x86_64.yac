@@ -301,17 +301,22 @@ let gen_gc(_) =
   let _ = mov_rax_rbx_disp8(b, 32) in
   let _ = jmp_rel32(b, 0) in
   let ptail2 = bytes_len(b) - 4 in
+  let byta = bytes_len(b) in
+  let _ = apply_patch(b, pbyt, byta) in
+  let _ = mov_rax_rbx_disp8(b, 40) in
+  let _ = jmp_rel32(b, 0) in
+  let ptail3 = bytes_len(b) - 4 in
   let mret = bytes_len(b) in
   let _ = apply_patch(b, pme, mret) in
   let _ = apply_patch(b, pme2, mret) in
   let _ = apply_patch(b, pmf, mret) in
   let _ = apply_patch(b, palr, mret) in
   let _ = apply_patch(b, pstr, mret) in
-  let _ = apply_patch(b, pbyt, mret) in
   let _ = apply_patch(b, pmr1, mret) in
   let _ = apply_patch(b, ccar, mark) in
   let _ = apply_patch(b, ptail1, mark) in
   let _ = apply_patch(b, ptail2, mark) in
+  let _ = apply_patch(b, ptail3, mark) in
   let _ = ret(b) in
   [b, headpos, shipos]
 
@@ -532,9 +537,10 @@ let gen_write_file(d) =
   let _ = cmp_rax_imm8(b, 4) in
   let _ = jcc_rel32(b, 5, 0) in
   let jnestr = bytes_len(b) - 4 in
-  /* BYTES path (kind==4) */
-  let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 216) in
-  let _ = add_rax_imm32(b, 40) in
+  /* BYTES path (kind==4): dataptr@40 is tagged STR blob, payload at +32 */
+  let _ = mov_rax_rbx_disp8(b, 40) in
+  let _ = and_rax_1(b) in
+  let _ = add_rax_imm32(b, 32) in
   let _ = mov_rsi_rax(b) in
   let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 67) in let _ = e8(b, 24) in
   let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 194) in
@@ -1560,23 +1566,11 @@ let emit_x86_i_prim(st, insn) =
     let _ = emit_store_rax_slot(b, dst) in
     [b, cur, labels, patches]
   else if k == "bytes_new" then
-    /* BYTES: [next][mark][kind=4][len][cap][data...] initial cap=4MiB.
-     * Compiler text is ~1.05MiB; 1MiB cap overflowed and SIGSEGV'd in helpers. */
     let dst = nth(insn, 1) in
-    let _ = mov_rdi_imm(b, 40 + 4194304) in
     let acall = bytes_len(b) in
     let _ = call_rel32(b, 0) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rax_disp8_imm32(b, 8, 0) in
-    let _ = mov_rax_disp8_imm32(b, 16, 4) in
-    let _ = mov_rax_disp8_imm32(b, 20, 0) in
-    let _ = mov_rax_disp8_imm32(b, 24, 0) in
-    let _ = mov_rax_disp8_imm32(b, 28, 0) in
-    let _ = mov_rax_disp8_imm32(b, 32, 4194304) in
-    let _ = mov_rax_disp8_imm32(b, 36, 0) in
-    let _ = or_rax_1(b) in
     let _ = emit_store_rax_slot(b, dst) in
-    [b, cur, labels, cons([acall + 1, "yac_alloc"], patches)]
+    [b, cur, labels, cons([acall + 1, "yac_bytes_new"], patches)]
   else if k == "bytes_len" then
     let dst = nth(insn, 1) in
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
@@ -1588,61 +1582,35 @@ let emit_x86_i_prim(st, insn) =
   else if k == "bytes_ref" then
     let dst = nth(insn, 1) in
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rbx_rax(b) in
+    let _ = mov_rdi_rax(b) in
     let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-    let _ = mov_rdx_rax(b) in
-    let _ = sar_rdx_1(b) in
-    let _ = mov_rax_rbx(b) in
-    let _ = add_rax_imm32(b, 40) in
-    let _ = movzx_eax_rax_rdx(b) in
-    let _ = shl_rax_1(b) in
+    let _ = mov_rsi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
     let _ = emit_store_rax_slot(b, dst) in
-    [b, cur, labels, patches]
+    [b, cur, labels, cons([acall + 1, "yac_bytes_ref"], patches)]
   else if k == "bytes_put" then
     let dst = nth(insn, 1) in
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rbx_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-    let _ = mov_rdx_rax(b) in
-    let _ = sar_rdx_1(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 4)) in
     let _ = mov_rdi_rax(b) in
-    let _ = sar_rdi_1(b) in
-    let _ = mov_rax_rbx(b) in
-    let _ = add_rax_imm32(b, 40) in
-    let _ = mov_rax_rdx_dil(b) in
-    let _ = mov_rcx_rdx(b) in
-    let _ = inc_rcx(b) in
-    let _ = mov_rax_rbx_disp8(b, 24) in
-    let _ = cmp_rcx_rax(b) in
-    let _ = jcc_rel32(b, 6, 0) in
-    let jskip = bytes_len(b) - 4 in
-    let _ = mov_mem_rbx_disp8_rcx(b, 24) in
-    let skip = bytes_len(b) in
-    let _ = apply_patch(b, jskip, skip) in
-    let _ = xor_rax_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rsi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 4)) in
+    let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 194) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
     let _ = emit_store_rax_slot(b, dst) in
-    [b, cur, labels, patches]
+    [b, cur, labels, cons([acall + 1, "yac_bytes_put"], patches)]
   else if k == "bytes_append" then
     let dst = nth(insn, 1) in
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = and_rax_1(b) in
-    let _ = push_r64(b, 0) in
-    let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
-    let _ = e8(b, 72) in let _ = e8(b, 209) in let _ = e8(b, 255) in
-    let _ = pop_r64(b, 0) in
-    let _ = mov_rdx_rax_disp8(b, 24) in
-    let _ = push_r64(b, 0) in
-    let _ = add_rax_imm32(b, 40) in
-    let _ = e8(b, 72) in let _ = e8(b, 1) in let _ = e8(b, 208) in
-    let _ = e8(b, 64) in let _ = e8(b, 136) in let _ = e8(b, 56) in
-    let _ = pop_r64(b, 0) in
-    let _ = inc_mem_rax_disp8(b, 24) in
-    let _ = or_rax_1(b) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rsi_rax(b) in
+    let acall = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
     let _ = emit_store_rax_slot(b, dst) in
-    [b, cur, labels, patches]
+    [b, cur, labels, cons([acall + 1, "yac_bytes_append"], patches)]
   else if k == "bytes_extend" then
     let dst = nth(insn, 1) in
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in

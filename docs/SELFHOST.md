@@ -521,7 +521,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 1. **HO**：每个 `letfun`（含 ncap=0）分配 closure；捕获/参数走 `apply`（动态读 nenv）；命名函数直 `call`；嵌套函数合并进 funs。
 2. **列表**：nil/cons/len/nth/tail/append/drop；字面量 desugar；`foldl`/`map`/`filter`（用户定义与原语）e2e。
 3. **字符串**：STR 堆对象（kind=3，8 字节对齐）；`strlit` / `str_len` / `str_ref` / `str_cat` / `str_slice` / `int_to_str`；`==`/`!=` 内容比较。
-4. **bytes**：BYTES 堆对象（kind=4，初容 1MiB）；`bytes_new/len/ref/put/append` / `bytes_to_str`。
+4. **bytes**：BYTES 堆对象（kind=4；外层 48B，payload 在独立 STR blob，`dataptr@40`）。初容 16，按需倍增（与 C `realloc` 同语义，外层指针不变）。`bytes_new/len/ref/put/append` / `bytes_to_str`。
 5. **IO**：`read_file` / `write_file`；位运算；`and`/`or`；bool 字面量。
 6. **HO 原语**：`yac_apply1`/`yac_apply2` + 原生 `foldl`/`map`（含捕获）。
 7. **M4 起步**：`yc.yac` + `selfhost_yc.sh`；L4 烟测 `selfhost_l4_lex.sh`（原生 is_kw）。
@@ -540,6 +540,6 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 - **`read_file` 64KiB 上限**：改为 `lseek` 按文件大小分配。
 - **TCO**：只改**同名**后缀 `call` 为拆栈 `jmp`（不要 `apply`、不要 `parse_program`/`parse_expr`）。`tco_prog` 仅对单条 top-level；C lower `maybe_tailcall` 同样只认当前 gname。`loop(100000)` 用例。
 - **编译速度**：`tokenize` 用 `list_push`（C 的 `cons` 会整表拷贝，90k token 是 O(n²)）。原生 listbuf `nth` 缓存相邻下标，解析不再每次从头走链表。
-- **bytes cap**：原生 `bytes_new` 初始 4MiB（原 1MiB）。编译器 text ~1.05MiB，append 不扩容会写穿堆，在 emit helpers 处 SIGSEGV。
+- **bytes 按需扩容**：外层 kind=4 固定小对象（len/cap/dataptr），数据在独立 STR blob。`yac_bytes_grow` 倍增 cap 并 `memcpy`，外层指针不变（C 是 `realloc` 同一 `Bytes*`）。GC 标记 kind=4 的 `+40`。`write_file` 从 blob+32 写出。
 - **`and` 非短路**：`skip_block_cm` 里 `* /` 判断在含 ` * ` 的块注释上误匹配；改为嵌套 `if`。
 - **空参 `let f() =`**：消耗 `)`；`has_params`（不要用 `len(params)>0`）才包装成 `fun`，否则 `f()` 会去调用整数。

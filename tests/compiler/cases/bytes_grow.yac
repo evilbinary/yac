@@ -1,0 +1,6 @@
+let fill(b, i) =
+  if i == 40 then bytes_ref(b, 39)
+  else
+    let _ = bytes_append(b, i) in
+    fill(b, i + 1)
+in fill(bytes_new(), 0)

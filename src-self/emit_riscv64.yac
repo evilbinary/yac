@@ -291,17 +291,22 @@ let gen_gc_rv(_) =
   let _ = rv_ld(b, 10, 19, 32) in
   let ptail2 = bytes_len(b) in
   let _ = rv_jal(b, 0, 0) in
+  let byta = bytes_len(b) in
+  let _ = rv_patch_b(b, pbyt, byta) in
+  let _ = rv_ld(b, 10, 19, 40) in
+  let ptail3 = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
   let mret = bytes_len(b) in
   let _ = rv_patch_b(b, pme, mret) in
   let _ = rv_patch_b(b, pme2, mret) in
   let _ = rv_patch_b(b, pmf, mret) in
   let _ = rv_patch_b(b, palr, mret) in
   let _ = rv_patch_b(b, pstr, mret) in
-  let _ = rv_patch_b(b, pbyt, mret) in
   let _ = rv_apply_jal(b, pmr1, mret, 0) in
   let _ = rv_apply_jal(b, ccar, mark, 1) in
   let _ = rv_apply_jal(b, ptail1, mark, 0) in
   let _ = rv_apply_jal(b, ptail2, mark, 0) in
+  let _ = rv_apply_jal(b, ptail3, mark, 0) in
   let _ = rv_jalr(b, 0, 1, 0) in
   [b, headpos, shipos]
 
@@ -385,7 +390,9 @@ let gen_write_file_rv(_) =
   let _ = rv_addi(b, 6, 0, 4) in
   let jne = bytes_len(b) in
   let _ = rv_bne(b, 11, 6, 0) in
-  let _ = rv_addi(b, 11, 10, 40) in
+  let _ = rv_ld(b, 11, 10, 40) in
+  let _ = rv_untag_ptr(b, 11) in
+  let _ = rv_addi(b, 11, 11, 32) in
   let _ = rv_ld(b, 12, 10, 24) in
   let jdo = bytes_len(b) in
   let _ = rv_jal(b, 0, 0) in
@@ -1310,19 +1317,7 @@ let emit_rv_i_prim(st, insn) =
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     [b, cur, labels, patches]
   else if k == "bytes_new" then
-    let _ = rv_li(b, 10, 40 + 4194304) in
-    let acall = bytes_len(b) in
-    let _ = rv_jal(b, 1, 0) in
-    let _ = rv_untag_ptr(b, 10) in
-    let _ = rv_sd(b, 0, 10, 8) in
-    let _ = rv_addi(b, 11, 0, 4) in
-    let _ = rv_sd(b, 11, 10, 16) in
-    let _ = rv_sd(b, 0, 10, 24) in
-    let _ = rv_li(b, 11, 4194304) in
-    let _ = rv_sd(b, 11, 10, 32) in
-    let _ = rv_tag(b, 10) in
-    let _ = rv_slot(b, nth(insn, 1), true, 10) in
-    [b, cur, labels, cons(["jalra", acall, "yac_alloc"], patches)]
+    [b, cur, labels, rv_jal_rt(b, patches, nth(insn, 1), "yac_bytes_new")]
   else if k == "bytes_len" then
     let _ = rv_slot(b, nth(insn, 2), false, 10) in
     let _ = rv_untag_ptr(b, 10) in
@@ -1332,54 +1327,17 @@ let emit_rv_i_prim(st, insn) =
     [b, cur, labels, patches]
   else if k == "bytes_ref" then
     let _ = rv_slot(b, nth(insn, 2), false, 10) in
-    let _ = rv_untag_ptr(b, 10) in
     let _ = rv_slot(b, nth(insn, 3), false, 11) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sra(b, 11, 11, 7) in
-    let _ = rv_addi(b, 10, 10, 40) in
-    let _ = rv_add(b, 10, 10, 11) in
-    let _ = rv_lbu(b, 10, 10, 0) in
-    let _ = rv_add(b, 10, 10, 10) in
-    let _ = rv_slot(b, nth(insn, 1), true, 10) in
-    [b, cur, labels, patches]
+    [b, cur, labels, rv_jal_rt(b, patches, nth(insn, 1), "yac_bytes_ref")]
   else if k == "bytes_put" then
     let _ = rv_slot(b, nth(insn, 2), false, 10) in
-    let _ = rv_untag_ptr(b, 10) in
-    let _ = rv_addi(b, 13, 10, 0) in
     let _ = rv_slot(b, nth(insn, 3), false, 11) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sra(b, 11, 11, 7) in
     let _ = rv_slot(b, nth(insn, 4), false, 12) in
-    let _ = rv_sra(b, 12, 12, 7) in
-    let _ = rv_addi(b, 10, 13, 40) in
-    let _ = rv_add(b, 10, 10, 11) in
-    let _ = rv_sb(b, 12, 10, 0) in
-    let _ = rv_addi(b, 11, 11, 1) in
-    let _ = rv_ld(b, 10, 13, 24) in
-    let jsk = bytes_len(b) in
-    let _ = rv_bgeu(b, 10, 11, 0) in
-    let _ = rv_sd(b, 11, 13, 24) in
-    let _ = rv_patch_b(b, jsk, bytes_len(b)) in
-    let _ = rv_addi(b, 10, 0, 0) in
-    let _ = rv_slot(b, nth(insn, 1), true, 10) in
-    [b, cur, labels, patches]
+    [b, cur, labels, rv_jal_rt(b, patches, nth(insn, 1), "yac_bytes_put")]
   else if k == "bytes_append" then
     let _ = rv_slot(b, nth(insn, 2), false, 10) in
-    let _ = rv_untag_ptr(b, 10) in
-    let _ = rv_addi(b, 13, 10, 0) in
     let _ = rv_slot(b, nth(insn, 3), false, 11) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sra(b, 11, 11, 7) in
-    let _ = rv_ld(b, 12, 13, 24) in
-    let _ = rv_addi(b, 10, 13, 40) in
-    let _ = rv_add(b, 10, 10, 12) in
-    let _ = rv_sb(b, 11, 10, 0) in
-    let _ = rv_addi(b, 12, 12, 1) in
-    let _ = rv_sd(b, 12, 13, 24) in
-    let _ = rv_addi(b, 10, 13, 0) in
-    let _ = rv_tag(b, 10) in
-    let _ = rv_slot(b, nth(insn, 1), true, 10) in
-    [b, cur, labels, patches]
+    [b, cur, labels, rv_jal_rt(b, patches, nth(insn, 1), "yac_bytes_append")]
   else if k == "len" then
     let _ = rv_slot(b, nth(insn, 2), false, 10) in
     [b, cur, labels, rv_jal_rt(b, patches, nth(insn, 1), "yac_len")]
