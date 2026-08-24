@@ -101,6 +101,7 @@ struct Closure {
     Frame *frame;   /* captured lexical frame */
     const char *cont_name; /* V_CONT: the single parameter name; NULL for V_FUN */
     int rslot;      /* V_CONT: slot of the param in the captured frame */
+    const char *debug_name; /* let-bound name for --prof-out; NULL if anonymous */
 };
 
 /* List value: len elements in a separately allocated items array (like Bytes).

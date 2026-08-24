@@ -110,7 +110,9 @@ Frame *gc_new_frame(Gc *g, int nslots) {
 }
 
 Closure *gc_new_closure(Gc *g) {
-    return (Closure *)gc_alloc_raw(g, G_CLO, sizeof(Closure));
+    Closure *c = (Closure *)gc_alloc_raw(g, G_CLO, sizeof(Closure));
+    c->debug_name = NULL;
+    return c;
 }
 
 ValArr *gc_new_valarr(Gc *g, int n) {

@@ -12,6 +12,7 @@
 #include "gc.h"
 #include "lexer.h"
 #include "parser.h"
+#include "profile.h"
 #include "rtio.h"
 #include "scheme.h"
 #include "uncps.h"
@@ -220,7 +221,9 @@ static void usage(const char *prog) {
             "  --scheme         translate a Scheme subset file to yac, then run it\n"
             "                   (combine with --repl for a Scheme REPL)\n"
             "  --checkpoint-at N  dump the machine state at step N and pause\n"
-            "  --resume FILE    load a checkpoint and continue execution\n",
+            "  --resume FILE    load a checkpoint and continue execution\n"
+            "  --prof-out FILE  write per-function counts and times (ANF interp)\n"
+            "                   (or set YAC_PROF_OUT)\n",
             prog);
 }
 
@@ -233,6 +236,7 @@ typedef struct {
 } Res;
 
 static void cleanup(Res *r) {
+    yac_prof_dump();
     if (r->have_lx) free(r->lx.toks);
     free(r->src);
     arena_free_all(&r->a);
@@ -240,7 +244,8 @@ static void cleanup(Res *r) {
 }
 
 int main(int argc, char **argv) {
-    yac_set_args(argc, argv);
+    const char *pe = getenv("YAC_PROF_OUT");
+    if (pe && *pe) yac_prof_enable(pe);
     bool dump_ast = false, dump_anf = false, dump_cps = false;
     bool cps_mode = false, both = false, uncps_mode = false, dump_uncps = false;
     bool no_gc = false, do_opt = false, repl_mode = false, scheme_mode = false;
@@ -289,11 +294,35 @@ int main(int argc, char **argv) {
             }
             limit_nodes = strtoul(argv[++i], NULL, 10);
         }
+        else if (strcmp(argv[i], "--prof-out") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "--prof-out requires a file\n");
+                return 2;
+            }
+            yac_prof_enable(argv[++i]);
+        }
         else if (argv[i][0] == '-') {
             /* Unrecognized flags (e.g. yc -o out.bin) are forwarded via argc()/argv(). */
         } else if (!file) file = argv[i];
         else {
             /* extra positionals are forwarded to argc()/argv() in the program */
+        }
+    }
+    {
+        char **fwd = (char **)malloc((size_t)argc * sizeof(char *));
+        int nfwd = 0, i;
+        if (fwd) {
+            fwd[nfwd++] = argv[0];
+            for (i = 1; i < argc; i++) {
+                if (strcmp(argv[i], "--prof-out") == 0) {
+                    if (i + 1 < argc) i++;
+                    continue;
+                }
+                fwd[nfwd++] = argv[i];
+            }
+            yac_set_args(nfwd, fwd);
+        } else {
+            yac_set_args(argc, argv);
         }
     }
     if (!file && !load_rt && !repl_mode && !resume_path) {

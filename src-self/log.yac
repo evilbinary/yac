@@ -10,6 +10,13 @@
  *   log(mod, msg)       — string message
  *   log_i(mod, key, n)  — key=int helper
  *
+ * Pass wall times go to module `prof` (milliseconds):
+ *   [..] [prof] lex=8
+ * C interpreter function profile (counts + incl/excl ns):
+ *   ./yac --prof-out FILE.prof bundle.yac input.yac
+ *   # or YAC_PROF_OUT=FILE.prof ./yac ...
+ * TSV, sorted by exclusive time. Native yc has no per-function sampler.
+ *
  * Requires prims: time_str, str_cat, int_to_str, print.
  * Bundle this file first so drivers / stages can call it.
  */

@@ -6,6 +6,8 @@
 #include <string.h>
 
 #include "gc.h"
+#include "profile.h"
+#include "value.h"
 
 /* Direct-style machine over flat environment frames. The machine state is
  * (code, current frame, continuation-frame stack). A variable reference
@@ -67,11 +69,17 @@ static Value eval_atom(const Atom *atom, Frame *env, Est *st) {
         clo->frame = env;
         clo->cont_name = NULL;
         clo->rslot = -1;
+        clo->debug_name = NULL;
         return v_fun(clo);
     }
     }
     fail(st, "internal: bad atom");
     return VALUE_NULL;
+}
+
+static const char *clo_prof_name(const Closure *clo) {
+    if (clo->debug_name && clo->debug_name[0]) return clo->debug_name;
+    return "lam";
 }
 
 static void apply_prim(Value head, Value *args, int nargs, Value *out, Est *st) {
@@ -81,7 +89,9 @@ static void apply_prim(Value head, Value *args, int nargs, Value *out, Est *st) 
         return;
     }
     PrimCtx ctx = {false, "", st->gc, st->a, call_value, st};
+    if (yac_prof_enabled()) yac_prof_enter(p->name);
     *out = p->fn(args, nargs, &ctx);
+    if (yac_prof_enabled()) yac_prof_leave();
     if (ctx.errored) fail(st, "%s", ctx.errmsg);
 }
 
@@ -116,8 +126,11 @@ static bool call_value(void *ud, Value head, Value *args, int nargs,
     Frame *nf = gc_new_frame(st->gc, clo->nslots);
     nf->parent = clo->frame;
     for (int i = 0; i < nargs; i++) nf->slots[i] = args[i];
-    int rc = eval_anf_core(clo->body, clo->body, nf, NULL, 0, st->a, out,
+    int rc;
+    if (yac_prof_enabled()) yac_prof_enter(clo_prof_name(clo));
+    rc = eval_anf_core(clo->body, clo->body, nf, NULL, 0, st->a, out,
                            st->errmsg, st->gc);
+    if (yac_prof_enabled()) yac_prof_leave();
     if (rc != 0) {
         gc_pop_root(st->gc); /* cframe */
         gc_pop_root(st->gc); /* env */
@@ -147,6 +160,7 @@ static void enter_call(Gc *gc, const Closure *clo, Value *args, int nargs,
 static int tail_return(Value v, CFrame **cframe, Frame **env, const Anf **node,
                        Gc *gc) {
     if (!*cframe) return 1;
+    if (yac_prof_enabled()) yac_prof_leave();
     CFrame *f = *cframe;
     *cframe = f->prev;
     gc_set_frame(gc, (GObj *)*cframe);
@@ -178,6 +192,8 @@ static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
         case N_LET: {
             Value v = eval_atom(&node->u.let.atom, env, &st);
             if (st.errored) goto err;
+            if (v.tag == V_FUN && node->u.let.name && node->u.let.name[0] != '#')
+                v.u.clo->debug_name = node->u.let.name;
             env->slots[node->u.let.slot] = v;
             node = node->u.let.body;
             break;
@@ -208,6 +224,7 @@ static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
                 cframe = f;
                 gc_set_frame(gc, (GObj *)f);
                 enter_call(gc, clo, args, node->u.call.nargs, &env);
+                if (yac_prof_enabled()) yac_prof_enter(clo_prof_name(clo));
                 node = clo->body;
             } else if (head.tag == V_PRIM) {
                 Value v;
@@ -256,6 +273,10 @@ static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
                     goto err;
                 }
                 enter_call(gc, clo, args, node->u.tailcall.nargs, &env);
+                if (yac_prof_enabled()) {
+                    yac_prof_leave();
+                    yac_prof_enter(clo_prof_name(clo));
+                }
                 node = clo->body;
             } else if (head.tag == V_PRIM) {
                 Value v;

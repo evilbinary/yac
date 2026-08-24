@@ -925,3 +925,66 @@ let lea_rdx_rsi_disp8(b, d) =
 /* lea rdi, [rsi+rdi]  (48 8d 3c 3e) */
 let lea_rdi_rsi_rdi(b) =
   let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 60) in e8(b, 62)
+/* cmp qword [rbx+disp8], 0  (48 83 7b id 00) */
+let cmp_mem_rbx_disp8_0(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 131) in let _ = e8(b, 123) in
+  let _ = e8(b, band(d, 255)) in e8(b, 0)
+/* mov [rbx+disp8], rsi  (48 89 73 id) */
+let mov_mem_rbx_disp8_rsi(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 115) in
+  e8(b, band(d, 255))
+/* mov r10, rax  (49 89 c2) */
+let mov_r10_rax(b) =
+  let _ = e8(b, 73) in let _ = e8(b, 137) in e8(b, 194)
+/* xor r9, r9  (4d 31 c9) */
+let xor_r9_r9(b) =
+  let _ = e8(b, 77) in let _ = e8(b, 49) in e8(b, 201)
+/* sub rsi, rdx  (48 29 d6) */
+let sub_rsi_rdx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 41) in e8(b, 214)
+/* shr rsi, imm8  (48 c1 ee ib) */
+let shr_rsi_imm8(b, n) =
+  let _ = e8(b, 72) in let _ = e8(b, 193) in let _ = e8(b, 238) in
+  e8(b, band(n, 255))
+/* shr rdx, imm8  (48 c1 ea ib) */
+let shr_rdx_imm8(b, n) =
+  let _ = e8(b, 72) in let _ = e8(b, 193) in let _ = e8(b, 234) in
+  e8(b, band(n, 255))
+/* shr rcx, imm8  (48 c1 e9 ib) */
+let shr_rcx_imm8(b, n) =
+  let _ = e8(b, 72) in let _ = e8(b, 193) in let _ = e8(b, 233) in
+  e8(b, band(n, 255))
+/* and ecx, 7  (83 e1 07) */
+let and_ecx_7(b) =
+  let _ = e8(b, 131) in let _ = e8(b, 225) in e8(b, 7)
+/* test ecx, 7  (f7 c1 07 00 00 00) */
+let test_rcx_7(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 247) in let _ = e8(b, 193) in
+  let _ = e8(b, 7) in let _ = e8(b, 0) in let _ = e8(b, 0) in e8(b, 0)
+/* cmp rcx, [rbp+disp8]  (48 3b 4d id) */
+let cmp_rcx_mem_rbp(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 59) in let _ = e8(b, 77) in
+  e8(b, band(d, 255))
+/* sub rdx, [rbp+disp8]  (48 2b 55 id) */
+let sub_rdx_mem_rbp(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 43) in let _ = e8(b, 85) in
+  e8(b, band(d, 255))
+/* add rdx, [rbp+disp8]  (48 03 55 id) */
+let add_rdx_mem_rbp(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 3) in let _ = e8(b, 85) in
+  e8(b, band(d, 255))
+/* bts [rdx], rcx  (48 0f ab 0a) */
+let bts_mem_rdx_rcx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 15) in let _ = e8(b, 171) in e8(b, 10)
+/* bt [rdx], rcx  (48 0f a3 0a) */
+let bt_mem_rdx_rcx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 15) in let _ = e8(b, 163) in e8(b, 10)
+/* test rsi, rsi  (48 85 f6) */
+let test_rsi_rsi(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 133) in e8(b, 246)
+/* mov rdx, rbx  (48 89 da) */
+let mov_rdx_rbx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 218)
+/* mov rdx, rcx  (48 89 ca) */
+let mov_rdx_rcx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 202)

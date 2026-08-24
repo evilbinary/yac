@@ -14,8 +14,11 @@ let pass_name(p) = nth(p, 1)
 let pass_fn(p) = nth(p, 2)
 
 let run_pass(p, x) =
+  let t0 = time_ms() in
   let fn = pass_fn(p) in
-  fn(x)
+  let r = fn(x) in
+  let _ = log_i("prof", pass_name(p), time_ms() - t0) in
+  r
 
 let run_passes(ps, x) =
   let n = len(ps) in
