@@ -38,6 +38,23 @@ let gen_alloc_rv(_) =
   let _ = rv_addi(b, 2, 2, 0 - 32) in
   let _ = rv_sd(b, 1, 2, 24) in
   let _ = rv_addi(b, 28, 10, 0) in
+  let bumppos = bytes_len(b) in
+  let _ = rv_li32_pair(b, 5, 0) in
+  let _ = rv_addi(b, 5, 5, 40) in
+  let _ = rv_ld(b, 11, 5, 0) in
+  let _ = rv_add(b, 11, 11, 28) in
+  let _ = rv_sd(b, 11, 5, 0) in
+  let _ = rv_li32_pair(b, 12, 16777216) in
+  let pskip = bytes_len(b) in
+  let _ = rv_bgeu(b, 12, 11, 0) in
+  let _ = rv_sd(b, 5, 2, 16) in
+  let _ = rv_sd(b, 28, 2, 8) in
+  let gccall = bytes_len(b) in
+  let _ = rv_jal(b, 1, 0) in
+  let _ = rv_ld(b, 5, 2, 16) in
+  let _ = rv_sd(b, 0, 5, 0) in
+  let _ = rv_ld(b, 28, 2, 8) in
+  let _ = rv_patch_b(b, pskip, bytes_len(b)) in
   let headpos = bytes_len(b) in
   let _ = rv_li32_pair(b, 6, 0) in
   let _ = rv_sd(b, 6, 2, 0) in
@@ -73,6 +90,9 @@ let gen_alloc_rv(_) =
   let _ = rv_addi(b, 17, 0, 214) in
   let _ = rv_ecall(b) in
   let _ = rv_addi(b, 29, 10, 0) in
+  let _ = rv_addi(b, 29, 29, 7) in
+  let _ = rv_addi(b, 5, 0, 0 - 8) in
+  let _ = rv_and(b, 29, 29, 5) in
   let _ = rv_add(b, 10, 29, 28) in
   let _ = rv_addi(b, 10, 10, 8) in
   let _ = rv_addi(b, 17, 0, 214) in
@@ -116,7 +136,7 @@ let gen_alloc_rv(_) =
   let _ = rv_ld(b, 1, 2, 24) in
   let _ = rv_addi(b, 2, 2, 32) in
   let _ = rv_jalr(b, 0, 1, 0) in
-  [b, headpos]
+  [b, headpos, bumppos, gccall]
 
 let rv_enter(b, n) =
   let _ = rv_addi(b, 2, 2, 0 - 16) in
@@ -160,7 +180,7 @@ let gen_gc_rv(_) =
   let _ = rv_jal(b, 0, 0) in
   let _ = rv_apply_jal(b, jclb, jcl, 0) in
   let _ = rv_patch_b(b, pcl, bytes_len(b)) in
-  let _ = rv_addi(b, 19, 8, 16) in
+  let _ = rv_addi(b, 19, 2, 0) in
   let jsc = bytes_len(b) in
   let pscd = bytes_len(b) in
   let _ = rv_bgeu(b, 19, 18, 0) in
@@ -210,6 +230,21 @@ let gen_gc_rv(_) =
   let _ = rv_ld(b, 18, 8, 0 - 16) in
   let _ = rv_ld(b, 19, 8, 0 - 24) in
   let _ = rv_leave(b) in
+  let mark_fast = bytes_len(b) in
+  let _ = rv_addi(b, 6, 0, 1) in
+  let _ = rv_and(b, 5, 10, 6) in
+  let pfe = bytes_len(b) in
+  let _ = rv_beq(b, 5, 0, 0) in
+  let pfe2 = bytes_len(b) in
+  let _ = rv_beq(b, 10, 6, 0) in
+  let _ = rv_untag_ptr(b, 10) in
+  let _ = rv_addi(b, 6, 0, 7) in
+  let _ = rv_and(b, 5, 10, 6) in
+  let pfe3 = bytes_len(b) in
+  let _ = rv_bne(b, 5, 0, 0) in
+  let _ = rv_addi(b, 19, 10, 0) in
+  let pfh = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
   let mark = bytes_len(b) in
   let _ = rv_apply_jal(b, cscan, mark, 1) in
   let _ = rv_addi(b, 6, 0, 1) in
@@ -231,6 +266,7 @@ let gen_gc_rv(_) =
   let _ = rv_jal(b, 0, 0) in
   let _ = rv_apply_jal(b, jmfb, jmf, 0) in
   let _ = rv_patch_b(b, pmh, bytes_len(b)) in
+  let _ = rv_apply_jal(b, pfh, bytes_len(b), 0) in
   let _ = rv_ld(b, 10, 19, 8) in
   let palr = bytes_len(b) in
   let _ = rv_bne(b, 10, 0, 0) in
@@ -270,7 +306,7 @@ let gen_gc_rv(_) =
   let jcapb = bytes_len(b) in
   let _ = rv_jal(b, 0, 0) in
   let _ = rv_apply_jal(b, jcapb, jcap, 0) in
-  let _ = rv_apply_jal(b, ccap, mark, 1) in
+  let _ = rv_apply_jal(b, ccap, mark_fast, 1) in
   let _ = rv_patch_b(b, pcapd, bytes_len(b)) in
   let pmr1 = bytes_len(b) in
   let _ = rv_jal(b, 0, 0) in
@@ -299,14 +335,17 @@ let gen_gc_rv(_) =
   let mret = bytes_len(b) in
   let _ = rv_patch_b(b, pme, mret) in
   let _ = rv_patch_b(b, pme2, mret) in
+  let _ = rv_patch_b(b, pfe, mret) in
+  let _ = rv_patch_b(b, pfe2, mret) in
+  let _ = rv_patch_b(b, pfe3, mret) in
   let _ = rv_patch_b(b, pmf, mret) in
   let _ = rv_patch_b(b, palr, mret) in
   let _ = rv_patch_b(b, pstr, mret) in
   let _ = rv_apply_jal(b, pmr1, mret, 0) in
-  let _ = rv_apply_jal(b, ccar, mark, 1) in
-  let _ = rv_apply_jal(b, ptail1, mark, 0) in
-  let _ = rv_apply_jal(b, ptail2, mark, 0) in
-  let _ = rv_apply_jal(b, ptail3, mark, 0) in
+  let _ = rv_apply_jal(b, ccar, mark_fast, 1) in
+  let _ = rv_apply_jal(b, ptail1, mark_fast, 0) in
+  let _ = rv_apply_jal(b, ptail2, mark_fast, 0) in
+  let _ = rv_apply_jal(b, ptail3, mark_fast, 0) in
   let _ = rv_jalr(b, 0, 1, 0) in
   [b, headpos, shipos]
 
@@ -1523,20 +1562,26 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
                                cons(["yac_alloc", alc_off],
                                     cons(["yac_gc", gc_off],
                                     cons(["yac_argv", av_off], fo0))))))) in
+  let pad8(_) =
+    if band(bytes_len(b), 7) == 0 then 0
+    else let _ = bytes_append(b, 0) in pad8(0) in
+  let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 40 then 0
+    if i >= 48 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
   let patches2 =
     cons(["gc_head", alc_off + nth(alcr, 1)],
+         cons(["gc_head", alc_off + nth(alcr, 2)],
+         cons(["jalra", alc_off + nth(alcr, 3), "yac_gc"],
          cons(["gc_head", gc_off + nth(gcr, 1)],
               cons(["stack_hi", gc_off + nth(gcr, 2)],
          cons(["jalra", rf_off + nth(rfr, 1), "yac_alloc"],
               cons(["jalra", av_off + nth(avr, 3), "yac_alloc"],
                    cons(["saved_argc", av_off + nth(avr, 1)],
-                        cons(["saved_argv", av_off + nth(avr, 2)], patches))))))) in
+                        cons(["saved_argv", av_off + nth(avr, 2)], patches))))))))) in
   let resolve(i) =
     if i < 0 then 0
     else

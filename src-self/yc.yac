@@ -91,8 +91,7 @@ let pass_anf(prog) =
   anf_list
 
 let pass_lower(anf_list) =
-  let lir = compile_top(anf_list) in
-  if len(anf_list) == 1 then tco_prog(lir) else lir
+  tco_prog(compile_top(anf_list))
 
 let pass_emit_t(t, lir) =
   let a = target_arch(t) in

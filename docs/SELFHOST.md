@@ -254,7 +254,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 | 函数 | 原因 |
 | --- | --- |
-| `gen_alloc` / `gen_gc` | `brk`、`gc_head`/`stack_hi`；标记-清除不进 LIR |
+| `gen_alloc` / `gen_gc` | `brk`（8 字节对齐）、`gc_head`/`stack_hi`/alloc_bump；标记-清除。alloc 每 16MiB 调 `yac_gc` |
 | `gen_read_file` / `gen_write_file` | 多步 syscall，指针与 tagged int 混用 |
 | `gen_argv` | Linux `char**` 指针可为奇数，不能当 tagged int 暂存 |
 | `gen_apply1` / `gen_apply2` | 动态 `nenv` 跳表 + SysV 寄存器 |
@@ -538,7 +538,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 **关键修复**：
 - **letif 丢函数**：then 臂 `letfun` 未并入 funs，闭包 fnptr 变成 `_start`。
 - **`read_file` 64KiB 上限**：改为 `lseek` 按文件大小分配。
-- **TCO**：只改**同名**后缀 `call` 为拆栈 `jmp`（不要 `apply`、不要 `parse_program`/`parse_expr`）。`tco_prog` 仅对单条 top-level；C lower `maybe_tailcall` 同样只认当前 gname。`loop(100000)` 用例。
+- **TCO**：只改**同名**后缀 `call` 为拆栈 `jmp`（不要 `apply`、不要把 `parse_expr` 尾调用成 `parse_binloop`）。`tco_prog` 对全部 fun（含 compiler bundle 里的 `lex`）。C lower `maybe_tailcall` 同样只认当前 gname。`loop(100000)` 用例。
 - **编译速度**：`tokenize` 用 `list_push`（C 的 `cons` 会整表拷贝，90k token 是 O(n²)）。原生 listbuf `nth` 缓存相邻下标，解析不再每次从头走链表。
 - **bytes 按需扩容**：外层 kind=4 固定小对象（len/cap/dataptr），数据在独立 STR blob。`yac_bytes_grow` 倍增 cap 并 `memcpy`，外层指针不变（C 是 `realloc` 同一 `Bytes*`）。GC 标记 kind=4 的 `+40`。`write_file` 从 blob+32 写出。
 - **`and` 非短路**：`skip_block_cm` 里 `* /` 判断在含 ` * ` 的块注释上误匹配；改为嵌套 `if`。

@@ -51,10 +51,27 @@ let emit_store_param(b, j, k) =
     else mov_mem_rbp32_r64(b, off, 9)
 
 /* yac_alloc(n in rdi) -> rax raw ptr.
- * Size lives at [obj-8], not in mark. First-fit gc_free (gc_head+32), else brk n+8. */
+ * Size lives at [obj-8], not in mark. First-fit gc_free (gc_head+32), else brk n+8.
+ * GLOBALS+40 is bytes-since-GC; when it exceeds 16MiB call yac_gc. */
 let gen_alloc(d) =
   let b = bytes_new() in
   let _ = e8(b, 87) in
+  let _ = mov_rax_imm64(b, 0) in
+  let bumpaddr = bytes_len(b) - 8 in
+  let _ = add_rax_imm8(b, 40) in
+  let _ = e8(b, 72) in let _ = e8(b, 1) in let _ = e8(b, 56) in
+  let _ = e8(b, 72) in let _ = e8(b, 129) in let _ = e8(b, 56) in
+  let _ = e32(b, 16777216) in
+  let _ = jcc_rel32(b, 6, 0) in
+  let pjbe = bytes_len(b) - 4 in
+  let _ = e8(b, 80) in
+  let gccall = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = e8(b, 88) in
+  let _ = e8(b, 72) in let _ = e8(b, 199) in let _ = e8(b, 0) in
+  let _ = e32(b, 0) in
+  let _ = apply_patch(b, pjbe, bytes_len(b)) in
+  let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 60) in let _ = e8(b, 36) in
   let _ = mov_rax_imm64(b, 0) in
   let headaddr = bytes_len(b) - 8 in
   let _ = mov_rbx_rax(b) in
@@ -99,6 +116,9 @@ let gen_alloc(d) =
   let _ = mov_rdi_imm(b, 0) in
   let _ = syscall(b) in
   let _ = mov_rsi_rax(b) in
+  /* kernel brk may be 2-mod-8 (ELF filesz); objects must be 8-aligned or GC untag is off-by-one. */
+  let _ = add_rsi_imm8(b, 7) in
+  let _ = and_rsi_imm8(b, 248) in
   let _ = e8(b, 95) in
   let _ = e8(b, 87) in
   let _ = lea_rdi_rsi_rdi(b) in
@@ -113,10 +133,11 @@ let gen_alloc(d) =
   let _ = mov_mem_rbx_rdx(b) in
   let _ = mov_rax_rdx(b) in
   let _ = ret(b) in
-  [b, headaddr]
+  [b, headaddr, bumpaddr, gccall]
 
-/* yac_gc: clear marks, recursive-mark tagged stack slots [rbp+16, stack_hi),
+/* yac_gc: clear marks, conservative-mark tagged slots [rsp, stack_hi),
  * unlink unmarked from gc_head onto gc_free (head+32). Size stays at [obj-8].
+ * Scan from rsp so the caller's locals (below their rbp) are roots.
  * [bytes, gc_head imm64 pos, stack_hi imm64 pos]. */
 let gen_gc(_) =
   let b = bytes_new() in
@@ -145,7 +166,7 @@ let gen_gc(_) =
   let _ = apply_patch(b, jclb, jcl) in
   let cldone = bytes_len(b) in
   let _ = apply_patch(b, pcl, cldone) in
-  let _ = lea_rsi_rbp_disp8(b, 16) in
+  let _ = lea_rsi_rsp(b) in
   let jsc = bytes_len(b) in
   let _ = mov_rdi_mem_rbp(b, 240) in
   let _ = cmp_rsi_rdi(b) in
@@ -213,6 +234,21 @@ let gen_gc(_) =
   let _ = pop_rbp(b) in
   let _ = xor_rax_rax(b) in
   let _ = ret(b) in
+  /* mark_fast: children of already-found objects skip the O(n) list walk. */
+  let mark_fast = bytes_len(b) in
+  let _ = test_rax_1(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let pfe = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let pfe2 = bytes_len(b) - 4 in
+  let _ = and_rax_1(b) in
+  let _ = e8(b, 168) in let _ = e8(b, 7) in
+  let _ = jcc_rel32(b, 5, 0) in
+  let pfe3 = bytes_len(b) - 4 in
+  let _ = mov_rbx_rax(b) in
+  let _ = jmp_rel32(b, 0) in
+  let pfh = bytes_len(b) - 4 in
   let mark = bytes_len(b) in
   let _ = apply_patch(b, cscan, mark) in
   let _ = test_rax_1(b) in
@@ -238,6 +274,7 @@ let gen_gc(_) =
   let _ = apply_patch(b, jmfb, jmf) in
   let mhit = bytes_len(b) in
   let _ = apply_patch(b, pmh, mhit) in
+  let _ = apply_patch(b, pfh, mhit) in
   let _ = mov_rax_rbx_disp8(b, 8) in
   let _ = test_rax_rax(b) in
   let _ = jcc_rel32(b, 5, 0) in
@@ -279,7 +316,7 @@ let gen_gc(_) =
   let _ = jmp_rel32(b, 0) in
   let jcapb = bytes_len(b) - 4 in
   let _ = apply_patch(b, jcapb, jcap) in
-  let _ = apply_patch(b, ccap, mark) in
+  let _ = apply_patch(b, ccap, mark_fast) in
   let capd = bytes_len(b) in
   let _ = apply_patch(b, pcapd, capd) in
   let _ = jmp_rel32(b, 0) in
@@ -309,14 +346,17 @@ let gen_gc(_) =
   let mret = bytes_len(b) in
   let _ = apply_patch(b, pme, mret) in
   let _ = apply_patch(b, pme2, mret) in
+  let _ = apply_patch(b, pfe, mret) in
+  let _ = apply_patch(b, pfe2, mret) in
+  let _ = apply_patch(b, pfe3, mret) in
   let _ = apply_patch(b, pmf, mret) in
   let _ = apply_patch(b, palr, mret) in
   let _ = apply_patch(b, pstr, mret) in
   let _ = apply_patch(b, pmr1, mret) in
-  let _ = apply_patch(b, ccar, mark) in
-  let _ = apply_patch(b, ptail1, mark) in
-  let _ = apply_patch(b, ptail2, mark) in
-  let _ = apply_patch(b, ptail3, mark) in
+  let _ = apply_patch(b, ccar, mark_fast) in
+  let _ = apply_patch(b, ptail1, mark_fast) in
+  let _ = apply_patch(b, ptail2, mark_fast) in
+  let _ = apply_patch(b, ptail3, mark_fast) in
   let _ = ret(b) in
   [b, headpos, shipos]
 
@@ -1847,10 +1887,14 @@ let emit_program_at(prog, load_vaddr, text_off) =
                                                   cons(["yac_argv", av_off], funOffsRev))))))) in
   let LOAD_VADDR = load_vaddr in
   let TEXT_OFF = text_off in
-  /* writable globals: gc_head, argc, argv, stack_hi, gc_free. */
+  /* writable globals: gc_head, argc, argv, stack_hi, gc_free, alloc_bump. */
+  let pad8(_) =
+    if band(bytes_len(b), 7) == 0 then 0
+    else let _ = bytes_append(b, 0) in pad8(0) in
+  let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 40 then 0
+    if i >= 48 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
@@ -1890,6 +1934,8 @@ let emit_program_at(prog, load_vaddr, text_off) =
     step(0) in
   let extra = list_new() in
   let _ = list_push(extra, ["gc_head", alc_off + alc_headaddr]) in
+  let _ = list_push(extra, ["gc_head", alc_off + nth(alcr, 2)]) in
+  let _ = list_push(extra, [alc_off + nth(alcr, 3) + 1, "yac_gc"]) in
   let _ = list_push(extra, ["gc_head", gc_off + nth(gcr, 1)]) in
   let _ = list_push(extra, ["stack_hi", gc_off + nth(gcr, 2)]) in
   let _ = list_push(extra, [rf_off + nth(rfr, 1), "yac_alloc"]) in

@@ -862,6 +862,10 @@ let sar_rsi_1(b) =
 let add_rsi_imm8(b, v) =
   let _ = e8(b, 72) in let _ = e8(b, 131) in let _ = e8(b, 198) in
   e8(b, band(v, 255))
+/* and rsi, imm8  (48 83 e6 ib) */
+let and_rsi_imm8(b, v) =
+  let _ = e8(b, 72) in let _ = e8(b, 131) in let _ = e8(b, 230) in
+  e8(b, band(v, 255))
 /* cmp rsi, rdi  (48 39 fe) */
 let cmp_rsi_rdi(b) =
   let _ = e8(b, 72) in let _ = e8(b, 57) in e8(b, 254)
