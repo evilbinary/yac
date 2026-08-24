@@ -13,21 +13,18 @@ let b_append(dst, src) =
   let _ = bytes_extend(dst, src) in
   dst
 
-let apply_patch(b, bytePos, target) =
-  let rel = target - (bytePos + 4) in
-  let _ = bytes_put(b, bytePos + 0, band(rel, 255)) in
-  let _ = bytes_put(b, bytePos + 1, band(bshr(rel, 8), 255)) in
-  let _ = bytes_put(b, bytePos + 2, band(bshr(rel, 16), 255)) in
-  let _ = bytes_put(b, bytePos + 3, band(bshr(rel, 24), 255)) in
-  0
-
-/* write a 32-bit absolute value at bytePos (for closure fnptr fields) */
-let apply_abs32(b, bytePos, val) =
+let apply_i32(b, bytePos, val) =
   let _ = bytes_put(b, bytePos + 0, band(val, 255)) in
   let _ = bytes_put(b, bytePos + 1, band(bshr(val, 8), 255)) in
   let _ = bytes_put(b, bytePos + 2, band(bshr(val, 16), 255)) in
   let _ = bytes_put(b, bytePos + 3, band(bshr(val, 24), 255)) in
   0
+
+let apply_patch(b, bytePos, target) =
+  apply_i32(b, bytePos, target - (bytePos + 4))
+
+/* write a 32-bit absolute value at bytePos (for closure fnptr fields) */
+let apply_abs32(b, bytePos, val) = apply_i32(b, bytePos, val)
 
 /* write a 64-bit little-endian value at bytePos (for GC global addresses) */
 let apply_u64(b, bytePos, val) =
@@ -80,6 +77,42 @@ let emit_map_from_at(m, xs, i, n) =
 
 let emit_map_from_list(xs) = emit_map_from_at(emit_map_new(0), xs, 0, len(xs))
 
+/* Fun id table: helpers first (first-put-wins), then prog funs.
+ * Helper ids are nfun+0..nfun+6 matching offs listbuf after emit_fun. */
+let emit_ids_helpers(ids, nfun) =
+  let _ = emit_map_put(ids, "yac_apply1", nfun) in
+  let _ = emit_map_put(ids, "yac_apply2", nfun + 1) in
+  let _ = emit_map_put(ids, "yac_write_file", nfun + 2) in
+  let _ = emit_map_put(ids, "yac_read_file", nfun + 3) in
+  let _ = emit_map_put(ids, "yac_alloc", nfun + 4) in
+  let _ = emit_map_put(ids, "yac_gc", nfun + 5) in
+  let _ = emit_map_put(ids, "yac_argv", nfun + 6) in
+  ids
+
+let emit_ids_bind(ids, funs, i, n) =
+  if i >= n then ids
+  else
+    let f = nth(funs, i) in
+    let _ =
+      if len(nth(f, 4)) == 0 then 0
+      else emit_map_put(ids, nth(f, 1), i) in
+    emit_ids_bind(ids, funs, i + 1, n)
+
+let emit_ids_new(funs) =
+  let nfun = len(funs) in
+  emit_ids_bind(emit_ids_helpers(emit_map_new(0), nfun), funs, 0, nfun)
+
+/* Patch tags: 1=rel32 to fun id, 2=closure abs32, 3+=globals.
+ * Local labels stay [pos, name] (len 2, name is a string). */
+let emit_patch_rel(ids, ps, pos, name) =
+  cons([1, pos, emit_map_get(ids, name)], ps)
+
+let emit_patch_clos(ids, ps, pos, name) =
+  cons([2, pos, emit_map_get(ids, name)], ps)
+
+let emit_st4(st, b, cur, labels, ps) =
+  [b, cur, labels, ps, nth(st, 4)]
+
 let label_has(labels, name) =
   let rec(l) =
     if len(l) == 0 then false
@@ -98,27 +131,28 @@ let patches_extend(dst, src) =
  * overflows the C stack once nth is O(1) and we actually walk every patch. */
 let emit_resolve_patch(st, p) =
   let b = nth(st, 0) in
-  let fmap = nth(st, 1) in
+  let offs = nth(st, 1) in
   let codebase = nth(st, 2) in
   let globbase = nth(st, 3) in
-  let kind = nth(p, 0) in
-  /* Call-site patches are [pos, name] with an int pos — skip string kinds. */
-  if kind == "closurefn" then
-    apply_abs32(b, nth(p, 1), codebase + emit_map_get(fmap, nth(p, 2)))
-  else if kind == "gc_head" then
+  let tag = nth(p, 0) in
+  if tag == 1 then
+    apply_patch(b, nth(p, 1), nth(offs, nth(p, 2)))
+  else if tag == 2 then
+    apply_abs32(b, nth(p, 1), codebase + nth(offs, nth(p, 2)))
+  else if tag == 3 then
     apply_u64(b, nth(p, 1), globbase)
-  else if kind == "saved_argc" then
+  else if tag == 4 then
     apply_u64(b, nth(p, 1), globbase + 8)
-  else if kind == "saved_argv" then
+  else if tag == 5 then
     apply_u64(b, nth(p, 1), globbase + 16)
-  else if kind == "stack_hi" then
+  else if tag == 6 then
     apply_u64(b, nth(p, 1), globbase + 24)
-  else if kind == "prof_st" then
+  else if tag == 7 then
     apply_u64(b, nth(p, 1), globbase + 56)
-  else if kind == "prof_busy" then
+  else if tag == 8 then
     apply_u64(b, nth(p, 1), globbase + 64)
   else
-    apply_patch(b, kind, emit_map_get(fmap, nth(p, 1)))
+    0
 
 let emit_resolve_loop(st, ps, i) =
   if i >= len(ps) then 0
