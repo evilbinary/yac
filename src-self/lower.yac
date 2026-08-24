@@ -174,9 +174,10 @@ let in_list(name, lst) =
 let prim_names = ["cons", "len", "nth", "tail", "append", "print",
                   "map", "filter", "foldl", "foldr", "drop", "head",
                   "str_len", "str_cat", "str_ref", "str_slice", "int_to_str",
-                  "time_ms", "time_str", "argc", "argv",
+                  "time_ms", "time_ns", "time_str", "argc", "argv",
                   "bytes_new", "bytes_len", "bytes_append", "bytes_extend", "bytes_ref", "bytes_put",
                   "bytes_to_str", "list_new", "list_push", "list_rev",
+                  "box_new", "box_get", "box_set", "yac_prof_cell",
                   "read_file", "write_file", "system", "popen", "band", "bor", "bxor", "bnot", "bshl", "bshr",
                   "gc_collect"]
 let is_prim_name(w) = in_list(w, prim_names)
@@ -393,7 +394,13 @@ let lower_letcall(b, pack) =
       l_str_slice(dst, nth(slots, 0), nth(slots, 1), nth(slots, 2))
     else if fnname == "int_to_str" then l_int_to_str(dst, nth(slots, 0))
     else if fnname == "time_ms" then l_time_ms(dst)
+    else if fnname == "time_ns" then l_call(dst, "time_ns", [])
     else if fnname == "time_str" then l_time_str(dst)
+    else if fnname == "box_new" then l_call(dst, "yac_box_new", [])
+    else if fnname == "box_get" then l_call(dst, "yac_box_get", [nth(slots, 0)])
+    else if fnname == "box_set" then
+      l_call(dst, "yac_box_set", [nth(slots, 0), nth(slots, 1)])
+    else if fnname == "yac_prof_cell" then l_call(dst, "yac_prof_cell", [])
     else if fnname == "argc" then l_argc(dst)
     else if fnname == "argv" then l_argv(dst, nth(slots, 0))
     else if fnname == "bytes_to_str" then l_bytes_to_str(dst, nth(slots, 0))
@@ -437,7 +444,12 @@ let lower_letcall(b, pack) =
       else l_call(dst, fun_code_name(funs0, fnname), slots) in
   let tagged = apply_tco([s, [nth(pack, 1), nth(pack, 2), nth(pack, 3), name],
                           newinsn, dst, slots]) in
-  [insn_push(nth(lr, 0), tagged),
+  let ins0 = nth(lr, 0) in
+  let ins1 =
+    if nth(tagged, 0) == "tailcall" then
+      insn_push(ins0, l_call(dst, "yac_prof_leave", []))
+    else ins0 in
+  [insn_push(ins1, tagged),
    cons([name, dst, 0], nth(lr, 2)), dst + 1,
    nth(s, 3), nth(s, 4), nth(s, 5)]
 
@@ -505,6 +517,44 @@ let lower_letfun_prep(b, s) =
              fs1, uid + 1] in
   [body, st5, name, ncap, ntot, gname, fvs, need_self, self_slot]
 
+let is_prof_name(nm) =
+  let n = str_len(nm) in
+  if n < 5 then false
+  else if str_ref(nm, 0) != 112 then false
+  else if str_ref(nm, 1) != 114 then false
+  else if str_ref(nm, 2) != 111 then false
+  else if str_ref(nm, 3) != 102 then false
+  else str_ref(nm, 4) == 95
+
+let is_yac_prof_name(nm) =
+  let n = str_len(nm) in
+  if n < 8 then false
+  else if str_ref(nm, 0) != 121 then false
+  else if str_ref(nm, 1) != 97 then false
+  else if str_ref(nm, 2) != 99 then false
+  else if str_ref(nm, 3) != 95 then false
+  else if str_ref(nm, 4) != 112 then false
+  else if str_ref(nm, 5) != 114 then false
+  else if str_ref(nm, 6) != 111 then false
+  else str_ref(nm, 7) == 102
+
+let prof_skip(nm) =
+  if nm == "_start" then true
+  else if is_prof_name(nm) then true
+  else is_yac_prof_name(nm)
+
+let prof_wrap_insns(name, head, body, retslot, nslots) =
+  if prof_skip(name) then
+    insn_push(insn_extend(head, body), l_ret(retslot))
+  else
+    let pnm = nslots - 2 in
+    let ptmp = nslots - 1 in
+    let a = insn_push(head, l_strlit(pnm, name)) in
+    let b = insn_push(a, l_call(ptmp, "yac_prof_enter", [pnm])) in
+    let c = insn_extend(b, body) in
+    let d = insn_push(c, l_call(ptmp, "yac_prof_leave", [])) in
+    insn_push(d, l_ret(retslot))
+
 let lower_letfun_finish(b, s, p, br) =
   let name = nth(p, 2) in
   let ncap = nth(p, 3) in
@@ -516,7 +566,7 @@ let lower_letfun_finish(b, s, p, br) =
   let env = nth(s, 1) in
   let insns = nth(s, 0) in
   let ctr = nth(s, 2) in
-  let nslots = nth(br, 3) + 8 in
+  let nslots = nth(br, 3) + 10 in
   let self_caps(j, acc) =
     if j >= ncap then acc
     else self_caps(j + 1, append(acc, [j + 1])) in
@@ -525,8 +575,7 @@ let lower_letfun_finish(b, s, p, br) =
     if need_self then
       insn_push(f_insns0, l_closure(self_slot, gname, self_caps(0, [])))
     else f_insns0 in
-  let f_insns2 = insn_extend(f_insns1, nth(br, 0)) in
-  let f_insns = insn_push(f_insns2, l_ret(nth(br, 1))) in
+  let f_insns = prof_wrap_insns(name, f_insns1, nth(br, 0), nth(br, 1), nslots) in
   let f = l_fun(gname, ntot, ncap, f_insns, name) in
   let slot = ctr in
   let capslot_of(j, acc) =
@@ -630,11 +679,10 @@ let compile_top(items) =
   let funs = funs_list(nth(st, 2)) in
   let _ = log_i("lower", "nfuns", len(funs)) in
   let nslots = nth(st, 1) in
+  let pin = insn_push(list_new(), l_prologue(nslots, 0)) in
+  let pin2 = insn_push(pin, l_call(0, "yac_prof_cell", [])) in
   let entry = l_fun("_start", 0, 0,
-               insn_push(
-                 insn_extend(insn_push(list_new(), l_prologue(nslots, 0)),
-                             entry_insns),
-                 l_exit(result_slot)),
+               insn_push(insn_extend(pin2, entry_insns), l_exit(result_slot)),
                "_start") in
   let _ = log("lower", "compile_top done") in
-  l_prog(cons(entry, append(reverse(funs), runtime_funs(0))), "_start")
+  l_prog(cons(entry, append(runtime_funs(0), reverse(funs))), "_start")

@@ -946,6 +946,56 @@ static Value prim_time_ms(Value *args, int nargs, PrimCtx *ctx) {
     return v_int((int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000L));
 }
 
+static Value prim_time_ns(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    (void)ctx;
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return v_int(0);
+    return v_int((int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec);
+}
+
+static Value prim_box_new(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    List *l = gc_new_list(ctx->gc, 1);
+    l->items[0] = v_list(gc_new_list(ctx->gc, 0));
+    return v_list(l);
+}
+
+static Value prim_box_get(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_LIST || args[0].u.l->len < 1) {
+        ctx->errored = true;
+        strcpy(ctx->errmsg, "box_get: expected a box");
+        return VALUE_NULL;
+    }
+    return args[0].u.l->items[0];
+}
+
+static Value prim_box_set(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_LIST || args[0].u.l->len < 1 || args[0].u.l->cap < 0) {
+        ctx->errored = true;
+        strcpy(ctx->errmsg, "box_set: expected a box");
+        return VALUE_NULL;
+    }
+    args[0].u.l->items[0] = args[1];
+    return v_int(0);
+}
+
+static List *prof_cell_list;
+
+static Value prim_yac_prof_cell(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    if (!prof_cell_list) {
+        prof_cell_list = gc_new_list(ctx->gc, 0);
+        gc_push_root(ctx->gc, (GObj *)prof_cell_list);
+    }
+    return v_list(prof_cell_list);
+}
+
 /* time_str() -> local wall-clock "HH:MM:SS.mmm". Called as time_str(). */
 static Value prim_time_str(Value *args, int nargs, PrimCtx *ctx) {
     (void)args;
@@ -1222,6 +1272,11 @@ static const Prim PRIMS[] = {
     {"bnot", 1, true, false, prim_bnot},
     {"int_to_str", 1, true, true, prim_int_to_str},
     {"time_ms", 1, true, false, prim_time_ms}, /* called as time_ms(); parser passes unit */
+    {"time_ns", 1, true, false, prim_time_ns},
+    {"box_new", 1, true, true, prim_box_new},
+    {"box_get", 1, true, true, prim_box_get},
+    {"box_set", 2, false, true, prim_box_set},
+    {"yac_prof_cell", 1, true, true, prim_yac_prof_cell},
     {"time_str", 1, true, true, prim_time_str}, /* called as time_str(); local HH:MM:SS */
     {"cons", 2, true, true, prim_cons},
     {"append", 2, true, true, prim_append},

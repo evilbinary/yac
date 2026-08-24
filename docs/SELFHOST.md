@@ -539,7 +539,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 - **letif 丢函数**：then 臂 `letfun` 未并入 funs，闭包 fnptr 变成 `_start`。
 - **`read_file` 64KiB 上限**：改为 `lseek` 按文件大小分配。
 - **TCO**：只改**同名**后缀 `call` 为拆栈 `jmp`（不要 `apply`、不要把 `parse_expr` 尾调用成 `parse_binloop`）。`tco_prog` 对全部 fun（含 compiler bundle 里的 `lex`）。C lower `maybe_tailcall` 同样只认当前 gname。`loop(100000)` 用例。
-- **编译速度**：`tokenize` 用 `list_push`。driver 每 pass 打 `[prof] <name>=<ms>`。**函数级 profile（C 解释器）**：`./yac --prof-out FILE.prof …` 或 `YAC_PROF_OUT`，TSV（name/calls/incl_ns/excl_ns），按 exclusive 排序。
+- **编译速度**：`tokenize` 用 `list_push`。driver 每 pass 打 `[prof] <name>=<ms>`。**函数级 profile**：`./yac --prof-out FILE.prof …`（C 解释器）或 `yc_A --prof-out FILE.prof …`（原生 enter/leave），TSV（name/calls/incl_ns/excl_ns），按 exclusive 排序。原生 dump 的 pct 是整数百分比。
 - **bytes 按需扩容**：外层 kind=4 固定小对象（len/cap/dataptr），数据在独立 STR blob。`yac_bytes_grow` 倍增 cap 并 `memcpy`，外层指针不变（C 是 `realloc` 同一 `Bytes*`）。GC 标记 kind=4 的 `+40`。`write_file` 从 blob+32 写出。
 - **`and` 非短路**：`skip_block_cm` 里 `* /` 判断在含 ` * ` 的块注释上误匹配；改为嵌套 `if`。
 - **空参 `let f() =`**：消耗 `)`；`has_params`（不要用 `len(params)>0`）才包装成 `fun`，否则 `f()` 会去调用整数。

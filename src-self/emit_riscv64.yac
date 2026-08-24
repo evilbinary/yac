@@ -1082,14 +1082,30 @@ let emit_rv_i_heap(st, insn) =
     let _ = rv_addi(b, 2, 2, 16) in
     [b, cur, labels, patches]
   else if k == "glob" then
+    let which = nth(insn, 2) in
     let gpos = bytes_len(b) in
     let _ = rv_li32_pair(b, 6, 0) in
     let _ = rv_ld(b, 6, 6, 0) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sll(b, 6, 6, 7) in
+    let _ =
+      if which == 3 then 0
+      else if which == 4 then 0
+      else
+        let _ = rv_addi(b, 7, 0, 1) in
+        rv_sll(b, 6, 6, 7) in
     let _ = rv_slot(b, nth(insn, 1), true, 6) in
-    let which = nth(insn, 2) in
-    let gkind = if which == 1 then "saved_argc" else "saved_argv" in
+    let gkind =
+      if which == 1 then "saved_argc"
+      else if which == 2 then "saved_argv"
+      else if which == 3 then "prof_st"
+      else "prof_busy" in
+    [b, cur, labels, cons([gkind, gpos], patches)]
+  else if k == "gst" then
+    let which = nth(insn, 1) in
+    let gpos = bytes_len(b) in
+    let _ = rv_li32_pair(b, 6, 0) in
+    let _ = rv_slot(b, nth(insn, 2), false, 7) in
+    let _ = rv_sd(b, 7, 6, 0) in
+    let gkind = if which == 3 then "prof_st" else "prof_busy" in
     [b, cur, labels, cons([gkind, gpos], patches)]
   else if k == "alloc" then
     let _ = rv_li(b, 10, nth(insn, 2)) in
@@ -1494,7 +1510,7 @@ let emit_insn_rv(st, insn, is_entry) =
   else if k == "obj_kind" or k == "obj_ld" or k == "obj_st" or k == "tag"
        or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
        or k == "alloc_s" or k == "ld8" or k == "st8" or k == "print"
-       or k == "write1" or k == "clock" or k == "glob" or k == "time_ms"
+       or k == "write1" or k == "clock" or k == "glob" or k == "gst" or k == "time_ms"
        or k == "time_str" or k == "argc" or k == "argv" then
     emit_rv_i_heap(st, insn)
   else if k == "memcpy" then emit_rv_i_memcpy(st, insn)
@@ -1568,7 +1584,7 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 48 then 0
+    if i >= 64 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
@@ -1596,6 +1612,10 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
           rv_li32_at(b, nth(p, 1), 6, GLOBALS_BASE + 24)
         else if kind == "gc_head" then
           rv_li32_at(b, nth(p, 1), 6, GLOBALS_BASE)
+        else if kind == "prof_st" then
+          rv_li32_at(b, nth(p, 1), 6, GLOBALS_BASE + 48)
+        else if kind == "prof_busy" then
+          rv_li32_at(b, nth(p, 1), 6, GLOBALS_BASE + 56)
         else if kind == "closurefn" then
           let fo_fn = rv_lookup(fo, nth(p, 2)) in
           rv_li32_at(b, nth(p, 1), 11, load_vaddr + text_off + fo_fn)

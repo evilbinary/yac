@@ -53,7 +53,7 @@ let emit_store_param(b, j, k) =
 /* yac_alloc(n in rdi) -> rax raw ptr.
  * Size lives at [obj-8], not in mark. First-fit gc_free (gc_head+32), else brk n+8.
  * GLOBALS+40 is bytes-since-GC; when it exceeds 16MiB call yac_gc.
- * GLOBALS+48 is heap_lo for GC stack bitmap. */
+ * GLOBALS+48 is heap_lo for GC stack bitmap. GLOBALS+56 is prof cell. */
 let gen_alloc(d) =
   let b = bytes_new() in
   let _ = e8(b, 87) in
@@ -1329,13 +1329,25 @@ let emit_x86_i_heap(st, insn) =
     let _ = add_rsp_imm8(b, 16) in
     [b, cur, labels, patches]
   else if k == "glob" then
+    let which = nth(insn, 2) in
     let _ = mov_rax_imm64(b, 0) in
     let gpat = bytes_len(b) - 8 in
     let _ = mov_rax_mem_rax(b) in
-    let _ = shl_rax_1(b) in
+    let _ = if which == 3 then 0 else if which == 4 then 0 else shl_rax_1(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    let which = nth(insn, 2) in
-    let gkind = if which == 1 then "saved_argc" else "saved_argv" in
+    let gkind =
+      if which == 1 then "saved_argc"
+      else if which == 2 then "saved_argv"
+      else if which == 3 then "prof_st"
+      else "prof_busy" in
+    [b, cur, labels, cons([gkind, gpat], patches)]
+  else if k == "gst" then
+    let which = nth(insn, 1) in
+    let _ = mov_rax_imm64(b, 0) in
+    let gpat = bytes_len(b) - 8 in
+    let _ = emit_load_rdi_slot(b, nth(insn, 2)) in
+    let _ = mov_mem_rax_rdi(b) in
+    let gkind = if which == 3 then "prof_st" else "prof_busy" in
     [b, cur, labels, cons([gkind, gpat], patches)]
   else if k == "time_ms" then
     let dst = nth(insn, 1) in
@@ -1916,7 +1928,7 @@ let emit_insn(st, insn, is_entry) =
     else if k == "obj_kind" or k == "obj_ld" or k == "obj_st" or k == "tag"
          or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
          or k == "alloc_s" or k == "ld8" or k == "st8" or k == "print"
-         or k == "write1" or k == "clock" or k == "glob" or k == "time_ms"
+         or k == "write1" or k == "clock" or k == "glob" or k == "gst" or k == "time_ms"
          or k == "time_str" or k == "argc" or k == "argv" then
       emit_x86_i_heap(st, insn)
     else if k == "memcpy" then emit_x86_i_memcpy(st, insn)
@@ -1934,7 +1946,7 @@ let resolve_local_labels(b, labels, patches) =
       let p = nth(patches, i) in
       let hd = nth(p, 0) in
       let _ =
-        if hd == "closurefn" or hd == "gc_head" or hd == "saved_argc" or hd == "saved_argv" or hd == "stack_hi" then list_push(keep, p)
+        if hd == "closurefn" or hd == "gc_head" or hd == "saved_argc" or hd == "saved_argv" or hd == "stack_hi" or hd == "prof_st" or hd == "prof_busy" then list_push(keep, p)
         else if label_has(labels, nth(p, 1)) then
           apply_patch(b, nth(p, 0), lookup_name(labels, nth(p, 1)))
         else list_push(keep, p) in
@@ -2009,14 +2021,14 @@ let emit_program_at(prog, load_vaddr, text_off) =
                                                   cons(["yac_argv", av_off], funOffsRev))))))) in
   let LOAD_VADDR = load_vaddr in
   let TEXT_OFF = text_off in
-  /* writable globals: gc_head, argc, argv, stack_hi, gc_free, alloc_bump, heap_lo. */
+  /* writable globals: gc_head, argc, argv, stack_hi, gc_free, alloc_bump, heap_lo, prof_st. */
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
   let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 56 then 0
+    if i >= 72 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
@@ -2046,6 +2058,12 @@ let emit_program_at(prog, load_vaddr, text_off) =
           else if kind == "stack_hi" then
             let pos = nth(p, 1) in
             apply_u64(b, pos, GLOBALS_BASE + 24)
+          else if kind == "prof_st" then
+            let pos = nth(p, 1) in
+            apply_u64(b, pos, GLOBALS_BASE + 56)
+          else if kind == "prof_busy" then
+            let pos = nth(p, 1) in
+            apply_u64(b, pos, GLOBALS_BASE + 64)
           else
             let pos = nth(p, 0) in
             let tname = nth(p, 1) in

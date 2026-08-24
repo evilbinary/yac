@@ -597,6 +597,109 @@ let rt_time_ms_ins(_) =
    l_binop("+", 7, 4, 6),
    l_ret(7)]
 
+let rt_time_ns_ins(_) =
+  [l_prologue(8, 0),
+   l_clock(1, 2, 1),
+   l_mov_imm(3, 1000000000),
+   l_binop("*", 4, 1, 3),
+   l_binop("+", 5, 4, 2),
+   l_ret(5)]
+
+let rt_box_new_ins(_) =
+  [l_prologue(6, 0),
+   l_alloc(1, 40),
+   l_obj_sti(1, 8, 0),
+   l_obj_sti(1, 16, 2),
+   l_nil(2),
+   l_obj_st(1, 24, 2),
+   l_obj_st(1, 32, 2),
+   l_ret(1)]
+
+let rt_box_get_ins(_) =
+  [l_prologue(4, 1),
+   l_obj_ld(2, 1, 24),
+   l_ret(2)]
+
+let rt_box_set_ins(_) =
+  [l_prologue(4, 2),
+   l_obj_st(1, 24, 2),
+   l_mov_imm(3, 0),
+   l_ret(3)]
+
+/* glob 3 holds the profiler listbuf (0 until yac_prof_cell). */
+let rt_prof_cell_ins(_) =
+  [l_prologue(8, 0),
+   l_glob(1, 3),
+   l_mov_imm(2, 0),
+   l_icmp("==", 3, 1, 2),
+   l_br(3, "pc_new", "pc_hit"),
+   l_label("pc_hit"),
+   l_ret(1),
+   l_label("pc_new"),
+   l_call(1, "yac_list_new", []),
+   l_gst(3, 1),
+   l_ret(1)]
+
+let rt_prof_enter_ins(_) =
+  [l_prologue(10, 1),
+   l_glob(2, 3),
+   l_mov_imm(3, 0),
+   l_icmp("==", 4, 2, 3),
+   l_br(4, "pe_off", "pe_len"),
+   l_label("pe_off"),
+   l_ret(3),
+   l_label("pe_len"),
+   l_obj_ld(5, 2, 24),
+   l_tag(5, 5),
+   l_icmp("==", 4, 5, 3),
+   l_br(4, "pe_off", "pe_busy"),
+   l_label("pe_busy"),
+   l_glob(7, 4),
+   l_icmp("==", 4, 7, 3),
+   l_br(4, "pe_go", "pe_off"),
+   l_label("pe_go"),
+   l_mov_imm(8, 1),
+   l_gst(4, 8),
+   l_call(6, "prof_enter_go", [1]),
+   l_mov_imm(8, 0),
+   l_gst(4, 8),
+   l_ret(6)]
+
+let rt_prof_leave_ins(_) =
+  [l_prologue(10, 0),
+   l_glob(1, 3),
+   l_mov_imm(2, 0),
+   l_icmp("==", 3, 1, 2),
+   l_br(3, "pl_off", "pl_len"),
+   l_label("pl_off"),
+   l_ret(2),
+   l_label("pl_len"),
+   l_obj_ld(4, 1, 24),
+   l_tag(4, 4),
+   l_icmp("==", 3, 4, 2),
+   l_br(3, "pl_off", "pl_busy"),
+   l_label("pl_busy"),
+   l_glob(7, 4),
+   l_icmp("==", 3, 7, 2),
+   l_br(3, "pl_go", "pl_off"),
+   l_label("pl_go"),
+   l_mov_imm(8, 1),
+   l_gst(4, 8),
+   l_call(5, "prof_leave_go", []),
+   l_mov_imm(8, 0),
+   l_gst(4, 8),
+   l_ret(5)]
+
+let rt_prof_go_enter_ins(_) =
+  [l_prologue(4, 1),
+   l_mov_imm(2, 0),
+   l_ret(2)]
+
+let rt_prof_go_leave_ins(_) =
+  [l_prologue(4, 0),
+   l_mov_imm(1, 0),
+   l_ret(1)]
+
 let rt_two_digit_ins(_) =
   [l_prologue(12, 1),
    l_mov_imm(2, 10),
@@ -683,5 +786,14 @@ let runtime_funs(_) =
    l_fun("gc_collect", 0, 0, rt_gc_ins(0), "gc_collect"),
    l_fun("yac_argc", 0, 0, rt_argc_ins(0), "yac_argc"),
    l_fun("time_ms", 0, 0, rt_time_ms_ins(0), "time_ms"),
+   l_fun("time_ns", 0, 0, rt_time_ns_ins(0), "time_ns"),
    l_fun("yac_two_digit", 1, 0, rt_two_digit_ins(0), "yac_two_digit"),
-   l_fun("time_str", 0, 0, rt_time_str_ins(0), "time_str")]
+   l_fun("time_str", 0, 0, rt_time_str_ins(0), "time_str"),
+   l_fun("yac_box_new", 0, 0, rt_box_new_ins(0), "yac_box_new"),
+   l_fun("yac_box_get", 1, 0, rt_box_get_ins(0), "yac_box_get"),
+   l_fun("yac_box_set", 2, 0, rt_box_set_ins(0), "yac_box_set"),
+   l_fun("yac_prof_cell", 0, 0, rt_prof_cell_ins(0), "yac_prof_cell"),
+   l_fun("yac_prof_enter", 1, 0, rt_prof_enter_ins(0), "yac_prof_enter"),
+   l_fun("yac_prof_leave", 0, 0, rt_prof_leave_ins(0), "yac_prof_leave"),
+   l_fun("prof_enter_go", 1, 0, rt_prof_go_enter_ins(0), "prof_enter_go"),
+   l_fun("prof_leave_go", 0, 0, rt_prof_go_leave_ins(0), "prof_leave_go")]
