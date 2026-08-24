@@ -42,46 +42,43 @@ let lookup_name(table, name) =
     else rec(drop(l, 1)) in
   rec(table)
 
-/* 256-bucket name->int map for O(1) avg fun-offset lookup during resolve. */
-let emit_hash(s) =
-  let n = str_len(s) in
-  let loop(i, h) =
-    if i >= n then h
-    else loop(i + 1, (h * 31 + str_ref(s, i)) % 256) in
-  loop(0, 0)
+/* Top-level loops so hash/get are TCO calls, not nested apply. */
+let emit_hash_loop(s, n, i, h) =
+  if i >= n then h
+  else emit_hash_loop(s, n, i + 1, (h * 31 + str_ref(s, i)) % 256)
 
-let emit_map_new(_) =
-  let b = list_new() in
-  let fill(i) =
-    if i >= 256 then b
-    else let _ = list_push(b, list_new()) in fill(i + 1) in
-  fill(0)
+let emit_hash(s) = emit_hash_loop(s, str_len(s), 0, 0)
+
+let emit_map_fill(b, i) =
+  if i >= 256 then b
+  else
+    let _ = list_push(b, list_new()) in
+    emit_map_fill(b, i + 1)
+
+let emit_map_new(_) = emit_map_fill(list_new(), 0)
 
 let emit_map_put(m, k, v) =
   let bucket = nth(m, emit_hash(k)) in
   let _ = list_push(bucket, [k, v]) in
   0
 
+let emit_map_scan(bucket, k, i, n) =
+  if i >= n then 0
+  else if nth(nth(bucket, i), 0) == k then nth(nth(bucket, i), 1)
+  else emit_map_scan(bucket, k, i + 1, n)
+
 let emit_map_get(m, k) =
   let bucket = nth(m, emit_hash(k)) in
-  let n = len(bucket) in
-  /* First put wins — same as lookup_name on funOffsRev. */
-  let scan(i) =
-    if i >= n then 0
-    else if nth(nth(bucket, i), 0) == k then nth(nth(bucket, i), 1)
-    else scan(i + 1) in
-  scan(0)
+  emit_map_scan(bucket, k, 0, len(bucket))
 
-let emit_map_from_list(xs) =
-  let m = emit_map_new(0) in
-  let n = len(xs) in
-  let loop(i) =
-    if i >= n then m
-    else
-      let e = nth(xs, i) in
-      let _ = emit_map_put(m, nth(e, 0), nth(e, 1)) in
-      loop(i + 1) in
-  loop(0)
+let emit_map_from_at(m, xs, i, n) =
+  if i >= n then m
+  else
+    let e = nth(xs, i) in
+    let _ = emit_map_put(m, nth(e, 0), nth(e, 1)) in
+    emit_map_from_at(m, xs, i + 1, n)
+
+let emit_map_from_list(xs) = emit_map_from_at(emit_map_new(0), xs, 0, len(xs))
 
 let label_has(labels, name) =
   let rec(l) =
@@ -105,6 +102,7 @@ let emit_resolve_patch(st, p) =
   let codebase = nth(st, 2) in
   let globbase = nth(st, 3) in
   let kind = nth(p, 0) in
+  /* Call-site patches are [pos, name] with an int pos — skip string kinds. */
   if kind == "closurefn" then
     apply_abs32(b, nth(p, 1), codebase + emit_map_get(fmap, nth(p, 2)))
   else if kind == "gc_head" then
@@ -120,7 +118,7 @@ let emit_resolve_patch(st, p) =
   else if kind == "prof_busy" then
     apply_u64(b, nth(p, 1), globbase + 64)
   else
-    apply_patch(b, nth(p, 0), emit_map_get(fmap, nth(p, 1)))
+    apply_patch(b, kind, emit_map_get(fmap, nth(p, 1)))
 
 let emit_resolve_loop(st, ps, i) =
   if i >= len(ps) then 0

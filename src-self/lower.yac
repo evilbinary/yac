@@ -28,33 +28,33 @@ let insn_extend(ins, xs) =
   loop(0)
 
 /* ---- fun table: [fun_list, fmap] with 256-bucket hash for O(1) avg lookup ---- */
-let hash_str(s) =
-  let n = str_len(s) in
-  let loop(i, h) =
-    if i >= n then h
-    else loop(i + 1, (h * 31 + str_ref(s, i)) % 256) in
-  loop(0, 0)
+let hash_str_loop(s, n, i, h) =
+  if i >= n then h
+  else hash_str_loop(s, n, i + 1, (h * 31 + str_ref(s, i)) % 256)
 
-let fmap_new(_) =
-  let b = list_new() in
-  let fill(i) =
-    if i >= 256 then b
-    else let _ = list_push(b, list_new()) in fill(i + 1) in
-  fill(0)
+let hash_str(s) = hash_str_loop(s, str_len(s), 0, 0)
+
+let fmap_fill(b, i) =
+  if i >= 256 then b
+  else
+    let _ = list_push(b, list_new()) in
+    fmap_fill(b, i + 1)
+
+let fmap_new(_) = fmap_fill(list_new(), 0)
 
 let fmap_put(m, k, v) =
   let bucket = nth(m, hash_str(k)) in
   let _ = list_push(bucket, [k, v]) in
   0
 
+let fmap_scan(bucket, k, i) =
+  if i < 0 then 0
+  else if nth(nth(bucket, i), 0) == k then nth(nth(bucket, i), 1)
+  else fmap_scan(bucket, k, i - 1)
+
 let fmap_get(m, k) =
   let bucket = nth(m, hash_str(k)) in
-  let n = len(bucket) in
-  let scan(i) =
-    if i < 0 then 0
-    else if nth(nth(bucket, i), 0) == k then nth(nth(bucket, i), 1)
-    else scan(i - 1) in
-  scan(n - 1)
+  fmap_scan(bucket, k, len(bucket) - 1)
 
 /* String set: same 256-bucket layout as fmap (values unused). */
 let sset_new(_) = fmap_new(0)
@@ -93,18 +93,17 @@ let sh_put(sh, k) =
   let _ = fmap_put(nth(sh, 0), k, nth(sh, 1)) in
   sh
 
+let sh_has_scan(bucket, k, dcur, i) =
+  if i < 0 then false
+  else
+    let e = nth(bucket, i) in
+    if nth(e, 0) == k then
+      if nth(e, 1) <= dcur then true else sh_has_scan(bucket, k, dcur, i - 1)
+    else sh_has_scan(bucket, k, dcur, i - 1)
+
 let sh_has(sh, k) =
   let bucket = nth(nth(sh, 0), hash_str(k)) in
-  let n = len(bucket) in
-  let dcur = nth(sh, 1) in
-  let scan(i) =
-    if i < 0 then false
-    else
-      let e = nth(bucket, i) in
-      if nth(e, 0) == k then
-        if nth(e, 1) <= dcur then true else scan(i - 1)
-      else scan(i - 1) in
-  scan(n - 1)
+  sh_has_scan(bucket, k, nth(sh, 1), len(bucket) - 1)
 
 let sh_enter(sh) = [nth(sh, 0), nth(sh, 1) + 1]
 let sh_leave(sh) = [nth(sh, 0), nth(sh, 1) - 1]
@@ -152,24 +151,38 @@ let str_to_int(s) =
   let v = acc(start, 0) in
   if isneg then 0 - v else v
 
-/* ---- environment ---- */
-let env_lookup(env, name) =
-  let rec(l) =
-    if len(l) == 0 then 0
-    else if nth(nth(l, 0), 0) == name then nth(nth(l, 0), 1)
-    else rec(drop(l, 1)) in
-  rec(env)
+/* ---- environment: cons of [name, slot, ncap] (persistent). ---- */
+let env_lookup_go(l, name) =
+  if len(l) == 0 then 0
+  else if nth(nth(l, 0), 0) == name then nth(nth(l, 0), 1)
+  else env_lookup_go(drop(l, 1), name)
+
+let env_lookup(env, name) = env_lookup_go(env, name)
+
+let env_ncap_go(l, name) =
+  if len(l) == 0 then 0
+  else if nth(nth(l, 0), 0) == name then nth(nth(l, 0), 2)
+  else env_ncap_go(drop(l, 1), name)
+
+let env_ncap(env, name) = env_ncap_go(env, name)
+
+let env_has_go(l, name) =
+  if len(l) == 0 then false
+  else if nth(nth(l, 0), 0) == name then true
+  else env_has_go(drop(l, 1), name)
+
+let env_has(env, name) = env_has_go(env, name)
 
 let is_cmp(op) =
   op == "<" or op == "<=" or op == ">" or op == ">=" or op == "==" or op == "!="
 
 /* is name in list? */
-let in_list(name, lst) =
-  let rec(l) =
-    if len(l) == 0 then false
-    else if nth(l, 0) == name then true
-    else rec(drop(l, 1)) in
-  rec(lst)
+let in_list_go(name, l) =
+  if len(l) == 0 then false
+  else if nth(l, 0) == name then true
+  else in_list_go(name, drop(l, 1))
+
+let in_list(name, lst) = in_list_go(name, lst)
 
 let prim_names = ["cons", "len", "nth", "tail", "append", "print",
                   "map", "filter", "foldl", "foldr", "drop", "head",
@@ -181,31 +194,6 @@ let prim_names = ["cons", "len", "nth", "tail", "append", "print",
                   "read_file", "write_file", "system", "popen", "band", "bor", "bxor", "bnot", "bshl", "bshr",
                   "gc_collect"]
 let is_prim_name(w) = in_list(w, prim_names)
-
-/* ---- environment ---- */
-/* env entries are [name, slot, ncap] (ncap = number of captured vars; 0 for
- * plain named functions / non-function values). */
-let env_lookup(env, name) =
-  let rec(l) =
-    if len(l) == 0 then 0
-    else if nth(nth(l, 0), 0) == name then nth(nth(l, 0), 1)
-    else rec(drop(l, 1)) in
-  rec(env)
-
-let env_ncap(env, name) =
-  let rec(l) =
-    if len(l) == 0 then 0
-    else if nth(nth(l, 0), 0) == name then nth(nth(l, 0), 2)
-    else rec(drop(l, 1)) in
-  rec(env)
-
-/* true if name is bound in env (even if slot is 0) */
-let env_has(env, name) =
-  let rec(l) =
-    if len(l) == 0 then false
-    else if nth(nth(l, 0), 0) == name then true
-    else rec(drop(l, 1)) in
-  rec(env)
 
 /* collect vars in anf body. Prim / zero-capture global call targets are not
  * free; HO values and capturing call targets remain free (need apply).
