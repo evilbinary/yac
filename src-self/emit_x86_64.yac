@@ -453,7 +453,14 @@ let gen_gc(_) =
   let ptail1 = bytes_len(b) - 4 in
   let lbufa = bytes_len(b) in
   let _ = apply_patch(b, plbuf, lbufa) in
+  let _ = push_r64(b, 3) in
+  let _ = push_r64(b, 3) in
   let _ = mov_rax_rbx_disp8(b, 32) in
+  let clbufh = bytes_len(b) + 1 in
+  let _ = call_rel32(b, 0) in
+  let _ = pop_r64(b, 3) in
+  let _ = pop_r64(b, 3) in
+  let _ = mov_rax_rbx_disp8(b, 64) in
   let _ = jmp_rel32(b, 0) in
   let ptail2 = bytes_len(b) - 4 in
   let byta = bytes_len(b) in
@@ -476,6 +483,7 @@ let gen_gc(_) =
   let _ = apply_patch(b, pstr, mret) in
   let _ = apply_patch(b, pmr1, mret) in
   let _ = apply_patch(b, ccar, mark_fast) in
+  let _ = apply_patch(b, clbufh, mark_fast) in
   let _ = apply_patch(b, ptail1, mark_fast) in
   let _ = apply_patch(b, ptail2, mark_fast) in
   let _ = apply_patch(b, ptail3, mark_fast) in
@@ -1282,6 +1290,27 @@ let emit_x86_i_heap(st, insn) =
     let _ = mov_rax_rbx(b) in
     let _ = mov_rax_rdx_dil(b) in
     [b, cur, labels, patches]
+  else if k == "ld64" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rbx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rdx_rax(b) in
+    let _ = sar_rdx_1(b) in
+    let _ = mov_rax_rbx(b) in
+    let _ = mov_rax_mem_rax_rdx(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    [b, cur, labels, patches]
+  else if k == "st64" then
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rbx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdx_rax(b) in
+    let _ = sar_rdx_1(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_mem_rbx_rdx_rax(b) in
+    [b, cur, labels, patches]
   else if k == "print" then
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     let _ = test_rax_1(b) in
@@ -1927,7 +1956,7 @@ let emit_insn(st, insn, is_entry) =
       emit_x86_i_core(st, insn, is_entry)
     else if k == "obj_kind" or k == "obj_ld" or k == "obj_st" or k == "tag"
          or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
-         or k == "alloc_s" or k == "ld8" or k == "st8" or k == "print"
+         or k == "alloc_s" or k == "ld8" or k == "st8" or k == "ld64" or k == "st64" or k == "print"
          or k == "write1" or k == "clock" or k == "glob" or k == "gst" or k == "time_ms"
          or k == "time_str" or k == "argc" or k == "argv" then
       emit_x86_i_heap(st, insn)
@@ -2033,45 +2062,6 @@ let emit_program_at(prog, load_vaddr, text_off) =
   let _ = fill_data(0) in
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
   let funOffsMap = emit_map_from_list(funOffsRev2) in
-  let resolve(ps) =
-    let n = len(ps) in
-    let step(i) =
-      if i >= n then 0
-      else
-        let p = nth(ps, i) in
-        let kind = nth(p, 0) in
-        let _ =
-          if kind == "closurefn" then
-            let pos = nth(p, 1) in
-            let tname = nth(p, 2) in
-            let fo = emit_map_get(funOffsMap, tname) in
-            apply_abs32(b, pos, LOAD_VADDR + TEXT_OFF + fo)
-          else if kind == "gc_head" then
-            let pos = nth(p, 1) in
-            apply_u64(b, pos, GLOBALS_BASE)
-          else if kind == "saved_argc" then
-            let pos = nth(p, 1) in
-            apply_u64(b, pos, GLOBALS_BASE + 8)
-          else if kind == "saved_argv" then
-            let pos = nth(p, 1) in
-            apply_u64(b, pos, GLOBALS_BASE + 16)
-          else if kind == "stack_hi" then
-            let pos = nth(p, 1) in
-            apply_u64(b, pos, GLOBALS_BASE + 24)
-          else if kind == "prof_st" then
-            let pos = nth(p, 1) in
-            apply_u64(b, pos, GLOBALS_BASE + 56)
-          else if kind == "prof_busy" then
-            let pos = nth(p, 1) in
-            apply_u64(b, pos, GLOBALS_BASE + 64)
-          else
-            let pos = nth(p, 0) in
-            let tname = nth(p, 1) in
-            let targ1 = lookup_name(labels, tname) in
-            let targ2 = if targ1 == 0 then emit_map_get(funOffsMap, tname) else targ1 in
-            apply_patch(b, pos, targ2) in
-        step(i + 1) in
-    step(0) in
   let extra = list_new() in
   let _ = list_push(extra, ["gc_head", alc_off + alc_headaddr]) in
   let _ = list_push(extra, ["gc_head", alc_off + nth(alcr, 2)]) in
@@ -2084,7 +2074,7 @@ let emit_program_at(prog, load_vaddr, text_off) =
   let _ = list_push(extra, [av_off + nth(avr, 3), "yac_alloc"]) in
   let _ = patches_extend(extra, patches) in
   let _ = log("emit", "resolve") in
-  let _ = resolve(extra) in
+  let _ = emit_resolve_loop([b, funOffsMap, LOAD_VADDR + TEXT_OFF, GLOBALS_BASE], extra, 0) in
   let _ = log_i("emit", "code_len", bytes_len(b)) in
   let _ = log("emit", "done") in
   [b, funOffsRev2]

@@ -593,6 +593,18 @@ let mov_rax_rdx_al(b) =
   let _ = e8(b, 136) in
   let _ = e8(b, 4) in
   e8(b, 16)
+/* mov rax, [rax+rdx]  (48 8b 04 10) */
+let mov_rax_mem_rax_rdx(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 4) in
+  e8(b, 16)
+/* mov [rbx+rdx], rax  (48 89 04 13) */
+let mov_mem_rbx_rdx_rax(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  let _ = e8(b, 4) in
+  e8(b, 19)
 /* movzx eax, byte [rax+rdx]  (0f b6 04 10) */
 let movzx_eax_rax_rdx(b) =
   let _ = e8(b, 15) in

@@ -96,3 +96,34 @@ let patches_extend(dst, src) =
     if i >= n then dst
     else let _ = list_push(dst, nth(src, i)) in loop(i + 1) in
   loop(0)
+
+/* Top-level so ncap=0 and self-call is TCO. Nested resolve(i) in emit_program_at
+ * overflows the C stack once nth is O(1) and we actually walk every patch. */
+let emit_resolve_patch(st, p) =
+  let b = nth(st, 0) in
+  let fmap = nth(st, 1) in
+  let codebase = nth(st, 2) in
+  let globbase = nth(st, 3) in
+  let kind = nth(p, 0) in
+  if kind == "closurefn" then
+    apply_abs32(b, nth(p, 1), codebase + emit_map_get(fmap, nth(p, 2)))
+  else if kind == "gc_head" then
+    apply_u64(b, nth(p, 1), globbase)
+  else if kind == "saved_argc" then
+    apply_u64(b, nth(p, 1), globbase + 8)
+  else if kind == "saved_argv" then
+    apply_u64(b, nth(p, 1), globbase + 16)
+  else if kind == "stack_hi" then
+    apply_u64(b, nth(p, 1), globbase + 24)
+  else if kind == "prof_st" then
+    apply_u64(b, nth(p, 1), globbase + 56)
+  else if kind == "prof_busy" then
+    apply_u64(b, nth(p, 1), globbase + 64)
+  else
+    apply_patch(b, nth(p, 0), emit_map_get(fmap, nth(p, 1)))
+
+let emit_resolve_loop(st, ps, i) =
+  if i >= len(ps) then 0
+  else
+    let _ = emit_resolve_patch(st, nth(ps, i)) in
+    emit_resolve_loop(st, ps, i + 1)
