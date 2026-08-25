@@ -151,11 +151,11 @@ let a64_apply_bl(b, pos, target) =
   let _ = bytes_put(b, pos + 3, band(bshr(w, 24), 255)) in
   0
 
-let a64_bl_rt(b, patches, dst, name) =
+let a64_bl_rt(b, patches, dst, name, ids) =
   let pos = bytes_len(b) in
   let _ = a64_bl(b, 0) in
   let _ = a64_slot(b, dst, true, 0) in
-  cons(["bl", pos, name], patches)
+  emit_patch_rel(ids, patches, pos, name)
 
 let a64_enter(b, n) =
   let _ = a64_stp_fp_lr(b) in
@@ -760,7 +760,7 @@ let a64_cmp_int(b, op) =
   a64_lsl1(b, 0, 0)
 
 /* cmp ==/!=: both STR (kind 3) -> yac_str_eq; else integer. */
-let a64_cmp_maybe_str(b, op, patches) =
+let a64_cmp_maybe_str(b, op, patches, ids) =
   let _ = a64_sub_imm(b, 31, 31, 16) in
   let _ = a64_stur(b, 0, 31, 0) in
   let _ = a64_stur(b, 1, 31, 8) in
@@ -819,7 +819,7 @@ let a64_cmp_maybe_str(b, op, patches) =
   let _ = a64_asr1(b, 1, 1) in
   let _ = a64_cmp_int(b, op) in
   let _ = a64_apply_b26(b, jdone, bytes_len(b)) in
-  cons(["bl", scall, "yac_str_eq"], patches)
+  emit_patch_rel(ids, patches, scall, "yac_str_eq")
 
 let emit_a64_i_core(st, insn, is_entry) =
   let b = nth(st, 0) in
@@ -841,8 +841,8 @@ let emit_a64_i_core(st, insn, is_entry) =
         let av_save = bytes_len(b) in
         let _ = a64_mov_imm64(b, 0, 0) in
         let _ = a64_stur(b, 8, 0, 0) in
-        cons(["saved_argv", av_save],
-             cons(["saved_argc", ac_save], patches))
+        cons([5, av_save],
+             cons([4, ac_save], patches))
       else patches in
     let _ =
       if is_entry then a64_mov_sp(b, 29, 31)
@@ -854,7 +854,7 @@ let emit_a64_i_core(st, insn, is_entry) =
         let sh_save = bytes_len(b) in
         let _ = a64_mov_imm64(b, 0, 0) in
         let _ = a64_stur(b, 29, 0, 0) in
-        cons(["stack_hi", sh_save], patches2)
+        cons([6, sh_save], patches2)
       else patches2 in
     let _ = a64_sub_imm(b, 31, 31, nbytes) in
     let storep(j) =
@@ -864,16 +864,16 @@ let emit_a64_i_core(st, insn, is_entry) =
         let _ = a64_slot(b, j + 1, true, j) in
         storep(j + 1) in
     let _ = storep(0) in
-    [b, cur, labels, patches3]
+    emit_st4(st, b, cur, labels, patches3)
   else if k == "mov_imm" then
     let _ = a64_mov_imm64(b, 0, nth(insn, 2)) in
     let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "mov" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "binop" then
     let op = nth(insn, 1) in
     let _ = a64_slot(b, nth(insn, 3), false, 0) in
@@ -899,7 +899,7 @@ let emit_a64_i_core(st, insn, is_entry) =
       else a64_add_reg(b, 0, 0, 1) in
     let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 2), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "icmp" then
     let op = nth(insn, 1) in
     let _ = a64_slot(b, nth(insn, 3), false, 0) in
@@ -908,26 +908,26 @@ let emit_a64_i_core(st, insn, is_entry) =
     let _ = a64_asr1(b, 1, 1) in
     let _ = a64_cmp_int(b, op) in
     let _ = a64_slot(b, nth(insn, 2), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "cmp" then
     let op = nth(insn, 1) in
     let _ = a64_slot(b, nth(insn, 3), false, 0) in
     let _ = a64_slot(b, nth(insn, 4), false, 1) in
     let patches2 =
-      if op == "==" or op == "!=" then a64_cmp_maybe_str(b, op, patches)
+      if op == "==" or op == "!=" then a64_cmp_maybe_str(b, op, patches, nth(st, 4))
       else
         let _ = a64_asr1(b, 0, 0) in
         let _ = a64_asr1(b, 1, 1) in
         let _ = a64_cmp_int(b, op) in
         patches in
     let _ = a64_slot(b, nth(insn, 2), true, 0) in
-    [b, cur, labels, patches2]
+    emit_st4(st, b, cur, labels, patches2)
   else if k == "label" then
-    [b, cur, cons([nth(insn, 1), bytes_len(b)], labels), patches]
+    emit_st4(st, b, cur, cons([nth(insn, 1), bytes_len(b)], labels), patches)
   else if k == "jmp" then
     let pos = bytes_len(b) in
     let _ = a64_b(b, 0) in
-    [b, cur, labels, cons(["b26", pos, nth(insn, 1)], patches)]
+    emit_st4(st, b, cur, labels, cons(["b26", pos, nth(insn, 1)], patches))
   else if k == "br" then
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
     let _ = a64_asr1(b, 0, 0) in
@@ -936,9 +936,9 @@ let emit_a64_i_core(st, insn, is_entry) =
     let _ = a64_b_eq(b, 0) in
     let pne = bytes_len(b) in
     let _ = a64_b(b, 0) in
-    [b, cur, labels,
+    emit_st4(st, b, cur, labels,
      cons(["b26", pne, nth(insn, 2)],
-          cons(["beq", peq, nth(insn, 3)], patches))]
+          cons(["beq", peq, nth(insn, 3)], patches)))
   else if k == "call" then
     let args = nth(insn, 3) in
     let na = len(args) in
@@ -952,22 +952,22 @@ let emit_a64_i_core(st, insn, is_entry) =
     let pos = bytes_len(b) in
     let _ = a64_bl(b, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, cons(["bl", pos, nth(insn, 2)], patches)]
+    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, nth(insn, 2)))
   else if k == "ret" then
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
     if is_entry then
-      let _ = a64_ret(b) in [b, cur, labels, patches]
+      let _ = a64_ret(b) in emit_st4(st, b, cur, labels, patches)
     else
       let _ = a64_mov_sp(b, 31, 29) in
       let _ = a64_ldp_fp_lr(b) in
       let _ = a64_ret(b) in
-      [b, cur, labels, patches]
+      emit_st4(st, b, cur, labels, patches)
   else if k == "exit" then
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
     let _ = a64_asr1(b, 0, 0) in
     let _ = a64_movz(b, 8, 93, 0) in
     let _ = a64_svc(b) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "tailcall" then
     let fn = nth(insn, 2) in
     let args = nth(insn, 3) in
@@ -986,7 +986,7 @@ let emit_a64_i_core(st, insn, is_entry) =
         a64_ldp_fp_lr(b) in
     let pos = bytes_len(b) in
     let _ = a64_b(b, 0) in
-    [b, cur, labels, cons(["b26", pos, fn], patches)]
+    emit_st4(st, b, cur, labels, emit_patch_jmpf(nth(st, 4), patches, pos, fn))
   else st
 
 let emit_a64_i_heap(st, insn) =
@@ -1002,26 +1002,26 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_ldur(b, 0, 0, 16) in
     let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "obj_ld" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_mov_imm64(b, 1, 0 - 2) in
     let _ = a64_and_reg(b, 0, 0, 1) in
     let _ = a64_ldur(b, 0, 0, nth(insn, 3)) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "obj_st" then
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
     let _ = a64_mov_imm64(b, 2, 0 - 2) in
     let _ = a64_and_reg(b, 0, 0, 2) in
     let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "tag" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "is_int" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_movz(b, 9, 1, 0) in
@@ -1029,14 +1029,14 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_eor_reg(b, 10, 10, 9) in
     let _ = a64_lsl1(b, 0, 10) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "obj_sti" then
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
     let _ = a64_mov_imm64(b, 1, 0 - 2) in
     let _ = a64_and_reg(b, 0, 0, 1) in
     let _ = a64_mov_imm64(b, 1, nth(insn, 3)) in
     let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "obj_st_int" then
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
     let _ = a64_asr1(b, 1, 1) in
@@ -1044,7 +1044,7 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_mov_imm64(b, 2, 0 - 2) in
     let _ = a64_and_reg(b, 0, 0, 2) in
     let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "ld8" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_mov_imm64(b, 1, 0 - 2) in
@@ -1055,7 +1055,7 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_ldrb(b, 0, 0) in
     let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "st8" then
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
     let _ = a64_asr1(b, 1, 1) in
@@ -1066,7 +1066,7 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_asr1(b, 2, 2) in
     let _ = a64_add_reg(b, 0, 0, 2) in
     let _ = a64_strb(b, 1, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "ld64" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_mov_imm64(b, 1, 0 - 2) in
@@ -1076,7 +1076,7 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_add_reg(b, 0, 0, 1) in
     let _ = a64_ldur(b, 0, 0, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "st64" then
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
@@ -1086,7 +1086,7 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_asr1(b, 2, 2) in
     let _ = a64_add_reg(b, 0, 0, 2) in
     let _ = a64_stur(b, 1, 0, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "write1" then
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
     let _ = a64_asr1(b, 0, 0) in
@@ -1098,7 +1098,7 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_movz(b, 8, 64, 0) in
     let _ = a64_svc(b) in
     let _ = a64_add_imm(b, 31, 31, 16) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "clock" then
     let _ = a64_sub_imm(b, 31, 31, 16) in
     let _ = a64_movz(b, 0, nth(insn, 3), 0) in
@@ -1112,7 +1112,7 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 2), true, 0) in
     let _ = a64_add_imm(b, 31, 31, 16) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "glob" then
     let which = nth(insn, 2) in
     let gpos = bytes_len(b) in
@@ -1121,26 +1121,26 @@ let emit_a64_i_heap(st, insn) =
     let _ = if which == 3 then 0 else if which == 4 then 0 else a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     let gkind =
-      if which == 1 then "saved_argc"
-      else if which == 2 then "saved_argv"
-      else if which == 3 then "prof_st"
-      else "prof_busy" in
-    [b, cur, labels, cons([gkind, gpos], patches)]
+      if which == 1 then 4
+      else if which == 2 then 5
+      else if which == 3 then 7
+      else 8 in
+    emit_st4(st, b, cur, labels, cons([gkind, gpos], patches))
   else if k == "gst" then
     let which = nth(insn, 1) in
     let gpos = bytes_len(b) in
     let _ = a64_mov_imm64(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 2), false, 1) in
     let _ = a64_stur(b, 1, 0, 0) in
-    let gkind = if which == 3 then "prof_st" else "prof_busy" in
-    [b, cur, labels, cons([gkind, gpos], patches)]
+    let gkind = if which == 3 then 7 else 8 in
+    emit_st4(st, b, cur, labels, cons([gkind, gpos], patches))
   else if k == "alloc" then
     let _ = a64_mov_imm64(b, 0, nth(insn, 2)) in
     let pos = bytes_len(b) in
     let _ = a64_bl(b, 0) in
     let _ = a64_tag(b, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, cons(["bl", pos, "yac_alloc"], patches)]
+    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_alloc"))
   else if k == "alloc_s" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_asr1(b, 0, 0) in
@@ -1148,7 +1148,7 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_bl(b, 0) in
     let _ = a64_tag(b, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, cons(["bl", pos, "yac_alloc"], patches)]
+    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_alloc"))
   else if k == "print" then
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
     let _ = a64_movz(b, 9, 1, 0) in
@@ -1176,20 +1176,19 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_movz(b, 8, 64, 0) in
     let _ = a64_svc(b) in
     let _ = a64_add_imm(b, 31, 31, 16) in
-    [b, cur, labels, cons(["bl", c_int, "print_int"],
-                          cons(["bl", c_val, "print_val"], patches))]
+    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), emit_patch_rel(nth(st, 4), patches, c_val, "print_val"), c_int, "print_int"))
   else if k == "argc" then
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_argc")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_argc", nth(st, 4)))
   else if k == "time_ms" then
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "time_ms")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "time_ms", nth(st, 4)))
   else if k == "time_str" then
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "time_str")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "time_str", nth(st, 4)))
   else if k == "argv" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let pos = bytes_len(b) in
     let _ = a64_bl(b, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, cons(["bl", pos, "yac_argv"], patches)]
+    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_argv"))
   else st
 
 let emit_a64_i_clos(st, insn, is_entry) =
@@ -1223,9 +1222,8 @@ let emit_a64_i_clos(st, insn, is_entry) =
     let _ = storecap(0) in
     let _ = a64_tag(b, 0) in
     let _ = a64_slot(b, dst, true, 0) in
-    [b, cur, labels,
-     cons(["bl", acall, "yac_alloc"],
-          cons(["closurefn", fnpos, fnName], patches))]
+    emit_st4(st, b, cur, labels,
+     emit_patch_rel(nth(st, 4), emit_patch_clos(nth(st, 4), patches, fnpos, fnName), acall, "yac_alloc"))
   else if k == "apply" then
     let dst = nth(insn, 1) in
     let clos = nth(insn, 2) in
@@ -1242,11 +1240,11 @@ let emit_a64_i_clos(st, insn, is_entry) =
         let _ = a64_bl(b, 0) in
         let _ = a64_slot(b, dst, true, 0) in
         let nm = if nargs == 1 then "yac_apply1" else "yac_apply2" in
-        [b, cur, labels, cons(["bl", pos, nm], patches)]
+        emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, nm))
       else
-        let _ = a64_brk(b) in [b, cur, labels, patches]
+        let _ = a64_brk(b) in emit_st4(st, b, cur, labels, patches)
     else if ntot > 8 then
-      let _ = a64_brk(b) in [b, cur, labels, patches]
+      let _ = a64_brk(b) in emit_st4(st, b, cur, labels, patches)
     else
       let _ = a64_slot(b, clos, false, 17) in
       let _ = a64_untag_ptr(b, 17) in
@@ -1262,7 +1260,7 @@ let emit_a64_i_clos(st, insn, is_entry) =
       let _ = load(0) in
       let _ = a64_blr(b, 16) in
       let _ = a64_slot(b, dst, true, 0) in
-      [b, cur, labels, patches]
+      emit_st4(st, b, cur, labels, patches)
   else if k == "tailapply" then
     let clos = nth(insn, 2) in
     let ncap = nth(insn, 3) in
@@ -1282,11 +1280,11 @@ let emit_a64_i_clos(st, insn, is_entry) =
         let pos = bytes_len(b) in
         let _ = a64_b(b, 0) in
         let nm = if nargs == 1 then "yac_apply1" else "yac_apply2" in
-        [b, cur, labels, cons(["b26", pos, nm], patches)]
+        emit_st4(st, b, cur, labels, emit_patch_jmpf(nth(st, 4), patches, pos, nm))
       else
-        let _ = a64_brk(b) in [b, cur, labels, patches]
+        let _ = a64_brk(b) in emit_st4(st, b, cur, labels, patches)
     else if ntot > 8 then
-      let _ = a64_brk(b) in [b, cur, labels, patches]
+      let _ = a64_brk(b) in emit_st4(st, b, cur, labels, patches)
     else
       let _ = a64_slot(b, clos, false, 17) in
       let _ = a64_untag_ptr(b, 17) in
@@ -1306,7 +1304,7 @@ let emit_a64_i_clos(st, insn, is_entry) =
           let _ = a64_mov_sp(b, 31, 29) in
           a64_ldp_fp_lr(b) in
       let _ = a64_br(b, 16) in
-      [b, cur, labels, patches]
+      emit_st4(st, b, cur, labels, patches)
   else st
 
 let emit_a64_i_prim(st, insn) =
@@ -1318,7 +1316,7 @@ let emit_a64_i_prim(st, insn) =
   if k == "nil" then
     let _ = a64_movz(b, 0, 1, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "cons" then
     let _ = a64_mov_imm64(b, 0, 40) in
     let acall = bytes_len(b) in
@@ -1333,7 +1331,7 @@ let emit_a64_i_prim(st, insn) =
     let _ = a64_stur(b, 1, 0, 32) in
     let _ = a64_tag(b, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, cons(["bl", acall, "yac_alloc"], patches)]
+    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall, "yac_alloc"))
   else if k == "strlit" then
     let dst = nth(insn, 1) in
     let s = nth(insn, 2) in
@@ -1360,7 +1358,7 @@ let emit_a64_i_prim(st, insn) =
     let _ = a64_strb(b, 31, 1) in
     let _ = a64_tag(b, 0) in
     let _ = a64_slot(b, dst, true, 0) in
-    [b, cur, labels, cons(["bl", acall, "yac_alloc"], patches)]
+    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall, "yac_alloc"))
   else if k == "str_len" then
     let dst = nth(insn, 1) in
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
@@ -1382,7 +1380,7 @@ let emit_a64_i_prim(st, insn) =
     let _ = a64_patch_bcond(b, jnil, zlen) in
     let _ = a64_apply_b26(b, jd, done) in
     let _ = a64_slot(b, dst, true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "str_ref" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_untag_ptr(b, 0) in
@@ -1393,100 +1391,100 @@ let emit_a64_i_prim(st, insn) =
     let _ = a64_ldrb(b, 0, 0) in
     let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "bytes_new" then
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_bytes_new")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_bytes_new", nth(st, 4)))
   else if k == "bytes_len" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_untag_ptr(b, 0) in
     let _ = a64_ldur(b, 0, 0, 24) in
     let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
   else if k == "bytes_ref" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_bytes_ref")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_bytes_ref", nth(st, 4)))
   else if k == "bytes_put" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
     let _ = a64_slot(b, nth(insn, 4), false, 2) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_bytes_put")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_bytes_put", nth(st, 4)))
   else if k == "len" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_len")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_len", nth(st, 4)))
   else if k == "nth" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_nth")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_nth", nth(st, 4)))
   else if k == "tail" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_tail")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_tail", nth(st, 4)))
   else if k == "append" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_append")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_append", nth(st, 4)))
   else if k == "list_rev" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_list_rev")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_list_rev", nth(st, 4)))
   else if k == "list_new" then
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_list_new")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_list_new", nth(st, 4)))
   else if k == "list_push" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_list_push")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_list_push", nth(st, 4)))
   else if k == "str_cat" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_str_cat")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_str_cat", nth(st, 4)))
   else if k == "str_slice" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
     let _ = a64_slot(b, nth(insn, 4), false, 2) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_str_slice")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_str_slice", nth(st, 4)))
   else if k == "int_to_str" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_int_to_str")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_int_to_str", nth(st, 4)))
   else if k == "bytes_to_str" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_bytes_to_str")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_bytes_to_str", nth(st, 4)))
   else if k == "bytes_extend" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_bytes_extend")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_bytes_extend", nth(st, 4)))
   else if k == "bytes_append" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_bytes_append")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_bytes_append", nth(st, 4)))
   else if k == "drop" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_drop")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_drop", nth(st, 4)))
   else if k == "foldl" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
     let _ = a64_slot(b, nth(insn, 4), false, 2) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_foldl")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_foldl", nth(st, 4)))
   else if k == "map" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    [b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_map")]
+    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_map", nth(st, 4)))
   else if k == "read_file" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let pos = bytes_len(b) in
     let _ = a64_bl(b, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, cons(["bl", pos, "yac_read_file"], patches)]
+    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_read_file"))
   else if k == "write_file" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
     let pos = bytes_len(b) in
     let _ = a64_bl(b, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    [b, cur, labels, cons(["bl", pos, "yac_write_file"], patches)]
+    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_write_file"))
   else
     let _ = a64_brk(b) in
-    [b, cur, labels, patches]
+    emit_st4(st, b, cur, labels, patches)
 
 let emit_a64_i_memcpy(st, insn) =
   let b = nth(st, 0) in
@@ -1519,7 +1517,7 @@ let emit_a64_i_memcpy(st, insn) =
   let done = bytes_len(b) in
   let _ = a64_patch_bcond(b, jeq, done) in
   let _ = a64_apply_b26(b, jb, loop) in
-  [b, cur, labels, patches]
+  emit_st4(st, b, cur, labels, patches)
 
 let emit_insn_a64(st, insn, is_entry) =
   let k = nth(insn, 0) in
@@ -1541,19 +1539,67 @@ let emit_insn_a64(st, insn, is_entry) =
 
 
 
-let a64_lookup(labels, name) =
-  let n = len(labels) in
-  let scan(i) =
-    if i < 0 then 0
-    else if nth(nth(labels, i), 0) == name then nth(nth(labels, i), 1)
-    else scan(i - 1) in
-  scan(n - 1)
+let a64_lookup_at(labels, name, i) =
+  if i < 0 then 0
+  else if nth(nth(labels, i), 0) == name then nth(nth(labels, i), 1)
+  else a64_lookup_at(labels, name, i - 1)
+
+let a64_lookup(labels, name) = a64_lookup_at(labels, name, len(labels) - 1)
+
+let a64_patch_beq(b, pos, targ) =
+  let rel = bshr(targ - pos, 2) in
+  let w = 1409286144 + bshl(band(rel, 524287), 5) in
+  let _ = bytes_put(b, pos, band(w, 255)) in
+  let _ = bytes_put(b, pos + 1, band(bshr(w, 8), 255)) in
+  let _ = bytes_put(b, pos + 2, band(bshr(w, 16), 255)) in
+  bytes_put(b, pos + 3, band(bshr(w, 24), 255))
+
+/* st = [b, offs, codebase, globbase, labels] */
+let a64_resolve_patch(st, p) =
+  let b = nth(st, 0) in
+  let offs = nth(st, 1) in
+  let codebase = nth(st, 2) in
+  let globbase = nth(st, 3) in
+  let labels = nth(st, 4) in
+  let tag = nth(p, 0) in
+  if tag == 1 then
+    a64_apply_bl(b, nth(p, 1), nth(offs, nth(p, 2)))
+  else if tag == 2 then
+    a64_mov_imm64_at(b, nth(p, 1), 1, codebase + nth(offs, nth(p, 2)))
+  else if tag == 3 then
+    a64_mov_imm64_at(b, nth(p, 1), 0, globbase)
+  else if tag == 4 then
+    a64_mov_imm64_at(b, nth(p, 1), 0, globbase + 8)
+  else if tag == 5 then
+    a64_mov_imm64_at(b, nth(p, 1), 0, globbase + 16)
+  else if tag == 6 then
+    a64_mov_imm64_at(b, nth(p, 1), 0, globbase + 24)
+  else if tag == 7 then
+    a64_mov_imm64_at(b, nth(p, 1), 0, globbase + 48)
+  else if tag == 8 then
+    a64_mov_imm64_at(b, nth(p, 1), 0, globbase + 56)
+  else if tag == 9 then
+    a64_apply_b26(b, nth(p, 1), nth(offs, nth(p, 2)))
+  else
+    let pos = nth(p, 1) in
+    let lab = nth(p, 2) in
+    let targ = a64_lookup(labels, lab) in
+    if tag == "beq" then a64_patch_beq(b, pos, targ)
+    else a64_apply_b26(b, pos, targ)
+
+let a64_resolve_loop(st, ps, i) =
+  if i >= len(ps) then 0
+  else
+    let _ = a64_resolve_patch(st, nth(ps, i)) in
+    a64_resolve_loop(st, ps, i + 1)
 
 let emit_program_arm64(prog, load_vaddr, text_off) =
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
   let entry = nth(prog, 2) in
   let out = bytes_new() in
+  let ids = emit_ids_new(funs) in
+  let offs = list_new() in
   let emit_fun(i, st, fo) =
     if i >= nfun then [st, fo]
     else
@@ -1561,16 +1607,19 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
       let name = nth(f, 1) in
       let is_entry = name == entry in
       let fstart = bytes_len(nth(st, 0)) in
-      let st0 = [nth(st, 0), 0, nth(st, 2), nth(st, 3)] in
+      let st0 = [nth(st, 0), 0, nth(st, 2), nth(st, 3), nth(st, 4)] in
       let insns = nth(f, 4) in
-      if len(insns) == 0 then emit_fun(i + 1, st, fo)
+      if len(insns) == 0 then
+        let _ = list_push(offs, 0) in
+        emit_fun(i + 1, st, fo)
       else
+        let _ = list_push(offs, fstart) in
         let run(j, s) =
           if j >= len(insns) then s
           else run(j + 1, emit_insn_a64(s, nth(insns, j), is_entry)) in
         let s1 = run(0, st0) in
         emit_fun(i + 1, s1, cons([name, fstart], fo)) in
-  let r1 = emit_fun(0, [out, 0, [], []], []) in
+  let r1 = emit_fun(0, [out, 0, [], [], ids], []) in
   let st = nth(r1, 0) in
   let fo0 = nth(r1, 1) in
   let b = nth(st, 0) in
@@ -1611,52 +1660,23 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
-  let patches2 =
-    cons(["gc_head", alc_off + nth(alcr, 1)],
-         cons(["gc_head", alc_off + nth(alcr, 2)],
-         cons(["bl", alc_off + nth(alcr, 3), "yac_gc"],
-         cons(["gc_head", gc_off + nth(gcr, 1)],
-              cons(["stack_hi", gc_off + nth(gcr, 2)],
-         cons(["bl", rf_off + nth(rfr, 1), "yac_alloc"],
-              cons(["bl", av_off + nth(avr, 3), "yac_alloc"],
-                   cons(["saved_argc", av_off + nth(avr, 1)],
-                        cons(["saved_argv", av_off + nth(avr, 2)], patches))))))))) in
-  let resolve(i) =
-    if i < 0 then 0
-    else
-      let p = nth(patches2, i) in
-      let kind = nth(p, 0) in
-      let _ =
-        if kind == "saved_argc" then
-          a64_mov_imm64_at(b, nth(p, 1), 0, GLOBALS_BASE + 8)
-        else if kind == "saved_argv" then
-          a64_mov_imm64_at(b, nth(p, 1), 0, GLOBALS_BASE + 16)
-        else if kind == "stack_hi" then
-          a64_mov_imm64_at(b, nth(p, 1), 0, GLOBALS_BASE + 24)
-        else if kind == "gc_head" then
-          a64_mov_imm64_at(b, nth(p, 1), 0, GLOBALS_BASE)
-        else if kind == "prof_st" then
-          a64_mov_imm64_at(b, nth(p, 1), 0, GLOBALS_BASE + 48)
-        else if kind == "prof_busy" then
-          a64_mov_imm64_at(b, nth(p, 1), 0, GLOBALS_BASE + 56)
-        else if kind == "closurefn" then
-          let fo_fn = a64_lookup(fo, nth(p, 2)) in
-          a64_mov_imm64_at(b, nth(p, 1), 1, load_vaddr + text_off + fo_fn)
-        else
-          let pos = nth(p, 1) in
-          let lab = nth(p, 2) in
-          let targ = a64_lookup(labels, lab) in
-          let targ2 =
-            if targ == 0 then a64_lookup(fo, lab) else targ in
-          if kind == "bl" then a64_apply_bl(b, pos, targ2)
-          else if kind == "beq" then
-            let rel = bshr(targ2 - pos, 2) in
-            let w = 1409286144 + bshl(band(rel, 524287), 5) in
-            let _ = bytes_put(b, pos, band(w, 255)) in
-            let _ = bytes_put(b, pos + 1, band(bshr(w, 8), 255)) in
-            let _ = bytes_put(b, pos + 2, band(bshr(w, 16), 255)) in
-            bytes_put(b, pos + 3, band(bshr(w, 24), 255))
-          else a64_apply_b26(b, pos, targ2) in
-      resolve(i - 1) in
-  let _ = resolve(len(patches2) - 1) in
+  let _ = list_push(offs, a1_off) in
+  let _ = list_push(offs, a2_off) in
+  let _ = list_push(offs, wf_off) in
+  let _ = list_push(offs, rf_off) in
+  let _ = list_push(offs, alc_off) in
+  let _ = list_push(offs, gc_off) in
+  let _ = list_push(offs, av_off) in
+  let extra = list_new() in
+  let _ = list_push(extra, [3, alc_off + nth(alcr, 1)]) in
+  let _ = list_push(extra, [3, alc_off + nth(alcr, 2)]) in
+  let _ = list_push(extra, [1, alc_off + nth(alcr, 3), emit_map_get(ids, "yac_gc")]) in
+  let _ = list_push(extra, [3, gc_off + nth(gcr, 1)]) in
+  let _ = list_push(extra, [6, gc_off + nth(gcr, 2)]) in
+  let _ = list_push(extra, [1, rf_off + nth(rfr, 1), emit_map_get(ids, "yac_alloc")]) in
+  let _ = list_push(extra, [1, av_off + nth(avr, 3), emit_map_get(ids, "yac_alloc")]) in
+  let _ = list_push(extra, [4, av_off + nth(avr, 1)]) in
+  let _ = list_push(extra, [5, av_off + nth(avr, 2)]) in
+  let _ = patches_extend(extra, patches) in
+  let _ = a64_resolve_loop([b, offs, load_vaddr + text_off, GLOBALS_BASE, labels], extra, 0) in
   [b, fo]

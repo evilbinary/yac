@@ -102,13 +102,17 @@ let emit_ids_new(funs) =
   let nfun = len(funs) in
   emit_ids_bind(emit_ids_helpers(emit_map_new(0), nfun), funs, 0, nfun)
 
-/* Patch tags: 1=rel32 to fun id, 2=closure abs32, 3+=globals.
- * Local labels stay [pos, name] (len 2, name is a string). */
+/* Patch tags: 1=call to fun id (x86 rel32 / a64 bl / rv jal ra),
+ * 2=closure fnptr, 3+=globals, 9=tail jmp to fun id (a64 b26 / rv jal).
+ * Local labels stay string kinds (b26/beq/jal) or [pos, name] on x86. */
 let emit_patch_rel(ids, ps, pos, name) =
   cons([1, pos, emit_map_get(ids, name)], ps)
 
 let emit_patch_clos(ids, ps, pos, name) =
   cons([2, pos, emit_map_get(ids, name)], ps)
+
+let emit_patch_jmpf(ids, ps, pos, name) =
+  cons([9, pos, emit_map_get(ids, name)], ps)
 
 let emit_st4(st, b, cur, labels, ps) =
   [b, cur, labels, ps, nth(st, 4)]
