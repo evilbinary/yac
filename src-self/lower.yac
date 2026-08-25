@@ -93,13 +93,13 @@ let sh_put(sh, k) =
   let _ = fmap_put(nth(sh, 0), k, nth(sh, 1)) in
   sh
 
+/* No `let e` here: native drops locals in this frame (same as env_scan). */
 let sh_has_scan(bucket, k, dcur, i) =
   if i < 0 then false
-  else
-    let e = nth(bucket, i) in
-    if nth(e, 0) == k then
-      if nth(e, 1) <= dcur then true else sh_has_scan(bucket, k, dcur, i - 1)
+  else if nth(nth(bucket, i), 0) == k then
+    if nth(nth(bucket, i), 1) <= dcur then true
     else sh_has_scan(bucket, k, dcur, i - 1)
+  else sh_has_scan(bucket, k, dcur, i - 1)
 
 let sh_has(sh, k) =
   let bucket = nth(nth(sh, 0), hash_str(k)) in
@@ -116,7 +116,7 @@ let fv_acc_add(a, k) =
   if fv_acc_has(a, k) then a
   else let _ = sset_put(nth(a, 1), k) in [cons(k, nth(a, 0)), nth(a, 1)]
 
-let funs_empty(_) = [[], fmap_new(0)]
+let funs_empty(nrt) = [[], fmap_new(0), nrt]
 let funs_list(fs) = nth(fs, 0)
 let funs_map(fs) = nth(fs, 1)
 
@@ -125,8 +125,11 @@ let fun_src(f) = if len(f) > 5 then nth(f, 5) else nth(f, 1)
 
 let funs_cons(fs, f) =
   let m = funs_map(fs) in
-  let _ = fmap_put(m, fun_src(f), [nth(f, 1), nth(f, 3)]) in
-  [cons(f, funs_list(fs)), m]
+  let idx =
+    if len(nth(f, 4)) == 0 then 0 - 1
+    else len(funs_list(fs)) in
+  let _ = fmap_put(m, fun_src(f), [nth(f, 1), nth(f, 3), idx]) in
+  [cons(f, funs_list(fs)), m, nth(fs, 2)]
 
 let funs_has(fs, name) =
   let e = fmap_get(funs_map(fs), name) in
@@ -151,21 +154,21 @@ let str_to_int(s) =
   let v = acc(start, 0) in
   if isneg then 0 - v else v
 
-/* Environment: one fmap, no clone. Bindings are [slot, ncap, gen].
- * letif then/else each env_enter a sibling gen; lookup skips gens not
- * on the ancestor chain of the current gen. */
+/* Environment: 2-tuple [fmap, [gen, parents]]. Bindings [slot, ncap, gen].
+ * env_scan must not bind locals (native drops `let` in that frame; fmap_scan
+ * style nth(nth(...)) is required). */
 let env_new(_) =
   let ps = list_new() in
   let _ = list_push(ps, 0) in
-  [fmap_new(0), 0, ps]
+  [fmap_new(0), [0, ps]]
 
 let env_enter(env) =
-  let ps = nth(env, 2) in
-  let _ = list_push(ps, nth(env, 1)) in
-  [nth(env, 0), len(ps) - 1, ps]
+  let ps = nth(nth(env, 1), 1) in
+  let _ = list_push(ps, nth(nth(env, 1), 0)) in
+  [nth(env, 0), [len(ps) - 1, ps]]
 
 let env_bind(env, name, slot, ncap) =
-  let _ = fmap_put(nth(env, 0), name, [slot, ncap, nth(env, 1)]) in
+  let _ = fmap_put(nth(env, 0), name, [slot, ncap, nth(nth(env, 1), 0)]) in
   env
 
 let env_live(g, cur, parents) =
@@ -175,17 +178,13 @@ let env_live(g, cur, parents) =
 
 let env_scan(bucket, k, cur, parents, i) =
   if i < 0 then 0
-  else
-    let e = nth(bucket, i) in
-    if nth(e, 0) != k then env_scan(bucket, k, cur, parents, i - 1)
-    else
-      let v = nth(e, 1) in
-      if env_live(nth(v, 2), cur, parents) then v
-      else env_scan(bucket, k, cur, parents, i - 1)
+  else if nth(nth(bucket, i), 0) == k then
+    if env_live(nth(nth(nth(bucket, i), 1), 2), cur, parents) then nth(nth(bucket, i), 1)
+    else env_scan(bucket, k, cur, parents, i - 1)
+  else env_scan(bucket, k, cur, parents, i - 1)
 
 let env_rec(env, name) =
-  let bucket = nth(nth(env, 0), hash_str(name)) in
-  env_scan(bucket, name, nth(env, 1), nth(env, 2), len(bucket) - 1)
+  env_scan(nth(nth(env, 0), hash_str(name)), name, nth(nth(env, 1), 0), nth(nth(env, 1), 1), len(nth(nth(env, 0), hash_str(name))) - 1)
 
 let env_lookup(env, name) =
   let e = env_rec(env, name) in
@@ -455,7 +454,10 @@ let lower_letcall(b, pack) =
         l_apply(dst, fnslot, fncap, slots)
       else if env_has(env, fnname) and not funs_has(funs0, fnname) then
         l_apply(dst, fnslot, 0 - 1, slots)
-      else l_call(dst, fun_code_name(funs0, fnname), slots) in
+      else
+        let e = fmap_get(funs_map(funs0), fnname) in
+        let gn = if e == 0 then fnname else nth(e, 0) in
+        l_call(dst, gn, slots) in
   let tagged = apply_tco([s, [nth(pack, 1), nth(pack, 2), nth(pack, 3), name],
                           newinsn, dst, slots]) in
   let ins0 = nth(lr, 0) in
@@ -687,10 +689,17 @@ let compile_top(items) =
       let r = lower_body(nth(items, i), cons_tail_no([entry_insns, env, counter, funs, funcnt])) in
       iter(i + 1, nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5),
            nth(r, 0), nth(r, 1)) in
-  let st = iter(0, env_new(0), 1, funs_empty(0), 0, list_new(), 0) in
+  let rt0 = runtime_funs(0) in
+  let nrt = len(rt0) in
+  let _ = log_i("lower", "nrt", nrt) in
+  let st = iter(0, env_new(0), 1, funs_empty(nrt), 0, list_new(), 0) in
   let entry_insns = nth(st, 4) in
   let result_slot = nth(st, 5) in
-  let funs = funs_list(nth(st, 2)) in
+  let fs = nth(st, 2) in
+  let funs = funs_list(fs) in
+  let rt =
+    if funs_has(fs, "prof_enter_go") then rt0
+    else append(rt0, runtime_prof_stubs(0)) in
   let _ = log_i("lower", "nfuns", len(funs)) in
   let nslots = nth(st, 1) in
   let pin = insn_push(list_new(), l_prologue(nslots, 0)) in
@@ -699,4 +708,4 @@ let compile_top(items) =
                insn_push(insn_extend(pin2, entry_insns), l_exit(result_slot)),
                "_start") in
   let _ = log("lower", "compile_top done") in
-  l_prog(cons(entry, append(runtime_funs(0), reverse(funs))), "_start")
+  l_prog(cons(entry, append(rt, reverse(funs))), "_start")

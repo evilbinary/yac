@@ -59,14 +59,17 @@ let emit_map_put(m, k, v) =
   let _ = list_push(bucket, [k, v]) in
   0
 
-let emit_map_scan(bucket, k, i, n) =
-  if i >= n then 0
-  else if nth(nth(bucket, i), 0) == k then nth(nth(bucket, i), 1)
-  else emit_map_scan(bucket, k, i + 1, n)
+/* Last-put-wins: later emit_map_put for the same key is the lookup result. */
+let emit_map_scan(bucket, k, i) =
+  if nth(nth(bucket, i), 0) == k then nth(nth(bucket, i), 1)
+  else if i == 0 then 0
+  else emit_map_scan(bucket, k, i - 1)
 
 let emit_map_get(m, k) =
   let bucket = nth(m, emit_hash(k)) in
-  emit_map_scan(bucket, k, 0, len(bucket))
+  let n = len(bucket) in
+  if n == 0 then 0
+  else emit_map_scan(bucket, k, n - 1)
 
 let emit_map_from_at(m, xs, i, n) =
   if i >= n then m
@@ -77,7 +80,8 @@ let emit_map_from_at(m, xs, i, n) =
 
 let emit_map_from_list(xs) = emit_map_from_at(emit_map_new(0), xs, 0, len(xs))
 
-/* Fun id table: helpers first (first-put-wins), then prog funs.
+/* Fun id table: prog funs, then helpers last so helper names stay reserved.
+ * Duplicate fun names: last-put-wins (runtime prof_* stubs lose to profile.yac).
  * Helper ids are nfun+0..nfun+6 matching offs listbuf after emit_fun. */
 let emit_ids_helpers(ids, nfun) =
   let _ = emit_map_put(ids, "yac_apply1", nfun) in
@@ -100,7 +104,7 @@ let emit_ids_bind(ids, funs, i, n) =
 
 let emit_ids_new(funs) =
   let nfun = len(funs) in
-  emit_ids_bind(emit_ids_helpers(emit_map_new(0), nfun), funs, 0, nfun)
+  emit_ids_helpers(emit_ids_bind(emit_map_new(0), funs, 0, nfun), nfun)
 
 /* Patch tags: 1=call to fun id (x86 rel32 / a64 bl / rv jal ra),
  * 2=closure fnptr, 3+=globals, 9=tail jmp to fun id (a64 b26 / rv jal).

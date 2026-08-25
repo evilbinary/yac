@@ -746,6 +746,7 @@ let rt_prof_leave_ins(_) =
    l_gst(4, 8),
    l_ret(5)]
 
+/* No-op until profile.yac defines the same names; emit last-put-wins. */
 let rt_prof_go_enter_ins(_) =
   [l_prologue(4, 1),
    l_mov_imm(2, 0),
@@ -851,6 +852,10 @@ let runtime_funs(_) =
    l_fun("yac_box_set", 2, 0, rt_box_set_ins(0), "yac_box_set"),
    l_fun("yac_prof_cell", 0, 0, rt_prof_cell_ins(0), "yac_prof_cell"),
    l_fun("yac_prof_enter", 1, 0, rt_prof_enter_ins(0), "yac_prof_enter"),
-   l_fun("yac_prof_leave", 0, 0, rt_prof_leave_ins(0), "yac_prof_leave"),
-   l_fun("prof_enter_go", 1, 0, rt_prof_go_enter_ins(0), "prof_enter_go"),
+   l_fun("yac_prof_leave", 0, 0, rt_prof_leave_ins(0), "yac_prof_leave")]
+
+/* Used only when profile.yac is not in the program. Do not put these in
+ * runtime_funs: same names would steal calls from profile.yac. */
+let runtime_prof_stubs(_) =
+  [l_fun("prof_enter_go", 1, 0, rt_prof_go_enter_ins(0), "prof_enter_go"),
    l_fun("prof_leave_go", 0, 0, rt_prof_go_leave_ins(0), "prof_leave_go")]
