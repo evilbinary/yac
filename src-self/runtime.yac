@@ -323,7 +323,7 @@ let rt_foldl_ins(_) =
    l_label("fd_go"),
    l_obj_ld(6, 3, 24),
    l_obj_ld(3, 3, 32),
-   l_apply(2, 1, 0 - 1, [2, 6]),
+   l_icall(2, 1, [2, 6]),
    l_tailcall(2, "yac_foldl", [1, 2, 3])]
 
 let rt_map_ins(_) =
@@ -336,7 +336,7 @@ let rt_map_ins(_) =
    l_label("mp_go"),
    l_obj_ld(5, 2, 24),
    l_obj_ld(6, 2, 32),
-   l_apply(7, 1, 0 - 1, [5]),
+   l_icall(7, 1, [5]),
    l_call(8, "yac_map", [1, 6]),
    l_cons(9, 7, 8),
    l_ret(9)]

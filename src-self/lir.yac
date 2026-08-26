@@ -101,22 +101,22 @@ let l_str_ref(d, a, b) = ["str_ref", d, a, b]
 let l_str_cat(d, a, b) = l_ccall(d, "yac_str_cat", [a, b])
 let l_str_slice(d, a, b, c) = l_ccall(d, "yac_str_slice", [a, b, c])
 let l_int_to_str(d, a) = l_ccall(d, "yac_int_to_str", [a])
-let l_bytes_to_str(d, a) = ["bytes_to_str", d, a]
-let l_time_ms(d) = ["time_ms", d]
-let l_time_str(d) = ["time_str", d]
-let l_argc(d) = ["argc", d]
-let l_argv(d, a) = ["argv", d, a]
+let l_bytes_to_str(d, a) = l_ccall(d, "yac_bytes_to_str", [a])
+let l_time_ms(d) = l_ccall(d, "time_ms", [])
+let l_time_str(d) = l_ccall(d, "time_str", [])
+let l_argc(d) = l_ccall(d, "yac_argc", [])
+let l_argv(d, a) = l_ccall(d, "yac_argv", [a])
 let l_drop(d, a, b) = l_ccall(d, "yac_drop", [a, b])
-let l_foldl(d, a, b, c) = ["foldl", d, a, b, c]
-let l_map(d, a, b) = ["map", d, a, b]
-let l_bytes_new(d) = ["bytes_new", d]
+let l_foldl(d, a, b, c) = l_ccall(d, "yac_foldl", [a, b, c])
+let l_map(d, a, b) = l_ccall(d, "yac_map", [a, b])
+let l_bytes_new(d) = l_ccall(d, "yac_bytes_new", [])
 let l_bytes_len(d, a) = ["bytes_len", d, a]
-let l_bytes_ref(d, a, b) = ["bytes_ref", d, a, b]
-let l_bytes_put(d, a, b, c) = ["bytes_put", d, a, b, c]
-let l_bytes_append(d, a, b) = ["bytes_append", d, a, b]
-let l_bytes_extend(d, a, b) = ["bytes_extend", d, a, b]
-let l_read_file(d, a) = ["read_file", d, a]
-let l_write_file(d, a, b) = ["write_file", d, a, b]
+let l_bytes_ref(d, a, b) = l_ccall(d, "yac_bytes_ref", [a, b])
+let l_bytes_put(d, a, b, c) = l_ccall(d, "yac_bytes_put", [a, b, c])
+let l_bytes_append(d, a, b) = l_ccall(d, "yac_bytes_append", [a, b])
+let l_bytes_extend(d, a, b) = l_ccall(d, "yac_bytes_extend", [a, b])
+let l_read_file(d, a) = l_ccall(d, "yac_read_file", [a])
+let l_write_file(d, a, b) = l_ccall(d, "yac_write_file", [a, b])
 /* Kernel heap ops: every emit-<arch> implements these. off is an untagged byte
  * immediate. obj_ld/obj_st copy the raw qword (car/cdr are already tagged;
  * listbuf len at +24 is not — use l_tag). */

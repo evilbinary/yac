@@ -134,8 +134,10 @@ insn      ::= ["local",    nslots, nparams]
             | ["fcall",    s, name, [s*]]      ; yac proc
             | ["ccall",    s, name, [s*]]      ; runtime（yac_* 等）
             | ["icall",    s, s, [s*]]         ; 闭包在槽里
+            | ["apply",    s, s, ncap, [s*]]   ; emit：已知 ncap>0
             | ["tcall",    s, name, [s*]]
             | ["ticall",   s, s, [s*]]
+            | ["tailapply",s, s, ncap, [s*]]
             | ["ret",      s]
             | ["syscall",  s, nr, [s*]]        ; nr 未 tag 立即数，≤6 参
             | ["print",    s]                  ; emit 糖：print_int/print_val + newline
@@ -149,7 +151,7 @@ L, name, entryName, srcname            ::= 字符串
 s                                      ::= 槽号（整数）
 ```
 
-`mov_imm` 写入 **已经编码好的** 64 位模式（翻译时完成 tag：int 为 `n<<1`，nil 为 `1`）。`nth`/`cons`/`len`/`str_cat` 等不是 LIR 指令，一律 `ccall yac_*`。
+`mov_imm` 写入 **已经编码好的** 64 位模式（翻译时完成 tag：int 为 `n<<1`，nil 为 `1`）。源级 `nth`/`cons`/`len`/`str_cat`/`foldl`/`map`/`bytes_*`/`argc`/`argv`/`time_*`/`read_file`/`write_file` 不是 LIR 指令，一律 `ccall yac_*`（或 `time_ms` 等 runtime 名）。`str_len`/`str_ref`/`bytes_len` 是对象字段读取（同 mref），emit 直出。
 
 emit 时 `lir_norm` 把设计标签收成 emit-* 已有的形状（构造器走左边；boot 手写 LIR 可直接用右边）：
 
@@ -238,13 +240,15 @@ callι(self, x, ["var", g], s, _, ss) =
     ["tcall",  s, g, ss]     if  tail(x) ∧ g = self ∧ g ∈ Σ ∧ |ss| ≤ 6
   | ["fcall",  s, g, ss]     if  g ∈ Σ ∧ Σ(g).ncap = 0
   | ["ccall",  s, rt(g), ss] if  g 是 runtime 名
-  | ["icall",  s, Γ(g), ss]  otherwise        ; 槽里是闭包
+  | ["apply",  s, Γ(g), n, ss] if  Γ(g) 有已知 ncap = n > 0
+  | ["icall",  s, Γ(g), ss]  otherwise        ; 槽里是闭包，nenv 运行时读
 
 callι(self, x, f, s, s_f, ss) =
     ["ticall", s, s_f, ss]   if  tail(x) ∧ f 是 self 的闭包槽 ∧ |ss| ≤ 6
   | ["icall",  s, s_f, ss]   otherwise
 
-rt("cons")="yac_cons"  rt("nth")="yac_nth"  rt("len")="yac_len"  …
+rt("cons")="yac_cons"  rt("nth")="yac_nth"  rt("len")="yac_len"
+rt("foldl")="yac_foldl"  rt("map")="yac_map"  rt("argc")="yac_argc"  …
 runtime 名以 yac_* / time_* / gc_collect / argc / argv / print_val 为准。
 
 tail(x)  当且仅当该 letcall 是 body 的最后一条绑定，且尾原子是 ["var", x]。

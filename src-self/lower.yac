@@ -484,7 +484,7 @@ let lower_prim_list(fnname, dst, slots) =
   else if fnname == "list_push" then
     l_list_push(dst, nth(slots, 0), nth(slots, 1))
   else if fnname == "list_set" then
-    l_call(dst, "yac_list_set", [nth(slots, 0), nth(slots, 1), nth(slots, 2)])
+    l_ccall(dst, "yac_list_set", [nth(slots, 0), nth(slots, 1), nth(slots, 2)])
   else if fnname == "list_rev" then l_list_rev(dst, nth(slots, 0))
   else 0
 
@@ -496,13 +496,13 @@ let lower_prim_str(fnname, dst, slots) =
     l_str_slice(dst, nth(slots, 0), nth(slots, 1), nth(slots, 2))
   else if fnname == "int_to_str" then l_int_to_str(dst, nth(slots, 0))
   else if fnname == "time_ms" then l_time_ms(dst)
-  else if fnname == "time_ns" then l_call(dst, "time_ns", [])
+  else if fnname == "time_ns" then l_ccall(dst, "time_ns", [])
   else if fnname == "time_str" then l_time_str(dst)
-  else if fnname == "box_new" then l_call(dst, "yac_box_new", [])
-  else if fnname == "box_get" then l_call(dst, "yac_box_get", [nth(slots, 0)])
+  else if fnname == "box_new" then l_ccall(dst, "yac_box_new", [])
+  else if fnname == "box_get" then l_ccall(dst, "yac_box_get", [nth(slots, 0)])
   else if fnname == "box_set" then
-    l_call(dst, "yac_box_set", [nth(slots, 0), nth(slots, 1)])
-  else if fnname == "yac_prof_cell" then l_call(dst, "yac_prof_cell", [])
+    l_ccall(dst, "yac_box_set", [nth(slots, 0), nth(slots, 1)])
+  else if fnname == "yac_prof_cell" then l_ccall(dst, "yac_prof_cell", [])
   else if fnname == "argc" then l_argc(dst)
   else if fnname == "argv" then l_argv(dst, nth(slots, 0))
   else 0
@@ -522,7 +522,7 @@ let lower_prim_bytes(fnname, dst, slots) =
   else if fnname == "read_file" then l_read_file(dst, nth(slots, 0))
   else if fnname == "write_file" then
     l_write_file(dst, nth(slots, 0), nth(slots, 1))
-  else if fnname == "gc_collect" then l_call(dst, "gc_collect", [])
+  else if fnname == "gc_collect" then l_ccall(dst, "gc_collect", [])
   else if fnname == "band" then l_binop("&", dst, nth(slots, 0), nth(slots, 1))
   else if fnname == "bor" then l_binop("|", dst, nth(slots, 0), nth(slots, 1))
   else if fnname == "bxor" then l_binop("^", dst, nth(slots, 0), nth(slots, 1))
@@ -536,10 +536,10 @@ let lower_user_call(fnname, dst, slots, env, funs0) =
     if env_ncap(env, fnname) > 0 then
       l_apply(dst, env_lookup(env, fnname), env_ncap(env, fnname), slots)
     else if funs_has(funs0, fnname) then
-      l_call(dst, fun_code_name(funs0, fnname), slots)
+      l_fcall(dst, fun_code_name(funs0, fnname), slots)
     else
-      l_apply(dst, env_lookup(env, fnname), 0 - 1, slots)
-  else l_call(dst, fun_code_name(funs0, fnname), slots)
+      l_icall(dst, env_lookup(env, fnname), slots)
+  else l_fcall(dst, fun_code_name(funs0, fnname), slots)
 
 let lower_call_insn(fnname, dst, slots, env, funs0) =
   let a = lower_prim_list(fnname, dst, slots) in

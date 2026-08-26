@@ -252,7 +252,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **已知编译器限制**：小程序里 33 元列表 / 33 个 `let` 都正常；**编译器自己的 `_start`（bundle 几百条顶层 let 合成一帧）里**放 33 元 LIR cons 字面量会被错编（`bytes_to_str` → SIGSEGV 139）。对策：`runtime.yac` 的 insn 列表做成 `rt_*_ins(_)` 小函数。`emit_insn` 已拆成按 op 分组的小函数；不要再把大块逻辑塞回 dispatcher。
 
-**riscv64**：无用户函数的整数/部分 list 原语在 qemu 下可跑；含 `letfun` 或用户调用的用例 SIGSEGV 139（C interp `--arch riscv64` 同样；既有 emit 问题，不是 LIR 设计标签改动引入）。arm64 qemu 与 x86 同源 `COMPILER_CASES` 全过。
+**riscv64 / arm64**：与 x86 同源 `COMPILER_CASES` 在 qemu 下全过。`rv_li32_at` 必须保留原 `lui` 的 rd（`yac_alloc` 的 bump 用 t0）；若写成固定 t1，堆指针读到垃圾，用户函数/闭包会挂死或 SIGSEGV。
 
 **近期完成（perf）**：全量 bundle 自编译曾 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）。`emit_insn` 已按 core/heap/clos/prim 拆开。`str_cat` / `str_slice` / `bytes_extend` / `bytes_to_str` 走 kernel `memcpy`（x86 `rep movsb`）。
 

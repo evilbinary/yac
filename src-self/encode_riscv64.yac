@@ -163,7 +163,12 @@ let rv_li32_pair(b, rd, v) =
   let _ = rv_lui(b, rd, hi) in
   rv_addi(b, rd, rd, lo_s)
 
-let rv_li32_at(b, pos, rd, v) =
+/* rd is bits [11:7] of the LUI already at pos; keep it (alloc bump is t0, not t1). */
+let rv_insn_rd(b, pos) =
+  band(bshr(bytes_ref(b, pos), 7), 1) + bshl(band(bytes_ref(b, pos + 1), 15), 1)
+
+let rv_li32_at(b, pos, rd0, v) =
+  let rd = rv_insn_rd(b, pos) in
   let hi = band(bshr(v + 2048, 12), 1048575) in
   let lo = band(v, 4095) in
   let lo_s = if lo > 2047 then lo - 4096 else lo in
