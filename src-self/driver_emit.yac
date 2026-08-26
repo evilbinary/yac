@@ -1,5 +1,6 @@
 /* driver_emit.yac — read a LIR list from emitin.yac, emit+pack ELF.
  * Used by tests/boot/run.yac (native emit_run, compiled once).
+ * pack_elf(lower_program(...)) — no backend.yac (avoids runtime_funs / pack_image).
  * Walk the parse AST with direct recursion (not map/apply).
  */
 let str_to_int(s) =
@@ -29,6 +30,6 @@ let src = read_file("build/test_tmp/emitin.yac")
 let toks = tokenize(src)
 let ast = nth(parse_program(toks, 0, []), 0)
 let prog = ast_to_val(ast)
-let elf = backend_compile(prog)
+let elf = pack_elf(nth(lower_program(prog), 0))
 let _ = write_file("build/test_tmp/emit.bin", elf)
 0

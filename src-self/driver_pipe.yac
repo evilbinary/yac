@@ -1,37 +1,18 @@
-/* driver_pipe.yac — dump source → ANF → LIR → emit (x86_64).
- * Concat: log, target, lexer, parser, anf, encode_x64, elf, lir,
- *         emit, emit_x86_64, lower, this file.
+/* driver_pipe.yac — source → ANF → LIR dump, then emit+pack ELF.
+ * Reads build/test_tmp/pipein.yac, writes build/test_tmp/pipe.bin.
  */
-let src = "1 + 2\n"
-let _ = print("--- source ---")
-let _ = print(src)
+let src = read_file("build/test_tmp/pipein.yac")
 let toks = tokenize(src)
 let ast = nth(parse_program(toks, 0, []), 0)
 let ar = anf_expr(ast, 0)
 let anf = [nth(ar, 0), nth(ar, 1)]
-let _ = print("--- ANF ---")
 let _ = print(anf)
 let out = lir_expr(anf, st_no([list_new(), env_new(0), 1, sigma_new(0), 0]))
 let insns = nth(out, 0)
-let _ = print("--- LIR insns ---")
 let _ = print(insns)
 let proc = start_proc(nth(out, 3), nth(out, 1), insns)
 let lir = tco_prog(["prog", [proc], "_start"])
-let _ = print("--- LIR prog ---")
-let _ = print(lir)
-let t = mk_target("x86_64", "elf", "exec")
-let er = lower_expr(lir, t)
-let code = nth(er, 0)
-let n = bytes_len(code)
-let _ = print("--- emit ---")
-let _ = print(str_cat("code_len=", int_to_str(n)))
-let dump(i, lim) =
-  if i >= lim then 0
-  else
-    let _ = print(bytes_ref(code, i)) in
-    dump(i + 1, lim)
-let lim = if n < 32 then n else 32
-let _ = dump(0, lim)
-let elf = pack_elf(code)
-let _ = write_file("build/pipe_tmp/out.bin", elf)
+let er = lower_expr(lir, mk_target("x86_64", "elf", "exec"))
+let elf = pack_elf(nth(er, 0))
+let _ = write_file("build/test_tmp/pipe.bin", elf)
 0

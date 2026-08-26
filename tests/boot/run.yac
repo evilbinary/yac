@@ -2,6 +2,7 @@
 let TMP = "build/test_tmp"
 let YC = "build/test_tmp/yc_A"
 let LOG_STUB = "let log(mod, msg) = 0\nlet log_i(mod, key, n) = 0\n"
+let EMIT_STUB = "let emit_program_arm64(p, v, o) = emit_program_x86_64(p, v, o)\nlet emit_program_riscv64(p, v, o) = emit_program_x86_64(p, v, o)\n"
 
 let sh_quote(s) = str_cat("'", str_cat(s, "'"))
 
@@ -73,6 +74,17 @@ let parse_one(st, c) =
 let anf_one(st, c) =
   let _ = write_file(str_cat(TMP, "/anfin.yac"), nth(c, 1)) in
   check(st, str_cat("anf ", nth(c, 0)), nth(c, 2), rchomp(native_out(str_cat(TMP, "/anf_run"))))
+
+let pipe_one(st, c) =
+  let _ = write_file(str_cat(TMP, "/pipein.yac"), nth(c, 1)) in
+  let out = rchomp(native_out(str_cat(TMP, "/pipe_run"))) in
+  let st1 = check(st, str_cat("pipe dump ", nth(c, 0)), nth(c, 2), out) in
+  if nth(run(["test", "-f", str_cat(TMP, "/pipe.bin")]), 0) != 0 then
+    check(st1, str_cat("pipe rc ", nth(c, 0)), nth(c, 3), "missing pipe.bin")
+  else
+    let _ = run(["chmod", "+x", str_cat(TMP, "/pipe.bin")]) in
+    check(st1, str_cat("pipe rc ", nth(c, 0)), nth(c, 3),
+          int_to_str(nth(run([str_cat(TMP, "/pipe.bin")]), 0)))
 
 let emit_one(st, c) =
   let _ = write_file(str_cat(TMP, "/emitin.yac"), nth(c, 1)) in
@@ -173,6 +185,18 @@ let anf_suite(st) =
     ["curried closure", "let y = fun (a) -> fun (b) -> a + b in y(1)", "[[[letfun, y, [a], [[[letfun, t1, [b], [[[letbin, t0, +, [var, a], [var, b]]], [var, t0]]]], [var, t1]]], [letcall, t2, [var, y], [[int, 1]]]], [var, t2]]"],
     ["unary minus", "-5", "[[[letbin, t0, -, [int, 0], [int, 5]]], [var, t0]]"]])
 
+let pipe_suite(st) =
+  foldl(pipe_one, st, [
+    ["1+2", "1 + 2\n",
+     "[[[letbin, t0, +, [int, 1], [int, 2]]], [var, t0]]\n[[mov_imm, 1, 2], [mov_imm, 2, 4], [add, 3, 1, 2]]",
+     "3"],
+    ["lit 42", "42\n",
+     "[[], [int, 42]]\n[[mov_imm, 1, 84]]",
+     "42"],
+    ["1+2*3", "1 + 2 * 3\n",
+     "[[[letbin, t0, *, [int, 2], [int, 3]], [letbin, t1, +, [int, 1], [var, t0]]], [var, t1]]\n[[mov_imm, 1, 4], [mov_imm, 2, 6], [mul, 3, 1, 2], [mov_imm, 4, 2], [add, 5, 4, 3]]",
+     "7"]])
+
 let elf_suite(st) =
   let _ = cat_files(["src-self/elf.yac", "src-self/driver_elf.yac"], str_cat(TMP, "/elf_run.yac")) in
   let br = native_build(str_cat(TMP, "/elf_run.yac"), str_cat(TMP, "/elf_run")) in
@@ -257,7 +281,8 @@ let unit_suite(st) =
     ["encode mov_rbp_rsp", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = mov_rbp_rsp(b);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "72\n137\n229\n0"],
     ["encode jmp_rel32", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = jmp_rel32(b, 0);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "233\n0\n0\n0\n0\n0"],
     ["encode mov_r64_r64", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = mov_r64_r64(b, 0, 1);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "72\n137\n200\n0"],
-    ["lir_expr 1+2", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac"], "let r = anf_expr([\"binop\", \"+\", [\"int\", \"1\"], [\"int\", \"2\"]], 0);\nlet st = st_no([list_new(), env_new(0), 1, sigma_new(0), 0]);\nlet out = lir_expr([nth(r,0), nth(r,1)], st);\nprint nth(nth(out, 0), 0);\n0;\n", "mov_imm\n0"]])
+    ["lir_expr 1+2", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac"], "let r = anf_expr([\"binop\", \"+\", [\"int\", \"1\"], [\"int\", \"2\"]], 0);\nlet st = st_no([list_new(), env_new(0), 1, sigma_new(0), 0]);\nlet out = lir_expr([nth(r,0), nth(r,1)], st);\nprint nth(nth(out, 0), 0);\n0;\n", "mov_imm\n0"],
+    ["lir_expr 1+2 insns", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac"], "let r = anf_expr([\"binop\", \"+\", [\"int\", \"1\"], [\"int\", \"2\"]], 0);\nlet st = st_no([list_new(), env_new(0), 1, sigma_new(0), 0]);\nlet out = lir_expr([nth(r,0), nth(r,1)], st);\nprint nth(out, 0);\n0;\n", "[[mov_imm, 1, 2], [mov_imm, 2, 4], [add, 3, 1, 2]]\n0"]])
 
 let main =
   let _ = run(["mkdir", "-p", TMP]) in
@@ -265,21 +290,37 @@ let main =
   let _ = cat_files(["src-self/lexer.yac", "src-self/parser.yac", "src-self/driver_parse.yac"], str_cat(TMP, "/parse_run.yac")) in
   let _ = cat_files(["src-self/lexer.yac", "src-self/parser.yac", "src-self/anf.yac", "src-self/driver_anf.yac"], str_cat(TMP, "/anf_run.yac")) in
   let _ = write_file(str_cat(TMP, "/log_stub.yac"), LOG_STUB) in
+  let _ = write_file(str_cat(TMP, "/emit_stub.yac"), EMIT_STUB) in
   let _ = cat_files([str_cat(TMP, "/log_stub.yac"),
+                     "src-self/target.yac",
                      "src-self/lexer.yac", "src-self/parser.yac",
                      "src-self/encode_x64.yac", "src-self/elf.yac",
                      "src-self/lir.yac",
                      "src-self/emit.yac", "src-self/emit_x86_64.yac",
+                     str_cat(TMP, "/emit_stub.yac"),
                      "src-self/lower.yac",
-                     "src-self/backend.yac", "src-self/driver_emit.yac"],
+                     "src-self/driver_emit.yac"],
                     str_cat(TMP, "/emit_run.yac")) in
+  let _ = cat_files([str_cat(TMP, "/log_stub.yac"),
+                     "src-self/target.yac",
+                     "src-self/lexer.yac", "src-self/parser.yac",
+                     "src-self/anf.yac",
+                     "src-self/encode_x64.yac", "src-self/elf.yac",
+                     "src-self/lir.yac",
+                     "src-self/emit.yac", "src-self/emit_x86_64.yac",
+                     str_cat(TMP, "/emit_stub.yac"),
+                     "src-self/lower.yac",
+                     "src-self/driver_pipe.yac"],
+                    str_cat(TMP, "/pipe_run.yac")) in
   let _ = native_build(str_cat(TMP, "/lex_run.yac"), str_cat(TMP, "/lex_run")) in
   let _ = native_build(str_cat(TMP, "/parse_run.yac"), str_cat(TMP, "/parse_run")) in
   let _ = native_build(str_cat(TMP, "/anf_run.yac"), str_cat(TMP, "/anf_run")) in
+  let _ = native_build(str_cat(TMP, "/pipe_run.yac"), str_cat(TMP, "/pipe_run")) in
   let st0 = lex_suite([0, 0]) in
   let st1 = parse_suite(st0) in
   let st2 = anf_suite(st1) in
-  let st3 = elf_suite(st2) in
+  let stP = pipe_suite(st2) in
+  let st3 = elf_suite(stP) in
   let st4 = emit_suite(st3) in
   let st5 = unit_suite(st4) in
   let _ = print("") in

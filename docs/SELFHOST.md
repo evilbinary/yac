@@ -242,7 +242,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 `lir_expr` 把一项 ANF 编成槽指令；整表 `["prog", [_start] · runtime · procs, "_start"]` 在 backend 里拼出。runtime 约 **39** 个过程（手写 helper 不占 fun 表）。
 
-**无法再迁进 LIR 的手写 `gen_*`**（`emit_program_at` 末尾追加）：
+**无法再迁进 LIR 的手写 `gen_*`**（`emit_program_x86_64` 末尾追加）：
 
 | 函数 | 原因 |
 | --- | --- |

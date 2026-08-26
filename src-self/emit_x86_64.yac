@@ -2015,7 +2015,7 @@ let resolve_local_labels(b, labels, patches) =
       step(i + 1) in
   step(0)
 
-let emit_program_at(prog, load_vaddr, text_off) =
+let emit_program_x86_64(prog, load_vaddr, text_off) =
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
   let _ = log_i("emit", "nfun", nfun) in
@@ -2123,4 +2123,4 @@ let emit_program_at(prog, load_vaddr, text_off) =
   let _ = log("emit", "done") in
   [b, funOffsRev2]
 
-let emit_program(prog) = emit_program_at(prog, 4194304, 120)
+let emit_program(prog) = emit_program_x86_64(prog, 4194304, 120)

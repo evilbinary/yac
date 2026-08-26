@@ -179,7 +179,7 @@ let patches_extend(dst, src) =
     else let _ = list_push(dst, nth(src, i)) in loop(i + 1) in
   loop(0)
 
-/* Top-level so ncap=0 and self-call is TCO. Nested resolve(i) in emit_program_at
+/* Top-level so ncap=0 and self-call is TCO. Nested resolve(i) in emit_program_x86_64
  * overflows the C stack once nth is O(1) and we actually walk every patch. */
 let emit_resolve_patch(st, p) =
   let b = nth(st, 0) in
