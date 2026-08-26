@@ -401,6 +401,10 @@ let lower_atom(atom, st) =
     let v = if nth(atom, 1) == "true" then 1 else 0 in
     [insn_push(insns, l_mov_imm(slot, v)),
      slot, env, ctr + 1, funs, funcnt]
+  else if k == "unit" then
+    let slot = ctr in
+    [insn_push(insns, l_mov_imm(slot, 0)),
+     slot, env, ctr + 1, funs, funcnt]
   else if k == "var" then
     lower_var(atom, st)
   else
@@ -553,16 +557,24 @@ let lower_user_call(fnname, dst, slots, env, funs0, self) =
       l_icall(dst, env_lookup(env, fnname), slots)
   else l_fcall(dst, fun_code_name(funs0, fnname), slots)
 
+/* callι: g ∈ Σ / env 先于 runtime 名。否则 `let len(n)=n+1` 会打成 yac_len。 */
+let is_bound_fn(fnname, env, funs0) =
+  if env_has(env, fnname) then true
+  else funs_has(funs0, fnname)
+
 let lower_call_insn(fnname, dst, slots, env, funs0, self) =
-  let a = lower_prim_list(fnname, dst, slots) in
-  if a == 0 then
-    let b = lower_prim_str(fnname, dst, slots) in
-    if b == 0 then
-      let c = lower_prim_bytes(fnname, dst, slots) in
-      if c == 0 then lower_user_call(fnname, dst, slots, env, funs0, self)
-      else c
-    else b
-  else a
+  if is_bound_fn(fnname, env, funs0) then
+    lower_user_call(fnname, dst, slots, env, funs0, self)
+  else
+    let a = lower_prim_list(fnname, dst, slots) in
+    if a == 0 then
+      let b = lower_prim_str(fnname, dst, slots) in
+      if b == 0 then
+        let c = lower_prim_bytes(fnname, dst, slots) in
+        if c == 0 then lower_user_call(fnname, dst, slots, env, funs0, self)
+        else c
+      else b
+    else a
 
 /* pack = [s, i, nb, tail]. */
 let lower_letcall(b, pack) =

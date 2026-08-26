@@ -144,6 +144,8 @@ insn      ::= ["local",    nslots, nparams]
             | ["glob",     s, i] | ["gst", i, s]
             | ["strlit",   s, bytes]           ; rodata，结果 tagged 指针
             | ["closure",  s, name, [s*]]      ; 分配闭包，patch 函数地址
+            | ["alloc",    s, nbytes]          ; runtime kernel
+            | ["obj_kind"|"obj_sti"|"obj_st_int"|"ld64"|"st64"|"write1"|"clock"|"memcpy", …]
 
 cop       ::= "==" | "!=" | "<" | "<=" | ">" | ">="
 off, nr, i, nslots, nparams, ncap, int ::= 整数
@@ -240,7 +242,7 @@ callι(self, x, ["var", g], s, _, ss) =
     ["tcall",  s, ĝ, cap·ss] if  tail(x) ∧ ĝ = self ∧ |cap·ss| ≤ 6
   | ["fcall",  s, ĝ, cap·ss] if  ĝ = self ∧ n > 0 ∧ |cap·ss| ≤ 6
   | ["fcall",  s, ĝ, ss]     if  g ∈ Σ ∧ n = 0
-  | ["ccall",  s, rt(g), ss] if  g 是 runtime 名
+  | ["ccall",  s, rt(g), ss] if  g 是 runtime 名   ; 在 Σ / env 之后，避免遮蔽 let len
   | ["apply",  s, Γ(g), n, ss] if  Γ(g) 有已知 ncap = n > 0
   | ["icall",  s, Γ(g), ss]  otherwise        ; 槽里是闭包，nenv 运行时读
   where ĝ = Σ 中 g 的码名（重名加 #uid）
