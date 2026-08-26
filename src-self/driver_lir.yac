@@ -1,0 +1,16 @@
+/* driver_lir.yac — parse + ANF + lir_expr, dump insn lists.
+ * Reads build/test_tmp/lirin.yac. Used by tests/boot/run.yac.
+ */
+let src = read_file("build/test_tmp/lirin.yac")
+let toks = tokenize(src)
+let prog = parse_program(toks, 0, [])
+let show(n) =
+  if n >= len(prog) then 0
+  else
+    let r = anf_expr(nth(prog, n), 0) in
+    let out = lir_expr([nth(r, 0), nth(r, 1)],
+                st_no([list_new(), env_new(0), 1, sigma_new(0), 0])) in
+    let _ = print(nth(out, 0)) in
+    show(n + 1)
+let _ = show(0)
+0

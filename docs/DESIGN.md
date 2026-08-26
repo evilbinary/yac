@@ -149,7 +149,7 @@ insn      ::= ["local",    nslots, nparams]
             | ["strlit",   s, bytes]           ; rodata，结果 tagged 指针
             | ["closure",  s, name, [s*]]      ; 分配闭包，patch 函数地址
             | ["alloc",    s, nbytes]          ; runtime kernel
-            | ["obj_kind"|"obj_sti"|"obj_st_int"|"ld64"|"st64"|"write1"|"clock"|"memcpy", …]
+            | ["write1"|"clock"|"memcpy", …]
 
 cop       ::= "==" | "!=" | "<" | "<=" | ">" | ">="
 off, nr, i, nslots, nparams, ncap, int ::= 整数

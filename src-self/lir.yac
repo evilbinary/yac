@@ -671,6 +671,27 @@ let lir_letif_prep(b, s) =
   let cr = lir_atom(nth(b, 2), s) in
   [nth(b, 3), nth(b, 4), cr, nth(cr, 3), nth(cr, 3) + 1, nth(b, 1)]
 
+let if_put(b, step, p) =
+  if step == 0 then
+    if_put(insn_push(b, ["cmpjmp", nth(nth(p, 0), 1), nth(p, 4), nth(p, 5)]), 1, p)
+  else if step == 1 then
+    if_put(insn_push(b, ["label", nth(p, 4)]), 2, p)
+  else if step == 2 then
+    if_put(insn_extend(b, nth(nth(p, 2), 0)), 3, p)
+  else if step == 3 then
+    if_put(insn_push(b, ["mov", nth(p, 1), nth(nth(p, 2), 1)]), 4, p)
+  else if step == 4 then
+    if_put(insn_push(b, ["jmp", nth(p, 6)]), 5, p)
+  else if step == 5 then
+    if_put(insn_push(b, ["label", nth(p, 5)]), 6, p)
+  else if step == 6 then
+    if_put(insn_extend(b, nth(nth(p, 3), 0)), 7, p)
+  else if step == 7 then
+    if_put(insn_push(b, ["mov", nth(p, 1), nth(nth(p, 3), 1)]), 8, p)
+  else if step == 8 then
+    insn_push(b, ["label", nth(p, 6)])
+  else b
+
 let lir_letif_finish(s, p, thenr, elser) =
   let cr = nth(p, 2) in
   let dst = nth(p, 3) in
@@ -680,15 +701,7 @@ let lir_letif_finish(s, p, thenr, elser) =
   let L2 = str_cat("LIF", int_to_str(L + 2)) in
   let nextctr =
     if nth(thenr, 3) > nth(elser, 3) then nth(thenr, 3) else nth(elser, 3) in
-  let buf = insn_push(list_new(), ["cmpjmp", nth(cr, 1), L0, L1]) in
-  let buf = insn_push(buf, ["label", L0]) in
-  let buf = insn_extend(buf, nth(thenr, 0)) in
-  let buf = insn_push(buf, ["mov", dst, nth(thenr, 1)]) in
-  let buf = insn_push(buf, ["jmp", L2]) in
-  let buf = insn_push(buf, ["label", L1]) in
-  let buf = insn_extend(buf, nth(elser, 0)) in
-  let buf = insn_push(buf, ["mov", dst, nth(elser, 1)]) in
-  let buf = insn_push(buf, ["label", L2]) in
+  let buf = if_put(list_new(), 0, [cr, dst, thenr, elser, L0, L1, L2]) in
   [insn_extend(nth(cr, 0), buf),
    env_bind(nth(elser, 2), nth(p, 5), dst, 0), nextctr,
    nth(elser, 4), L + 3, nth(s, 5)]

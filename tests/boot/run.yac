@@ -75,15 +75,18 @@ let anf_one(st, c) =
   let _ = write_file(str_cat(TMP, "/anfin.yac"), nth(c, 1)) in
   check(st, str_cat("anf ", nth(c, 0)), nth(c, 2), rchomp(native_out(str_cat(TMP, "/anf_run"))))
 
+let lir_one(st, c) =
+  let _ = write_file(str_cat(TMP, "/lirin.yac"), nth(c, 1)) in
+  check(st, str_cat("lir ", nth(c, 0)), nth(c, 2), rchomp(native_out(str_cat(TMP, "/lir_run"))))
+
 let pipe_one(st, c) =
   let _ = write_file(str_cat(TMP, "/pipein.yac"), nth(c, 1)) in
-  let out = rchomp(native_out(str_cat(TMP, "/pipe_run"))) in
-  let st1 = check(st, str_cat("pipe dump ", nth(c, 0)), nth(c, 2), out) in
+  let _ = run([str_cat(TMP, "/pipe_run")]) in
   if nth(run(["test", "-f", str_cat(TMP, "/pipe.bin")]), 0) != 0 then
-    check(st1, str_cat("pipe rc ", nth(c, 0)), nth(c, 3), "missing pipe.bin")
+    check(st, str_cat("pipe rc ", nth(c, 0)), nth(c, 2), "missing pipe.bin")
   else
     let _ = run(["chmod", "+x", str_cat(TMP, "/pipe.bin")]) in
-    check(st1, str_cat("pipe rc ", nth(c, 0)), nth(c, 3),
+    check(st, str_cat("pipe rc ", nth(c, 0)), nth(c, 2),
           int_to_str(nth(run([str_cat(TMP, "/pipe.bin")]), 0)))
 
 let emit_one(st, c) =
@@ -185,17 +188,32 @@ let anf_suite(st) =
     ["curried closure", "let y = fun (a) -> fun (b) -> a + b in y(1)", "[[[letfun, y, [a], [[[letfun, t1, [b], [[[letbin, t0, +, [var, a], [var, b]]], [var, t0]]]], [var, t1]]], [letcall, t2, [var, y], [[int, 1]]]], [var, t2]]"],
     ["unary minus", "-5", "[[[letbin, t0, -, [int, 0], [int, 5]]], [var, t0]]"]])
 
+let lir_suite(st) =
+  foldl(lir_one, st, [
+    ["literal", "42", "[[mov_imm, 1, 84]]"],
+    ["addition", "1 + 2", "[[mov_imm, 1, 2], [mov_imm, 2, 4], [add, 3, 1, 2]]"],
+    ["precedence", "1 + 2 * 3",
+     "[[mov_imm, 1, 4], [mov_imm, 2, 6], [mul, 3, 1, 2], [mov_imm, 4, 2], [add, 5, 4, 3]]"],
+    ["if true", "if true then 1 else 2",
+     "[[mov_imm, 1, 2], [cmpjmp, 1, LIF0, LIF1], [label, LIF0], [mov_imm, 3, 2], [mov, 2, 3], [jmp, LIF2], [label, LIF1], [mov_imm, 3, 4], [mov, 2, 3], [label, LIF2]]"],
+    ["if var", "if x then 1 else 2",
+     "[[cmpjmp, 0, LIF0, LIF1], [label, LIF0], [mov_imm, 2, 2], [mov, 1, 2], [jmp, LIF2], [label, LIF1], [mov_imm, 2, 4], [mov, 1, 2], [label, LIF2]]"],
+    ["let bind", "let x = 5 in x + 1",
+     "[[mov_imm, 1, 10], [mov_imm, 2, 2], [add, 3, 1, 2]]"],
+    ["letfun call", "let f(x) = x + 1 in f(2)",
+     "[[closure, 1, f, []], [mov_imm, 2, 4], [fcall, 3, f, [2]]]"],
+    ["unary minus", "-5", "[[mov_imm, 1, 0], [mov_imm, 2, 10], [sub, 3, 1, 2]]"],
+    ["call", "f(1, 2)", "[[mov_imm, 1, 2], [mov_imm, 2, 4], [fcall, 3, f, [1, 2]]]"],
+    ["lambda", "fun (a) -> a + 1", "[[closure, 1, t1, []]]"]])
+
 let pipe_suite(st) =
   foldl(pipe_one, st, [
-    ["1+2", "1 + 2\n",
-     "[[[letbin, t0, +, [int, 1], [int, 2]]], [var, t0]]\n[[mov_imm, 1, 2], [mov_imm, 2, 4], [add, 3, 1, 2]]",
-     "3"],
-    ["lit 42", "42\n",
-     "[[], [int, 42]]\n[[mov_imm, 1, 84]]",
-     "42"],
-    ["1+2*3", "1 + 2 * 3\n",
-     "[[[letbin, t0, *, [int, 2], [int, 3]], [letbin, t1, +, [int, 1], [var, t0]]], [var, t1]]\n[[mov_imm, 1, 4], [mov_imm, 2, 6], [mul, 3, 1, 2], [mov_imm, 4, 2], [add, 5, 4, 3]]",
-     "7"]])
+    ["1+2", "1 + 2\n", "3"],
+    ["lit 42", "42\n", "42"],
+    ["1+2*3", "1 + 2 * 3\n", "7"],
+    ["if true", "if true then 1 else 2\n", "1"],
+    ["let x+1", "let x = 5 in x + 1\n", "6"],
+    ["letfun f(2)", "let f(x) = x + 1 in f(2)\n", "3"]])
 
 let elf_suite(st) =
   let _ = cat_files(["src-self/elf.yac", "src-self/driver_elf.yac"], str_cat(TMP, "/elf_run.yac")) in
@@ -279,15 +297,14 @@ let unit_suite(st) =
     ["encode syscall", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = syscall(b);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "15\n5\n0"],
     ["encode mov_rbp_rsp", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = mov_rbp_rsp(b);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "72\n137\n229\n0"],
     ["encode jmp_rel32", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = jmp_rel32(b, 0);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "233\n0\n0\n0\n0\n0"],
-    ["encode mov_r64_r64", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = mov_r64_r64(b, 0, 1);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "72\n137\n200\n0"],
-    ["lir_expr 1+2", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac"], "let r = anf_expr([\"binop\", \"+\", [\"int\", \"1\"], [\"int\", \"2\"]], 0);\nlet st = st_no([list_new(), env_new(0), 1, sigma_new(0), 0]);\nlet out = lir_expr([nth(r,0), nth(r,1)], st);\nprint nth(nth(out, 0), 0);\n0;\n", "mov_imm\n0"],
-    ["lir_expr 1+2 insns", ["lexer.yac", "parser.yac", "anf.yac", "lir.yac"], "let r = anf_expr([\"binop\", \"+\", [\"int\", \"1\"], [\"int\", \"2\"]], 0);\nlet st = st_no([list_new(), env_new(0), 1, sigma_new(0), 0]);\nlet out = lir_expr([nth(r,0), nth(r,1)], st);\nprint nth(out, 0);\n0;\n", "[[mov_imm, 1, 2], [mov_imm, 2, 4], [add, 3, 1, 2]]\n0"]])
+    ["encode mov_r64_r64", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = mov_r64_r64(b, 0, 1);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "72\n137\n200\n0"]])
 
 let main =
   let _ = run(["mkdir", "-p", TMP]) in
   let _ = cat_files(["src-self/lexer.yac", "src-self/driver_lex.yac"], str_cat(TMP, "/lex_run.yac")) in
   let _ = cat_files(["src-self/lexer.yac", "src-self/parser.yac", "src-self/driver_parse.yac"], str_cat(TMP, "/parse_run.yac")) in
   let _ = cat_files(["src-self/lexer.yac", "src-self/parser.yac", "src-self/anf.yac", "src-self/driver_anf.yac"], str_cat(TMP, "/anf_run.yac")) in
+  let _ = cat_files(["src-self/lexer.yac", "src-self/parser.yac", "src-self/anf.yac", "src-self/lir.yac", "src-self/driver_lir.yac"], str_cat(TMP, "/lir_run.yac")) in
   let _ = write_file(str_cat(TMP, "/log_stub.yac"), LOG_STUB) in
   let _ = write_file(str_cat(TMP, "/emit_stub.yac"), EMIT_STUB) in
   let _ = cat_files([str_cat(TMP, "/log_stub.yac"),
@@ -314,11 +331,13 @@ let main =
   let _ = native_build(str_cat(TMP, "/lex_run.yac"), str_cat(TMP, "/lex_run")) in
   let _ = native_build(str_cat(TMP, "/parse_run.yac"), str_cat(TMP, "/parse_run")) in
   let _ = native_build(str_cat(TMP, "/anf_run.yac"), str_cat(TMP, "/anf_run")) in
+  let _ = native_build(str_cat(TMP, "/lir_run.yac"), str_cat(TMP, "/lir_run")) in
   let _ = native_build(str_cat(TMP, "/pipe_run.yac"), str_cat(TMP, "/pipe_run")) in
   let st0 = lex_suite([0, 0]) in
   let st1 = parse_suite(st0) in
   let st2 = anf_suite(st1) in
-  let stP = pipe_suite(st2) in
+  let stL = lir_suite(st2) in
+  let stP = pipe_suite(stL) in
   let st3 = elf_suite(stP) in
   let st4 = emit_suite(st3) in
   let st5 = unit_suite(st4) in
