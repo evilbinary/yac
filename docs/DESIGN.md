@@ -237,11 +237,15 @@ bin(cop,s,a,b)  = ["cmp",  cop, s, a, b]     ; cop ∈ {==,!=,<,<=,>,>=}
          ι   = callι(self, x, f, s, s_f, [s_i])
 
 callι(self, x, ["var", g], s, _, ss) =
-    ["tcall",  s, g, ss]     if  tail(x) ∧ g = self ∧ g ∈ Σ ∧ |ss| ≤ 6
-  | ["fcall",  s, g, ss]     if  g ∈ Σ ∧ Σ(g).ncap = 0
+    ["tcall",  s, ĝ, cap·ss] if  tail(x) ∧ ĝ = self ∧ |cap·ss| ≤ 6
+  | ["fcall",  s, ĝ, cap·ss] if  ĝ = self ∧ n > 0 ∧ |cap·ss| ≤ 6
+  | ["fcall",  s, ĝ, ss]     if  g ∈ Σ ∧ n = 0
   | ["ccall",  s, rt(g), ss] if  g 是 runtime 名
   | ["apply",  s, Γ(g), n, ss] if  Γ(g) 有已知 ncap = n > 0
   | ["icall",  s, Γ(g), ss]  otherwise        ; 槽里是闭包，nenv 运行时读
+  where ĝ = Σ 中 g 的码名（重名加 #uid）
+        n   = Σ(g).ncap
+        cap = [1..n]                         ; 当前帧捕获槽，self 调用要原样传入
 
 callι(self, x, f, s, s_f, ss) =
     ["ticall", s, s_f, ss]   if  tail(x) ∧ f 是 self 的闭包槽 ∧ |ss| ≤ 6
@@ -253,6 +257,7 @@ runtime 名以 yac_* / time_* / gc_collect / argc / argv / print_val 为准。
 
 tail(x)  当且仅当该 letcall 是 body 的最后一条绑定，且尾原子是 ["var", x]。
 只对 self 做 TCO；ccall 不做 TCO。
+命名 self 走第一条（`fcall`/`tcall` + 捕获槽），不要把所有尾 `icall` 收成 `ticall`（`twice(f,x)=f(f(x))` 会错）。
 
 Γ ⊢ ["letfun", f, ps, body]  ⇒  Γ[f ↦ s]  ▹  I_out  ▹  {proc} ∪ P
   where  caps = FV(body) \ ({f} ∪ ps)

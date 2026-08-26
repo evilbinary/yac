@@ -428,13 +428,13 @@ let maybe_tailcall(rest_tail, newinsn, dst, slots, self) =
   else if not tco_name_ok(self) then newinsn
   else if nth(newinsn, 0) == "fcall" then
     if nth(newinsn, 2) == self then
-      if len(slots) > 6 then newinsn
-      else l_tcall(dst, nth(newinsn, 2), slots)
+      if len(nth(newinsn, 3)) > 6 then newinsn
+      else l_tcall(dst, nth(newinsn, 2), nth(newinsn, 3))
     else newinsn
   else if nth(newinsn, 0) == "call" then
     if nth(newinsn, 2) == self then
-      if len(slots) > 6 then newinsn
-      else l_tcall(dst, nth(newinsn, 2), slots)
+      if len(nth(newinsn, 3)) > 6 then newinsn
+      else l_tcall(dst, nth(newinsn, 2), nth(newinsn, 3))
     else newinsn
   else newinsn
 
@@ -531,23 +531,35 @@ let lower_prim_bytes(fnname, dst, slots) =
   else if fnname == "bshr" then l_binop(">>", dst, nth(slots, 0), nth(slots, 1))
   else 0
 
-let lower_user_call(fnname, dst, slots, env, funs0) =
+/* Slots 1..ncap already hold this frame's captures (letfun layout). */
+let cap_slots_n(n, j, acc) =
+  if j > n then acc
+  else cap_slots_n(n, j + 1, append(acc, [j]))
+
+let lower_user_call(fnname, dst, slots, env, funs0, self) =
   if env_has(env, fnname) then
     if env_ncap(env, fnname) > 0 then
-      l_apply(dst, env_lookup(env, fnname), env_ncap(env, fnname), slots)
+      if fun_code_name(funs0, fnname) == self then
+        if env_ncap(env, fnname) + len(slots) > 6 then
+          l_apply(dst, env_lookup(env, fnname), env_ncap(env, fnname), slots)
+        else
+          l_fcall(dst, fun_code_name(funs0, fnname),
+                  append(cap_slots_n(env_ncap(env, fnname), 1, []), slots))
+      else
+        l_apply(dst, env_lookup(env, fnname), env_ncap(env, fnname), slots)
     else if funs_has(funs0, fnname) then
       l_fcall(dst, fun_code_name(funs0, fnname), slots)
     else
       l_icall(dst, env_lookup(env, fnname), slots)
   else l_fcall(dst, fun_code_name(funs0, fnname), slots)
 
-let lower_call_insn(fnname, dst, slots, env, funs0) =
+let lower_call_insn(fnname, dst, slots, env, funs0, self) =
   let a = lower_prim_list(fnname, dst, slots) in
   if a == 0 then
     let b = lower_prim_str(fnname, dst, slots) in
     if b == 0 then
       let c = lower_prim_bytes(fnname, dst, slots) in
-      if c == 0 then lower_user_call(fnname, dst, slots, env, funs0)
+      if c == 0 then lower_user_call(fnname, dst, slots, env, funs0, self)
       else c
     else b
   else a
@@ -560,7 +572,8 @@ let lower_letcall(b, pack) =
   let dst = nth(lr, 3) in
   let tagged = apply_tco(
     [s, [nth(pack, 1), nth(pack, 2), nth(pack, 3), nth(b, 1)],
-     lower_call_insn(nth(nth(b, 2), 1), dst, nth(lr, 1), nth(s, 1), nth(s, 3)),
+     lower_call_insn(nth(nth(b, 2), 1), dst, nth(lr, 1), nth(s, 1), nth(s, 3),
+                     nth(s, 5)),
      dst, nth(lr, 1)]) in
   [insn_push(nth(lr, 0), tagged),
    env_bind(nth(lr, 2), nth(b, 1), dst, 0), dst + 1,
