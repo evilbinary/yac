@@ -123,7 +123,8 @@ let anf = ["tailcall", ["var","fact"], [["int",5]]]
 | `src-self/encode_{x64,arm64,riscv64}.yac` | 单条目标指令 → 字节                                | ✅   |
 | `src-self/emit.yac` + `emit_<arch>.yac`   | LIR → 机器码（x86-64 / arm64 / riscv64）       | ✅   |
 | `src-self/{elf,pe,macho,pack}.yac`        | 机器码 → ELF / PE / Mach-O                    | ✅   |
-| `src-self/backend.yac` `yc.yac`           | 驱动：`--arch` / `--format`、管线、错误报告          | ✅   |
+| `src-self/backend.yac`                    | 管线 + `compile_file`；`backend_compile` = emit+pack_elf | ✅   |
+| `src-self/yc.yac`                         | CLI：`--arch` / `--format`、argv                         | ✅   |
 | `src-self/driver_{lex,parse,anf,elf}.yac` | 各阶段测试驱动                                   | ✅   |
 
 

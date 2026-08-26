@@ -2,10 +2,9 @@
  *
  * Pass: ["pass", name, fn]   fn : value -> value
  *
- * The list lives in yc.yac (not tests):
+ * The list lives in backend.yac (not tests):
  *   src -lex-> tok -parse-> ast -anf-> anf -lower-> lir -emit-> pack
- * Later ANF opts go between "anf" and "lower". pack is the container
- * (pack_elf today; other formats swap that pass).
+ * Later ANF opts go between "anf" and "lower". pack is the container.
  */
 
 let mk_pass(name, fn) = ["pass", name, fn]

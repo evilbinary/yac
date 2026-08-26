@@ -225,15 +225,16 @@ let str_to_int(s) =
 let env_new(_) =
   let ps = list_new() in
   let _ = list_push(ps, 0) in
-  [alist_new(0), [0, ps]]
+  [alist_new(0), [0, ps], fmap_new(0)]
 
 let env_enter(env) =
   let ps = nth(nth(env, 1), 1) in
   let _ = list_push(ps, nth(nth(env, 1), 0)) in
-  [nth(env, 0), [len(ps) - 1, ps]]
+  [nth(env, 0), [len(ps) - 1, ps], nth(env, 2)]
 
 let env_bind(env, name, slot, ncap) =
   let _ = alist_put(nth(env, 0), name, [slot, ncap, nth(nth(env, 1), 0)]) in
+  let _ = fmap_put(nth(env, 2), name, 1) in
   env
 
 let env_live(g, cur, parents) =
@@ -249,8 +250,9 @@ let env_scan(xs, k, cur, parents, i) =
   else env_scan(xs, k, cur, parents, i - 1)
 
 let env_rec(env, name) =
-  env_scan(nth(env, 0), name, nth(nth(env, 1), 0), nth(nth(env, 1), 1),
-           len(nth(env, 0)) - 1)
+  if fmap_get(nth(env, 2), name) == 0 then 0
+  else env_scan(nth(env, 0), name, nth(nth(env, 1), 0), nth(nth(env, 1), 1),
+                len(nth(env, 0)) - 1)
 
 let env_lookup(env, name) =
   let e = env_rec(env, name) in
@@ -557,10 +559,11 @@ let lower_user_call(fnname, dst, slots, env, funs0, self) =
       l_icall(dst, env_lookup(env, fnname), slots)
   else l_fcall(dst, fun_code_name(funs0, fnname), slots)
 
-/* callι: g ∈ Σ / env 先于 runtime 名。否则 `let len(n)=n+1` 会打成 yac_len。 */
+/* callι: Σ 哈希先于 env；env 先于 runtime 名。否则 `let len(n)=n+1` 会打成 yac_len。
+ * env_rec 对从未 bind 的名字（nth/len/cons…）fmap miss，避免线性扫 alist。 */
 let is_bound_fn(fnname, env, funs0) =
-  if env_has(env, fnname) then true
-  else funs_has(funs0, fnname)
+  if funs_has(funs0, fnname) then true
+  else env_has(env, fnname)
 
 let lower_call_insn(fnname, dst, slots, env, funs0, self) =
   if is_bound_fn(fnname, env, funs0) then

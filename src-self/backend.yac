@@ -1,6 +1,29 @@
-/* backend.yac — emit then pack_elf for emit/elf drivers.
- * yc.yac runs those as two PIPELINE passes instead of this helper.
+/* backend.yac — LIR → bytes → image, plus the compile pipeline.
+ *
+ * backend_compile(lir)  — x86 ELF (boot driver_emit / driver_lower)
+ * compile_file(...)     — src → write binary (called from yc.yac)
+ *
+ * PIPELINE: src -lex-> tok -parse-> ast -anf-> anf -lower-> lir -emit-> pack
  */
+
+let backend_emit(t, lir) =
+  let a = target_arch(t) in
+  let _ = log("backend", "emit begin") in
+  let r =
+    if a == "x86_64" then
+      emit_program_at(lir, target_vaddr(t), target_text_off(t))
+    else if a == "arm64" then
+      emit_program_arm64(lir, target_vaddr(t), target_text_off(t))
+    else
+      emit_program_riscv64(lir, target_vaddr(t), target_text_off(t)) in
+  let code = nth(r, 0) in
+  let _ = log_i("backend", "code_len", bytes_len(code)) in
+  code
+
+let backend_pack(t, code) =
+  let _ = log("backend", "pack") in
+  pack_image(t, code)
+
 let backend_compile(prog) =
   let _ = log("backend", "emit begin") in
   let r = emit_program(prog) in
@@ -9,3 +32,59 @@ let backend_compile(prog) =
   let bin = pack_elf(nth(r, 0)) in
   let _ = log("backend", "done") in
   bin
+
+let anf_top(item) =
+  let r = anf_expr(item, 0) in
+  [nth(r, 0), nth(r, 1)]
+
+let anf_all(i, prog, acc) =
+  if i >= len(prog) then acc
+  else anf_all(i + 1, prog, append(acc, [anf_top(nth(prog, i))]))
+
+let pass_lex(src) =
+  let _ = log("yc", "tokenize begin") in
+  let toks = tokenize(src) in
+  let _ = log_i("yc", "ntoks", len(toks)) in
+  toks
+
+let pass_parse(toks) =
+  let _ = log("yc", "parse begin") in
+  let prog = parse_program(toks, 0, []) in
+  let _ = log_i("yc", "nprog", len(prog)) in
+  prog
+
+let pass_anf(prog) =
+  let _ = log("yc", "anf begin") in
+  let anf_list = anf_all(0, prog, []) in
+  let _ = log_i("yc", "nanf", len(anf_list)) in
+  anf_list
+
+let pass_lower(anf_list) =
+  tco_prog(compile_top(anf_list))
+
+let pass_emit_t(t, lir) = backend_emit(t, lir)
+
+let pass_pack_t(t, code) = backend_pack(t, code)
+
+let make_pipeline(t) =
+  [mk_pass("lex", pass_lex),
+   mk_pass("parse", pass_parse),
+   mk_pass("anf", pass_anf),
+   mk_pass("lower", pass_lower),
+   mk_pass("emit", fun(lir) -> pass_emit_t(t, lir)),
+   mk_pass("pack", fun(code) -> pass_pack_t(t, code))]
+
+let compile_file(inpath, outpath, t, profpath) =
+  let t0 = time_ms() in
+  let _ = if profpath == "" then 0 else yac_prof_enable(profpath) in
+  let _ = log("yc", "start") in
+  let src = read_file(inpath) in
+  let _ = log_i("yc", "src_len", str_len(src)) in
+  let bin = run_passes(make_pipeline(t), src) in
+  let _ = log_i("yc", "bin_len", bytes_len(bin)) in
+  let _ = log("yc", "write") in
+  let _ = write_file(outpath, bin) in
+  let _ = log_i("prof", "total", time_ms() - t0) in
+  let _ = log("yc", "done") in
+  let _ = if profpath == "" then 0 else yac_prof_dump(0) in
+  0
