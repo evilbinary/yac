@@ -9,6 +9,23 @@
 
 let reverse(xs) = list_rev(xs)
 
+/* DESIGN arith tags. */
+let is_arith(k) =
+  k == "add" or k == "sub" or k == "mul" or k == "div" or k == "rem"
+  or k == "sar" or k == "shr" or k == "sal" or k == "shl"
+  or k == "land" or k == "lor" or k == "xor"
+
+/* icall/ticall have no ncap field; apply/tailapply do. */
+let apply_ncap(insn) =
+  if nth(insn, 0) == "icall" then 0 - 1
+  else if nth(insn, 0) == "ticall" then 0 - 1
+  else nth(insn, 3)
+
+let apply_args(insn) =
+  if nth(insn, 0) == "icall" then nth(insn, 3)
+  else if nth(insn, 0) == "ticall" then nth(insn, 3)
+  else nth(insn, 4)
+
 let b_append(dst, src) =
   let _ = bytes_extend(dst, src) in
   dst

@@ -921,7 +921,7 @@ let emit_x86_i_core(st, insn, is_entry) =
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
   let k = nth(insn, 0) in
-  if k == "prologue" then
+  if k == "local" then
     let nlocals = nth(insn, 1) in
     let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
     /* imm8 for sub/add rsp is signed (-128..127); frames >= 128 need imm32 */
@@ -976,36 +976,31 @@ let emit_x86_i_core(st, insn, is_entry) =
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "binop" then
-    /* untag both operands, compute, retag */
-    let op = nth(insn, 1) in
-    let dst = nth(insn, 2) in
-    let a = nth(insn, 3) in
-    let bop = nth(insn, 4) in
+  else if is_arith(k) then
+    let dst = nth(insn, 1) in
+    let a = nth(insn, 2) in
+    let bop = nth(insn, 3) in
     let _ = emit_load_rax_slot(b, a) in
     let _ = sar_rax_1(b) in
     let _ = emit_load_rbx_slot(b, bop) in
     let _ = sar_rbx_1(b) in
     let c =
-      if op == "+" then add_rax_rbx(b)
-      else if op == "-" then sub_rax_rbx(b)
-      else if op == "*" then imul_rax_rbx(b)
-      else if op == "&" then and_rax_rbx(b)
-      else if op == "|" then or_rax_rbx(b)
-      else if op == "^" then xor_rax_rbx(b)
-      else if op == "~" then not_rax(b)
-      else if op == "<<" then
+      if k == "add" then add_rax_rbx(b)
+      else if k == "sub" then sub_rax_rbx(b)
+      else if k == "mul" then imul_rax_rbx(b)
+      else if k == "land" then and_rax_rbx(b)
+      else if k == "lor" then or_rax_rbx(b)
+      else if k == "xor" then xor_rax_rbx(b)
+      else if k == "shl" or k == "sal" then
         let _ = mov_rcx_rbx(b) in
         shl_rax_cl(b)
-      else if op == ">>" then
+      else if k == "shr" or k == "sar" then
         let _ = mov_rcx_rbx(b) in
         shr_rax_cl(b)
-      else if op == "and" then and_rax_rbx(b)
-      else if op == "or" then or_rax_rbx(b)
-      else if op == "/" then
+      else if k == "div" then
         let _ = cqo(b) in
         idiv_rbx(b)
-      else if op == "%" then
+      else if k == "rem" then
         let _ = cqo(b) in
         let _ = idiv_rbx(b) in
         mov_r64_r64(b, 0, 2)
@@ -1114,7 +1109,7 @@ let emit_x86_i_core(st, insn, is_entry) =
   else if k == "label" then
     let nm = nth(insn, 1) in
     emit_st4(st, b, cur, cons([nm, cur], labels), patches)
-  else if k == "call" then
+  else if k == "fcall" or k == "ccall" then
     /* call fn(argSlots...): load args to rdi,rsi,rdx,rcx,r8,r9; call; store. */
     let dst = nth(insn, 1) in
     let fn = nth(insn, 2) in
@@ -1137,7 +1132,7 @@ let emit_x86_i_core(st, insn, is_entry) =
     let _ = call_rel32(b, 0) in
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, callstart + 1, fn))
-  else if k == "tailcall" then
+  else if k == "tcall" then
     /* TCO: load args, tear down frame, jmp (no extra stack). */
     let fn = nth(insn, 2) in
     let args = nth(insn, 3) in
@@ -1165,7 +1160,7 @@ let emit_x86_i_core(st, insn, is_entry) =
     let jpos = bytes_len(b) in
     let _ = jmp_rel32(b, 0) in
     emit_st4(st, b, cur, labels, cons([jpos + 1, nth(insn, 1)], patches))
-  else if k == "br" then
+  else if k == "cmpjmp" then
     let cond = nth(insn, 1) in
     let tl = nth(insn, 2) in
     let fl = nth(insn, 3) in
@@ -1239,14 +1234,14 @@ let emit_x86_i_heap(st, insn) =
     let _ = shl_rax_1(b) in
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "obj_ld" then
+  else if k == "mref" then
     let dst = nth(insn, 1) in
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let _ = and_rax_1(b) in
     let _ = mov_rax_rax_disp8(b, nth(insn, 3)) in
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "obj_st" then
+  else if k == "mset" then
     let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     let _ = and_rax_1(b) in
@@ -1295,7 +1290,7 @@ let emit_x86_i_heap(st, insn) =
     let _ = or_rax_1(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_alloc"))
-  else if k == "ld8" then
+  else if k == "mref8" then
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let _ = and_rax_1(b) in
     let _ = mov_rbx_rax(b) in
@@ -1307,7 +1302,7 @@ let emit_x86_i_heap(st, insn) =
     let _ = shl_rax_1(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "st8" then
+  else if k == "mset8" then
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     let _ = and_rax_1(b) in
     let _ = mov_rbx_rax(b) in
@@ -1472,14 +1467,12 @@ let emit_x86_i_clos(st, insn, is_entry) =
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels,
      emit_patch_rel(nth(st, 4), emit_patch_clos(nth(st, 4), patches, fnpos, fnName), acall + 1, "yac_alloc"))
-  else if k == "apply" then
-    /* apply dst closSlot ncap [argSlots]:
-     * ncap >= 0: load that many caps (compile-time).
-     * ncap < 0: read nenv from the object at runtime (jump table). */
+  else if k == "apply" or k == "icall" then
+    /* apply dst clos ncap [args]  |  icall dst clos [args] (ncap = -1) */
     let dst = nth(insn, 1) in
     let clos = nth(insn, 2) in
-    let ncap = nth(insn, 3) in
-    let args = nth(insn, 4) in
+    let ncap = apply_ncap(insn) in
+    let args = apply_args(insn) in
     let nargs = len(args) in
     if ncap >= 0 then
       let ntot = ncap + nargs in
@@ -1618,10 +1611,10 @@ let emit_x86_i_clos(st, insn, is_entry) =
       let _ = apply_patch(b, j4, lc) in
       let _ = apply_patch(b, j5, lc) in
       emit_st4(st, b, cur, labels, patches)
-  else if k == "tailapply" then
+  else if k == "tailapply" or k == "ticall" then
     let clos = nth(insn, 2) in
-    let ncap = nth(insn, 3) in
-    let args = nth(insn, 4) in
+    let ncap = apply_ncap(insn) in
+    let args = apply_args(insn) in
     let nargs = len(args) in
     let ntot = ncap + nargs in
     let nreg = if ntot < 6 then ntot else 6 in
@@ -1968,26 +1961,26 @@ let emit_x86_i_memcpy(st, insn) =
   emit_st4(st, b, cur, labels, patches)
 
 /* emit one instruction; st = [bytes, cur, labelsRev, patchesRev, funIds].
- * Helpers keep this frame small (huge emit_insn miscompiles under L5).
- * lir_norm lives in the wrapper so this frame stays the old size. */
+ * Helpers keep this frame small (huge emit_insn miscompiles under L5). */
 let emit_insn_go(st, insn, is_entry) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let k = nth(insn, 0) in
   let len0 = bytes_len(b) in
   let done =
-    if k == "closure" or k == "apply" or k == "tailapply" then
+    if k == "closure" or k == "apply" or k == "icall"
+         or k == "tailapply" or k == "ticall" then
       emit_x86_i_clos(st, insn, is_entry)
-    else if k == "prologue" or k == "mov_imm" or k == "mov" or k == "binop"
-         or k == "cmp" or k == "icmp" or k == "label" or k == "call"
-         or k == "tailcall" or k == "jmp" or k == "br" or k == "ret"
+    else if k == "local" or k == "mov_imm" or k == "mov" or is_arith(k)
+         or k == "cmp" or k == "icmp" or k == "label" or k == "fcall" or k == "ccall"
+         or k == "tcall" or k == "jmp" or k == "cmpjmp" or k == "ret"
          or k == "exit" then
       emit_x86_i_core(st, insn, is_entry)
     else if k == "untag" or k == "syscall" then
       emit_x86_i_sys(st, insn)
-    else if k == "obj_kind" or k == "obj_ld" or k == "obj_st" or k == "tag"
+    else if k == "obj_kind" or k == "mref" or k == "mset" or k == "tag"
          or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
-         or k == "alloc_s" or k == "ld8" or k == "st8" or k == "ld64" or k == "st64" or k == "print"
+         or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64" or k == "print"
          or k == "write1" or k == "clock" or k == "glob" or k == "gst" or k == "time_ms"
          or k == "time_str" or k == "argc" or k == "argv" then
       emit_x86_i_heap(st, insn)
@@ -1997,7 +1990,7 @@ let emit_insn_go(st, insn, is_entry) =
   [nth(done, 0), cur + (newlen - len0), nth(done, 2), nth(done, 3), nth(done, 4)]
 
 let emit_insn(st, insn, is_entry) =
-  emit_insn_go(st, lir_norm(insn), is_entry)
+  emit_insn_go(st, insn, is_entry)
 
 
 let resolve_local_labels(b, labels, patches) =

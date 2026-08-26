@@ -804,7 +804,7 @@ let emit_rv_i_core(st, insn, is_entry) =
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
   let k = nth(insn, 0) in
-  if k == "prologue" then
+  if k == "local" then
     let nlocals = nth(insn, 1) in
     let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
     let nbytes = rv_frame_bytes(nlocals) in
@@ -852,30 +852,26 @@ let emit_rv_i_core(st, insn, is_entry) =
     let _ = rv_slot(b, nth(insn, 2), false, 6) in
     let _ = rv_slot(b, nth(insn, 1), true, 6) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "binop" then
-    let op = nth(insn, 1) in
-    let _ = rv_slot(b, nth(insn, 3), false, 6) in
+  else if is_arith(k) then
+    let _ = rv_slot(b, nth(insn, 2), false, 6) in
     let _ = rv_addi(b, 7, 0, 1) in
     let _ = rv_sra(b, 6, 6, 7) in
-    let _ = rv_slot(b, nth(insn, 4), false, 28) in
+    let _ = rv_slot(b, nth(insn, 3), false, 28) in
     let _ = rv_sra(b, 28, 28, 7) in
     let _ =
-      if op == "+" then rv_add(b, 6, 6, 28)
-      else if op == "-" then rv_sub(b, 6, 6, 28)
-      else if op == "*" then rv_mul(b, 6, 6, 28)
-      else if op == "&" then rv_and(b, 6, 6, 28)
-      else if op == "|" then rv_or(b, 6, 6, 28)
-      else if op == "^" then rv_xor(b, 6, 6, 28)
-      else if op == "~" then rv_xori(b, 6, 6, 4095)
-      else if op == "<<" then rv_sll(b, 6, 6, 28)
-      else if op == ">>" then rv_srl(b, 6, 6, 28)
-      else if op == "and" then rv_and(b, 6, 6, 28)
-      else if op == "or" then rv_or(b, 6, 6, 28)
-      else if op == "/" then rv_div(b, 6, 6, 28)
-      else if op == "%" then rv_rem(b, 6, 6, 28)
+      if k == "add" then rv_add(b, 6, 6, 28)
+      else if k == "sub" then rv_sub(b, 6, 6, 28)
+      else if k == "mul" then rv_mul(b, 6, 6, 28)
+      else if k == "land" then rv_and(b, 6, 6, 28)
+      else if k == "lor" then rv_or(b, 6, 6, 28)
+      else if k == "xor" then rv_xor(b, 6, 6, 28)
+      else if k == "shl" or k == "sal" then rv_sll(b, 6, 6, 28)
+      else if k == "shr" or k == "sar" then rv_srl(b, 6, 6, 28)
+      else if k == "div" then rv_div(b, 6, 6, 28)
+      else if k == "rem" then rv_rem(b, 6, 6, 28)
       else rv_add(b, 6, 6, 28) in
     let _ = rv_sll(b, 6, 6, 7) in
-    let _ = rv_slot(b, nth(insn, 2), true, 6) in
+    let _ = rv_slot(b, nth(insn, 1), true, 6) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "icmp" then
     let op = nth(insn, 1) in
@@ -910,7 +906,7 @@ let emit_rv_i_core(st, insn, is_entry) =
     let pos = bytes_len(b) in
     let _ = rv_jal(b, 0, 0) in
     emit_st4(st, b, cur, labels, cons(["jal", pos, nth(insn, 1)], patches))
-  else if k == "br" then
+  else if k == "cmpjmp" then
     let _ = rv_slot(b, nth(insn, 1), false, 6) in
     let _ = rv_addi(b, 7, 0, 1) in
     let _ = rv_sra(b, 6, 6, 7) in
@@ -923,7 +919,7 @@ let emit_rv_i_core(st, insn, is_entry) =
     emit_st4(st, b, cur, labels,
      cons(["jal", pt, nth(insn, 2)],
           cons(["jal", pf, nth(insn, 3)], patches)))
-  else if k == "call" then
+  else if k == "fcall" or k == "ccall" then
     let args = nth(insn, 3) in
     let na = len(args) in
     let load(j) =
@@ -955,7 +951,7 @@ let emit_rv_i_core(st, insn, is_entry) =
     let _ = rv_addi(b, 17, 0, 93) in
     let _ = rv_ecall(b) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "tailcall" then
+  else if k == "tcall" then
     let fn = nth(insn, 2) in
     let args = nth(insn, 3) in
     let na = len(args) in
@@ -1021,14 +1017,14 @@ let emit_rv_i_heap(st, insn) =
     let _ = rv_add(b, 10, 10, 10) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "obj_ld" then
+  else if k == "mref" then
     let _ = rv_slot(b, nth(insn, 2), false, 10) in
     let _ = rv_addi(b, 6, 0, 0 - 2) in
     let _ = rv_and(b, 10, 10, 6) in
     let _ = rv_ld(b, 10, 10, nth(insn, 3)) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "obj_st" then
+  else if k == "mset" then
     let _ = rv_slot(b, nth(insn, 3), false, 11) in
     let _ = rv_slot(b, nth(insn, 1), false, 10) in
     let _ = rv_addi(b, 6, 0, 0 - 2) in
@@ -1064,7 +1060,7 @@ let emit_rv_i_heap(st, insn) =
     let _ = rv_and(b, 10, 10, 6) in
     let _ = rv_sd(b, 11, 10, nth(insn, 2)) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "ld8" then
+  else if k == "mref8" then
     let _ = rv_slot(b, nth(insn, 2), false, 10) in
     let _ = rv_addi(b, 6, 0, 0 - 2) in
     let _ = rv_and(b, 10, 10, 6) in
@@ -1076,7 +1072,7 @@ let emit_rv_i_heap(st, insn) =
     let _ = rv_add(b, 10, 10, 10) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "st8" then
+  else if k == "mset8" then
     let _ = rv_slot(b, nth(insn, 3), false, 12) in
     let _ = rv_addi(b, 7, 0, 1) in
     let _ = rv_sra(b, 12, 12, 7) in
@@ -1254,11 +1250,11 @@ let emit_rv_i_clos(st, insn, is_entry) =
     let _ = rv_slot(b, dst, true, 10) in
     emit_st4(st, b, cur, labels,
      emit_patch_rel(nth(st, 4), emit_patch_clos(nth(st, 4), patches, fnpos, fnName), acall, "yac_alloc"))
-  else if k == "apply" then
+  else if k == "apply" or k == "icall" then
     let dst = nth(insn, 1) in
     let clos = nth(insn, 2) in
-    let ncap = nth(insn, 3) in
-    let args = nth(insn, 4) in
+    let ncap = apply_ncap(insn) in
+    let args = apply_args(insn) in
     let nargs = len(args) in
     let ntot = ncap + nargs in
     if ncap < 0 then
@@ -1291,10 +1287,10 @@ let emit_rv_i_clos(st, insn, is_entry) =
       let _ = rv_jalr(b, 1, 6, 0) in
       let _ = rv_slot(b, dst, true, 10) in
       emit_st4(st, b, cur, labels, patches)
-  else if k == "tailapply" then
+  else if k == "tailapply" or k == "ticall" then
     let clos = nth(insn, 2) in
-    let ncap = nth(insn, 3) in
-    let args = nth(insn, 4) in
+    let ncap = apply_ncap(insn) in
+    let args = apply_args(insn) in
     let nargs = len(args) in
     let ntot = ncap + nargs in
     if ncap < 0 then
@@ -1555,18 +1551,19 @@ let emit_rv_i_memcpy(st, insn) =
 
 let emit_insn_rv_go(st, insn, is_entry) =
   let k = nth(insn, 0) in
-  if k == "closure" or k == "apply" or k == "tailapply" then
+  if k == "closure" or k == "apply" or k == "icall"
+       or k == "tailapply" or k == "ticall" then
     emit_rv_i_clos(st, insn, is_entry)
-  else if k == "prologue" or k == "mov_imm" or k == "mov" or k == "binop"
-       or k == "cmp" or k == "icmp" or k == "label" or k == "call"
-       or k == "tailcall" or k == "jmp" or k == "br" or k == "ret"
+  else if k == "local" or k == "mov_imm" or k == "mov" or is_arith(k)
+       or k == "cmp" or k == "icmp" or k == "label" or k == "fcall" or k == "ccall"
+       or k == "tcall" or k == "jmp" or k == "cmpjmp" or k == "ret"
        or k == "exit" then
     emit_rv_i_core(st, insn, is_entry)
   else if k == "untag" or k == "syscall" then
     emit_rv_i_sys(st, insn)
-  else if k == "obj_kind" or k == "obj_ld" or k == "obj_st" or k == "tag"
+  else if k == "obj_kind" or k == "mref" or k == "mset" or k == "tag"
        or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
-       or k == "alloc_s" or k == "ld8" or k == "st8" or k == "ld64" or k == "st64" or k == "print"
+       or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64" or k == "print"
        or k == "write1" or k == "clock" or k == "glob" or k == "gst" or k == "time_ms"
        or k == "time_str" or k == "argc" or k == "argv" then
     emit_rv_i_heap(st, insn)
@@ -1574,7 +1571,7 @@ let emit_insn_rv_go(st, insn, is_entry) =
   else emit_rv_i_prim(st, insn)
 
 let emit_insn_rv(st, insn, is_entry) =
-  emit_insn_rv_go(st, lir_norm(insn), is_entry)
+  emit_insn_rv_go(st, insn, is_entry)
 
 
 

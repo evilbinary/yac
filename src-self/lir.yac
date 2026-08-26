@@ -23,40 +23,11 @@ let bin(op, d, a, b) =
   else if op == "%" then ["rem", d, a, b]
   else if op == "and" then ["land", d, a, b]
   else if op == "or" then ["lor", d, a, b]
-  else ["binop", op, d, a, b]
-
-/* DESIGN tags → emit-* shapes. No `let k` (native drops it). */
-let lir_norm_arith(ins) =
-  if nth(ins, 0) == "add" then ["binop", "+", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "sub" then ["binop", "-", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "mul" then ["binop", "*", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "div" then ["binop", "/", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "rem" then ["binop", "%", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "sar" then ["binop", ">>", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "shr" then ["binop", ">>", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "sal" then ["binop", "<<", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "shl" then ["binop", "<<", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "land" then ["binop", "and", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "lor" then ["binop", "or", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "xor" then ["binop", "^", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else ins
-
-let lir_norm_call(ins) =
-  if nth(ins, 0) == "fcall" then ["call", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "ccall" then ["call", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "tcall" then ["tailcall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "icall" then ["apply", nth(ins, 1), nth(ins, 2), 0 - 1, nth(ins, 3)]
-  else if nth(ins, 0) == "ticall" then ["tailapply", nth(ins, 1), nth(ins, 2), 0 - 1, nth(ins, 3)]
-  else lir_norm_arith(ins)
-
-let lir_norm(ins) =
-  if nth(ins, 0) == "local" then ["prologue", nth(ins, 1), nth(ins, 2)]
-  else if nth(ins, 0) == "cmpjmp" then ["br", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "mref" then ["obj_ld", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "mset" then ["obj_st", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "mref8" then ["ld8", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "mset8" then ["st8", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else lir_norm_call(ins)
+  else if op == "<<" then ["shl", d, a, b]
+  else if op == ">>" then ["shr", d, a, b]
+  else if op == "&" then ["land", d, a, b]
+  else if op == "^" then ["xor", d, a, b]
+  else ["add", d, a, b]
 
 let tco_hit(ins, slot, gname, i) =
   if nth(ins, 1) == slot then
@@ -78,14 +49,10 @@ let tco_find(insns, i, slot, gname) =
     else 0 - 1
   else if nth(nth(insns, i), 0) == "fcall" then
     tco_hit(nth(insns, i), slot, gname, i)
-  else if nth(nth(insns, i), 0) == "call" then
-    tco_hit(nth(insns, i), slot, gname, i)
   else 0 - 1
 
 let tco_one(ins) =
-  if nth(ins, 0) == "call" then
-    ["tcall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "fcall" then
+  if nth(ins, 0) == "fcall" then
     ["tcall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
   else if nth(ins, 0) == "apply" then
     ["tailapply", nth(ins, 1), nth(ins, 2), nth(ins, 3), nth(ins, 4)]

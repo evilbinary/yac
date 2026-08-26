@@ -159,19 +159,7 @@ s                                      ::= 槽号（整数）
 
 `mov_imm` 写入 **已经编码好的** 64 位模式（翻译时完成 tag：int 为 `n<<1`，nil 为 `1`）。源级 `nth`/`cons`/`len`/`str_cat`/`foldl`/`map`/`bytes_`*/*`argc`*/*`argv`*/*`time_`/`read_file`/`write_file` 不是 LIR 指令，一律 `ccall yac_`*（或 `time_ms` 等 runtime 名）。`str_len`/`str_ref`/`bytes_len` 是对象字段读取（同 mref），emit 直出。
 
-emit 时 `lir_norm` 把设计标签收成 emit-* 已有的形状（构造器走左边；boot 手写 LIR 可直接用右边）：
-
-```
-local            →  prologue
-add/sub/mul/…    →  binop
-cmpjmp           →  br
-fcall / ccall    →  call
-tcall            →  tailcall
-icall            →  apply  (ncap = -1)
-ticall           →  tailapply
-mref / mset      →  obj_ld / obj_st
-mref8 / mset8    →  ld8 / st8
-```
+emit 认同一套 DESIGN 标签（`local`/`add`/`cmpjmp`/`fcall`/`ccall`/`tcall`/`icall`/`apply`/`mref`/`mset`/`mref8`…）。`apply`/`tailapply` 带已知 `ncap`；`icall`/`ticall` 无 ncap（运行时读闭包）。
 
 `exit` 是 emit 糖（untag + 架构 exit），手写测试仍可用。`_start` 走 `untag` + `syscall 60`。`syscall` 的 nr **60 表示进程退出**（x86-64 Linux 的 exit 号）；arm64/riscv64 映成 93。槽参数已是要进寄存器的位模式。
 

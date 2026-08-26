@@ -1,6 +1,6 @@
 /* runtime.yac — arch-independent runtime as LIR (same emit_insn as user code).
  *
- * Kernel: obj_kind / obj_ld / obj_st / obj_sti / obj_st_int / tag / alloc
+ * Kernel: obj_kind / mref / mset / obj_sti / obj_st_int / tag / alloc
  * plus ordinary control LIR. cons still goes through emit (yac_alloc).
  * Layout (qword): next=0 mark=8 kind=16 car/len=24 cdr/head=32 (listbuf tail=40).
  * listbuf also: nth cursor i=48 cell=56; index vec@64 (STR blob of cell ptrs),
@@ -387,8 +387,8 @@ let rt_str_cat_ins(_) =
    ["mov_imm", 7, 7 + 7],
    ["add", 6, 6, 7],
    ["mov_imm", 7, 3 + 3],
-   ["binop", ">>", 6, 6, 7],
-   ["binop", "<<", 6, 6, 7],
+   ["shr", 6, 6, 7],
+   ["shl", 6, 6, 7],
    ["alloc_s", 8, 6],
    ["obj_sti", 8, 8, 0],
    ["obj_sti", 8, 16, 3],
@@ -409,8 +409,8 @@ let rt_str_slice_ins(_) =
    ["mov_imm", 5, 7 + 7],
    ["add", 4, 4, 5],
    ["mov_imm", 5, 3 + 3],
-   ["binop", ">>", 4, 4, 5],
-   ["binop", "<<", 4, 4, 5],
+   ["shr", 4, 4, 5],
+   ["shl", 4, 4, 5],
    ["alloc_s", 6, 4],
    ["obj_sti", 6, 8, 0],
    ["obj_sti", 6, 16, 3],
@@ -844,8 +844,8 @@ let rt_bytes_to_str_ins(_) =
    ["mov_imm", 4, 7 + 7],
    ["add", 3, 3, 4],
    ["mov_imm", 4, 3 + 3],
-   ["binop", ">>", 3, 3, 4],
-   ["binop", "<<", 3, 3, 4],
+   ["shr", 3, 3, 4],
+   ["shl", 3, 3, 4],
    ["alloc_s", 5, 3],
    ["obj_sti", 5, 8, 0],
    ["obj_sti", 5, 16, 3],

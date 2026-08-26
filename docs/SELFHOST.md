@@ -144,7 +144,7 @@ let anf = ["tailcall", ["var","fact"], [["int",5]]]
 
 ### 6.1 LIR（低级中间表示，跨架构共享）
 
-ISA 以 `docs/DESIGN.md` §2.1 为准（设计标签）。构造器发 `local`/`add`/`cmpjmp`/`fcall`/`ccall`/`tcall`/`mref`/…；emit 前 `lir_norm` 收成 `prologue`/`binop`/`br`/`call`/`tailcall`/`obj_ld`。手写 boot LIR 可直接用 emit 标签（含 `exit`）。
+ISA 以 `docs/DESIGN.md` §2.1 为准。构造器与 emit 同一套标签（`local`/`add`/`cmpjmp`/`fcall`/`mref`/…）。手写 boot LIR 可带 `exit` 糖。
 
 槽机：值为栈槽，临时值走返回寄存器。没有独立寄存器分配。`nth`/`cons`/`len`/`str_cat` 不是 LIR 指令，走 `ccall yac_*`。
 
