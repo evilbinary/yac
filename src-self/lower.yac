@@ -27,44 +27,109 @@ let insn_extend(ins, xs) =
     else let _ = list_push(ins, nth(xs, i)) in loop(i + 1) in
   loop(0)
 
-/* ---- fun table: [fun_list, fmap] with 256-bucket hash for O(1) avg lookup ---- */
+/* Maps:
+ * - fmap: mutable open-addressing [vec, n, cap]. funs / profile.
+ * - alist (append [k,v], last-put-wins scan): env / shadow / fv sset.
+ *   Those need put history for gen/depth; do not overwrite.
+ */
 let hash_str_loop(s, n, i, h) =
   if i >= n then h
-  else hash_str_loop(s, n, i + 1, (h * 31 + str_ref(s, i)) % 256)
+  else hash_str_loop(s, n, i + 1, band(h * 131 + str_ref(s, i), 16777215))
 
 let hash_str(s) = hash_str_loop(s, str_len(s), 0, 0)
 
-let fmap_fill(b, i) =
-  if i >= 256 then b
+let fmap_fill(b, i, cap) =
+  if i >= cap then b
   else
-    let _ = list_push(b, list_new()) in
-    fmap_fill(b, i + 1)
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    fmap_fill(b, i + 8, cap)
 
-let fmap_new(_) = fmap_fill(list_new(), 0)
+let fmap_new(_) =
+  let m = list_new() in
+  let _ = list_push(m, fmap_fill(list_new(), 0, 8)) in
+  let _ = list_push(m, 0) in
+  let _ = list_push(m, 8) in
+  m
 
-let fmap_put(m, k, v) =
-  let bucket = nth(m, hash_str(k)) in
-  let _ = list_push(bucket, [k, v]) in
-  0
+let fmap_probe(vec, k, i, mask) =
+  if nth(vec, i) == 0 then i
+  else if nth(nth(vec, i), 0) == k then i
+  else fmap_probe(vec, k, band(i + 1, mask), mask)
 
-let fmap_scan(bucket, k, i) =
-  if i < 0 then 0
-  else if nth(nth(bucket, i), 0) == k then nth(nth(bucket, i), 1)
-  else fmap_scan(bucket, k, i - 1)
+let fmap_got(e) =
+  if e == 0 then 0 else nth(e, 1)
 
 let fmap_get(m, k) =
-  let bucket = nth(m, hash_str(k)) in
-  fmap_scan(bucket, k, len(bucket) - 1)
+  fmap_got(nth(nth(m, 0), fmap_probe(nth(m, 0), k,
+            band(hash_str(k), nth(m, 2) - 1), nth(m, 2) - 1)))
 
-/* String set: same 256-bucket layout as fmap (values unused). */
-let sset_new(_) = fmap_new(0)
+let fmap_fresh(m, i, k, v) =
+  let _ = list_set(nth(m, 0), i, [k, v]) in
+  list_set(m, 1, nth(m, 1) + 1)
+
+let fmap_put_at(m, k, v, i) =
+  if nth(nth(m, 0), i) == 0 then fmap_fresh(m, i, k, v)
+  else list_set(nth(m, 0), i, [k, v])
+
+let fmap_install(m, k, v) =
+  fmap_put_at(m, k, v, fmap_probe(nth(m, 0), k,
+              band(hash_str(k), nth(m, 2) - 1), nth(m, 2) - 1))
+
+let fmap_rehash(oldv, m, i, oldc) =
+  if i >= oldc then 0
+  else if nth(oldv, i) == 0 then fmap_rehash(oldv, m, i + 1, oldc)
+  else
+    let _ = fmap_install(m, nth(nth(oldv, i), 0), nth(nth(oldv, i), 1)) in
+    fmap_rehash(oldv, m, i + 1, oldc)
+
+let fmap_grow_prep(m, oldc) =
+  let _ = list_set(m, 0, fmap_fill(list_new(), 0, oldc * 2)) in
+  let _ = list_set(m, 1, 0) in
+  list_set(m, 2, oldc * 2)
+
+let fmap_swap(oldv, m, oldc) =
+  let _ = fmap_grow_prep(m, oldc) in
+  fmap_rehash(oldv, m, 0, oldc)
+
+let fmap_grow(m) = fmap_swap(nth(m, 0), m, nth(m, 2))
+
+let fmap_maybe_grow(m) =
+  if nth(m, 1) * 2 >= nth(m, 2) then fmap_grow(m) else 0
+
+let fmap_put(m, k, v) =
+  let _ = fmap_maybe_grow(m) in
+  fmap_install(m, k, v)
+
+/* Alist scan (also used by sset / sh). */
+let fmap_scan(xs, k, i) =
+  if i < 0 then 0
+  else if nth(nth(xs, i), 0) == k then nth(nth(xs, i), 1)
+  else fmap_scan(xs, k, i - 1)
+
+let alist_new(_) = list_new()
+
+let alist_put(m, k, v) =
+  let _ = list_push(m, [k, v]) in
+  0
+
+let alist_get(m, k) = fmap_scan(m, k, len(m) - 1)
+
+/* String set: alist, values unused. */
+let sset_new(_) = alist_new(0)
 
 let sset_put(m, k) =
-  let _ = fmap_put(m, k, 1) in
+  let _ = alist_put(m, k, 1) in
   m
 
 let sset_has(m, k) =
-  let e = fmap_get(m, k) in
+  let e = fmap_scan(m, k, len(m) - 1) in
   if e == 0 then false else true
 
 let sset_from_list(xs) =
@@ -75,9 +140,9 @@ let sset_from_list(xs) =
     else let _ = sset_put(m, nth(xs, i)) in loop(i + 1) in
   loop(0)
 
-/* Shadow env: [fmap name->depth, depth]. Nested letfun uses enter/leave
+/* Shadow env: [alist name->depth, depth]. Nested letfun uses enter/leave
  * without cloning; has() ignores bindings deeper than the current depth. */
-let sh_new(_) = [fmap_new(0), 1]
+let sh_new(_) = [alist_new(0), 1]
 
 let sh_from_list(xs) =
   let sh = sh_new(0) in
@@ -85,25 +150,25 @@ let sh_from_list(xs) =
   let loop(i) =
     if i >= n then sh
     else
-      let _ = fmap_put(nth(sh, 0), nth(xs, i), nth(sh, 1)) in
+      let _ = alist_put(nth(sh, 0), nth(xs, i), nth(sh, 1)) in
       loop(i + 1) in
   loop(0)
 
 let sh_put(sh, k) =
-  let _ = fmap_put(nth(sh, 0), k, nth(sh, 1)) in
+  let _ = alist_put(nth(sh, 0), k, nth(sh, 1)) in
   sh
 
-/* No `let e` here: native drops locals in this frame (same as env_scan). */
-let sh_has_scan(bucket, k, dcur, i) =
-  if i < 0 then false
-  else if nth(nth(bucket, i), 0) == k then
-    if nth(nth(bucket, i), 1) <= dcur then true
-    else sh_has_scan(bucket, k, dcur, i - 1)
-  else sh_has_scan(bucket, k, dcur, i - 1)
+/* Continue (not hit) first so both recurrences are tail like fmap_scan.
+ * Native `!=` on strings is pointer inequality — use `==` then branch. */
+let sh_has_scan(xs, k, dcur, i) =
+  if i < 0 then 0
+  else if nth(nth(xs, i), 0) == k then
+    if nth(nth(xs, i), 1) > dcur then sh_has_scan(xs, k, dcur, i - 1)
+    else 1
+  else sh_has_scan(xs, k, dcur, i - 1)
 
 let sh_has(sh, k) =
-  let bucket = nth(nth(sh, 0), hash_str(k)) in
-  sh_has_scan(bucket, k, nth(sh, 1), len(bucket) - 1)
+  sh_has_scan(nth(sh, 0), k, nth(sh, 1), len(nth(sh, 0)) - 1) != 0
 
 let sh_enter(sh) = [nth(sh, 0), nth(sh, 1) + 1]
 let sh_leave(sh) = [nth(sh, 0), nth(sh, 1) - 1]
@@ -154,13 +219,13 @@ let str_to_int(s) =
   let v = acc(start, 0) in
   if isneg then 0 - v else v
 
-/* Environment: 2-tuple [fmap, [gen, parents]]. Bindings [slot, ncap, gen].
+/* Environment: 2-tuple [alist, [gen, parents]]. Bindings [slot, ncap, gen].
  * env_scan must not bind locals (native drops `let` in that frame; fmap_scan
  * style nth(nth(...)) is required). */
 let env_new(_) =
   let ps = list_new() in
   let _ = list_push(ps, 0) in
-  [fmap_new(0), [0, ps]]
+  [alist_new(0), [0, ps]]
 
 let env_enter(env) =
   let ps = nth(nth(env, 1), 1) in
@@ -168,7 +233,7 @@ let env_enter(env) =
   [nth(env, 0), [len(ps) - 1, ps]]
 
 let env_bind(env, name, slot, ncap) =
-  let _ = fmap_put(nth(env, 0), name, [slot, ncap, nth(nth(env, 1), 0)]) in
+  let _ = alist_put(nth(env, 0), name, [slot, ncap, nth(nth(env, 1), 0)]) in
   env
 
 let env_live(g, cur, parents) =
@@ -176,15 +241,16 @@ let env_live(g, cur, parents) =
   else if cur == 0 then false
   else env_live(g, nth(parents, cur), parents)
 
-let env_scan(bucket, k, cur, parents, i) =
+let env_scan(xs, k, cur, parents, i) =
   if i < 0 then 0
-  else if nth(nth(bucket, i), 0) == k then
-    if env_live(nth(nth(nth(bucket, i), 1), 2), cur, parents) then nth(nth(bucket, i), 1)
-    else env_scan(bucket, k, cur, parents, i - 1)
-  else env_scan(bucket, k, cur, parents, i - 1)
+  else if nth(nth(xs, i), 0) == k then
+    if env_live(nth(nth(nth(xs, i), 1), 2), cur, parents) then nth(nth(xs, i), 1)
+    else env_scan(xs, k, cur, parents, i - 1)
+  else env_scan(xs, k, cur, parents, i - 1)
 
 let env_rec(env, name) =
-  env_scan(nth(nth(env, 0), hash_str(name)), name, nth(nth(env, 1), 0), nth(nth(env, 1), 1), len(nth(nth(env, 0), hash_str(name))) - 1)
+  env_scan(nth(env, 0), name, nth(nth(env, 1), 0), nth(nth(env, 1), 1),
+           len(nth(env, 0)) - 1)
 
 let env_lookup(env, name) =
   let e = env_rec(env, name) in
@@ -214,7 +280,7 @@ let prim_names = ["cons", "len", "nth", "tail", "append", "print",
                   "str_len", "str_cat", "str_ref", "str_slice", "int_to_str",
                   "time_ms", "time_ns", "time_str", "argc", "argv",
                   "bytes_new", "bytes_len", "bytes_append", "bytes_extend", "bytes_ref", "bytes_put",
-                  "bytes_to_str", "list_new", "list_push", "list_rev",
+                  "bytes_to_str", "list_new", "list_push", "list_set", "list_rev",
                   "box_new", "box_get", "box_set", "yac_prof_cell",
                   "read_file", "write_file", "system", "popen", "band", "bor", "bxor", "bnot", "bshl", "bshr",
                   "gc_collect"]
@@ -222,13 +288,15 @@ let is_prim_name(w) = in_list(w, prim_names)
 
 /* collect vars in anf body. Prim / zero-capture global call targets are not
  * free; HO values and capturing call targets remain free (need apply).
- * accum = [list, sset]; shadow = [fmap, depth]. */
+ * accum = [list, sset]; shadow = [alist, depth]. */
 let collect_anf_vars(anf, accum, shadow, funs) =
   let atom_vars(atom, acc, shdw) =
     let k = nth(atom, 0) in
     if k == "var" then
       let nm = nth(atom, 1) in
       if sh_has(shdw, nm) then acc
+      else if funs_has(funs, nm) then
+        if fun_ncap(funs, nm) == 0 then acc else fv_acc_add(acc, nm)
       else fv_acc_add(acc, nm)
     else if k == "fun" then
       let rr = collect_anf_vars(nth(atom, 2), acc, shdw, funs) in
@@ -295,6 +363,18 @@ let free_vars(fnbody, params, funs) =
   let rr = collect_anf_vars(fnbody, fv_acc_new(0), sh, funs) in
   reverse(fv_acc_list(nth(rr, 0)))
 
+/* let-free: native drops `let` in lower_atom's frame. */
+let lower_var(atom, st) =
+  if env_lookup(nth(st, 1), nth(atom, 1)) != 0 then
+    [nth(st, 0), env_lookup(nth(st, 1), nth(atom, 1)),
+     nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
+  else if funs_has(nth(st, 3), nth(atom, 1)) then
+    [insn_push(nth(st, 0),
+       l_closure(nth(st, 2), fun_code_name(nth(st, 3), nth(atom, 1)), [])),
+     nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
+  else
+    [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
+
 /* atomize a sub-expr to a slot. st = [insns, env, counter, funs, funcnt].
  * Returns [insns, slot, env, counter, funs, funcnt]. */
 let lower_atom(atom, st) =
@@ -322,7 +402,7 @@ let lower_atom(atom, st) =
     [insn_push(insns, l_mov_imm(slot, v)),
      slot, env, ctr + 1, funs, funcnt]
   else if k == "var" then
-    [insns, env_lookup(env, nth(atom, 1)), env, ctr, funs, funcnt]
+    lower_var(atom, st)
   else
     [insns, 0, env, ctr, funs, funcnt]
 
@@ -330,9 +410,11 @@ let lower_atom(atom, st) =
  * is "F" or this function's gname. */
 let rest_is_tail(s, info) =
   if nth(s, 5) == "F" then false
-  else if nth(info, 0) != nth(info, 1) - 1 then false
-  else if nth(nth(info, 2), 0) != "var" then false
-  else nth(nth(info, 2), 1) == nth(info, 3)
+  else if nth(info, 0) == nth(info, 1) - 1 then
+    if nth(nth(info, 2), 0) == "var" then
+      nth(nth(info, 2), 1) == nth(info, 3)
+    else false
+  else false
 
 /* Denylist: native tailcall of parse_program does not finish the bundle
  * parse. lex/emit/skip_* still need self-TCO or they stack-overflow. */
@@ -344,10 +426,17 @@ let tco_name_ok(self) =
 let maybe_tailcall(rest_tail, newinsn, dst, slots, self) =
   if not rest_tail then newinsn
   else if not tco_name_ok(self) then newinsn
-  else if nth(newinsn, 0) != "call" then newinsn
-  else if nth(newinsn, 2) != self then newinsn
-  else if len(slots) > 6 then newinsn
-  else l_tailcall(dst, nth(newinsn, 2), slots)
+  else if nth(newinsn, 0) == "fcall" then
+    if nth(newinsn, 2) == self then
+      if len(slots) > 6 then newinsn
+      else l_tcall(dst, nth(newinsn, 2), slots)
+    else newinsn
+  else if nth(newinsn, 0) == "call" then
+    if nth(newinsn, 2) == self then
+      if len(slots) > 6 then newinsn
+      else l_tcall(dst, nth(newinsn, 2), slots)
+    else newinsn
+  else newinsn
 
 /* 2-arg wrapper: do not keep rest_tail live across lower_letcall's prim chain. */
 let apply_tco(pack) =
@@ -370,103 +459,111 @@ let pack_yes(st5, self) = [cons_tail_yes(st5, self), 0]
 let pack_from(cf) = [cons_tail_from(cf), 0]
 let pack_step(st, i) = [st, i]
 
+/* p = [j, ins, env, ctr, funs]. Native max 6 args. */
+let lower_loadargs(args, p, slots_rev) =
+  if nth(p, 0) >= len(args) then
+    [nth(p, 1), reverse(slots_rev), nth(p, 2), nth(p, 3)]
+  else
+    let r = lower_atom(nth(args, nth(p, 0)),
+                       [nth(p, 1), nth(p, 2), nth(p, 3), nth(p, 4), 0]) in
+    lower_loadargs(args,
+      [nth(p, 0) + 1, nth(r, 0), nth(r, 2), nth(r, 3), nth(p, 4)],
+      cons(nth(r, 1), slots_rev))
+
+let lower_prim_list(fnname, dst, slots) =
+  if fnname == "cons" then l_cons(dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "len" then l_len(dst, nth(slots, 0))
+  else if fnname == "nth" then l_nth(dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "tail" then l_tail(dst, nth(slots, 0))
+  else if fnname == "append" then l_append(dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "drop" then l_drop(dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "foldl" then
+    l_foldl(dst, nth(slots, 0), nth(slots, 1), nth(slots, 2))
+  else if fnname == "map" then l_map(dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "list_new" then l_list_new(dst)
+  else if fnname == "list_push" then
+    l_list_push(dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "list_set" then
+    l_call(dst, "yac_list_set", [nth(slots, 0), nth(slots, 1), nth(slots, 2)])
+  else if fnname == "list_rev" then l_list_rev(dst, nth(slots, 0))
+  else 0
+
+let lower_prim_str(fnname, dst, slots) =
+  if fnname == "str_len" then l_str_len(dst, nth(slots, 0))
+  else if fnname == "str_ref" then l_str_ref(dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "str_cat" then l_str_cat(dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "str_slice" then
+    l_str_slice(dst, nth(slots, 0), nth(slots, 1), nth(slots, 2))
+  else if fnname == "int_to_str" then l_int_to_str(dst, nth(slots, 0))
+  else if fnname == "time_ms" then l_time_ms(dst)
+  else if fnname == "time_ns" then l_call(dst, "time_ns", [])
+  else if fnname == "time_str" then l_time_str(dst)
+  else if fnname == "box_new" then l_call(dst, "yac_box_new", [])
+  else if fnname == "box_get" then l_call(dst, "yac_box_get", [nth(slots, 0)])
+  else if fnname == "box_set" then
+    l_call(dst, "yac_box_set", [nth(slots, 0), nth(slots, 1)])
+  else if fnname == "yac_prof_cell" then l_call(dst, "yac_prof_cell", [])
+  else if fnname == "argc" then l_argc(dst)
+  else if fnname == "argv" then l_argv(dst, nth(slots, 0))
+  else 0
+
+let lower_prim_bytes(fnname, dst, slots) =
+  if fnname == "bytes_to_str" then l_bytes_to_str(dst, nth(slots, 0))
+  else if fnname == "bytes_new" then l_bytes_new(dst)
+  else if fnname == "bytes_len" then l_bytes_len(dst, nth(slots, 0))
+  else if fnname == "bytes_ref" then
+    l_bytes_ref(dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "bytes_put" then
+    l_bytes_put(dst, nth(slots, 0), nth(slots, 1), nth(slots, 2))
+  else if fnname == "bytes_append" then
+    l_bytes_append(dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "bytes_extend" then
+    l_bytes_extend(dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "read_file" then l_read_file(dst, nth(slots, 0))
+  else if fnname == "write_file" then
+    l_write_file(dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "gc_collect" then l_call(dst, "gc_collect", [])
+  else if fnname == "band" then l_binop("&", dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "bor" then l_binop("|", dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "bxor" then l_binop("^", dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "bnot" then l_binop("~", dst, nth(slots, 0), nth(slots, 0))
+  else if fnname == "bshl" then l_binop("<<", dst, nth(slots, 0), nth(slots, 1))
+  else if fnname == "bshr" then l_binop(">>", dst, nth(slots, 0), nth(slots, 1))
+  else 0
+
+let lower_user_call(fnname, dst, slots, env, funs0) =
+  if env_has(env, fnname) then
+    if env_ncap(env, fnname) > 0 then
+      l_apply(dst, env_lookup(env, fnname), env_ncap(env, fnname), slots)
+    else if funs_has(funs0, fnname) then
+      l_call(dst, fun_code_name(funs0, fnname), slots)
+    else
+      l_apply(dst, env_lookup(env, fnname), 0 - 1, slots)
+  else l_call(dst, fun_code_name(funs0, fnname), slots)
+
+let lower_call_insn(fnname, dst, slots, env, funs0) =
+  let a = lower_prim_list(fnname, dst, slots) in
+  if a == 0 then
+    let b = lower_prim_str(fnname, dst, slots) in
+    if b == 0 then
+      let c = lower_prim_bytes(fnname, dst, slots) in
+      if c == 0 then lower_user_call(fnname, dst, slots, env, funs0)
+      else c
+    else b
+  else a
+
 /* pack = [s, i, nb, tail]. */
 let lower_letcall(b, pack) =
   let s = nth(pack, 0) in
-  let insns = nth(s, 0) in
-  let env = nth(s, 1) in
-  let ctr = nth(s, 2) in
-  let name = nth(b, 1) in
-  let fn = nth(b, 2) in
-  let args = nth(b, 3) in
-  let fnname = nth(fn, 1) in
-  let nargs = len(args) in
-  let funs0 = nth(s, 3) in
-  let loadargs(j, ins, env2, ctr2, slots_rev) =
-    if j >= nargs then [ins, reverse(slots_rev), env2, ctr2]
-    else
-      let r = lower_atom(nth(args, j), [ins, env2, ctr2, funs0, 0]) in
-      loadargs(j + 1, nth(r, 0), nth(r, 2), nth(r, 3),
-               cons(nth(r, 1), slots_rev)) in
-  let lr = loadargs(0, insns, env, ctr, []) in
-  let slots = nth(lr, 1) in
+  let lr = lower_loadargs(nth(b, 3),
+            [0, nth(s, 0), nth(s, 1), nth(s, 2), nth(s, 3)], []) in
   let dst = nth(lr, 3) in
-  let newinsn =
-    if fnname == "cons" then l_cons(dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "len" then l_len(dst, nth(slots, 0))
-    else if fnname == "nth" then l_nth(dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "tail" then l_tail(dst, nth(slots, 0))
-    else if fnname == "append" then
-      l_append(dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "str_len" then l_str_len(dst, nth(slots, 0))
-    else if fnname == "str_ref" then
-      l_str_ref(dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "str_cat" then
-      l_str_cat(dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "str_slice" then
-      l_str_slice(dst, nth(slots, 0), nth(slots, 1), nth(slots, 2))
-    else if fnname == "int_to_str" then l_int_to_str(dst, nth(slots, 0))
-    else if fnname == "time_ms" then l_time_ms(dst)
-    else if fnname == "time_ns" then l_call(dst, "time_ns", [])
-    else if fnname == "time_str" then l_time_str(dst)
-    else if fnname == "box_new" then l_call(dst, "yac_box_new", [])
-    else if fnname == "box_get" then l_call(dst, "yac_box_get", [nth(slots, 0)])
-    else if fnname == "box_set" then
-      l_call(dst, "yac_box_set", [nth(slots, 0), nth(slots, 1)])
-    else if fnname == "yac_prof_cell" then l_call(dst, "yac_prof_cell", [])
-    else if fnname == "argc" then l_argc(dst)
-    else if fnname == "argv" then l_argv(dst, nth(slots, 0))
-    else if fnname == "bytes_to_str" then l_bytes_to_str(dst, nth(slots, 0))
-    else if fnname == "drop" then
-      l_drop(dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "foldl" then
-      l_foldl(dst, nth(slots, 0), nth(slots, 1), nth(slots, 2))
-    else if fnname == "map" then
-      l_map(dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "bytes_new" then l_bytes_new(dst)
-    else if fnname == "list_new" then l_list_new(dst)
-    else if fnname == "list_push" then
-      l_list_push(dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "list_rev" then l_list_rev(dst, nth(slots, 0))
-    else if fnname == "bytes_len" then l_bytes_len(dst, nth(slots, 0))
-    else if fnname == "bytes_ref" then
-      l_bytes_ref(dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "bytes_put" then
-      l_bytes_put(dst, nth(slots, 0), nth(slots, 1), nth(slots, 2))
-    else if fnname == "bytes_append" then
-      l_bytes_append(dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "bytes_extend" then
-      l_bytes_extend(dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "read_file" then l_read_file(dst, nth(slots, 0))
-    else if fnname == "write_file" then
-      l_write_file(dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "gc_collect" then l_call(dst, "gc_collect", [])
-    else if fnname == "band" then l_binop("&", dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "bor" then l_binop("|", dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "bxor" then l_binop("^", dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "bnot" then l_binop("~", dst, nth(slots, 0), nth(slots, 0))
-    else if fnname == "bshl" then l_binop("<<", dst, nth(slots, 0), nth(slots, 1))
-    else if fnname == "bshr" then l_binop(">>", dst, nth(slots, 0), nth(slots, 1))
-    else
-      let fnslot = env_lookup(env, fnname) in
-      let fncap = env_ncap(env, fnname) in
-      if env_has(env, fnname) and fncap > 0 then
-        l_apply(dst, fnslot, fncap, slots)
-      else if env_has(env, fnname) and not funs_has(funs0, fnname) then
-        l_apply(dst, fnslot, 0 - 1, slots)
-      else
-        let e = fmap_get(funs_map(funs0), fnname) in
-        let gn = if e == 0 then fnname else nth(e, 0) in
-        l_call(dst, gn, slots) in
-  let tagged = apply_tco([s, [nth(pack, 1), nth(pack, 2), nth(pack, 3), name],
-                          newinsn, dst, slots]) in
-  let ins0 = nth(lr, 0) in
-  let ins1 =
-    if nth(tagged, 0) == "tailcall" then
-      insn_push(ins0, l_call(dst, "yac_prof_leave", []))
-    else ins0 in
-  [insn_push(ins1, tagged),
-   env_bind(nth(lr, 2), name, dst, 0), dst + 1,
+  let tagged = apply_tco(
+    [s, [nth(pack, 1), nth(pack, 2), nth(pack, 3), nth(b, 1)],
+     lower_call_insn(nth(nth(b, 2), 1), dst, nth(lr, 1), nth(s, 1), nth(s, 3)),
+     dst, nth(lr, 1)]) in
+  [insn_push(nth(lr, 0), tagged),
+   env_bind(nth(lr, 2), nth(b, 1), dst, 0), dst + 1,
    nth(s, 3), nth(s, 4), nth(s, 5)]
 
 let lower_let(b, s) =
@@ -533,44 +630,6 @@ let lower_letfun_prep(b, s) =
              fs1, uid + 1] in
   [body, st5, name, ncap, ntot, gname, fvs, need_self, self_slot]
 
-let is_prof_name(nm) =
-  let n = str_len(nm) in
-  if n < 5 then false
-  else if str_ref(nm, 0) != 112 then false
-  else if str_ref(nm, 1) != 114 then false
-  else if str_ref(nm, 2) != 111 then false
-  else if str_ref(nm, 3) != 102 then false
-  else str_ref(nm, 4) == 95
-
-let is_yac_prof_name(nm) =
-  let n = str_len(nm) in
-  if n < 8 then false
-  else if str_ref(nm, 0) != 121 then false
-  else if str_ref(nm, 1) != 97 then false
-  else if str_ref(nm, 2) != 99 then false
-  else if str_ref(nm, 3) != 95 then false
-  else if str_ref(nm, 4) != 112 then false
-  else if str_ref(nm, 5) != 114 then false
-  else if str_ref(nm, 6) != 111 then false
-  else str_ref(nm, 7) == 102
-
-let prof_skip(nm) =
-  if nm == "_start" then true
-  else if is_prof_name(nm) then true
-  else is_yac_prof_name(nm)
-
-let prof_wrap_insns(name, head, body, retslot, nslots) =
-  if prof_skip(name) then
-    insn_push(insn_extend(head, body), l_ret(retslot))
-  else
-    let pnm = nslots - 2 in
-    let ptmp = nslots - 1 in
-    let a = insn_push(head, l_strlit(pnm, name)) in
-    let b = insn_push(a, l_call(ptmp, "yac_prof_enter", [pnm])) in
-    let c = insn_extend(b, body) in
-    let d = insn_push(c, l_call(ptmp, "yac_prof_leave", [])) in
-    insn_push(d, l_ret(retslot))
-
 let lower_letfun_finish(b, s, p, br) =
   let name = nth(p, 2) in
   let ncap = nth(p, 3) in
@@ -582,7 +641,7 @@ let lower_letfun_finish(b, s, p, br) =
   let env = nth(s, 1) in
   let insns = nth(s, 0) in
   let ctr = nth(s, 2) in
-  let nslots = nth(br, 3) + 10 in
+  let nslots = nth(br, 3) in
   let self_caps(j, acc) =
     if j >= ncap then acc
     else self_caps(j + 1, append(acc, [j + 1])) in
@@ -591,16 +650,15 @@ let lower_letfun_finish(b, s, p, br) =
     if need_self then
       insn_push(f_insns0, l_closure(self_slot, gname, self_caps(0, [])))
     else f_insns0 in
-  let f_insns = prof_wrap_insns(name, f_insns1, nth(br, 0), nth(br, 1), nslots) in
+  let f_insns = insn_push(insn_extend(f_insns1, nth(br, 0)), l_ret(nth(br, 1))) in
   let f = l_fun(gname, ntot, ncap, f_insns, name) in
   let slot = ctr in
   let capslot_of(j, acc) =
     if j >= ncap then acc
     else capslot_of(j + 1, append(acc, [env_lookup(env, nth(fvs, j))])) in
-  let capslots = capslot_of(0, []) in
-  let clo = l_closure(slot, gname, capslots) in
   let funs1 = funs_cons(nth(br, 4), f) in
-  [insn_push(insns, clo), env_bind(env, name, slot, ncap),
+  [insn_push(insns, l_closure(slot, gname, capslot_of(0, []))),
+   env_bind(env, name, slot, ncap),
    ctr + 1, funs1, nth(br, 5), nth(s, 5)]
 
 let lower_letif_prep(b, s) =
@@ -676,6 +734,15 @@ let lower_body_loop(anf, pack) =
 
 let lower_body(anf, st) = lower_body_loop(anf, pack_step(st, 0))
 
+let start_proc(nslots, result_slot, body) =
+  l_fun("_start", 0, 0,
+    insn_push(
+      insn_push(
+        insn_extend(insn_push(list_new(), l_local(nslots, 0)), body),
+        l_untag(nslots, result_slot)),
+      l_syscall(0, 60, [nslots])),
+    "_start")
+
 /* ---- public API ---- */
 let compile_top(items) =
   let _ = log("lower", "compile_top begin") in
@@ -697,15 +764,8 @@ let compile_top(items) =
   let result_slot = nth(st, 5) in
   let fs = nth(st, 2) in
   let funs = funs_list(fs) in
-  let rt =
-    if funs_has(fs, "prof_enter_go") then rt0
-    else append(rt0, runtime_prof_stubs(0)) in
   let _ = log_i("lower", "nfuns", len(funs)) in
   let nslots = nth(st, 1) in
-  let pin = insn_push(list_new(), l_prologue(nslots, 0)) in
-  let pin2 = insn_push(pin, l_call(0, "yac_prof_cell", [])) in
-  let entry = l_fun("_start", 0, 0,
-               insn_push(insn_extend(pin2, entry_insns), l_exit(result_slot)),
-               "_start") in
+  let entry = start_proc(nslots, result_slot, entry_insns) in
   let _ = log("lower", "compile_top done") in
-  l_prog(cons(entry, append(rt, reverse(funs))), "_start")
+  l_prog(cons(entry, append(rt0, reverse(funs))), "_start")

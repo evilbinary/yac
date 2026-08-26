@@ -2,3 +2,7 @@ src/*.o
 *.exe
 build/
 yac
+a_native.prof
+a_native1.prof
+yc_A
+yc_B

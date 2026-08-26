@@ -1,59 +1,112 @@
-/* lir.yac — LIR: arch-independent ISA between lower and emit-*.
+/* lir.yac — machine-close LIR (ANF → LIR → emit-* → ELF/PE/Mach-O).
  *
- * Lower (ANF → LIR) emits only these constructors. Each emit-<arch> consumes
- * the same ["prog", ...] and produces raw code bytes; pack wraps a container.
- *
- * Program:  ["prog", [fun...], entryName]
- * Function: ["fun", name, nparams, ncap, [insn...], srcname]
- *
- * Slots are virtual (not machine registers). emit-x64 maps them to [rbp+off];
- * other arches use their own frame. Do not put x86/arm ops in this file.
+ * Constructors emit DESIGN.md tags (local/add/cmpjmp/fcall/ccall/tcall/…).
+ * lir_norm (split, no `let k`) maps them to emit-* shapes at emit time.
+ * Handwritten tests may still use prologue/binop/br/call/exit directly.
+ * mov_imm stores the tagged bit pattern (n<<1); nil is 1.
  */
 
 let l_prog(funs, entry) = ["prog", funs, entry]
+let l_proc(name, nparams, ncap, insns, srcname) =
+  ["proc", name, nparams, ncap, insns, srcname]
 let l_fun(name, nparams, ncap, insns, srcname) =
-  ["fun", name, nparams, ncap, insns, srcname]
+  l_proc(name, nparams, ncap, insns, srcname)
 
-let l_prologue(nlocals, nparams) = ["prologue", nlocals, nparams]
-let l_mov_imm(d, v) = ["mov_imm", d, v]
+let l_local(nlocals, nparams) = ["local", nlocals, nparams]
+let l_prologue(nlocals, nparams) = l_local(nlocals, nparams)
+let l_nop(_) = ["nop"]
+let l_save(_) = ["save"]
+let l_restore(_) = ["restore"]
+/* Immediate is the bit pattern. l_mov_imm tags a yac int (n<<1). nil is 1. */
+let l_mov_raw(d, v) = ["mov_imm", d, v]
+let l_mov_imm(d, v) = ["mov_imm", d, v + v]
 let l_mov(d, s) = ["mov", d, s]
-let l_binop(op, d, a, b) = ["binop", op, d, a, b]
+let l_add(d, a, b) = ["add", d, a, b]
+let l_sub(d, a, b) = ["sub", d, a, b]
+let l_mul(d, a, b) = ["mul", d, a, b]
+let l_div(d, a, b) = ["div", d, a, b]
+let l_rem(d, a, b) = ["rem", d, a, b]
+let l_sar(d, a, b) = ["sar", d, a, b]
+let l_sal(d, a, b) = ["sal", d, a, b]
+let l_shl(d, a, b) = ["shl", d, a, b]
+let l_shr(d, a, b) = ["shr", d, a, b]
+let l_land(d, a, b) = ["land", d, a, b]
+let l_lor(d, a, b) = ["lor", d, a, b]
+let l_xor(d, a, b) = ["xor", d, a, b]
+let l_untag(d, s) = ["untag", d, s]
+let l_syscall(d, nr, args) = ["syscall", d, nr, args]
+let l_binop(op, d, a, b) =
+  if op == "+" then l_add(d, a, b)
+  else if op == "-" then l_sub(d, a, b)
+  else if op == "*" then l_mul(d, a, b)
+  else if op == "/" then l_div(d, a, b)
+  else if op == "%" then l_rem(d, a, b)
+  else if op == "and" then l_land(d, a, b)
+  else if op == "or" then l_lor(d, a, b)
+  else ["binop", op, d, a, b]
 let l_cmp(op, d, a, b) = ["cmp", op, d, a, b]
 /* Integer-only compare (never yac_str_eq). Use in runtime loops. */
 let l_icmp(op, d, a, b) = ["icmp", op, d, a, b]
-let l_br(c, t, f) = ["br", c, t, f]
+let l_cmpjmp(c, t, f) = ["cmpjmp", c, t, f]
+let l_br(c, t, f) = l_cmpjmp(c, t, f)
 let l_label(n) = ["label", n]
 let l_jmp(l) = ["jmp", l]
-let l_call(d, f, args) = ["call", d, f, args]
-let l_tailcall(d, f, args) = ["tailcall", d, f, args]
+
+/* yac_* LIR procs are fcall (same image, TCO ok). ccall is prim sugar. */
+let is_rt_other(f) =
+  if f == "time_ms" then true
+  else if f == "time_ns" then true
+  else if f == "time_str" then true
+  else if f == "print_int" then true
+  else if f == "print_val" then true
+  else if f == "gc_collect" then true
+  else false
+
+let is_rt_name(f) =
+  let n = str_len(f) in
+  if n < 4 then is_rt_other(f)
+  else if str_ref(f, 0) != 121 then is_rt_other(f)
+  else if str_ref(f, 1) != 97 then is_rt_other(f)
+  else if str_ref(f, 2) != 99 then is_rt_other(f)
+  else if str_ref(f, 3) != 95 then is_rt_other(f)
+  else true
+
+let l_fcall(d, f, args) = ["fcall", d, f, args]
+let l_ccall(d, f, args) = ["ccall", d, f, args]
+let l_tcall(d, f, args) = ["tcall", d, f, args]
+let l_call(d, f, args) = l_fcall(d, f, args)
+let l_tailcall(d, f, args) = l_tcall(d, f, args)
 let l_apply(d, fnslot, ncap, args) = ["apply", d, fnslot, ncap, args]
 let l_tailapply(d, fnslot, ncap, args) =
   ["tailapply", d, fnslot, ncap, args]
+let l_icall(d, fnslot, args) = ["icall", d, fnslot, args]
+let l_ticall(d, fnslot, args) = ["ticall", d, fnslot, args]
 let l_ret(s) = ["ret", s]
+/* emit sugar: untag + arch exit. compile_top uses untag+syscall instead. */
 let l_exit(s) = ["exit", s]
 let l_closure(d, fname, caps) = ["closure", d, fname, caps]
 let l_print(s) = ["print", s]
-let l_nil(d) = ["nil", d]
+let l_nil(d) = l_mov_raw(d, 1)
 let l_strlit(d, s) = ["strlit", d, s]
-let l_cons(d, a, b) = ["cons", d, a, b]
-let l_len(d, a) = ["len", d, a]
-let l_nth(d, a, b) = ["nth", d, a, b]
-let l_tail(d, a) = ["tail", d, a]
-let l_append(d, a, b) = ["append", d, a, b]
-let l_list_rev(d, a) = ["list_rev", d, a]
-let l_list_new(d) = ["list_new", d]
-let l_list_push(d, a, b) = ["list_push", d, a, b]
+let l_cons(d, a, b) = l_ccall(d, "yac_cons", [a, b])
+let l_len(d, a) = l_ccall(d, "yac_len", [a])
+let l_nth(d, a, b) = l_ccall(d, "yac_nth", [a, b])
+let l_tail(d, a) = l_ccall(d, "yac_tail", [a])
+let l_append(d, a, b) = l_ccall(d, "yac_append", [a, b])
+let l_list_rev(d, a) = l_ccall(d, "yac_list_rev", [a])
+let l_list_new(d) = l_ccall(d, "yac_list_new", [])
+let l_list_push(d, a, b) = l_ccall(d, "yac_list_push", [a, b])
 let l_str_len(d, a) = ["str_len", d, a]
 let l_str_ref(d, a, b) = ["str_ref", d, a, b]
-let l_str_cat(d, a, b) = ["str_cat", d, a, b]
-let l_str_slice(d, a, b, c) = ["str_slice", d, a, b, c]
-let l_int_to_str(d, a) = ["int_to_str", d, a]
+let l_str_cat(d, a, b) = l_ccall(d, "yac_str_cat", [a, b])
+let l_str_slice(d, a, b, c) = l_ccall(d, "yac_str_slice", [a, b, c])
+let l_int_to_str(d, a) = l_ccall(d, "yac_int_to_str", [a])
 let l_bytes_to_str(d, a) = ["bytes_to_str", d, a]
 let l_time_ms(d) = ["time_ms", d]
 let l_time_str(d) = ["time_str", d]
 let l_argc(d) = ["argc", d]
 let l_argv(d, a) = ["argv", d, a]
-let l_drop(d, a, b) = ["drop", d, a, b]
+let l_drop(d, a, b) = l_ccall(d, "yac_drop", [a, b])
 let l_foldl(d, a, b, c) = ["foldl", d, a, b, c]
 let l_map(d, a, b) = ["map", d, a, b]
 let l_bytes_new(d) = ["bytes_new", d]
@@ -68,8 +121,10 @@ let l_write_file(d, a, b) = ["write_file", d, a, b]
  * immediate. obj_ld/obj_st copy the raw qword (car/cdr are already tagged;
  * listbuf len at +24 is not — use l_tag). */
 let l_obj_kind(d, p) = ["obj_kind", d, p]
-let l_obj_ld(d, p, off) = ["obj_ld", d, p, off]
-let l_obj_st(p, off, s) = ["obj_st", p, off, s]
+let l_mref(d, p, off) = ["mref", d, p, off]
+let l_mset(p, off, s) = ["mset", p, off, s]
+let l_obj_ld(d, p, off) = l_mref(d, p, off)
+let l_obj_st(p, off, s) = l_mset(p, off, s)
 let l_tag(d, s) = ["tag", d, s]
 /* is_int: tagged 2 if slot is even (int/bool), 0 if odd (ptr/nil). */
 let l_is_int(d, s) = ["is_int", d, s]
@@ -80,8 +135,10 @@ let l_alloc(d, nbytes) = ["alloc", d, nbytes]
 let l_alloc_s(d, n) = ["alloc_s", d, n]
 let l_obj_sti(p, off, imm) = ["obj_sti", p, off, imm]
 let l_obj_st_int(p, off, s) = ["obj_st_int", p, off, s]
-let l_ld8(d, p, off) = ["ld8", d, p, off]
-let l_st8(p, off, v) = ["st8", p, off, v]
+let l_mref8(d, p, off) = ["mref8", d, p, off]
+let l_mset8(p, off, v) = ["mset8", p, off, v]
+let l_ld8(d, p, off) = l_mref8(d, p, off)
+let l_st8(p, off, v) = l_mset8(p, off, v)
 /* Raw qword at untagged (ptr+off). ld64 does not retag; st64 stores the slot bits. */
 let l_ld64(d, p, off) = ["ld64", d, p, off]
 let l_st64(p, off, v) = ["st64", p, off, v]
@@ -96,56 +153,93 @@ let l_glob(d, which) = ["glob", d, which]
 let l_gst(which, s) = ["gst", which, s]
 let l_memcpy(dst, doff, src, soff, n) = ["memcpy", dst, doff, src, soff, n]
 
+/* Map DESIGN tags → emit-* tags. Split, no `let k` (native drops it). */
+let lir_norm_arith(ins) =
+  if nth(ins, 0) == "add" then ["binop", "+", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "sub" then ["binop", "-", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "mul" then ["binop", "*", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "div" then ["binop", "/", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "rem" then ["binop", "%", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "sar" then ["binop", ">>", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "shr" then ["binop", ">>", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "sal" then ["binop", "<<", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "shl" then ["binop", "<<", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "land" then ["binop", "and", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "lor" then ["binop", "or", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "xor" then ["binop", "^", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else ins
+
+let lir_norm_call(ins) =
+  if nth(ins, 0) == "fcall" then ["call", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "ccall" then ["call", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "tcall" then ["tailcall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "icall" then ["apply", nth(ins, 1), nth(ins, 2), 0 - 1, nth(ins, 3)]
+  else if nth(ins, 0) == "ticall" then ["tailapply", nth(ins, 1), nth(ins, 2), 0 - 1, nth(ins, 3)]
+  else lir_norm_arith(ins)
+
+let lir_norm(ins) =
+  if nth(ins, 0) == "local" then ["prologue", nth(ins, 1), nth(ins, 2)]
+  else if nth(ins, 0) == "cmpjmp" then ["br", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "mref" then ["obj_ld", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "mset" then ["obj_st", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "mref8" then ["ld8", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else if nth(ins, 0) == "mset8" then ["st8", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+  else lir_norm_call(ins)
+
 /* Rewrite a suffix self-call whose dest is moved into the ret slot.
- * Only `call` to the same gname (not apply, not another fun).
- * Tailcalling nested parse_binloop from parse_expr hangs yc_A on the bundle. */
-let tco_find(insns, i, slot, gname) =
-  if i < 0 then 0 - 1
-  else
-    let ins = nth(insns, i) in
-    let k = nth(ins, 0) in
-    if k == "ret" then tco_find(insns, i - 1, nth(ins, 1), gname)
-    else if k == "label" then tco_find(insns, i - 1, slot, gname)
-    else if k == "mov" then
-      if nth(ins, 1) == slot then tco_find(insns, i - 1, nth(ins, 2), gname)
-      else 0 - 1
-    else if k == "call" then
-      if nth(ins, 2) == "yac_prof_leave" then tco_find(insns, i - 1, slot, gname)
-      else if nth(ins, 1) != slot then 0 - 1
-      else if nth(ins, 2) != gname then 0 - 1
-      else if len(nth(ins, 3)) > 6 then 0 - 1
+ * Only fcall/call to the same gname (not apply, not ccall). */
+let tco_hit(ins, slot, gname, i) =
+  if nth(ins, 1) == slot then
+    if nth(ins, 2) == gname then
+      if len(nth(ins, 3)) > 6 then 0 - 1
       else i
     else 0 - 1
+  else 0 - 1
+
+let tco_find(insns, i, slot, gname) =
+  if i < 0 then 0 - 1
+  else if nth(nth(insns, i), 0) == "ret" then
+    tco_find(insns, i - 1, nth(nth(insns, i), 1), gname)
+  else if nth(nth(insns, i), 0) == "label" then
+    tco_find(insns, i - 1, slot, gname)
+  else if nth(nth(insns, i), 0) == "mov" then
+    if nth(nth(insns, i), 1) == slot then
+      tco_find(insns, i - 1, nth(nth(insns, i), 2), gname)
+    else 0 - 1
+  else if nth(nth(insns, i), 0) == "fcall" then
+    tco_hit(nth(insns, i), slot, gname, i)
+  else if nth(nth(insns, i), 0) == "call" then
+    tco_hit(nth(insns, i), slot, gname, i)
+  else 0 - 1
 
 let tco_one(ins) =
-  let k = nth(ins, 0) in
-  if k == "call" then l_tailcall(nth(ins, 1), nth(ins, 2), nth(ins, 3))
-  else if k == "apply" then
+  if nth(ins, 0) == "call" then
+    l_tailcall(nth(ins, 1), nth(ins, 2), nth(ins, 3))
+  else if nth(ins, 0) == "fcall" then
+    l_tcall(nth(ins, 1), nth(ins, 2), nth(ins, 3))
+  else if nth(ins, 0) == "apply" then
     l_tailapply(nth(ins, 1), nth(ins, 2), nth(ins, 3), nth(ins, 4))
+  else if nth(ins, 0) == "icall" then
+    l_ticall(nth(ins, 1), nth(ins, 2), nth(ins, 3))
   else ins
 
 let tco_copy(insns, idx, j, acc) =
-  let n = len(insns) in
-  if j >= n then acc
+  if j >= len(insns) then acc
+  else if j == idx then
+    let _ = list_push(acc, tco_one(nth(insns, j))) in
+    tco_copy(insns, idx, j + 1, acc)
   else
-    let ins = nth(insns, j) in
-    if j == idx then
-      let _ = list_push(acc, l_call(nth(ins, 1), "yac_prof_leave", [])) in
-      let _ = list_push(acc, tco_one(ins)) in
-      tco_copy(insns, idx, j + 1, acc)
-    else
-      let _ = list_push(acc, ins) in
-      tco_copy(insns, idx, j + 1, acc)
+    let _ = list_push(acc, nth(insns, j)) in
+    tco_copy(insns, idx, j + 1, acc)
+
+let tco_fun_at(f, idx) =
+  if idx == 0 - 1 then f
+  else l_fun(nth(f, 1), nth(f, 2), nth(f, 3),
+             tco_copy(nth(f, 4), idx, 0, list_new()), nth(f, 5))
 
 let tco_fun(f) =
-  let insns = nth(f, 4) in
-  let n = len(insns) in
-  if n < 2 then f
-  else
-    let idx = tco_find(insns, n - 1, 0, nth(f, 1)) in
-    if idx == 0 - 1 then f
-    else l_fun(nth(f, 1), nth(f, 2), nth(f, 3),
-               tco_copy(insns, idx, 0, list_new()), nth(f, 5))
+  if len(nth(f, 4)) < 2 then f
+  else tco_fun_at(f, tco_find(nth(f, 4), len(nth(f, 4)) - 1, 0, nth(f, 1)))
 
 let tco_prog(p) =
   let funs = nth(p, 1) in

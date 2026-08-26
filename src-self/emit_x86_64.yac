@@ -968,9 +968,8 @@ let emit_x86_i_core(st, insn, is_entry) =
       let _ = storeparams(0) in
       emit_st4(st, b, cur, labels, patches)
   else if k == "mov_imm" then
-    /* tag: store n<<1 */
-    let _ = mov_r64_imm(b, 0, nth(insn, 2)) in
-    let _ = shl_rax_1(b) in
+    /* bit pattern already encoded (tagged int or nil=1) */
+    let _ = mov_r64_imm64(b, 0, nth(insn, 2)) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "mov" then
@@ -1194,6 +1193,37 @@ let emit_x86_i_core(st, insn, is_entry) =
     let _ = syscall(b) in
     emit_st4(st, b, cur, labels, patches)
   else st
+
+let emit_x86_sysarg(b, args, j) =
+  if j >= len(args) then 0
+  else
+    let _ = emit_load_rax_slot(b, nth(args, j)) in
+    let _ =
+      if j == 0 then mov_rdi_rax(b)
+      else if j == 1 then mov_rsi_rax(b)
+      else if j == 2 then mov_rdx_rax(b)
+      else if j == 3 then mov_r10_rax(b)
+      else if j == 4 then mov_r8_rax(b)
+      else mov_r9_rax(b) in
+    emit_x86_sysarg(b, args, j + 1)
+
+let emit_x86_i_sys(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  if nth(insn, 0) == "untag" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = sar_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, patches)
+  else
+    let _ = emit_x86_sysarg(b, nth(insn, 3), 0) in
+    let _ = mov_r64_imm(b, 0, nth(insn, 2)) in
+    let _ = syscall(b) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, patches)
 
 let emit_x86_i_heap(st, insn) =
   let b = nth(st, 0) in
@@ -1938,8 +1968,9 @@ let emit_x86_i_memcpy(st, insn) =
   emit_st4(st, b, cur, labels, patches)
 
 /* emit one instruction; st = [bytes, cur, labelsRev, patchesRev, funIds].
- * Helpers keep this frame small (huge emit_insn miscompiles under L5). */
-let emit_insn(st, insn, is_entry) =
+ * Helpers keep this frame small (huge emit_insn miscompiles under L5).
+ * lir_norm lives in the wrapper so this frame stays the old size. */
+let emit_insn_go(st, insn, is_entry) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let k = nth(insn, 0) in
@@ -1952,6 +1983,8 @@ let emit_insn(st, insn, is_entry) =
          or k == "tailcall" or k == "jmp" or k == "br" or k == "ret"
          or k == "exit" then
       emit_x86_i_core(st, insn, is_entry)
+    else if k == "untag" or k == "syscall" then
+      emit_x86_i_sys(st, insn)
     else if k == "obj_kind" or k == "obj_ld" or k == "obj_st" or k == "tag"
          or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
          or k == "alloc_s" or k == "ld8" or k == "st8" or k == "ld64" or k == "st64" or k == "print"
@@ -1962,6 +1995,9 @@ let emit_insn(st, insn, is_entry) =
     else emit_x86_i_prim(st, insn) in
   let newlen = bytes_len(nth(done, 0)) in
   [nth(done, 0), cur + (newlen - len0), nth(done, 2), nth(done, 3), nth(done, 4)]
+
+let emit_insn(st, insn, is_entry) =
+  emit_insn_go(st, lir_norm(insn), is_entry)
 
 
 let resolve_local_labels(b, labels, patches) =

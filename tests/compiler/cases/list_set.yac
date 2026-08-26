@@ -1,0 +1,5 @@
+let m = list_new() in
+let _ = list_push(m, 1) in
+let _ = list_push(m, 2) in
+let _ = list_set(m, 1, 20) in
+nth(m, 1)

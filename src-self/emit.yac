@@ -39,37 +39,81 @@ let lookup_name(table, name) =
     else rec(drop(l, 1)) in
   rec(table)
 
-/* Top-level loops so hash/get are TCO calls, not nested apply. */
+/* Mutable open-addressing name map: [vec, n, cap]. Same as lower fmap. */
 let emit_hash_loop(s, n, i, h) =
   if i >= n then h
-  else emit_hash_loop(s, n, i + 1, (h * 31 + str_ref(s, i)) % 256)
+  else emit_hash_loop(s, n, i + 1, band(h * 131 + str_ref(s, i), 16777215))
 
 let emit_hash(s) = emit_hash_loop(s, str_len(s), 0, 0)
 
-let emit_map_fill(b, i) =
-  if i >= 256 then b
+let emit_map_fill(b, i, cap) =
+  if i >= cap then b
   else
-    let _ = list_push(b, list_new()) in
-    emit_map_fill(b, i + 1)
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    emit_map_fill(b, i + 8, cap)
 
-let emit_map_new(_) = emit_map_fill(list_new(), 0)
+let emit_map_new(_) =
+  let m = list_new() in
+  let _ = list_push(m, emit_map_fill(list_new(), 0, 8)) in
+  let _ = list_push(m, 0) in
+  let _ = list_push(m, 8) in
+  m
 
-let emit_map_put(m, k, v) =
-  let bucket = nth(m, emit_hash(k)) in
-  let _ = list_push(bucket, [k, v]) in
-  0
+let emit_map_probe(vec, k, i, mask) =
+  if nth(vec, i) == 0 then i
+  else if nth(nth(vec, i), 0) == k then i
+  else emit_map_probe(vec, k, band(i + 1, mask), mask)
 
-/* Last-put-wins: later emit_map_put for the same key is the lookup result. */
-let emit_map_scan(bucket, k, i) =
-  if nth(nth(bucket, i), 0) == k then nth(nth(bucket, i), 1)
-  else if i == 0 then 0
-  else emit_map_scan(bucket, k, i - 1)
+let emit_map_got(e) =
+  if e == 0 then 0 else nth(e, 1)
 
 let emit_map_get(m, k) =
-  let bucket = nth(m, emit_hash(k)) in
-  let n = len(bucket) in
-  if n == 0 then 0
-  else emit_map_scan(bucket, k, n - 1)
+  emit_map_got(nth(nth(m, 0), emit_map_probe(nth(m, 0), k,
+                band(emit_hash(k), nth(m, 2) - 1), nth(m, 2) - 1)))
+
+let emit_map_fresh(m, i, k, v) =
+  let _ = list_set(nth(m, 0), i, [k, v]) in
+  list_set(m, 1, nth(m, 1) + 1)
+
+let emit_map_put_at(m, k, v, i) =
+  if nth(nth(m, 0), i) == 0 then emit_map_fresh(m, i, k, v)
+  else list_set(nth(m, 0), i, [k, v])
+
+let emit_map_install(m, k, v) =
+  emit_map_put_at(m, k, v, emit_map_probe(nth(m, 0), k,
+                  band(emit_hash(k), nth(m, 2) - 1), nth(m, 2) - 1))
+
+let emit_map_rehash(oldv, m, i, oldc) =
+  if i >= oldc then 0
+  else if nth(oldv, i) == 0 then emit_map_rehash(oldv, m, i + 1, oldc)
+  else
+    let _ = emit_map_install(m, nth(nth(oldv, i), 0), nth(nth(oldv, i), 1)) in
+    emit_map_rehash(oldv, m, i + 1, oldc)
+
+let emit_map_grow_prep(m, oldc) =
+  let _ = list_set(m, 0, emit_map_fill(list_new(), 0, oldc * 2)) in
+  let _ = list_set(m, 1, 0) in
+  list_set(m, 2, oldc * 2)
+
+let emit_map_swap(oldv, m, oldc) =
+  let _ = emit_map_grow_prep(m, oldc) in
+  emit_map_rehash(oldv, m, 0, oldc)
+
+let emit_map_grow(m) = emit_map_swap(nth(m, 0), m, nth(m, 2))
+
+let emit_map_maybe_grow(m) =
+  if nth(m, 1) * 2 >= nth(m, 2) then emit_map_grow(m) else 0
+
+let emit_map_put(m, k, v) =
+  let _ = emit_map_maybe_grow(m) in
+  emit_map_install(m, k, v)
 
 let emit_map_from_at(m, xs, i, n) =
   if i >= n then m

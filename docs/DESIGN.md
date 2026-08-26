@@ -30,23 +30,305 @@ Yac 是一个小型、纯粹的函数式语言，其核心设计目标是**在�
                                                                                        ▼
                                                                                  ┌───────────┐
                                                                                  │ ANF IR    │──▶ eval_anf ──▶ 结果
-                                                                                 └───────────┘
-                                                                                       │
-                                                                                       ▼ CPS 转换
-                                                                                 ┌───────────┐
-                                                                                 │ CPS IR    │──▶ eval_cps ──▶ 结果
-                                                                                 └───────────┘
-                                                                                       │
-                                                                                       ▼ un-CPS（受限）
-                                                                                 ┌───────────┐
-                                                                                 │ ANF IR    │
-                                                                                 └───────────┘
+                                                                                 └─────┬─────┘
+                                           ┌───────────────────────────────────────────┴────┐
+                                           │                                                │
+                                           ▼ CPS 转换                                       ▼ lower
+                                     ┌───────────┐                                    ┌───────────┐
+                                     │ CPS IR    │──▶ eval_cps ──▶ 结果               │ LIR       │
+                                     └─────┬─────┘                                    └─────┬─────┘
+                                           │                                                │
+                                           ▼ un-CPS（受限）                                 ▼ emit-*
+                                     ┌───────────┐                                    ┌───────────┐
+                                     │ ANF IR    │                                    │ 机器码    │──▶ ELF / PE / Mach-O
+                                     └───────────┘                                    └───────────┘
 ```
 
 路径：
-- `source → AST → ANF → CPS`（常规编译管线的 IR 视图）
-- `CPS → ANF`（**un-CPS**，仅在"续延不逃逸"时成立）
-- 每层都可以独立 dump 出来查看（`--dump-anf` / `--dump-cps`）。
+
+- `source → AST → ANF → CPS`（C 解释器：`eval_anf` / `eval_cps`）
+- `CPS → ANF`（**un-CPS**，仅在「续延不逃逸」时成立）
+- `source → AST → ANF → LIR → 机器码`（自举编译器 `yc`，不经过 CPS）
+- 每层都可以独立 dump（`--dump-anf` / `--dump-cps`；LIR 为 yac list）
+
+### 2.1 机器码路径：ANF → LIR → 二进制
+
+```
+                       ┌───────────┐
+                       │ ANF IR    │
+                       └─────┬─────┘
+                             │
+                             ▼ lower
+                       ┌───────────┐
+                       │ LIR       │── 槽机：mov / add / mref / fcall / syscall …
+                       └─────┬─────┘
+                             │
+                             ▼ emit-x86_64 / emit_arm64 / emit_riscv64
+                       ┌───────────┐
+                       │ 机器码    │── 1..n 条目标指令字节
+                       └─────┬─────┘
+                             │
+                             ▼ pack
+                       ┌──────────────────┐
+                       │ ELF / PE / Mach-O│
+                       └──────────────────┘
+```
+
+三层都是 **yac list**（除最后的容器字节）。槽号 `s` 是整数虚寄存器；emit 映到 `[rbp+off]` / FP 帧。值在 LIR/机器码里是 tagged：int 为 `n<<1`，堆指针为奇数。
+
+#### ANF（`anf.yac` 实际产出）
+
+一个表达式 = 绑定序列 + 尾原子。顶层程序 = 这种 body 的列表。
+
+```
+body      ::= [ binds, atom ]
+
+atom      ::= ["int",  digits]
+            | ["str",  bytes]
+            | ["bool", "true" | "false"]
+            | ["unit"]
+            | ["nil"]
+            | ["var",  name]
+            | ["fun",  [name*], body]
+
+bind      ::= ["let",      name, atom]
+            | ["letbin",   name, op, atom, atom]
+            | ["letcall",  name, atom, [atom*]]
+            | ["letif",    name, atom, body, body]
+            | ["letfun",   name, [name*], body]
+            | ["letprint", name, atom]
+
+op        ::= "+" | "-" | "*" | "/" | "%"
+            | "==" | "!=" | "<" | "<=" | ">" | ">="
+            | "and" | "or"
+```
+
+`letfun` 的 body、`letif` 的两支都是完整 `body`（可再嵌套）。`print` 的尾原子是 `["unit"]`。
+
+#### LIR（跨架构，接近机器）
+
+```
+prog      ::= ["prog", [proc*], entryName]
+
+proc      ::= ["proc", name, nparams, ncap, [insn*], srcname]
+              ; 指令序列以 local 开头
+
+insn      ::= ["local",    nslots, nparams]
+            | ["nop"]
+            | ["save"] | ["restore"]
+            | ["mov",      s, s]
+            | ["mov_imm",  s, int]
+            | ["mref",     s, s, off]          ; qword，ptr 先去 tag
+            | ["mset",     s, off, s]
+            | ["mref8",    s, s, off]
+            | ["mset8",    s, off, s]
+            | ["add"|"sub"|"mul"|"div"|"rem"|"neg", ...]
+            | ["sar"|"sal"|"shl"|"shr", s, s, s]
+            | ["land"|"lor"|"xor", s, s, s]
+            | ["lnot",     s, s]
+            | ["tag"|"untag"|"is_int", s, s]
+            | ["cmp"|"icmp", cop, s, s, s]     ; 写入 bool 槽
+            | ["cmpjmp",   s, L, L]            ; 槽真→Lt 否则 Lf
+            | ["jmp",      L]
+            | ["label",    L]
+            | ["fcall",    s, name, [s*]]      ; yac proc
+            | ["ccall",    s, name, [s*]]      ; runtime（yac_* 等）
+            | ["icall",    s, s, [s*]]         ; 闭包在槽里
+            | ["tcall",    s, name, [s*]]
+            | ["ticall",   s, s, [s*]]
+            | ["ret",      s]
+            | ["syscall",  s, nr, [s*]]        ; nr 未 tag 立即数，≤6 参
+            | ["print",    s]                  ; emit 糖：print_int/print_val + newline
+            | ["glob",     s, i] | ["gst", i, s]
+            | ["strlit",   s, bytes]           ; rodata，结果 tagged 指针
+            | ["closure",  s, name, [s*]]      ; 分配闭包，patch 函数地址
+
+cop       ::= "==" | "!=" | "<" | "<=" | ">" | ">="
+off, nr, i, nslots, nparams, ncap, int ::= 整数
+L, name, entryName, srcname            ::= 字符串
+s                                      ::= 槽号（整数）
+```
+
+`mov_imm` 写入 **已经编码好的** 64 位模式（翻译时完成 tag：int 为 `n<<1`，nil 为 `1`）。`nth`/`cons`/`len`/`str_cat` 等不是 LIR 指令，一律 `ccall yac_*`。
+
+emit 时 `lir_norm` 把设计标签收成 emit-* 已有的形状（构造器走左边；boot 手写 LIR 可直接用右边）：
+
+```
+local            →  prologue
+add/sub/mul/…    →  binop
+cmpjmp           →  br
+fcall / ccall    →  call
+tcall            →  tailcall
+icall            →  apply  (ncap = -1)
+ticall           →  tailapply
+mref / mset      →  obj_ld / obj_st
+mref8 / mset8    →  ld8 / st8
+```
+
+`exit` 是 emit 糖（untag + 架构 exit），手写测试仍可用。`_start` 走 `untag` + `syscall 60`。`syscall` 的 nr **60 表示进程退出**（x86-64 Linux 的 exit 号）；arm64/riscv64 映成 93。槽参数已是要进寄存器的位模式。
+
+#### ANF → LIR
+
+环境 `Γ : name → slot`。当前过程名 `self`（`_start` 或某个 `letfun` 的码名）。已定义过程 `Σ`（名 → `{ncap}`）。`s*` 表示 fresh 槽。`I · J` 是指令拼接。`ε` 是空序列。
+
+判断：
+
+```
+Γ ⊢ atom  ⇒  s  ▹  I
+Γ ⊢ bind  ⇒  Γ' ▹  I  ▹  proc*
+self ; Γ ⊢ body  ⇒  s  ▹  I  ▹  proc*
+⊢ program  ⇒  prog
+```
+
+**原子**
+
+```
+Γ ⊢ ["int",  n]              ⇒  s  ▹  [["mov_imm", s, n<<1]]
+Γ ⊢ ["bool", "true"]         ⇒  s  ▹  [["mov_imm", s, 2]]
+Γ ⊢ ["bool", "false"]        ⇒  s  ▹  [["mov_imm", s, 0]]
+Γ ⊢ ["unit"]                 ⇒  s  ▹  [["mov_imm", s, 0]]
+Γ ⊢ ["nil"]                  ⇒  s  ▹  [["mov_imm", s, 1]]
+Γ ⊢ ["str",  b]              ⇒  s  ▹  [["strlit",  s, b]]
+Γ ⊢ ["var",  x]              ⇒  Γ(x)  ▹  ε
+Γ ⊢ ["fun",  ps, body]       ≡  Γ ⊢ ["letfun", x, ps, body] ; ["var", x]   x fresh
+```
+
+**绑定**
+
+```
+Γ ⊢ ["let", x, a]  ⇒  Γ[x ↦ s]  ▹  I  ▹  ∅
+  where  Γ ⊢ a  ⇒  s  ▹  I
+
+Γ ⊢ ["letbin", x, op, a, b]  ⇒  Γ[x ↦ s]  ▹  Iₐ · Iᵦ · [ι]  ▹  ∅
+  where  Γ ⊢ a  ⇒  sₐ  ▹  Iₐ
+         Γ ⊢ b  ⇒  sᵦ  ▹  Iᵦ
+         ι = bin(op, s, sₐ, sᵦ)
+
+bin("+",s,a,b)  = ["add", s, a, b]
+bin("-",s,a,b)  = ["sub", s, a, b]
+bin("*",s,a,b)  = ["mul", s, a, b]
+bin("/",s,a,b)  = ["div", s, a, b]
+bin("%",s,a,b)  = ["rem", s, a, b]
+bin("and",s,a,b)= ["land", s, a, b]          ; 不短路
+bin("or",s,a,b) = ["lor",  s, a, b]          ; 不短路
+bin(cop,s,a,b)  = ["cmp",  cop, s, a, b]     ; cop ∈ {==,!=,<,<=,>,>=}
+
+Γ ⊢ ["letprint", x, a]  ⇒  Γ[x ↦ s]  ▹  Iₐ · [["print", sₐ],
+                                               ["mov_imm", s, 0]]  ▹  ∅
+  where  Γ ⊢ a  ⇒  sₐ  ▹  Iₐ
+  ; `print` 是 emit 糖：按 tag 调 print_int / print_val，再写 newline（对齐 C interp）
+
+Γ ⊢ ["letif", x, c, bodyₜ, bodyₑ]  ⇒  Γ[x ↦ s]  ▹  I  ▹  Pₜ ∪ Pₑ
+  where  Γ ⊢ c  ⇒  s_c  ▹  I_c
+         self ; Γ ⊢ bodyₜ  ⇒  sₜ  ▹  Iₜ  ▹  Pₜ
+         self ; Γ ⊢ bodyₑ  ⇒  sₑ  ▹  Iₑ  ▹  Pₑ
+         I = I_c ·
+             [["cmpjmp", s_c, Lₜ, Lₑ],
+              ["label", Lₜ]] · Iₜ · [["mov", s, sₜ], ["jmp", L],
+              ["label", Lₑ]] · Iₑ · [["mov", s, sₑ],
+              ["label", L]]
+
+Γ ⊢ ["letcall", x, f, as]  ⇒  Γ[x ↦ s]  ▹  I_f · I_as · [ι]  ▹  ∅
+  where  Γ ⊢ f          ⇒  s_f  ▹  I_f
+         Γ ⊢ as_i       ⇒  s_i  ▹  I_i     （逐参）
+         I_as = I_0 · … · I_{n-1}
+         ι   = callι(self, x, f, s, s_f, [s_i])
+
+callι(self, x, ["var", g], s, _, ss) =
+    ["tcall",  s, g, ss]     if  tail(x) ∧ g = self ∧ g ∈ Σ ∧ |ss| ≤ 6
+  | ["fcall",  s, g, ss]     if  g ∈ Σ ∧ Σ(g).ncap = 0
+  | ["ccall",  s, rt(g), ss] if  g 是 runtime 名
+  | ["icall",  s, Γ(g), ss]  otherwise        ; 槽里是闭包
+
+callι(self, x, f, s, s_f, ss) =
+    ["ticall", s, s_f, ss]   if  tail(x) ∧ f 是 self 的闭包槽 ∧ |ss| ≤ 6
+  | ["icall",  s, s_f, ss]   otherwise
+
+rt("cons")="yac_cons"  rt("nth")="yac_nth"  rt("len")="yac_len"  …
+runtime 名以 yac_* / time_* / gc_collect / argc / argv / print_val 为准。
+
+tail(x)  当且仅当该 letcall 是 body 的最后一条绑定，且尾原子是 ["var", x]。
+只对 self 做 TCO；ccall 不做 TCO。
+
+Γ ⊢ ["letfun", f, ps, body]  ⇒  Γ[f ↦ s]  ▹  I_out  ▹  {proc} ∪ P
+  where  caps = FV(body) \ ({f} ∪ ps)
+         ncap = |caps|
+         Γ_f  = { caps_i ↦ i+1 } ∪ { ps_j ↦ ncap+j+1 }
+                ∪ (ncap>0 ∧ f ∈ FV(body)  ?  {f ↦ ncap+|ps|+1}  :  ∅)
+         f ; Γ_f ⊢ body  ⇒  s_r  ▹  I_b  ▹  P
+         proc = ["proc", f, ncap+|ps|, ncap,
+                 [["local", N, ncap+|ps|]]
+                 · (ncap>0 ∧ f ∈ FV(body)
+                      ? [["closure", Γ_f(f), f, [1..ncap]]]
+                      : ε)
+                 · I_b
+                 · [["ret", s_r]],
+                 f]
+         I_out = [["closure", s, f, [Γ(caps_i)]]]
+                 ; ncap=0 也分配闭包：函数当值（map/filter）时槽里必须是闭包。
+                 ; 按名调用走 fcall，不读这个槽。不做「只按名」分析。
+```
+
+槽布局：`1..ncap` 捕获，`ncap+1..` 形参，之后是局部。`N` 是本过程用到的最大槽号。
+
+**body / 程序**
+
+```
+self ; Γ ⊢ [ b1, …, bn ], a  ⇒  s  ▹  I₁ · … · Iₙ · I_a  ▹  P₁ ∪ … ∪ Pₙ
+  where  Γ ⊢ b1  ⇒  Γ₁ ▹ I₁ ▹ P₁
+         Γ₁ ⊢ b2 ⇒  Γ₂ ▹ I₂ ▹ P₂
+         …
+         Γₙ ⊢ a  ⇒  s  ▹ I_a
+
+⊢ [body₁, …, bodyₘ]  ⇒  ["prog", [_start] · runtime · procs, "_start"]
+  where  _start ; ∅ ⊢ body₁;…;bodyₘ  ⇒  s  ▹  I  ▹  procs
+         _start = ["proc", "_start", 0, 0,
+                   [["local", N, 0]] · I ·
+                   [["untag", t, s], ["syscall", _, 60, [t]]],
+                   "_start"]
+```
+
+`runtime` 是 `yac_*` 等过程，不从 ANF 来。调用约定最多 6 个参数。
+
+**例子**
+
+```
+源:   let x = 1 in x + 2
+
+ANF:  [[["let", "x", ["int", "1"]],
+        ["letbin", "t", "+", ["var", "x"], ["int", "2"]]],
+       ["var", "t"]]
+
+LIR:  ["proc", "_start", 0, 0,
+       [["local", 4, 0],
+        ["mov_imm", 1, 2],          ; 1<<1
+        ["mov_imm", 2, 4],          ; 2<<1
+        ["add", 3, 1, 2],
+        ["untag", 4, 3],
+        ["syscall", 0, 60, [4]]],
+       "_start"]
+```
+
+#### 机器码（不是第三种 IR）
+
+LIR 一条 insn 变成 **1..n 条目标指令字节**，再打进容器。没有「机器码语法」的 yac list；形态是文件：
+
+```
+image     ::= ELF64 | PE | Mach-O
+ELF64     ::= ehdr  phdr*  text  (globals…)
+
+text      ::= encoded(insn)*     ; 按 --arch 选 emit-*
+encoded   ::= x86-64 | arm64 | riscv64 字节
+```
+
+约定（各 arch 各自实现，LIR 不变）：
+
+- 槽 `s` → 帧上 8 字节格；临时值走返回寄存器（x86 `rax`，arm `x0`，riscv `a0`）
+- `mov_imm`：按立即数原样写入，不再 `<<1`
+- `fcall`/`ccall`：按名 rel32/`bl`/`jal` 到符号表；参数 ≤6
+- `syscall`：x86 `syscall`，arm `svc #0`，riscv `ecall`；`nr` 进 syscall 号寄存器（60 = 退出，见上）
+- `cmpjmp`：测 tagged 条件槽（非 0 为真；`true` 的 tag 为 2）
+- `_start`：`local` 后跑顶层绑定，最后 `untag` + `syscall 60`
 
 ## 3. 源语言
 
@@ -183,6 +465,7 @@ CExp C ::= let x = V in C
 ```
 
 实现时，`callcc` 和 `throw` 可以就是两个原语：
+
 - `callcc(f)`：把机器当前的续延（一个闭包值）作为参数调用 `f`。
 - `throw(k, v)`：直接尾调用 `k(v)`。
 
@@ -270,6 +553,7 @@ typedef struct CExp {
 ```
 
 ANF IR 与之同构，差别是：
+
 - `call`/`prim` 出现在 `let` 的右侧而不是整体节点；
 - 尾调用 `call/prim` 是独立节点；
 - 多出 `callcc`/`throw` 节点（ANF 机器拒绝执行，CPS 机器接受）。
@@ -316,6 +600,7 @@ typedef struct Prim { const char *name; int arity; PrimFn fn; } Prim;
 ```
 
 要点：
+
 - 尾调用位置的续延就是**外层传入的 k**，因此 CPS 天然保留 TCO。
 - 函数体的转换以"函数的续延参数 k"为环境入口，被调用时收到真实续延。
 - `callcc`/`throw` 在转换中保持不变（CPS 机器原生支持）。
@@ -334,10 +619,12 @@ unCPS(C):  // 假设续延都形如 λx. E 且只在尾位置被调用
 
 ### 7.3 续延的两种运行时形态（影响解释器设计）
 
-| 形态 | 实现 | callcc 支持 |
-|---|---|---|
-| A. 续延即值 | 蹦床，续延是普通闭包 | 免费（续延已经是值） |
+
+| 形态       | 实现                          | callcc 支持         |
+| -------- | --------------------------- | ----------------- |
+| A. 续延即值  | 蹦床，续延是普通闭包                  | 免费（续延已经是值）        |
 | B. 显式续延栈 | 机器维护 `Frame *cont` 帧栈，续延是帧链 | `callcc` = 捕获帧链后缀 |
+
 
 设计上 **先实现 A**（简单、正确）；B 作为后续优化/教学展示（更接近"控制栈"的直觉，也便于接 `setjmp/longjmp` 风格的异常原语）。两者结果应一致，可交叉测试。
 
@@ -414,12 +701,14 @@ yac --no-gc file.yac            # 关掉 GC（arena 调试模式）
 
 ## 12. 里程碑
 
-| 里程碑 | 内容 | 验收 |
-|---|---|---|
-| M1 | lexer、parser、AST→ANF、ANF 解释器（arena 分配） | 普通程序可跑；golden 测试过 |
-| M2 | ANF→CPS、CPS 解释器（蹦床）、`callcc`/`throw` 原语 | `--both` 对普通程序一致；callcc 用例跑通 |
-| M3 | mark-sweep GC、un-CPS（受限）、`--dump-*` | TCO 压测 10⁷ 级不爆栈；un-CPS 往返一致 |
-| M4 | 扁平环境快照、CPS 化简（常量折叠/eta 归约）、属性测试、文档 | 性能可测量改进；随机程序比对稳定 |
+
+| 里程碑 | 内容                                      | 验收                           |
+| --- | --------------------------------------- | ---------------------------- |
+| M1  | lexer、parser、AST→ANF、ANF 解释器（arena 分配）  | 普通程序可跑；golden 测试过            |
+| M2  | ANF→CPS、CPS 解释器（蹦床）、`callcc`/`throw` 原语 | `--both` 对普通程序一致；callcc 用例跑通 |
+| M3  | mark-sweep GC、un-CPS（受限）、`--dump-*`     | TCO 压测 10⁷ 级不爆栈；un-CPS 往返一致  |
+| M4  | 扁平环境快照、CPS 化简（常量折叠/eta 归约）、属性测试、文档      | 性能可测量改进；随机程序比对稳定             |
+
 
 ## 13. 参考文献与灵感
 
@@ -427,3 +716,4 @@ yac --no-gc file.yac            # 关掉 GC（arena 调试模式）
 - A. Sabry, M. Felleisen, *Reasoning about Programs in Continuation-Passing Style*（CPS 等价性、un-CPS 条件）
 - C. Flanagan et al., *The Essence of Compiling with Continuations*（ANF 与 CPS 的关系）
 - S. L. Peyton Jones, *Compiling Haskell by Program Transformation*（归约/化简示例）
+

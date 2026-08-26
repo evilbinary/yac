@@ -40,6 +40,13 @@ let mov_r64_imm(b, rd, imm) =
   let _ = e8(b, modrm(3, 0, rd)) in  /* /0, rm=rd */
   e32(b, imm)
 
+/* mov r64, imm64 (REX.W b8+rd id64). Needed for tagged LIR immediates. */
+let mov_r64_imm64(b, rd, imm) =
+  let rex = if rd >= 8 then 73 else 72 in
+  let _ = e8(b, rex) in
+  let _ = e8(b, 184 + band(rd, 7)) in
+  e64(b, imm)
+
 /* mov rax, imm32 zero-extended (b8 id32, no REX) — 5 bytes, for small ints */
 let mov_eax_imm(b, imm) =
   let _ = e8(b, 184) in      /* b8 */

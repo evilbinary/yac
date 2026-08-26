@@ -76,15 +76,15 @@
 | 布尔/比较                     | ✅             | —                                                       |
 | 不可变 List                  | ✅             | 用 List 存 token/AST/LIR                                  |
 | 闭包 / map / filter / foldl | ✅             | 编译器大量使用高阶函数                                             |
-| TCO                       | ✅             | 编译器和它生成的代码都不爆栈                                          |
-| 字符串                       | ⚠️ 只有字面量      | **需加**：`len` `substr` `concat` `==` 字符遍历                |
-| 字节缓冲/可变数组                 | ❌             | **需加**：`bytearray`（append/at/set），用于拼机器码                |
-| 文件 I/O                    | ❌             | **需加**：`read-file` `write-file` `open/read/write/close` |
-| 位运算                       | ❌             | **需加**：`shift` `land` `lor` `lxor`（机器码编码需要）             |
-| 系统调用 / 进程退出               | ❌             | **需加**：`syscall` `exit` `argv/argc`                     |
+| TCO                       | ✅             | 只对 self；`parse_expr`/`parse_program` 不做 TCO            |
+| 字符串                       | ✅             | `str_len` `str_ref` `str_cat` `str_slice` `==`          |
+| 字节缓冲/可变数组                 | ✅             | `bytes_*`（append/ref/put/extend），用于拼机器码                 |
+| 文件 I/O                    | ✅             | `read_file` `write_file`                                |
+| 位运算                       | ✅             | `bshl` `band`/`bor`/`bxor`/`bnot`（机器码编码需要）             |
+| 系统调用 / 进程退出               | ✅             | LIR `syscall`；`_start` 以 `untag` + `syscall 60` 退出；`argc`/`argv` |
 
 
-> 这些原语加在现有 `value.c` 的 `PRIMS` 表（`value.c:557`），对 L0 的 C 解释器是新增内建；对自举后的 yac 则是运行时 `rt` 提供的机器码函数。两者签名一致，前端无需区分。
+> 这些原语在 C 解释器走 `value.c` 的 `PRIMS`；自举后的原生 `yc` 走 `runtime.yac` + emit kernel。两者签名一致，前端无需区分。
 
 
 
@@ -117,27 +117,23 @@ let anf = ["tailcall", ["var","fact"], [["int",5]]]
 | `src-self/lexer.yac`                      | 字符流 → token 流（空白/注释/标识符/数字含科学计数法/字符串/操作符） | ✅   |
 | `src-self/parser.yac`                     | token 流 → AST（递归下降 + 优先级爬升）               | ✅   |
 | `src-self/anf.yac`                        | AST → ANF（`[bindings, tailExpr]`，求值顺序显式）  | ✅   |
-| `src-self/elf.yac`                        | 机器码 → 最小 x86-64 ELF64 可执行文件               | ✅   |
+| `src-self/lir.yac`                        | LIR 构造器 + `lir_norm` + 过程内 self-TCO      | ✅   |
+| `src-self/lower.yac`                      | ANF → LIR（槽机指令选择；ncap=0 仍分配闭包）            | ✅   |
+| `src-self/runtime.yac`                    | `yac_*` 运行时过程（列表/字符串/bytes/print/time）   | ✅   |
+| `src-self/encode_{x64,arm64,riscv64}.yac` | 单条目标指令 → 字节                                | ✅   |
+| `src-self/emit.yac` + `emit_<arch>.yac`   | LIR → 机器码（x86-64 / arm64 / riscv64）       | ✅   |
+| `src-self/{elf,pe,macho,pack}.yac`        | 机器码 → ELF / PE / Mach-O                    | ✅   |
+| `src-self/backend.yac` `yc.yac`           | 驱动：`--arch` / `--format`、管线、错误报告          | ✅   |
 | `src-self/driver_{lex,parse,anf,elf}.yac` | 各阶段测试驱动                                   | ✅   |
 
 
-**规划中**：
-
-
-| 文件                         | 职责                                                  |
-| -------------------------- | --------------------------------------------------- |
-| `src-self/encode_x64.yac`  | x86-64 指令 → 字节流（mov/add/sub/imul/cmp/jcc/syscall 等） |
-| `src-self/lower.yac`       | ANF → LIR（指令选择）                                     |
-| `src-self/regalloc.yac`    | LIR → 寄存器/栈槽分配                                      |
-| `src-self/emit-<arch>.yac` | LIR → 目标机器码字节流（每架构一个）                               |
-| `src-self/link.yac`        | 符号、重定位、入口 `_start` → ELF                            |
-| `src-self/driver.yac`      | `main`：`--emit` 选项、调用管线、错误报告                        |
-| `src-self/rt.asm`（非 yac）   | 运行时最小层（见 §7）                                        |
+没有单独的 `regalloc.yac` / `link.yac`：M3 值为栈槽（`[rbp+off]`），符号/入口在 emit+pack 里完成。
 
 
 > **架构约束**：yac 无相互递归/前向引用，故每个解析器/转换器实现为一个
 > 顶层**自递归函数** + 其内部的**嵌套闭包 helper**（闭包可引用外层函数）。
 > 这是本项目反复使用、验证可行的模式。
+> 原生 emit 对大帧 `let` 会丢绑定：热点函数拆小、少用 `let k = nth(...)`。
 
 
 
@@ -147,14 +143,9 @@ let anf = ["tailcall", ["var","fact"], [["int",5]]]
 
 ### 6.1 LIR（低级中间表示，跨架构共享）
 
-与 C 版设计同构，但用 yac 数据表示：
+ISA 以 `docs/DESIGN.md` §2.1 为准（设计标签）。构造器发 `local`/`add`/`cmpjmp`/`fcall`/`ccall`/`tcall`/`mref`/…；emit 前 `lir_norm` 收成 `prologue`/`binop`/`br`/`call`/`tailcall`/`obj_ld`。手写 boot LIR 可直接用 emit 标签（含 `exit`）。
 
-```yac
-/* 指令: [op, dst, a, b, imm, off, sym] */
-let ins = ["mov", "r0", "r1", [], 0, 0, []]
-```
-
-op 集合：`mov/add/sub/mul/div/and/or/xor/cmp/ldr/str/call/jmp/bcc/faddr/enter/leave`。
+槽机：值为栈槽，临时值走返回寄存器。没有独立寄存器分配。`nth`/`cons`/`len`/`str_cat` 不是 LIR 指令，走 `ccall yac_*`。
 
 ### 6.2 后端流程
 
@@ -248,7 +239,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
 
-`runtime.yac` 用 LIR 实现列表/字符串/bytes 以及 `print_int`、`print_val`（列表/`[]`/裸字符串，对齐 C `value_to_string`）、`time_ms`/`time_str`、`yac_argc`、`gc_collect`（转调 `yac_gc`）。kernel 指令：`write1`、`clock`、`glob`、`is_int`（偶数为 int）、`memcpy`（x86 `rep movsb`；arm64/riscv64 字节循环，独立小函数）。`compile_top` 产出 **25** 个 fun（`_start` + 24 runtime；手写 helper 不占 fun 表）。
+`runtime.yac` 用 LIR 实现列表/字符串/bytes 以及 `print_int`、`print_val`（列表/`[]`/裸字符串，对齐 C `value_to_string`）、`time_ms`/`time_str`、`yac_argc`、`gc_collect`（转调 `yac_gc`）。kernel 指令：`write1`、`clock`、`glob`、`is_int`（偶数为 int）、`memcpy`（x86 `rep movsb`；arm64/riscv64 字节循环，独立小函数）。`compile_top` 产出 **40** 个 fun（`_start` + **39** runtime；手写 helper 不占 fun 表）。
 
 **无法再迁进 LIR 的手写 `gen_*`**（`emit_program_at` 末尾追加）：
 
@@ -260,6 +251,8 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | `gen_apply1` / `gen_apply2` | 动态 `nenv` 跳表 + SysV 寄存器 |
 
 **已知编译器限制**：小程序里 33 元列表 / 33 个 `let` 都正常；**编译器自己的 `_start`（bundle 几百条顶层 let 合成一帧）里**放 33 元 LIR cons 字面量会被错编（`bytes_to_str` → SIGSEGV 139）。对策：`runtime.yac` 的 insn 列表做成 `rt_*_ins(_)` 小函数。`emit_insn` 已拆成按 op 分组的小函数；不要再把大块逻辑塞回 dispatcher。
+
+**riscv64**：无用户函数的整数/部分 list 原语在 qemu 下可跑；含 `letfun` 或用户调用的用例 SIGSEGV 139（C interp `--arch riscv64` 同样；既有 emit 问题，不是 LIR 设计标签改动引入）。arm64 qemu 与 x86 同源 `COMPILER_CASES` 全过。
 
 **近期完成（perf）**：全量 bundle 自编译曾 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）。`emit_insn` 已按 core/heap/clos/prim 拆开。`str_cat` / `str_slice` / `bytes_extend` / `bytes_to_str` 走 kernel `memcpy`（x86 `rep movsb`）。
 

@@ -14,6 +14,15 @@
  * (yc_A bytes_to_str → SIGSEGV); the same literal in a small function is fine.
  */
 
+let rt_cons_ins(_) =
+  [l_prologue(6, 2),
+   l_alloc(3, 40),
+   l_obj_sti(3, 8, 0),
+   l_obj_sti(3, 16, 2),
+   l_obj_st(3, 24, 1),
+   l_obj_st(3, 32, 2),
+   l_ret(3)]
+
 let rt_tail_ins(_) =
   [l_prologue(6, 1),
    l_nil(2),
@@ -238,6 +247,40 @@ let rt_list_ensure_ins(_) =
    l_obj_st(1, 64, 8),
    l_obj_st_int(1, 72, 3),
    l_ret(1)]
+
+/* list_set(lst, i, x): overwrite slot i (same vec as nth). */
+let rt_list_set_ins(_) =
+  [l_prologue(18, 3),
+   l_obj_kind(4, 1),
+   l_mov_imm(5, 5),
+   l_icmp("==", 6, 4, 5),
+   l_br(6, "ls_len", "ls_bad"),
+   l_label("ls_bad"),
+   l_mov_imm(7, 0),
+   l_ret(7),
+   l_label("ls_len"),
+   l_obj_ld(8, 1, 24),
+   l_tag(8, 8),
+   l_icmp("<", 6, 2, 8),
+   l_br(6, "ls_ge0", "ls_bad"),
+   l_label("ls_ge0"),
+   l_mov_imm(9, 0),
+   l_icmp("<", 6, 2, 9),
+   l_br(6, "ls_bad", "ls_vec"),
+   l_label("ls_vec"),
+   l_obj_ld(10, 1, 64),
+   l_nil(11),
+   l_icmp("==", 6, 10, 11),
+   l_br(6, "ls_bad", "ls_off"),
+   l_label("ls_off"),
+   l_mov_imm(12, 8),
+   l_binop("*", 13, 2, 12),
+   l_mov_imm(12, 32),
+   l_binop("+", 13, 13, 12),
+   l_ld64(14, 10, 13),
+   l_obj_st(14, 24, 3),
+   l_mov_imm(7, 0),
+   l_ret(7)]
 
 let rt_list_push_ins(_) =
   [l_prologue(16, 2),
@@ -816,7 +859,8 @@ let rt_bytes_to_str_ins(_) =
    l_ret(5)]
 
 let runtime_funs(_) =
-  [l_fun("yac_tail", 1, 0, rt_tail_ins(0), "yac_tail"),
+  [l_fun("yac_cons", 2, 0, rt_cons_ins(0), "yac_cons"),
+   l_fun("yac_tail", 1, 0, rt_tail_ins(0), "yac_tail"),
    l_fun("yac_len", 1, 0, rt_len_ins(0), "yac_len"),
    l_fun("yac_nth", 2, 0, rt_nth_ins(0), "yac_nth"),
    l_fun("yac_list_rev", 1, 0, rt_list_rev_ins(0), "yac_list_rev"),
@@ -825,6 +869,7 @@ let runtime_funs(_) =
    l_fun("yac_list_new", 0, 0, rt_list_new_ins(0), "yac_list_new"),
    l_fun("yac_list_ensure", 1, 0, rt_list_ensure_ins(0), "yac_list_ensure"),
    l_fun("yac_list_push", 2, 0, rt_list_push_ins(0), "yac_list_push"),
+   l_fun("yac_list_set", 3, 0, rt_list_set_ins(0), "yac_list_set"),
    l_fun("yac_foldl", 3, 0, rt_foldl_ins(0), "yac_foldl"),
    l_fun("yac_map", 2, 0, rt_map_ins(0), "yac_map"),
    l_fun("yac_str_eq", 2, 0, rt_str_eq_ins(0), "yac_str_eq"),

@@ -1,0 +1,269 @@
+/* tests/perf/map_bench.yac — mutable open-addressing map (aligned with lower.yac fmap).
+ *
+ *   ./yac tests/perf/map_bench.yac
+ *   ./yac $BUNDLE tests/perf/map_bench.yac -o /tmp/map_bench && /tmp/map_bench
+ *
+ * Table is [vec, n, cap], cap power of 2, slot 0 empty else [k,v].
+ * fmap (funs): open addressing. env/sh/fv: alist (scope history).
+ */
+
+let hash_str_loop(s, n, i, h) =
+  if i >= n then h
+  else hash_str_loop(s, n, i + 1, band(h * 131 + str_ref(s, i), 16777215))
+
+let hash_str(s) = hash_str_loop(s, str_len(s), 0, 0)
+
+let fmap_fill(b, i, cap) =
+  if i >= cap then b
+  else
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    fmap_fill(b, i + 8, cap)
+
+let fmap_new(_) =
+  let m = list_new() in
+  let _ = list_push(m, fmap_fill(list_new(), 0, 8)) in
+  let _ = list_push(m, 0) in
+  let _ = list_push(m, 8) in
+  m
+
+let fmap_probe(vec, k, i, mask) =
+  if nth(vec, i) == 0 then i
+  else if nth(nth(vec, i), 0) == k then i
+  else fmap_probe(vec, k, band(i + 1, mask), mask)
+
+let fmap_got(e) =
+  if e == 0 then 0 else nth(e, 1)
+
+let fmap_get(m, k) =
+  fmap_got(nth(nth(m, 0), fmap_probe(nth(m, 0), k,
+            band(hash_str(k), nth(m, 2) - 1), nth(m, 2) - 1)))
+
+let fmap_fresh(m, i, k, v) =
+  let _ = list_set(nth(m, 0), i, [k, v]) in
+  list_set(m, 1, nth(m, 1) + 1)
+
+let fmap_put_at(m, k, v, i) =
+  if nth(nth(m, 0), i) == 0 then fmap_fresh(m, i, k, v)
+  else list_set(nth(m, 0), i, [k, v])
+
+let fmap_install(m, k, v) =
+  fmap_put_at(m, k, v, fmap_probe(nth(m, 0), k,
+              band(hash_str(k), nth(m, 2) - 1), nth(m, 2) - 1))
+
+let fmap_rehash(oldv, m, i, oldc) =
+  if i >= oldc then 0
+  else if nth(oldv, i) == 0 then fmap_rehash(oldv, m, i + 1, oldc)
+  else
+    let _ = fmap_install(m, nth(nth(oldv, i), 0), nth(nth(oldv, i), 1)) in
+    fmap_rehash(oldv, m, i + 1, oldc)
+
+let fmap_grow_prep(m, oldc) =
+  let _ = list_set(m, 0, fmap_fill(list_new(), 0, oldc * 2)) in
+  let _ = list_set(m, 1, 0) in
+  list_set(m, 2, oldc * 2)
+
+let fmap_swap(oldv, m, oldc) =
+  let _ = fmap_grow_prep(m, oldc) in
+  fmap_rehash(oldv, m, 0, oldc)
+
+let fmap_grow(m) = fmap_swap(nth(m, 0), m, nth(m, 2))
+
+let fmap_maybe_grow(m) =
+  if nth(m, 1) * 2 >= nth(m, 2) then fmap_grow(m) else 0
+
+let fmap_put(m, k, v) =
+  let _ = fmap_maybe_grow(m) in
+  fmap_install(m, k, v)
+
+let fmap_scan(xs, k, i) =
+  if i < 0 then 0
+  else if nth(nth(xs, i), 0) == k then nth(nth(xs, i), 1)
+  else fmap_scan(xs, k, i - 1)
+
+let alist_put(m, k, v) =
+  let _ = list_push(m, [k, v]) in
+  0
+
+let env_new(_) =
+  let ps = list_new() in
+  let _ = list_push(ps, 0) in
+  [list_new(), [0, ps]]
+
+let env_enter(env) =
+  let ps = nth(nth(env, 1), 1) in
+  let _ = list_push(ps, nth(nth(env, 1), 0)) in
+  [nth(env, 0), [len(ps) - 1, ps]]
+
+let env_bind(env, name, slot, ncap) =
+  let _ = alist_put(nth(env, 0), name, [slot, ncap, nth(nth(env, 1), 0)]) in
+  env
+
+let env_live(g, cur, parents) =
+  if cur == g then 1
+  else if cur == 0 then 0
+  else env_live(g, nth(parents, cur), parents)
+
+let env_scan(xs, k, cur, parents, i) =
+  if i < 0 then 0
+  else if nth(nth(xs, i), 0) == k then
+    if env_live(nth(nth(nth(xs, i), 1), 2), cur, parents) != 0 then nth(nth(xs, i), 1)
+    else env_scan(xs, k, cur, parents, i - 1)
+  else env_scan(xs, k, cur, parents, i - 1)
+
+let env_lookup(env, name) =
+  let e = env_scan(nth(env, 0), name, nth(nth(env, 1), 0), nth(nth(env, 1), 1),
+                   len(nth(env, 0)) - 1) in
+  if e == 0 then 0 else nth(e, 0)
+
+let NAMES = ["a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
+             "a8", "a9", "a10", "a11", "a12", "a13", "a14", "a15",
+             "a16", "a17", "a18", "a19", "a20", "a21", "a22", "a23",
+             "a24", "a25", "a26", "a27", "a28", "a29", "a30", "a31"]
+
+let NENV = 800
+let NBIND = 24
+let NLOOK = 48
+let NSH = 250
+let NSHPUT = 30
+let NSHHAS = 32
+let NFV = 250
+let NFVPUT = 16
+let NFVHAS = 20
+let NFUN = 1600
+let NFUNGET = 1500
+let NFILL = 8
+
+let nm(i) = nth(NAMES, i % 32)
+
+let line(k, n) =
+  let _ = print(str_cat(k, str_cat("=", int_to_str(n)))) in
+  0
+
+let fail(msg) =
+  let _ = print(str_cat("FAIL: ", msg)) in
+  1
+
+let check_maps(_) =
+  let m = list_new() in
+  let _ = list_push(m, 1) in
+  let _ = list_set(m, 0, 9) in
+  if nth(m, 0) != 9 then fail("list_set")
+  else
+    let fm = fmap_new(0) in
+    let _ = fmap_put(fm, "x", 1) in
+    let _ = fmap_put(fm, "x", 2) in
+    if fmap_get(fm, "x") != 2 then fail("fmap last-put")
+    else if fmap_get(fm, "z") != 0 then fail("fmap miss")
+    else
+      let am = list_new() in
+      let _ = alist_put(am, "x", 1) in
+      let _ = alist_put(am, "x", 2) in
+      if fmap_scan(am, "x", len(am) - 1) != 2 then fail("alist last-put")
+      else
+        let e0 = env_new(0) in
+        let e1 = env_bind(e0, "x", 3, 0) in
+        if env_lookup(e1, "x") != 3 then fail("env bind")
+        else
+          let e2 = env_enter(e1) in
+          let e3 = env_bind(e2, "x", 7, 0) in
+          if env_lookup(e3, "x") != 7 then fail("env shadow") else 0
+
+let env_looks(env, i, acc) =
+  if i >= NLOOK then acc
+  else env_looks(env, i + 1, acc + env_lookup(env, nm(i)))
+
+let env_binds(env, i) =
+  if i >= NBIND then env
+  else env_binds(env_bind(env, nm(i), i + 1, 0), i + 1)
+
+let bench_env(i, acc) =
+  if i >= NENV then acc
+  else bench_env(i + 1, acc + env_looks(env_binds(env_new(0), 0), 0, 0))
+
+let sh_puts(xs, i) =
+  if i >= NSHPUT then xs
+  else
+    let _ = alist_put(xs, nm(i), 1) in
+    sh_puts(xs, i + 1)
+
+let sh_looks(xs, last, i, acc) =
+  if i >= NSHHAS then acc
+  else sh_looks(xs, last, i + 1, acc + fmap_scan(xs, nm(i), last))
+
+let bench_sh(i, acc) =
+  if i >= NSH then acc
+  else
+    let xs = sh_puts(list_new(), 0) in
+    bench_sh(i + 1, acc + sh_looks(xs, len(xs) - 1, 0, 0))
+
+let fmap_scan_name(xs, k, i) =
+  if i < 0 then 0
+  else if nth(xs, i) == k then 1
+  else fmap_scan_name(xs, k, i - 1)
+
+let fv_puts(m, i) =
+  if i >= NFVPUT then m
+  else
+    let _ = list_push(m, nm(i)) in
+    fv_puts(m, i + 1)
+
+let fv_looks(m, last, i, acc) =
+  if i >= NFVHAS then acc
+  else fv_looks(m, last, i + 1, acc + fmap_scan_name(m, nm(i), last))
+
+let bench_fv(i, acc) =
+  if i >= NFV then acc
+  else
+    let m = fv_puts(list_new(), 0) in
+    bench_fv(i + 1, acc + fv_looks(m, len(m) - 1, 0, 0))
+
+let fun_puts(m, i) =
+  if i >= NFUN then m
+  else
+    let _ = fmap_put(m, nm(i), i + 1) in
+    fun_puts(m, i + 1)
+
+let fun_looks(m, i, acc) =
+  if i >= NFUNGET then acc
+  else fun_looks(m, i + 1, acc + fmap_get(m, nm(i)))
+
+let bench_funs(_) =
+  fun_looks(fun_puts(fmap_new(0), 0), 0, 0)
+
+let fill_n(i) =
+  if i >= NFILL then 0
+  else
+    let _ = fmap_new(0) in
+    fill_n(i + 1)
+
+let main =
+  let cr = check_maps(0) in
+  if cr != 0 then cr
+  else
+    let t0 = time_ms() in
+    let s0 = bench_env(0, 0) in
+    let t1 = time_ms() in
+    let s1 = bench_sh(0, 0) in
+    let t2 = time_ms() in
+    let s2 = bench_fv(0, 0) in
+    let t3 = time_ms() in
+    let s3 = bench_funs(0) in
+    let t4 = time_ms() in
+    let _ = fill_n(0) in
+    let t5 = time_ms() in
+    let _ = print("map_bench") in
+    let _ = line("alist_env_ms", t1 - t0) in
+    let _ = line("alist_sh_ms", t2 - t1) in
+    let _ = line("alist_fv_ms", t3 - t2) in
+    let _ = line("hmap_funs_ms", t4 - t3) in
+    let _ = line("hmap_new_xN_ms", t5 - t4) in
+    let _ = line("sum", s0 + s1 + s2 + s3) in
+    0
+in main

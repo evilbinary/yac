@@ -867,7 +867,6 @@ let emit_a64_i_core(st, insn, is_entry) =
     emit_st4(st, b, cur, labels, patches3)
   else if k == "mov_imm" then
     let _ = a64_mov_imm64(b, 0, nth(insn, 2)) in
-    let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "mov" then
@@ -988,6 +987,34 @@ let emit_a64_i_core(st, insn, is_entry) =
     let _ = a64_b(b, 0) in
     emit_st4(st, b, cur, labels, emit_patch_jmpf(nth(st, 4), patches, pos, fn))
   else st
+
+let emit_a64_sysarg(b, args, j) =
+  if j >= len(args) then 0
+  else if j >= 6 then 0
+  else
+    let _ = a64_slot(b, nth(args, j), false, j) in
+    emit_a64_sysarg(b, args, j + 1)
+
+let emit_a64_i_sys(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  if nth(insn, 0) == "untag" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let _ = a64_asr1(b, 0, 0) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else
+    let nr = nth(insn, 2) in
+    let _ = emit_a64_sysarg(b, nth(insn, 3), 0) in
+    let _ =
+      if nr == 60 then a64_movz(b, 8, 93, 0)
+      else a64_movz(b, 8, nr, 0) in
+    let _ = a64_svc(b) in
+    let _ = a64_lsl1(b, 0, 0) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
 
 let emit_a64_i_heap(st, insn) =
   let b = nth(st, 0) in
@@ -1519,7 +1546,7 @@ let emit_a64_i_memcpy(st, insn) =
   let _ = a64_apply_b26(b, jb, loop) in
   emit_st4(st, b, cur, labels, patches)
 
-let emit_insn_a64(st, insn, is_entry) =
+let emit_insn_a64_go(st, insn, is_entry) =
   let k = nth(insn, 0) in
   if k == "closure" or k == "apply" or k == "tailapply" then
     emit_a64_i_clos(st, insn, is_entry)
@@ -1528,6 +1555,8 @@ let emit_insn_a64(st, insn, is_entry) =
        or k == "tailcall" or k == "jmp" or k == "br" or k == "ret"
        or k == "exit" then
     emit_a64_i_core(st, insn, is_entry)
+  else if k == "untag" or k == "syscall" then
+    emit_a64_i_sys(st, insn)
   else if k == "obj_kind" or k == "obj_ld" or k == "obj_st" or k == "tag"
        or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
        or k == "alloc_s" or k == "ld8" or k == "st8" or k == "ld64" or k == "st64" or k == "print"
@@ -1536,6 +1565,9 @@ let emit_insn_a64(st, insn, is_entry) =
     emit_a64_i_heap(st, insn)
   else if k == "memcpy" then emit_a64_i_memcpy(st, insn)
   else emit_a64_i_prim(st, insn)
+
+let emit_insn_a64(st, insn, is_entry) =
+  emit_insn_a64_go(st, lir_norm(insn), is_entry)
 
 
 

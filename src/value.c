@@ -508,6 +508,36 @@ static Value prim_list_push(Value *args, int nargs, PrimCtx *ctx) {
     return v_unit();
 }
 
+/* list_set(lst, i, x) -> unit. Mutates slot i (open-addressing tables). */
+static Value prim_list_set(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_LIST) {
+        ctx->errored = true;
+        strcpy(ctx->errmsg, "list_set: expected a list");
+        return VALUE_NULL;
+    }
+    List *l = args[0].u.l;
+    if (l->cap < 0) {
+        ctx->errored = true;
+        strcpy(ctx->errmsg, "list_set: list is immutable");
+        return VALUE_NULL;
+    }
+    if (args[1].tag != V_INT) {
+        ctx->errored = true;
+        strcpy(ctx->errmsg, "list_set: index must be an integer");
+        return VALUE_NULL;
+    }
+    long long i = args[1].u.i;
+    if (i < 0 || i >= l->len) {
+        ctx->errored = true;
+        snprintf(ctx->errmsg, sizeof(ctx->errmsg),
+                 "list_set: index %lld out of range (len=%d)", i, l->len);
+        return VALUE_NULL;
+    }
+    l->items[i] = args[2];
+    return v_unit();
+}
+
 /* reverse(lst) -> new list, O(n) */
 static Value prim_reverse(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
@@ -1252,6 +1282,7 @@ static const Prim PRIMS[] = {
     {"bytes_new", 1, true, true, prim_bytes_new}, /* called as bytes_new(); parser passes unit */
     {"list_new", 1, true, true, prim_list_new},   /* called as list_new(); parser passes unit */
     {"list_push", 2, false, true, prim_list_push},
+    {"list_set", 3, false, true, prim_list_set},
     {"list_rev", 1, true, true, prim_reverse},
     {"bytes_put", 3, false, true, prim_bytes_put},
     {"bytes_append", 2, false, true, prim_bytes_append},
