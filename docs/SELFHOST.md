@@ -117,8 +117,8 @@ let anf = ["tailcall", ["var","fact"], [["int",5]]]
 | `src-self/lexer.yac`                      | 字符流 → token 流（空白/注释/标识符/数字含科学计数法/字符串/操作符） | ✅   |
 | `src-self/parser.yac`                     | token 流 → AST（递归下降 + 优先级爬升）               | ✅   |
 | `src-self/anf.yac`                        | AST → ANF（`[bindings, tailExpr]`，求值顺序显式）  | ✅   |
-| `src-self/lir.yac`                        | LIR 构造器 + `lir_norm` + 过程内 self-TCO      | ✅   |
-| `src-self/lower.yac`                      | ANF → LIR（槽机指令选择；ncap=0 仍分配闭包）            | ✅   |
+| `src-self/lir.yac`                        | ANF → LIR（`lir_expr`，对标 `anf_expr`） | ✅   |
+| `src-self/lower.yac`                      | LIR → 机器码（调用 `emit_*`）                              | ✅   |
 | `src-self/runtime.yac`                    | `yac_*` 运行时过程（列表/字符串/bytes/print/time）   | ✅   |
 | `src-self/encode_{x64,arm64,riscv64}.yac` | 单条目标指令 → 字节                                | ✅   |
 | `src-self/emit.yac` + `emit_<arch>.yac`   | LIR → 机器码（x86-64 / arm64 / riscv64）       | ✅   |
@@ -240,7 +240,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
 
-`runtime.yac` 用 LIR 实现列表/字符串/bytes 以及 `print_int`、`print_val`（列表/`[]`/裸字符串，对齐 C `value_to_string`）、`time_ms`/`time_str`、`yac_argc`、`gc_collect`（转调 `yac_gc`）。kernel 指令：`write1`、`clock`、`glob`、`is_int`（偶数为 int）、`memcpy`（x86 `rep movsb`；arm64/riscv64 字节循环，独立小函数）。`compile_top` 产出 **40** 个 fun（`_start` + **39** runtime；手写 helper 不占 fun 表）。
+`lir_expr` 把一项 ANF 编成槽指令；整表 `["prog", [_start] · runtime · procs, "_start"]` 在 backend 里拼出。runtime 约 **39** 个过程（手写 helper 不占 fun 表）。
 
 **无法再迁进 LIR 的手写 `gen_*`**（`emit_program_at` 末尾追加）：
 

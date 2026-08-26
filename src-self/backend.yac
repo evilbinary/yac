@@ -1,37 +1,10 @@
-/* backend.yac — LIR → bytes → image, plus the compile pipeline.
- *
- * backend_compile(lir)  — x86 ELF (boot driver_emit / driver_lower)
- * compile_file(...)     — src → write binary (called from yc.yac)
- *
- * PIPELINE: src -lex-> tok -parse-> ast -anf-> anf -lower-> lir -emit-> pack
- */
+/* backend.yac — pipeline + image. lir_expr = ANF→LIR；lower_expr = LIR→emit. */
 
-let backend_emit(t, lir) =
-  let a = target_arch(t) in
-  let _ = log("backend", "emit begin") in
-  let r =
-    if a == "x86_64" then
-      emit_program_at(lir, target_vaddr(t), target_text_off(t))
-    else if a == "arm64" then
-      emit_program_arm64(lir, target_vaddr(t), target_text_off(t))
-    else
-      emit_program_riscv64(lir, target_vaddr(t), target_text_off(t)) in
-  let code = nth(r, 0) in
-  let _ = log_i("backend", "code_len", bytes_len(code)) in
-  code
+let backend_emit(t, ast) = nth(lower_expr(ast, t), 0)
 
-let backend_pack(t, code) =
-  let _ = log("backend", "pack") in
-  pack_image(t, code)
+let backend_pack(t, code) = pack_image(t, code)
 
-let backend_compile(prog) =
-  let _ = log("backend", "emit begin") in
-  let r = emit_program(prog) in
-  let _ = log_i("backend", "code_len", bytes_len(nth(r, 0))) in
-  let _ = log("backend", "pack") in
-  let bin = pack_elf(nth(r, 0)) in
-  let _ = log("backend", "done") in
-  bin
+let backend_compile(prog) = pack_elf(nth(lower_program(prog), 0))
 
 let anf_top(item) =
   let r = anf_expr(item, 0) in
@@ -41,38 +14,36 @@ let anf_all(i, prog, acc) =
   if i >= len(prog) then acc
   else anf_all(i + 1, prog, append(acc, [anf_top(nth(prog, i))]))
 
-let pass_lex(src) =
-  let _ = log("yc", "tokenize begin") in
-  let toks = tokenize(src) in
-  let _ = log_i("yc", "ntoks", len(toks)) in
-  toks
+let pass_lex(src) = tokenize(src)
+let pass_parse(toks) = parse_program(toks, 0, [])
+let pass_anf(prog) = anf_all(0, prog, [])
 
-let pass_parse(toks) =
-  let _ = log("yc", "parse begin") in
-  let prog = parse_program(toks, 0, []) in
-  let _ = log_i("yc", "nprog", len(prog)) in
-  prog
+/* st = [env, ctr, Σ, uid, insns, slot] */
+let lir_all(i, items, st) =
+  if i >= len(items) then st
+  else
+    let r = lir_expr(nth(items, i),
+              st_no([nth(st, 4), nth(st, 0), nth(st, 1), nth(st, 2), nth(st, 3)])) in
+    lir_all(i + 1, items,
+      [nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5), nth(r, 0), nth(r, 1)])
 
-let pass_anf(prog) =
-  let _ = log("yc", "anf begin") in
-  let anf_list = anf_all(0, prog, []) in
-  let _ = log_i("yc", "nanf", len(anf_list)) in
-  anf_list
-
-let pass_lower(anf_list) =
-  tco_prog(compile_top(anf_list))
-
-let pass_emit_t(t, lir) = backend_emit(t, lir)
-
-let pass_pack_t(t, code) = backend_pack(t, code)
+let pass_lir(anf_list) =
+  let rt0 = runtime_funs(0) in
+  let st = lir_all(0, anf_list,
+             [env_new(0), 1, sigma_new(len(rt0)), 0, list_new(), 0]) in
+  let funs = sigma_list(nth(st, 2)) in
+  let entry = start_proc(nth(st, 1), nth(st, 5), nth(st, 4)) in
+  tco_prog(["prog", cons(entry, append(rt0, reverse(funs))), "_start"])
 
 let make_pipeline(t) =
+  let pass_lower(ast) = nth(lower_expr(ast, t), 0) in
+  let pass_pack(code) = pack_image(t, code) in
   [mk_pass("lex", pass_lex),
    mk_pass("parse", pass_parse),
    mk_pass("anf", pass_anf),
+   mk_pass("lir", pass_lir),
    mk_pass("lower", pass_lower),
-   mk_pass("emit", fun(lir) -> pass_emit_t(t, lir)),
-   mk_pass("pack", fun(code) -> pass_pack_t(t, code))]
+   mk_pass("pack", pass_pack)]
 
 let compile_file(inpath, outpath, t, profpath) =
   let t0 = time_ms() in

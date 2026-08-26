@@ -1,4 +1,4 @@
-/* driver_lower.yac — full pipeline with stage logs (see log.yac). */
+/* driver_lower.yac — ANF → LIR → emit → ELF. */
 let _ = log("lower", "start")
 let src = read_file("build/lower_tmp/in.yac");
 let _ = log_i("lower", "src_len", str_len(src))
@@ -14,8 +14,20 @@ let anf_item(item) =
   [nth(r, 0), nth(r, 1)];
 let anf_list = map(anf_item, prog);
 let _ = log_i("lower", "nanf", len(anf_list))
-let lir = compile_top(anf_list);
-let elf = backend_compile(lir);
+let rt0 = runtime_funs(0)
+let st0 = [env_new(0), 1, sigma_new(len(rt0)), 0, list_new(), 0]
+let fold(i, st) =
+  if i >= len(anf_list) then st
+  else
+    let r = lir_expr(nth(anf_list, i),
+              st_no([nth(st, 4), nth(st, 0), nth(st, 1), nth(st, 2), nth(st, 3)])) in
+    fold(i + 1, [nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5), nth(r, 0), nth(r, 1)])
+let st = fold(0, st0)
+let lir = tco_prog(["prog",
+  cons(start_proc(nth(st, 1), nth(st, 5), nth(st, 4)),
+       append(rt0, reverse(sigma_list(nth(st, 2))))), "_start"]);
+let r = lower_program(lir);
+let elf = pack_elf(nth(r, 0));
 let _ = log_i("lower", "elf_len", bytes_len(elf))
 let _ = write_file("build/lower_tmp/out.bin", elf) in
 let __ = log("lower", "done") in

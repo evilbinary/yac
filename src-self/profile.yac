@@ -3,7 +3,7 @@
  * C interp already dumps via --prof-out (src/profile.c). Native yc_A
  * instruments letfun prologues and uses the same TSV shape.
  * Disabled path: yac_prof_enter sees empty cell and returns.
- * Bundled after lower.yac so fmap and hash_str exist.
+ * Bundled after lir.yac so fmap and hash_str exist.
  * Overrides runtime.yac no-op prof_enter_go / prof_leave_go (emit last-put-wins).
  */
 

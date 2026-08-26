@@ -21,6 +21,8 @@ Yac 是一个小型、纯粹的函数式语言，其核心设计目标是**在�
 4. **可验证**：对同一程序，`evalANF(anf(p)) == evalCPS(cps(anf(p)))`，用属性测试保证翻译正确性。
 5. **用 C 实现**：作为系统语言，C 要求我们把"堆对象、闭包、续延、GC"全部显式设计出来，正适合作为教学/原型核心。
 
+
+
 ## 2. 总体架构
 
 ```
@@ -33,12 +35,12 @@ Yac 是一个小型、纯粹的函数式语言，其核心设计目标是**在�
                                                                                  └─────┬─────┘
                                            ┌───────────────────────────────────────────┴────┐
                                            │                                                │
-                                           ▼ CPS 转换                                       ▼ lower
+                                           ▼ CPS 转换                                       ▼ LIR转换
                                      ┌───────────┐                                    ┌───────────┐
                                      │ CPS IR    │──▶ eval_cps ──▶ 结果               │ LIR       │
                                      └─────┬─────┘                                    └─────┬─────┘
                                            │                                                │
-                                           ▼ un-CPS（受限）                                 ▼ emit-*
+                                           ▼ un-CPS（受限）                                 ▼low emit-*
                                      ┌───────────┐                                    ┌───────────┐
                                      │ ANF IR    │                                    │ 机器码    │──▶ ELF / PE / Mach-O
                                      └───────────┘                                    └───────────┘
@@ -51,6 +53,8 @@ Yac 是一个小型、纯粹的函数式语言，其核心设计目标是**在�
 - `source → AST → ANF → LIR → 机器码`（自举编译器 `yc`，不经过 CPS）
 - 每层都可以独立 dump（`--dump-anf` / `--dump-cps`；LIR 为 yac list）
 
+
+
 ### 2.1 机器码路径：ANF → LIR → 二进制
 
 ```
@@ -58,12 +62,12 @@ Yac 是一个小型、纯粹的函数式语言，其核心设计目标是**在�
                        │ ANF IR    │
                        └─────┬─────┘
                              │
-                             ▼ lower
+                             ▼ anf ir-转lir
                        ┌───────────┐
                        │ LIR       │── 槽机：mov / add / mref / fcall / syscall …
                        └─────┬─────┘
                              │
-                             ▼ emit-x86_64 / emit_arm64 / emit_riscv64
+                             ▼ lower emit-x86_64 / emit_arm64 / emit_riscv64
                        ┌───────────┐
                        │ 机器码    │── 1..n 条目标指令字节
                        └─────┬─────┘
@@ -153,7 +157,7 @@ L, name, entryName, srcname            ::= 字符串
 s                                      ::= 槽号（整数）
 ```
 
-`mov_imm` 写入 **已经编码好的** 64 位模式（翻译时完成 tag：int 为 `n<<1`，nil 为 `1`）。源级 `nth`/`cons`/`len`/`str_cat`/`foldl`/`map`/`bytes_*`/`argc`/`argv`/`time_*`/`read_file`/`write_file` 不是 LIR 指令，一律 `ccall yac_*`（或 `time_ms` 等 runtime 名）。`str_len`/`str_ref`/`bytes_len` 是对象字段读取（同 mref），emit 直出。
+`mov_imm` 写入 **已经编码好的** 64 位模式（翻译时完成 tag：int 为 `n<<1`，nil 为 `1`）。源级 `nth`/`cons`/`len`/`str_cat`/`foldl`/`map`/`bytes_`*/*`argc`*/*`argv`*/*`time_`/`read_file`/`write_file` 不是 LIR 指令，一律 `ccall yac_`*（或 `time_ms` 等 runtime 名）。`str_len`/`str_ref`/`bytes_len` 是对象字段读取（同 mref），emit 直出。
 
 emit 时 `lir_norm` 把设计标签收成 emit-* 已有的形状（构造器走左边；boot 手写 LIR 可直接用右边）：
 
@@ -171,7 +175,7 @@ mref8 / mset8    →  ld8 / st8
 
 `exit` 是 emit 糖（untag + 架构 exit），手写测试仍可用。`_start` 走 `untag` + `syscall 60`。`syscall` 的 nr **60 表示进程退出**（x86-64 Linux 的 exit 号）；arm64/riscv64 映成 93。槽参数已是要进寄存器的位模式。
 
-#### ANF → LIR
+#### ANF → LIR（`lir.yac` 的 `lir_expr`，对标 `anf_expr`）
 
 环境 `Γ : name → slot`。当前过程名 `self`（`_start` 或某个 `letfun` 的码名）。已定义过程 `Σ`（名 → `{ncap}`）。`s*` 表示 fresh 槽。`I · J` 是指令拼接。`ε` 是空序列。
 
@@ -320,6 +324,8 @@ LIR:  ["proc", "_start", 0, 0,
        "_start"]
 ```
 
+
+
 #### 机器码（不是第三种 IR）
 
 LIR 一条 insn 变成 **1..n 条目标指令字节**，再打进容器。没有「机器码语法」的 yac list；形态是文件：
@@ -340,6 +346,8 @@ encoded   ::= x86-64 | arm64 | riscv64 字节
 - `syscall`：x86 `syscall`，arm `svc #0`，riscv `ecall`；`nr` 进 syscall 号寄存器（60 = 退出，见上）
 - `cmpjmp`：测 tagged 条件槽（非 0 为真；`true` 的 tag 为 2）
 - `_start`：`local` 后跑顶层绑定，最后 `untag` + `syscall 60`
+
+
 
 ## 3. 源语言
 
@@ -376,6 +384,8 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 - `callcc f`：`f` 是一元函数，收到一个**当前续延**（一个一等值）；调用 `throw k v` 即以 `v` 作为整个 `callcc` 表达式的结果跳回。
 - 顶层最后一个表达式的结果就是程序退出值（ANF 的 `halt`、CPS 的 `halt`）。
 
+
+
 ### 3.3 示例
 
 ```
@@ -399,6 +409,8 @@ let f(n) = if n > 100 then throw exit 999 else f(n+1) in
 f(0)                              -- 999
 ```
 
+
+
 ## 4. 核心 IR 之一：ANF
 
 ANF 的核心理念：**"计算"与"绑定"分离**。原子值（Atom）无副作用、无需再求值；一切计算都绑定到变量后再继续。
@@ -419,12 +431,16 @@ Exp   E ::= halt A
         |  A                                  -- 返回原子
 ```
 
+
+
 ### 4.2 说明
 
 - **原子（Atom）不会触发求值**：变量、字面量、原语名求值结果立即可得。
 - 每个 `let x = … in E` 只绑定**一次**计算，因此 `E` 中的 `x` 一定是一个"已算好的值"——求值顺序在语法里被写死。
 - 尾位置的 `call / prim / A` 不绑定结果，直接把控制权交给调用者/顶层，天然支持尾调用优化。
 - 函数体本身就是一个 ANF 表达式；`λ(x*).E` 是值的一部分（闭包）。
+
+
 
 ### 4.3 ANF 解释器（eval_anf）
 
@@ -466,6 +482,8 @@ CExp C ::= let x = V in C
 - 一个**程序** = 一个 CPS 表达式 + 一个初始续延 `halt`（打印/返回结果）。
 - `let x = V in C` 中的 `V` 是原子值，不求值、不调用——所有"副作用性"计算都发生在应用位置。
 
+
+
 ### 5.2 关键观察：callcc 在 CPS 里是免费的
 
 因为续延就是普通值：
@@ -479,6 +497,8 @@ CExp C ::= let x = V in C
 
 - `callcc(f)`：把机器当前的续延（一个闭包值）作为参数调用 `f`。
 - `throw(k, v)`：直接尾调用 `k(v)`。
+
+
 
 ### 5.3 CPS 解释器（eval_cps）
 
@@ -516,6 +536,8 @@ run(prog):
 
 ## 6. 求值的基础设施（C 实现）
 
+
+
 ### 6.1 值表示
 
 ```c
@@ -545,6 +567,8 @@ typedef struct Closure {
 - 闭包在 ANF 与 CPS 之间复用同一结构；差别只在 `body` 指向的 IR 与参数约定（CPS 多一个续延参数）。
 - `Env` 采用**链表作用域**或**扁平数组+快照**（见 6.3）。
 
+
+
 ### 6.2 IR 表示
 
 CPS IR：
@@ -568,6 +592,8 @@ ANF IR 与之同构，差别是：
 - `call`/`prim` 出现在 `let` 的右侧而不是整体节点；
 - 尾调用 `call/prim` 是独立节点；
 - 多出 `callcc`/`throw` 节点（ANF 机器拒绝执行，CPS 机器接受）。
+
+
 
 ### 6.3 环境（Env）
 
@@ -593,6 +619,8 @@ typedef struct Prim { const char *name; int arity; PrimFn fn; } Prim;
 
 ## 7. ANF ↔ CPS 转换
 
+
+
 ### 7.1 ANF → CPS（CPS 转换）
 
 定义 `⟦·⟧` 把 ANF 表达式映到 CPS 表达式，同时引入续延参数 `k`：
@@ -615,6 +643,8 @@ typedef struct Prim { const char *name; int arity; PrimFn fn; } Prim;
 - 尾调用位置的续延就是**外层传入的 k**，因此 CPS 天然保留 TCO。
 - 函数体的转换以"函数的续延参数 k"为环境入口，被调用时收到真实续延。
 - `callcc`/`throw` 在转换中保持不变（CPS 机器原生支持）。
+
+
 
 ### 7.2 CPS → ANF（un-CPS）
 
@@ -641,6 +671,8 @@ unCPS(C):  // 假设续延都形如 λx. E 且只在尾位置被调用
 
 ## 8. 内存管理
 
+
+
 ### 8.1 为何不用引用计数
 
 CPS 中闭包可捕获续延，续延再捕获闭包——**环**不可避免，引用计数会泄漏。因此采用**追踪式 GC**。
@@ -652,10 +684,14 @@ CPS 中闭包可捕获续延，续延再捕获闭包——**环**不可避免，
 - 根集合用显式**值栈**（`Value *vstack`）维护：进入原语回调前 `gc_push` 保护临时值，返回后 `gc_pop`。C 局部变量不当作根（不做保守扫描），保证可移植与精确性。
 - 回收：`mark(roots) → sweep(堆)`，空闲块用 free 链维护，`alloc` 优先复用。
 
+
+
 ### 8.3 简化方案（M1–M2 先用）
 
 - **arena/无 GC 版**：解释器运行期只增不减地分配（跑完统一释放），配合 `--limit-nodes` 限制节点数以防失控。正确性测试用它跑小输入。
 - M3 引入 mark-sweep 后，arena 版保留为 `--no-gc` 调试开关。
+
+
 
 ## 9. 类型系统（可选扩展，非核心）
 
@@ -664,6 +700,8 @@ CPS 中闭包可捕获续延，续延再捕获闭包——**环**不可避免，
 - **表层 + ANF**：Hindley-Milner 类型推断（`let` 泛化）。
 - **CPS**：续延类型 `τ ⇒ ⊥`，CPS 版本的类型为 `(A→⊥)→⊥`，采用回答类型多态（answer type polymorphism）。`callcc : ((τ⇒α)→τ)→τ`。
 - 该扩展不影响 §4–§8 的任何求值语义，独立成模块。
+
+
 
 ## 10. 目录结构与模块划分
 
@@ -703,12 +741,16 @@ yac --both file.yac             # 两个解释器各跑一遍并比对（属性�
 yac --no-gc file.yac            # 关掉 GC（arena 调试模式）
 ```
 
+
+
 ## 11. 验证策略
 
 1. **golden tests**：同一 `.yac` 程序分别跑 ANF 与 CPS，输出必须一致。
 2. **属性测试**：随机生成 AST → 转 ANF → 转 CPS，比对 `evalANF` 与 `evalCPS` 结果；随机程序里混入 `callcc`/`throw` 时，只对 CPS 断言（ANF 应报"不支持"）。
 3. **TCO 压测**：`let f(n) = if n==0 then 0 else f(n-1) in f(10000000)` 必须不爆栈（ANF 与 CPS 各一遍）。
 4. **callcc 语义测试**：`callcc`+`throw` 的经典用例（提前退出、生成器式背靠背续延、K 组合子小剧场）。
+
+
 
 ## 12. 里程碑
 
@@ -719,6 +761,8 @@ yac --no-gc file.yac            # 关掉 GC（arena 调试模式）
 | M2  | ANF→CPS、CPS 解释器（蹦床）、`callcc`/`throw` 原语 | `--both` 对普通程序一致；callcc 用例跑通 |
 | M3  | mark-sweep GC、un-CPS（受限）、`--dump-*`     | TCO 压测 10⁷ 级不爆栈；un-CPS 往返一致  |
 | M4  | 扁平环境快照、CPS 化简（常量折叠/eta 归约）、属性测试、文档      | 性能可测量改进；随机程序比对稳定             |
+
+
 
 
 ## 13. 参考文献与灵感
