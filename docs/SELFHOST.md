@@ -502,7 +502,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 - 闭包对象加 `[next][mark]` 头：`[next][mark][fnptr][nenv][env...]`（offset 0/8/16/24/32）。
 - `yac_alloc`：brk 分配 + 把新对象链入全局链表（`[next]=旧head`，head 指向新对象）。head 存在 ELF 数据区（段改 RWX）。
-- `gc_collect`：保守标记-清除——标记阶段把链表中所有对象 mark=1（保守根集=全部，因暂无栈图），清除阶段复位。**暂不回收**（保持所有活闭包，安全）；精确回收需栈图（M6）。
+- `gc_collect`：x86 按调用点栈图沿 rbp 链标记 LIR slot，再清除未标记对象到 `gc_free`。arm64/riscv 仍扫 `[sp, stack_hi)`。
 - 每次分配后调用 `gc_collect`（保守、无副作用，实际被反复执行验证）。
 - 验证：闭包捕获 + 全部 e2e 在 GC 开启下通过。
 
@@ -524,7 +524,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 **仍待**：
 1. **M6 L6**：compiler/qemu 只经原生 `yc_A`；boot 的 lex/parse/anf/lir/pipe/elf/emit/encode 用 `yc_A` 编跑。boot harness（`tests/boot/run.yac`）由 `yc_A` 编成 `boot_run` 再执行。原生 `system`（fork/execve `/bin/sh -c` + wait4）；harness 用 `system` + 临时文件代替 `popen`。原生 `exit` 为 `exit` 指令（syscall 60）。字符串转义 `\n` `\t` `\r` `\0` 与 C 一致（`\"` `\\` 用下一字符本身）。`bxor`/`bnot`/`bshl`/`bshr` 三架构。cps/callcc/float/bignum 仍走 C。顶层 `./yac tests/run.yac` 仍是 C 引导。
-2. **GC 栈图 / `--emit-asm` / `regalloc.yac` / M7 callcc**：未做。
+2. **GC 栈图（x86，已完成）**：调用点记录 `nslots`；`yac_gc` 沿 rbp 链用返回地址查表，只扫调用者帧的 LIR slot。`yac_alloc` 带 rbp 帧以便链上能看到调用者。arm64/riscv 仍保守扫栈。`--emit-asm` / `regalloc.yac` / M7 callcc：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。
 

@@ -126,6 +126,31 @@ let emit_patch_jmpf(ids, ps, pos, name) =
 /* tag 11: mov-imm64 of pooled STR (va|1). pos = imm64 / movz site. */
 let emit_patch_strlit(ps, pos, off) = cons([11, pos, off], ps)
 
+/* tag 12: abs64 = codebase + file_off (stack-map retaddrs / table ptr). */
+let emit_patch_codeva(ps, pos, off) = cons([12, pos, off], ps)
+
+/* Call-site stack maps: [ret_off, nslots]. nslots is the caller's frame. */
+let smap_cell = list_new()
+
+let smap_reset(_) =
+  if len(smap_cell) == 0 then
+    let _ = list_push(smap_cell, 0) in
+    list_push(smap_cell, list_new())
+  else
+    let _ = list_set(smap_cell, 0, 0) in
+    list_set(smap_cell, 1, list_new())
+
+let smap_set_nslots(n) =
+  let _ = if len(smap_cell) == 0 then smap_reset(0) else 0 in
+  list_set(smap_cell, 0, n)
+
+let smap_note(ret_off) =
+  let _ = if len(smap_cell) < 2 then smap_reset(0) else 0 in
+  list_push(nth(smap_cell, 1), [ret_off, nth(smap_cell, 0)])
+
+let smap_recs(_) =
+  if len(smap_cell) < 2 then list_new() else nth(smap_cell, 1)
+
 /* Unique STR objects in the image (not yac_alloc). Same content => same ptr
  * so native == is pointer-eq. GC only walks gc_head; pool is in the ELF. */
 let strlit_cell = list_new()
@@ -185,6 +210,23 @@ let strlit_off(s) =
 let strlit_bytes(_) =
   if len(strlit_cell) < 2 then bytes_new() else nth(strlit_cell, 1)
 
+let smap_emit_table(b, extra) =
+  let recs = smap_recs(0) in
+  let nr = len(recs) in
+  let start = bytes_len(b) in
+  let _ = strlit_u64(b, nr) in
+  let putr(i) =
+    if i >= nr then 0
+    else
+      let e = nth(recs, i) in
+      let pos = bytes_len(b) in
+      let _ = strlit_u64(b, 0) in
+      let _ = list_push(extra, [12, pos, nth(e, 0)]) in
+      let _ = strlit_u64(b, nth(e, 1)) in
+      putr(i + 1) in
+  let _ = putr(0) in
+  start
+
 let emit_st4(st, b, cur, labels, ps) =
   [b, cur, labels, ps, nth(st, 4)]
 
@@ -221,6 +263,8 @@ let emit_resolve_patch(st, p) =
     apply_u64(b, nth(p, 1), globbase + 64)
   else if tag == 11 then
     apply_u64(b, nth(p, 1), nth(st, 4) + nth(p, 2) + 1)
+  else if tag == 12 then
+    apply_u64(b, nth(p, 1), nth(st, 2) + nth(p, 2))
   else
     0
 
