@@ -59,97 +59,28 @@ let apply_u64(b, bytePos, val) =
   let _ = apply_abs32(b, bytePos + 4, band(bshr(val, 32), 4294967295)) in
   0
 
-let lookup_name(table, name) =
-  let rec(l) =
-    if len(l) == 0 then 0
-    else if nth(nth(l, 0), 0) == name then nth(nth(l, 0), 1)
-    else rec(drop(l, 1)) in
-  rec(table)
+/* Local labels: cons list of [name, pos]. */
+let lookup_name_at(table, name, i) =
+  if i < 0 then 0
+  else if nth(nth(table, i), 0) == name then nth(nth(table, i), 1)
+  else lookup_name_at(table, name, i - 1)
 
-/* Mutable open-addressing name map: [vec, n, cap]. Same as lower fmap. */
-let emit_hash_loop(s, n, i, h) =
-  if i >= n then h
-  else emit_hash_loop(s, n, i + 1, band(h * 131 + str_ref(s, i), 16777215))
+let lookup_name(table, name) = lookup_name_at(table, name, len(table) - 1)
 
-let emit_hash(s) = emit_hash_loop(s, str_len(s), 0, 0)
+let label_has_at(labels, name, i) =
+  if i < 0 then false
+  else if nth(nth(labels, i), 0) == name then true
+  else label_has_at(labels, name, i - 1)
 
-let emit_map_fill(b, i, cap) =
-  if i >= cap then b
-  else
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    emit_map_fill(b, i + 8, cap)
+let label_has(labels, name) = label_has_at(labels, name, len(labels) - 1)
 
-let emit_map_new(_) =
-  let m = list_new() in
-  let _ = list_push(m, emit_map_fill(list_new(), 0, 4096)) in
-  let _ = list_push(m, 0) in
-  let _ = list_push(m, 4096) in
-  m
+let label_put(labels, name, pos) = cons([name, pos], labels)
 
-let emit_map_probe(vec, k, i, mask) =
-  if nth(vec, i) == 0 then i
-  else if nth(nth(vec, i), 0) == k then i
-  else emit_map_probe(vec, k, band(i + 1, mask), mask)
-
-let emit_map_got(e) =
-  if e == 0 then 0 else nth(e, 1)
-
-let emit_map_get(m, k) =
-  emit_map_got(nth(nth(m, 0), emit_map_probe(nth(m, 0), k,
-                band(emit_hash(k), nth(m, 2) - 1), nth(m, 2) - 1)))
-
-let emit_map_fresh(m, i, k, v) =
-  let _ = list_set(nth(m, 0), i, [k, v]) in
-  list_set(m, 1, nth(m, 1) + 1)
-
-let emit_map_put_at(m, k, v, i) =
-  if nth(nth(m, 0), i) == 0 then emit_map_fresh(m, i, k, v)
-  else list_set(nth(m, 0), i, [k, v])
-
-let emit_map_install(m, k, v) =
-  emit_map_put_at(m, k, v, emit_map_probe(nth(m, 0), k,
-                  band(emit_hash(k), nth(m, 2) - 1), nth(m, 2) - 1))
-
-let emit_map_rehash(oldv, m, i, oldc) =
-  if i >= oldc then 0
-  else if nth(oldv, i) == 0 then emit_map_rehash(oldv, m, i + 1, oldc)
-  else
-    let _ = emit_map_install(m, nth(nth(oldv, i), 0), nth(nth(oldv, i), 1)) in
-    emit_map_rehash(oldv, m, i + 1, oldc)
-
-let emit_map_grow_prep(m, oldc) =
-  let _ = list_set(m, 0, emit_map_fill(list_new(), 0, oldc * 2)) in
-  let _ = list_set(m, 1, 0) in
-  list_set(m, 2, oldc * 2)
-
-let emit_map_swap(oldv, m, oldc) =
-  let _ = emit_map_grow_prep(m, oldc) in
-  emit_map_rehash(oldv, m, 0, oldc)
-
-let emit_map_grow(m) = emit_map_swap(nth(m, 0), m, nth(m, 2))
-
-let emit_map_maybe_grow(m) =
-  if nth(m, 1) * 2 >= nth(m, 2) then emit_map_grow(m) else 0
-
+let emit_map_new(_) = fmap_new(0)
+let emit_map_get(m, k) = fmap_get(m, k)
 let emit_map_put(m, k, v) =
-  let _ = emit_map_maybe_grow(m) in
-  emit_map_install(m, k, v)
-
-let emit_map_from_at(m, xs, i, n) =
-  if i >= n then m
-  else
-    let e = nth(xs, i) in
-    let _ = emit_map_put(m, nth(e, 0), nth(e, 1)) in
-    emit_map_from_at(m, xs, i + 1, n)
-
-let emit_map_from_list(xs) = emit_map_from_at(emit_map_new(0), xs, 0, len(xs))
+  let _ = fmap_put(m, k, v) in
+  m
 
 /* Fun id table: prog funs, then helpers last so helper names stay reserved.
  * Duplicate fun names: last-put-wins (runtime prof_* stubs lose to profile.yac).
@@ -175,7 +106,9 @@ let emit_ids_bind(ids, funs, i, n) =
 
 let emit_ids_new(funs) =
   let nfun = len(funs) in
-  emit_ids_helpers(emit_ids_bind(emit_map_new(0), funs, 0, nfun), nfun)
+  let ids = fmap_new(0) in
+  let _ = fmap_init_n(ids, 4096) in
+  emit_ids_helpers(emit_ids_bind(ids, funs, 0, nfun), nfun)
 
 /* Patch tags: 1=call to fun id (x86 rel32 / a64 bl / rv jal ra),
  * 2=closure fnptr, 3+=globals, 9=tail jmp to fun id (a64 b26 / rv jal).
@@ -191,13 +124,6 @@ let emit_patch_jmpf(ids, ps, pos, name) =
 
 let emit_st4(st, b, cur, labels, ps) =
   [b, cur, labels, ps, nth(st, 4)]
-
-let label_has(labels, name) =
-  let rec(l) =
-    if len(l) == 0 then false
-    else if nth(nth(l, 0), 0) == name then true
-    else rec(drop(l, 1)) in
-  rec(labels)
 
 let patches_extend(dst, src) =
   let n = len(src) in
@@ -233,8 +159,8 @@ let emit_resolve_patch(st, p) =
   else
     0
 
-let emit_resolve_loop(st, ps, i) =
-  if i >= len(ps) then 0
+let emit_resolve_loop(st, ps, i, n) =
+  if i >= n then 0
   else
     let _ = emit_resolve_patch(st, nth(ps, i)) in
-    emit_resolve_loop(st, ps, i + 1)
+    emit_resolve_loop(st, ps, i + 1, n)

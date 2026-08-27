@@ -1,0 +1,147 @@
+/* map.yac — open-addressing string map + intern.
+ * Bundled before lexer so tokenize can intern ident/kw/op text.
+ * hash_str is the C prim / native yac_str_hash (not a per-char yac loop).
+ */
+
+let hash_str(s) = str_hash(s)
+
+let fmap_fill(b, i, cap) =
+  if i >= cap then b
+  else
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    fmap_fill(b, i + 16, cap)
+
+let fmap_new(_) =
+  let m = list_new() in
+  let _ = list_push(m, list_new()) in
+  let _ = list_push(m, 0) in
+  let _ = list_push(m, 0) in
+  m
+
+let fmap_probe(vec, k, h, i, mask) =
+  let e = nth(vec, i) in
+  if e == 0 then i
+  else if nth(e, 2) == h then
+    if nth(e, 0) == k then i
+    else fmap_probe(vec, k, h, band(i + 1, mask), mask)
+  else
+    let i2 = band(i + 1, mask) in
+    let e2 = nth(vec, i2) in
+    if e2 == 0 then i2
+    else if nth(e2, 2) == h then
+      if nth(e2, 0) == k then i2
+      else fmap_probe(vec, k, h, band(i2 + 1, mask), mask)
+    else fmap_probe(vec, k, h, band(i2 + 1, mask), mask)
+
+let fmap_got(e) =
+  if e == 0 then 0 else nth(e, 1)
+
+let fmap_get_h(m, k, h) =
+  let cap = nth(m, 2) in
+  if cap == 0 then 0
+  else fmap_got(nth(nth(m, 0), fmap_probe(nth(m, 0), k, h, band(h, cap - 1), cap - 1)))
+
+let fmap_get(m, k) =
+  let cap = nth(m, 2) in
+  if cap == 0 then 0
+  else fmap_get_h(m, k, hash_str(k))
+
+let fmap_put_at(m, k, v, h, i) =
+  let vec = nth(m, 0) in
+  if nth(vec, i) == 0 then
+    let _ = list_set(vec, i, [k, v, h]) in
+    list_set(m, 1, nth(m, 1) + 1)
+  else list_set(vec, i, [k, v, h])
+
+let fmap_install_hash(m, k, v, h) =
+  let vec = nth(m, 0) in
+  let mask = nth(m, 2) - 1 in
+  fmap_put_at(m, k, v, h, fmap_probe(vec, k, h, band(h, mask), mask))
+
+let fmap_install(m, k, v) =
+  fmap_install_hash(m, k, v, hash_str(k))
+
+let fmap_rehash(oldv, m, i, oldc) =
+  if i >= oldc then 0
+  else
+    let e = nth(oldv, i) in
+    if e == 0 then fmap_rehash(oldv, m, i + 1, oldc)
+    else
+      let _ = fmap_install_hash(m, nth(e, 0), nth(e, 1), nth(e, 2)) in
+      fmap_rehash(oldv, m, i + 1, oldc)
+
+let fmap_grow_prep(m, oldc) =
+  let _ = list_set(m, 0, fmap_fill(list_new(), 0, oldc * 2)) in
+  let _ = list_set(m, 1, 0) in
+  list_set(m, 2, oldc * 2)
+
+let fmap_init(m) =
+  let _ = list_set(m, 0, fmap_fill(list_new(), 0, 64)) in
+  list_set(m, 2, 64)
+
+let fmap_init_n(m, cap) =
+  let _ = list_set(m, 0, fmap_fill(list_new(), 0, cap)) in
+  list_set(m, 2, cap)
+
+let fmap_new64(_) =
+  let m = fmap_new(0) in
+  let _ = fmap_init_n(m, 64) in
+  m
+
+let fmap_swap(oldv, m, oldc) =
+  let _ = fmap_grow_prep(m, oldc) in
+  fmap_rehash(oldv, m, 0, oldc)
+
+let fmap_grow(m) =
+  let oldv = nth(m, 0) in
+  fmap_swap(oldv, m, nth(m, 2))
+
+let fmap_maybe_grow(m) =
+  if nth(m, 2) == 0 then fmap_init(m)
+  else if nth(m, 1) * 2 >= nth(m, 2) then fmap_grow(m)
+  else 0
+
+let fmap_put_h(m, k, v, h) =
+  let _ = fmap_maybe_grow(m) in
+  fmap_install_hash(m, k, v, h)
+
+let fmap_put(m, k, v) = fmap_put_h(m, k, v, hash_str(k))
+
+let fmap_push(m, k, v) =
+  let h = hash_str(k) in
+  let old = fmap_get_h(m, k, h) in
+  if old == 0 then fmap_put_h(m, k, [v], h)
+  else fmap_put_h(m, k, cons(v, old), h)
+
+/* One intern table per process; keys are canonical string objects. */
+let intern_cell = list_new()
+
+let intern(s) =
+  let m =
+    if len(intern_cell) == 0 then
+      let m0 = fmap_new(0) in
+      let _ = fmap_init_n(m0, 4096) in
+      let _ = list_push(intern_cell, m0) in
+      m0
+    else nth(intern_cell, 0) in
+  let h = hash_str(s) in
+  let e = fmap_get_h(m, s, h) in
+  if e == 0 then
+    let _ = fmap_put_h(m, s, s, h) in
+    s
+  else e

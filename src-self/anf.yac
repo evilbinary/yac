@@ -24,7 +24,7 @@ let reverse(xs) = list_rev(xs)
 
 let anf_expr(ast, counter) =
   /* fresh temp name + incremented counter */
-  let fresh(c) = [str_cat("t", int_to_str(c)), c + 1] in
+  let fresh(c) = [intern(str_cat("t", int_to_str(c))), c + 1] in
 
   /* atomize a sub-expression: returns [bindings, atom, counter].
    * If ast is already atomic, bindings is empty; else it binds a fresh temp. */

@@ -918,7 +918,7 @@ let emit_a64_i_core(st, insn, is_entry) =
     let _ = a64_slot(b, nth(insn, 2), true, 0) in
     emit_st4(st, b, cur, labels, patches2)
   else if k == "label" then
-    emit_st4(st, b, cur, cons([nth(insn, 1), bytes_len(b)], labels), patches)
+    emit_st4(st, b, cur, label_put(labels, nth(insn, 1), bytes_len(b)), patches)
   else if k == "jmp" then
     let pos = bytes_len(b) in
     let _ = a64_b(b, 0) in

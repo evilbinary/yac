@@ -28,7 +28,8 @@ let parse_err(j) = [["error", "parse"], j]
 
 let parse_expr(toks, i, min_prec) =
   /* ---- token access ---- */
-  let tk_at(j) = if j >= len(toks) then ["eof", "", 0] else nth(toks, j) in
+  let ntoks = len(toks) in
+  let tk_at(j) = if j >= ntoks then ["eof", "", 0] else nth(toks, j) in
   let kk(j) = nth(tk_at(j), 0) in
   let tt(j) = nth(tk_at(j), 1) in
   let is_punct(j) =
@@ -44,9 +45,11 @@ let parse_expr(toks, i, min_prec) =
     else if k == "punct" then true
     else false in
   let is_kw(j, t) =
-    if kk(j) == "kw" then tt(j) == t else false in
+    let tok = tk_at(j) in
+    if nth(tok, 0) == "kw" then nth(tok, 1) == t else false in
   let is_op(j, t) =
-    if kk(j) == "op" then tt(j) == t else false in
+    let tok = tk_at(j) in
+    if nth(tok, 0) == "op" then nth(tok, 1) == t else false in
 
   /* ---- precedence ---- */
   let prec_of(op) =
@@ -65,9 +68,10 @@ let parse_expr(toks, i, min_prec) =
     else if op == "%" then 6
     else 0 in
   let is_binop_tok(j) =
-    let k = kk(j) in
-    if k == "op" then prec_of(tt(j)) > 0
-    else if k == "kw" then prec_of(tt(j)) > 0
+    let tok = tk_at(j) in
+    let k = nth(tok, 0) in
+    if k == "op" then prec_of(nth(tok, 1)) > 0
+    else if k == "kw" then prec_of(nth(tok, 1)) > 0
     else false in
 
   /* ---- parse a comma-separated argument list inside parens, after '(' ---- */

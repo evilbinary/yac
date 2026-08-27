@@ -51,7 +51,7 @@ let tco_find(insns, i, slot, gname) =
   else if nth(nth(insns, i), 0) == "label" then
     tco_find(insns, i - 1, slot, gname)
   else if nth(nth(insns, i), 0) == "mov" then
-    if nth(nth(insns, i), 1) == slot then
+  if nth(nth(insns, i), 1) == slot then
       tco_find(insns, i - 1, nth(nth(insns, i), 2), gname)
     else 0 - 1
   else if nth(nth(insns, i), 0) == "fcall" then
@@ -67,18 +67,12 @@ let tco_one(ins) =
     ["ticall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
   else ins
 
-let tco_copy(insns, idx, j, acc) =
-  if j >= len(insns) then acc
-  else if j == idx then
-    let _ = list_push(acc, tco_one(nth(insns, j))) in
-    tco_copy(insns, idx, j + 1, acc)
-  else
-    let _ = list_push(acc, nth(insns, j)) in
-    tco_copy(insns, idx, j + 1, acc)
-
 let tco_fun_at(f, idx) =
   if idx == 0 - 1 then f
-  else ["proc", nth(f, 1), nth(f, 2), nth(f, 3), tco_copy(nth(f, 4), idx, 0, list_new()), nth(f, 5)]
+  else
+    let insns = nth(f, 4) in
+    let _ = list_set(insns, idx, tco_one(nth(insns, idx))) in
+    f
 
 let tco_fun(f) =
   if len(nth(f, 4)) < 2 then f
@@ -107,154 +101,51 @@ let insn_extend(ins, xs) =
     else let _ = list_push(ins, nth(xs, i)) in loop(i + 1) in
   loop(0)
 
-let hash_str_loop(s, n, i, h) =
-  if i >= n then h
-  else hash_str_loop(s, n, i + 1, band(h * 131 + str_ref(s, i), 16777215))
+/* fmap_* / hash_str / intern: map.yac (bundled before lexer). */
 
-let hash_str(s) = hash_str_loop(s, str_len(s), 0, 0)
-
-let fmap_fill(b, i, cap) =
-  if i >= cap then b
-  else
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    let _ = list_push(b, 0) in
-    fmap_fill(b, i + 16, cap)
-
-let fmap_new_cap(cap) =
-  let m = list_new() in
-  let _ = list_push(m, fmap_fill(list_new(), 0, cap)) in
-  let _ = list_push(m, 0) in
-  let _ = list_push(m, cap) in
-  m
-
-let fmap_new(_) = fmap_new_cap(64)
-
-let fmap_probe(vec, k, i, mask) =
-  let e = nth(vec, i) in
-  if e == 0 then i
-  else if nth(e, 0) == k then i
-  else fmap_probe(vec, k, band(i + 1, mask), mask)
-
-let fmap_got(e) =
-  if e == 0 then 0 else nth(e, 1)
-
-let fmap_get(m, k) =
-  let cap = nth(m, 2) in
-  if cap == 0 then 0
-  else
-    let vec = nth(m, 0) in
-    let mask = cap - 1 in
-    fmap_got(nth(vec, fmap_probe(vec, k, band(hash_str(k), mask), mask)))
-
-let fmap_put_at(m, k, v, h, i) =
-  let vec = nth(m, 0) in
-  if nth(vec, i) == 0 then
-    let _ = list_set(vec, i, [k, v, h]) in
-    list_set(m, 1, nth(m, 1) + 1)
-  else list_set(vec, i, [k, v, h])
-
-let fmap_install_hash(m, k, v, h) =
-  let vec = nth(m, 0) in
-  let mask = nth(m, 2) - 1 in
-  fmap_put_at(m, k, v, h, fmap_probe(vec, k, band(h, mask), mask))
-
-let fmap_install(m, k, v) =
-  fmap_install_hash(m, k, v, hash_str(k))
-
-let fmap_rehash(oldv, m, i, oldc) =
-  if i >= oldc then 0
-  else
-    let e = nth(oldv, i) in
-    if e == 0 then fmap_rehash(oldv, m, i + 1, oldc)
-    else
-      let _ = fmap_install_hash(m, nth(e, 0), nth(e, 1), nth(e, 2)) in
-      fmap_rehash(oldv, m, i + 1, oldc)
-
-let fmap_grow_prep(m, oldc) =
-  let _ = list_set(m, 0, fmap_fill(list_new(), 0, oldc * 2)) in
-  let _ = list_set(m, 1, 0) in
-  list_set(m, 2, oldc * 2)
-
-let fmap_init(m) =
-  let _ = list_set(m, 0, fmap_fill(list_new(), 0, 16)) in
-  list_set(m, 2, 16)
-
-let fmap_swap(oldv, m, oldc) =
-  let _ = fmap_grow_prep(m, oldc) in
-  fmap_rehash(oldv, m, 0, oldc)
-
-let fmap_grow(m) =
-  let oldv = nth(m, 0) in
-  fmap_swap(oldv, m, nth(m, 2))
-
-let fmap_maybe_grow(m) =
-  if nth(m, 1) * 2 >= nth(m, 2) then fmap_grow(m)
-  else 0
-
-let fmap_put(m, k, v) =
-  let _ = fmap_maybe_grow(m) in
-  fmap_install(m, k, v)
-
-let fmap_scan(xs, k, i) =
-  if i < 0 then 0
-  else if nth(nth(xs, i), 0) == k then nth(nth(xs, i), 1)
-  else fmap_scan(xs, k, i - 1)
-
-let alist_new(_) = list_new()
-let alist_put(m, k, v) =
-  let _ = list_push(m, [k, v]) in 0
-let alist_get(m, k) = fmap_scan(m, k, len(m) - 1)
-
-let sset_new(_) = alist_new(0)
+let sset_new(_) = fmap_new64(0)
 let sset_put(m, k) =
-  let _ = alist_put(m, k, 1) in m
+  let _ = fmap_put(m, k, 1) in m
 let sset_has(m, k) =
-  let e = fmap_scan(m, k, len(m) - 1) in
-  if e == 0 then false else true
+  if fmap_get(m, k) == 0 then false else true
 
-let sh_new(_) = [alist_new(0), 1]
+let sh_new(_) = [fmap_new64(0), 1]
 let sh_from_list(xs) =
   let sh = sh_new(0) in
   let n = len(xs) in
   let loop(i) =
     if i >= n then sh
     else
-      let _ = alist_put(nth(sh, 0), nth(xs, i), nth(sh, 1)) in
+      let _ = fmap_push(nth(sh, 0), nth(xs, i), nth(sh, 1)) in
       loop(i + 1) in
   loop(0)
 let sh_put(sh, k) =
-  let _ = alist_put(nth(sh, 0), k, nth(sh, 1)) in sh
-let sh_has_scan(xs, k, dcur, i) =
-  if i < 0 then 0
-  else if nth(nth(xs, i), 0) == k then
-    if nth(nth(xs, i), 1) > dcur then sh_has_scan(xs, k, dcur, i - 1)
-    else 1
-  else sh_has_scan(xs, k, dcur, i - 1)
+  let _ = fmap_push(nth(sh, 0), k, nth(sh, 1)) in sh
+let sh_has_at(ch, j, n, dcur) =
+  if j >= n then false
+  else if nth(ch, j) > dcur then sh_has_at(ch, j + 1, n, dcur)
+  else true
+let sh_has_chain(ch, dcur) = sh_has_at(ch, 0, len(ch), dcur)
 let sh_has(sh, k) =
-  sh_has_scan(nth(sh, 0), k, nth(sh, 1), len(nth(sh, 0)) - 1) != 0
+  let ch = fmap_get(nth(sh, 0), k) in
+  if ch == 0 then false else sh_has_chain(ch, nth(sh, 1))
 let sh_enter(sh) = [nth(sh, 0), nth(sh, 1) + 1]
 
 let fv_acc_new(_) = [[], sset_new(0)]
 let fv_acc_list(a) = nth(a, 0)
-let fv_acc_add(a, k) =
-  if sset_has(nth(a, 1), k) then a
-  else let _ = sset_put(nth(a, 1), k) in [cons(k, nth(a, 0)), nth(a, 1)]
+let fv_acc_add_h(a, k, h) =
+  let m = nth(a, 1) in
+  if fmap_get_h(m, k, h) == 0 then
+    let _ = fmap_put_h(m, k, 1, h) in
+    [cons(k, nth(a, 0)), m]
+  else a
 
-let sigma_new(nrt) = [[], fmap_new_cap(4096), nrt]
+let fv_acc_add(a, k) = fv_acc_add_h(a, k, hash_str(k))
+
+let sigma_new(nrt) =
+  let m = fmap_new(0) in
+  let _ = fmap_init_n(m, 2048) in
+  [[], m, nrt]
 let sigma_list(fs) = nth(fs, 0)
 let sigma_map(fs) = nth(fs, 1)
 let fun_src(f) = if len(f) > 5 then nth(f, 5) else nth(f, 1)
@@ -266,6 +157,10 @@ let sigma_cons(fs, f) =
     else len(sigma_list(fs)) in
   let _ = fmap_put(m, fun_src(f), [nth(f, 1), nth(f, 3), idx]) in
   [cons(f, sigma_list(fs)), m, nth(fs, 2)]
+
+let sigma_ent_h(fs, name, h) =
+  if len(fs) < 2 then 0
+  else fmap_get_h(sigma_map(fs), name, h)
 
 let sigma_ent(fs, name) =
   if len(fs) < 2 then 0
@@ -292,20 +187,19 @@ let str_to_int(s) =
   let v = acc(start, 0) in
   if isneg then 0 - v else v
 
-/* Γ : name → [slot, ncap, gen]. Unbound names miss the fmap first. */
+/* Γ : fmap name → stack of [slot, ncap, gen]. Shared across env_enter. */
 let env_new(_) =
   let ps = list_new() in
   let _ = list_push(ps, 0) in
-  [alist_new(0), [0, ps], fmap_new(0)]
+  [fmap_new64(0), [0, ps]]
 
 let env_enter(env) =
   let ps = nth(nth(env, 1), 1) in
   let _ = list_push(ps, nth(nth(env, 1), 0)) in
-  [nth(env, 0), [len(ps) - 1, ps], nth(env, 2)]
+  [nth(env, 0), [len(ps) - 1, ps]]
 
 let env_bind(env, name, slot, ncap) =
-  let _ = alist_put(nth(env, 0), name, [slot, ncap, nth(nth(env, 1), 0)]) in
-  let _ = fmap_put(nth(env, 2), name, 1) in
+  let _ = fmap_push(nth(env, 0), name, [slot, ncap, nth(nth(env, 1), 0)]) in
   env
 
 let env_live(g, cur, parents) =
@@ -313,17 +207,19 @@ let env_live(g, cur, parents) =
   else if cur == 0 then false
   else env_live(g, nth(parents, cur), parents)
 
-let env_scan(xs, k, cur, parents, i) =
-  if i < 0 then 0
-  else if nth(nth(xs, i), 0) == k then
-    if env_live(nth(nth(nth(xs, i), 1), 2), cur, parents) then nth(nth(xs, i), 1)
-    else env_scan(xs, k, cur, parents, i - 1)
-  else env_scan(xs, k, cur, parents, i - 1)
+let env_chain_at(ch, j, cur, parents) =
+  if j >= len(ch) then 0
+  else if env_live(nth(nth(ch, j), 2), cur, parents) then nth(ch, j)
+  else env_chain_at(ch, j + 1, cur, parents)
 
-let env_rec(env, name) =
-  if fmap_get(nth(env, 2), name) == 0 then 0
-  else env_scan(nth(env, 0), name, nth(nth(env, 1), 0), nth(nth(env, 1), 1),
-                len(nth(env, 0)) - 1)
+let env_chain(ch, cur, parents) = env_chain_at(ch, 0, cur, parents)
+
+let env_rec_h(env, name, h) =
+  let ch = fmap_get_h(nth(env, 0), name, h) in
+  if ch == 0 then 0
+  else env_chain(ch, nth(nth(env, 1), 0), nth(nth(env, 1), 1))
+
+let env_rec(env, name) = env_rec_h(env, name, hash_str(name))
 
 let env_slot(env, name) =
   let e = env_rec(env, name) in
@@ -346,12 +242,12 @@ let is_cmp(op) =
   else if op == "!=" then true
   else false
 
-let in_list_go(name, l) =
-  if len(l) == 0 then false
-  else if nth(l, 0) == name then true
-  else in_list_go(name, drop(l, 1))
+let in_list_go(name, l, i, n) =
+  if i >= n then false
+  else if nth(l, i) == name then true
+  else in_list_go(name, l, i + 1, n)
 
-let in_list(name, lst) = in_list_go(name, lst)
+let in_list(name, lst) = in_list_go(name, lst, 0, len(lst))
 
 let is_prim_name(w) =
   if w == "cons" then true
@@ -367,6 +263,7 @@ let is_prim_name(w) =
   else if w == "drop" then true
   else if w == "head" then true
   else if w == "str_len" then true
+  else if w == "str_hash" then true
   else if w == "str_cat" then true
   else if w == "str_ref" then true
   else if w == "str_slice" then true
@@ -410,12 +307,19 @@ let free_vars(fnbody, params, funs) =
       let k = nth(atom, 0) in
       if k == "var" then
         let nm = nth(atom, 1) in
-        if sh_has(sh, nm) then a
-        else
-          let se = sigma_ent(funs, nm) in
-          if se == 0 then fv_acc_add(a, nm)
+        let h = hash_str(nm) in
+        let ch = fmap_get_h(nth(sh, 0), nm, h) in
+        if ch == 0 then
+          let se = sigma_ent_h(funs, nm, h) in
+          if se == 0 then fv_acc_add_h(a, nm, h)
           else if nth(se, 1) == 0 then a
-          else fv_acc_add(a, nm)
+          else fv_acc_add_h(a, nm, h)
+        else if sh_has_chain(ch, nth(sh, 1)) then a
+        else
+          let se = sigma_ent_h(funs, nm, h) in
+          if se == 0 then fv_acc_add_h(a, nm, h)
+          else if nth(se, 1) == 0 then a
+          else fv_acc_add_h(a, nm, h)
       else if k == "fun" then nth(fv(nth(atom, 2), a, sh), 0)
       else a in
     let args_vars(args, j, a, sh) =
@@ -471,12 +375,14 @@ let free_vars(fnbody, params, funs) =
 /* st = [I, Γ, ctr, Σ, uid]. Returns [I, s, Γ, ctr, Σ, uid]. */
 
 let lir_var(atom, st) =
-  let e = env_rec(nth(st, 1), nth(atom, 1)) in
+  let nm = nth(atom, 1) in
+  let h = hash_str(nm) in
+  let e = env_rec_h(nth(st, 1), nm, h) in
   if e != 0 then
     [nth(st, 0), nth(e, 0),
      nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
   else
-    let se = sigma_ent(nth(st, 3), nth(atom, 1)) in
+    let se = sigma_ent_h(nth(st, 3), nm, h) in
     if se != 0 then
       [insn_push(nth(st, 0),
          ["closure", nth(st, 2), nth(se, 0), []]),
@@ -533,26 +439,15 @@ let maybe_tcall(rest_tail, ins, self) =
 
 let cap_slots(n, j, acc) =
   if j > n then acc
-  else cap_slots(n, j + 1, append(acc, [j]))
-
-/* callι: Σ then Γ then runtime. Do not turn every ncap>0 into icall.
- * Named self uses fcall/tcall + capture slots 1..n. */
-let lir_user_call(g, dst, ss, env, funs, self) =
-  let e = env_rec(env, g) in
-  if e == 0 then
-    ["fcall", dst, sigma_code(funs, g), ss]
-  else if nth(e, 1) > 0 then
-    if sigma_code(funs, g) == self then
-      if nth(e, 1) + len(ss) > 6 then
-        ["apply", dst, nth(e, 0), nth(e, 1), ss]
-      else
-        ["fcall", dst, sigma_code(funs, g), append(cap_slots(nth(e, 1), 1, []), ss)]
-    else
-      ["apply", dst, nth(e, 0), nth(e, 1), ss]
-  else if sigma_ent(funs, g) != 0 then
-    ["fcall", dst, sigma_code(funs, g), ss]
   else
-    ["icall", dst, nth(e, 0), ss]
+    let _ = list_push(acc, j) in
+    cap_slots(n, j + 1, acc)
+
+let list_ext(dst, src, i, n) =
+  if i >= n then dst
+  else
+    let _ = list_push(dst, nth(src, i)) in
+    list_ext(dst, src, i + 1, n)
 
 let lir_rt_list(g, dst, ss) =
   if g == "cons" then ["ccall", dst, "yac_cons", [nth(ss, 0), nth(ss, 1)]]
@@ -572,6 +467,7 @@ let lir_rt_list(g, dst, ss) =
 
 let lir_rt_str(g, dst, ss) =
   if g == "str_len" then ["str_len", dst, nth(ss, 0)]
+  else if g == "str_hash" then ["ccall", dst, "yac_str_hash", [nth(ss, 0)]]
   else if g == "str_ref" then ["str_ref", dst, nth(ss, 0), nth(ss, 1)]
   else if g == "str_cat" then ["ccall", dst, "yac_str_cat", [nth(ss, 0), nth(ss, 1)]]
   else if g == "str_slice" then
@@ -616,12 +512,26 @@ let lir_rt(g, dst, ss) =
     if b == 0 then lir_rt_bytes(g, dst, ss) else b
   else a
 
+/* callι: Σ then Γ then runtime. Do not turn every ncap>0 into icall.
+ * Named self uses fcall/tcall + capture slots 1..n. */
 let calli(g, dst, ss, env, funs, self) =
-  let e = env_rec(env, g) in
+  let h = hash_str(g) in
+  let e = env_rec_h(env, g, h) in
   if e != 0 then
-    lir_user_call(g, dst, ss, env, funs, self)
+    let ncap = nth(e, 1) in
+    if ncap > 0 then
+      let se = sigma_ent_h(funs, g, h) in
+      let code = if se == 0 then g else nth(se, 0) in
+      if code == self then
+        if ncap + len(ss) > 6 then ["apply", dst, nth(e, 0), ncap, ss]
+        else ["fcall", dst, code, list_ext(cap_slots(ncap, 1, list_new()), ss, 0, len(ss))]
+      else ["apply", dst, nth(e, 0), ncap, ss]
+    else
+      let se = sigma_ent_h(funs, g, h) in
+      if se != 0 then ["fcall", dst, nth(se, 0), ss]
+      else ["icall", dst, nth(e, 0), ss]
   else
-    let se = sigma_ent(funs, g) in
+    let se = sigma_ent_h(funs, g, h) in
     if se != 0 then ["fcall", dst, nth(se, 0), ss]
     else
       let p = lir_rt(g, dst, ss) in
@@ -721,12 +631,15 @@ let lir_letfun_prep(b, s) =
 
 let cap_list(n, j, acc) =
   if j >= n then acc
-  else cap_list(n, j + 1, append(acc, [j + 1]))
+  else
+    let _ = list_push(acc, j + 1) in
+    cap_list(n, j + 1, acc)
 
 let outer_caps(env, fvs, ncap, j, acc) =
   if j >= ncap then acc
-  else outer_caps(env, fvs, ncap, j + 1,
-        append(acc, [env_slot(env, nth(fvs, j))]))
+  else
+    let _ = list_push(acc, env_slot(env, nth(fvs, j))) in
+    outer_caps(env, fvs, ncap, j + 1, acc)
 
 let lir_letfun_finish(s, p, br) =
   let ncap = nth(p, 3) in
@@ -736,11 +649,11 @@ let lir_letfun_finish(s, p, br) =
   let f_insns0 = insn_push(list_new(), ["local", nth(br, 3), ntot]) in
   let f_insns1 =
     if need_self then
-      insn_push(f_insns0, ["closure", nth(p, 8), gname, cap_list(ncap, 0, [])])
+      insn_push(f_insns0, ["closure", nth(p, 8), gname, cap_list(ncap, 0, list_new())])
     else f_insns0 in
   let f = ["proc", gname, ntot, ncap, insn_push(insn_extend(f_insns1, nth(br, 0)), ["ret", nth(br, 1)]), nth(p, 2)] in
   [insn_push(nth(s, 0),
-     ["closure", nth(s, 2), gname, outer_caps(nth(s, 1), nth(p, 6), ncap, 0, [])]),
+     ["closure", nth(s, 2), gname, outer_caps(nth(s, 1), nth(p, 6), ncap, 0, list_new())]),
    env_bind(nth(s, 1), nth(p, 2), nth(s, 2), ncap),
    nth(s, 2) + 1, sigma_cons(nth(br, 4), f), nth(br, 5), nth(s, 5)]
 

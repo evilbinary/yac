@@ -1021,6 +1021,11 @@ let emit_x86_i_core(st, insn, is_entry) =
       let _ = push_r64(b, 0) in
       /* stack: [rsp]=b [rsp+8]=a */
       let _ = mov_rax_mem_rsp8(b) in
+      let _ = mov_rbx_mem_rsp(b) in
+      let _ = cmp_rax_rbx(b) in
+      let _ = jcc_rel32(b, 4, 0) in
+      let jptr = bytes_len(b) - 4 in
+      let _ = mov_rax_mem_rsp8(b) in
       let _ = cmp_rax_imm8(b, 1) in
       let _ = jcc_rel32(b, 4, 0) in
       let jnil1 = bytes_len(b) - 4 in
@@ -1062,6 +1067,14 @@ let emit_x86_i_core(st, insn, is_entry) =
         else 0 in
       let _ = jmp_rel32(b, 0) in
       let jdone = bytes_len(b) - 4 in
+      let ptreq = bytes_len(b) in
+      let _ = apply_patch(b, jptr, ptreq) in
+      let _ = add_rsp_imm8(b, 16) in
+      let _ =
+        if op == "==" then mov_r64_imm(b, 0, 2)
+        else xor_rax_rax(b) in
+      let _ = jmp_rel32(b, 0) in
+      let jptrdone = bytes_len(b) - 4 in
       let intp = bytes_len(b) in
       let _ = apply_patch(b, jz1, intp) in
       let _ = apply_patch(b, jz2, intp) in
@@ -1080,6 +1093,7 @@ let emit_x86_i_core(st, insn, is_entry) =
       let _ = add_rsp_imm8(b, 16) in
       let done = bytes_len(b) in
       let _ = apply_patch(b, jdone, done) in
+      let _ = apply_patch(b, jptrdone, done) in
       let _ = emit_store_rax_slot(b, dst) in
       emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, scall + 1, "yac_str_eq"))
     else
@@ -1108,7 +1122,7 @@ let emit_x86_i_core(st, insn, is_entry) =
     emit_st4(st, b, cur, labels, patches)
   else if k == "label" then
     let nm = nth(insn, 1) in
-    emit_st4(st, b, cur, cons([nm, cur], labels), patches)
+    emit_st4(st, b, cur, label_put(labels, nm, cur), patches)
   else if k == "fcall" or k == "ccall" then
     /* call fn(argSlots...): load args to rdi,rsi,rdx,rcx,r8,r9; call; store. */
     let dst = nth(insn, 1) in
@@ -2111,7 +2125,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let _ = list_push(extra, [1, av_off + nth(avr, 3), emit_map_get(ids, "yac_alloc")]) in
   let _ = patches_extend(extra, patches) in
   let _ = log("emit", "resolve") in
-  let _ = emit_resolve_loop([b, offs, LOAD_VADDR + TEXT_OFF, GLOBALS_BASE], extra, 0) in
+  let _ = emit_resolve_loop([b, offs, LOAD_VADDR + TEXT_OFF, GLOBALS_BASE], extra, 0, len(extra)) in
   let _ = log_i("emit", "code_len", bytes_len(b)) in
   let _ = log("emit", "done") in
   [b, funOffsRev2]

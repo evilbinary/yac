@@ -182,6 +182,7 @@ let exists_rc(p) = nth(run(["test", "-f", p]), 0)
 
 let cat_bundle(_) =
   cat_files(["src-self/log.yac", "src-self/pass.yac", "src-self/target.yac",
+             "src-self/map.yac",
              "src-self/lexer.yac", "src-self/parser.yac", "src-self/anf.yac",
              "src-self/encode_x64.yac", "src-self/encode_arm64.yac",
              "src-self/encode_riscv64.yac", "src-self/elf.yac", "src-self/pe.yac",

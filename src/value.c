@@ -20,6 +20,27 @@
 
 const Value VALUE_NULL = {V_INT, {0}};
 
+static int str_polyhash(const char *d, int n) {
+    int h = 0;
+    int i;
+    for (i = 0; i < n; i++)
+        h = (h * 131 + (unsigned char)d[i]) & 16777215;
+    return h;
+}
+
+static int str_hash_of(Str *st) {
+    if (st->hash_cached < 0)
+        st->hash_cached = str_polyhash(st->data, st->len);
+    return st->hash_cached;
+}
+
+static Value wrap_str(Str *st) {
+    Value v = {V_STR, {0}};
+    st->hash_cached = -1;
+    v.u.s = st;
+    return v;
+}
+
 Value v_int(int64_t i) {
     Value v = {V_INT, {0}};
     v.u.i = i;
@@ -39,12 +60,10 @@ Value v_bool(bool b) {
 }
 
 Value v_str(Arena *a, const char *s) {
-    Value v = {V_STR, {0}};
     Str *st = (Str *)arena_alloc(a, sizeof(Str));
     st->len = (int)strlen(s);
     st->data = arena_strdup(a, s);
-    v.u.s = st;
-    return v;
+    return wrap_str(st);
 }
 
 Value v_unit(void) {
@@ -415,6 +434,13 @@ static Value prim_strlen(Value *args, int nargs, PrimCtx *ctx) {
     return v_int(args[0].u.s->len);
 }
 
+/* str_hash(s) -> int; same polyhash as former hash_str_loop (131, mask 24 bits). */
+static Value prim_str_hash(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_STR) { ctx->errored = true; strcpy(ctx->errmsg, "str_hash: expected a string"); return VALUE_NULL; }
+    return v_int(str_hash_of(args[0].u.s));
+}
+
 /* str-cat(a, b) -> string */
 static Value prim_strcat(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
@@ -428,9 +454,7 @@ static Value prim_strcat(Value *args, int nargs, PrimCtx *ctx) {
     Str *st = (Str *)arena_alloc(ctx->a, sizeof(Str));
     st->len = (int)n;
     st->data = buf;
-    Value v = {V_STR, {0}};
-    v.u.s = st;
-    return v;
+    return wrap_str(st);
 }
 
 /* str-slice(s, start, len) -> string */
@@ -450,9 +474,7 @@ static Value prim_strslice(Value *args, int nargs, PrimCtx *ctx) {
     Str *st = (Str *)arena_alloc(ctx->a, sizeof(Str));
     st->len = (int)len;
     st->data = buf;
-    Value v = {V_STR, {0}};
-    v.u.s = st;
-    return v;
+    return wrap_str(st);
 }
 
 /* str-ref(s, i) -> int (byte value at index) */
@@ -636,9 +658,7 @@ static Value prim_bytes_to_str(Value *args, int nargs, PrimCtx *ctx) {
     Str *st = (Str *)arena_alloc(ctx->a, sizeof(Str));
     st->len = b->len;
     st->data = buf;
-    Value v = {V_STR, {0}};
-    v.u.s = st;
-    return v;
+    return wrap_str(st);
 }
 
 /* str->bytes(s) -> buffer (copies bytes) */
@@ -670,9 +690,7 @@ static Value prim_read_file(Value *args, int nargs, PrimCtx *ctx) {
     Str *st = (Str *)arena_alloc(ctx->a, sizeof(Str));
     st->len = (int)got;
     st->data = buf;
-    Value v = {V_STR, {0}};
-    v.u.s = st;
-    return v;
+    return wrap_str(st);
 }
 
 /* write-file(path, bytes-or-str) -> unit */
@@ -706,9 +724,7 @@ static Value v_str_buf(Arena *a, const char *data, size_t len) {
     Str *st = (Str *)arena_alloc(a, sizeof(Str));
     st->len = (int)len;
     st->data = buf;
-    Value v = {V_STR, {0}};
-    v.u.s = st;
-    return v;
+    return wrap_str(st);
 }
 
 typedef struct {
@@ -1276,6 +1292,7 @@ static const Prim PRIMS[] = {
     {"argv", 1, true, true, prim_argv},
     {"exit", 1, false, false, prim_exit},
     {"str_len", 1, true, false, prim_strlen},
+    {"str_hash", 1, true, false, prim_str_hash},
     {"str_cat", 2, true, true, prim_strcat},
     {"str_slice", 3, true, true, prim_strslice},
     {"str_ref", 2, true, false, prim_strref},
@@ -1348,8 +1365,10 @@ bool value_equal(Value a, Value b) {
     if (a.tag == V_FLOAT && b.tag == V_FLOAT) return a.u.f == b.u.f;
     if (a.tag == V_BOOL && b.tag == V_BOOL) return a.u.b == b.u.b;
     if (a.tag == V_UNIT && b.tag == V_UNIT) return true;
-    if (a.tag == V_STR && b.tag == V_STR)
+    if (a.tag == V_STR && b.tag == V_STR) {
+        if (a.u.s == b.u.s) return true;
         return a.u.s->len == b.u.s->len && memcmp(a.u.s->data, b.u.s->data, a.u.s->len) == 0;
+    }
     if (a.tag == V_LIST && b.tag == V_LIST) {
         if (a.u.l->len != b.u.l->len) return false;
         for (int i = 0; i < a.u.l->len; i++)

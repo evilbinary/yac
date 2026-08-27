@@ -161,4 +161,4 @@ let yac_prof_dump(_) =
     let b4 = prof_nl(prof_putn(b3, len(xs))) in
     let b5 = prof_nl(prof_puts(b4, "# name calls incl_ns excl_ns incl_ms excl_ms pct_excl")) in
     let b6 = prof_lines(b5, xs, tot, 0) in
-    write_file(path, b6)
+    write_file(path, bytes_to_str(b6))

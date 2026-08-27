@@ -31,6 +31,7 @@ typedef enum {
 
 typedef struct Str {
     int len;
+    int hash_cached; /* -1 unset; else 24-bit polyhash */
     char *data; /* NUL-terminated */
 } Str;
 

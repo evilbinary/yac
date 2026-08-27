@@ -343,6 +343,12 @@ let rt_map_ins(_) =
 
 let rt_str_eq_ins(_) =
   [["local", 16, 2],
+   ["icmp", "==", 12, 1, 2],
+   ["cmpjmp", 12, "se_same", "se_diffptr"],
+   ["label", "se_same"],
+   ["mov_imm", 6, 1 + 1],
+   ["ret", 6],
+   ["label", "se_diffptr"],
    ["mref", 3, 1, 24],
    ["tag", 3, 3],
    ["mref", 4, 2, 24],
@@ -374,6 +380,30 @@ let rt_str_eq_ins(_) =
    ["mov_imm", 11, 1 + 1],
    ["add", 7, 7, 11],
    ["jmp", "se_loop"]]
+
+let rt_str_hash_ins(_) =
+  [["local", 18, 1],
+   ["mref", 2, 1, 24],
+   ["tag", 2, 2],
+   ["mov_imm", 3, 0 + 0],
+   ["mov_imm", 4, 0 + 0],
+   ["mov_imm", 10, 131 + 131],
+   ["mov_imm", 11, 16777215 + 16777215],
+   ["label", "sh_loop"],
+   ["icmp", "==", 5, 3, 2],
+   ["cmpjmp", 5, "sh_done", "sh_byte"],
+   ["label", "sh_byte"],
+   ["mov_imm", 6, 32 + 32],
+   ["add", 6, 6, 3],
+   ["mref8", 9, 1, 6],
+   ["mul", 4, 4, 10],
+   ["add", 4, 4, 9],
+   ["land", 4, 4, 11],
+   ["mov_imm", 12, 1 + 1],
+   ["add", 3, 3, 12],
+   ["jmp", "sh_loop"],
+   ["label", "sh_done"],
+   ["ret", 4]]
 
 let rt_str_cat_ins(_) =
   [["local", 18, 2],
@@ -873,6 +903,7 @@ let runtime_funs(_) =
    ["proc", "yac_foldl", 3, 0, rt_foldl_ins(0), "yac_foldl"],
    ["proc", "yac_map", 2, 0, rt_map_ins(0), "yac_map"],
    ["proc", "yac_str_eq", 2, 0, rt_str_eq_ins(0), "yac_str_eq"],
+   ["proc", "yac_str_hash", 1, 0, rt_str_hash_ins(0), "yac_str_hash"],
    ["proc", "yac_str_cat", 2, 0, rt_str_cat_ins(0), "yac_str_cat"],
    ["proc", "yac_str_slice", 3, 0, rt_str_slice_ins(0), "yac_str_slice"],
    ["proc", "yac_str_chr", 1, 0, rt_str_chr_ins(0), "yac_str_chr"],

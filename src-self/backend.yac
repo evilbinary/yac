@@ -10,27 +10,30 @@ let anf_top(item) =
   let r = anf_expr(item, 0) in
   [nth(r, 0), nth(r, 1)]
 
-let anf_all(i, prog, acc) =
-  if i >= len(prog) then acc
-  else anf_all(i + 1, prog, append(acc, [anf_top(nth(prog, i))]))
+let anf_all(i, prog, acc, n) =
+  if i >= n then acc
+  else
+    let _ = list_push(acc, anf_top(nth(prog, i))) in
+    anf_all(i + 1, prog, acc, n)
 
 let pass_lex(src) = tokenize(src)
 let pass_parse(toks) = parse_program(toks, 0, [])
-let pass_anf(prog) = anf_all(0, prog, [])
+let pass_anf(prog) = anf_all(0, prog, list_new(), len(prog))
 
 /* st = [env, ctr, Σ, uid, insns, slot] */
-let lir_all(i, items, st) =
-  if i >= len(items) then st
+let lir_all(i, items, st, n) =
+  if i >= n then st
   else
     let r = lir_expr(nth(items, i),
               st_no([nth(st, 4), nth(st, 0), nth(st, 1), nth(st, 2), nth(st, 3)])) in
     lir_all(i + 1, items,
-      [nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5), nth(r, 0), nth(r, 1)])
+      [nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5), nth(r, 0), nth(r, 1)], n)
 
 let pass_lir(anf_list) =
   let rt0 = runtime_funs(0) in
   let st = lir_all(0, anf_list,
-             [env_new(0), 1, sigma_new(len(rt0)), 0, list_new(), 0]) in
+             [env_new(0), 1, sigma_new(len(rt0)), 0, list_new(), 0],
+             len(anf_list)) in
   let funs = sigma_list(nth(st, 2)) in
   let entry = start_proc(nth(st, 1), nth(st, 5), nth(st, 4)) in
   tco_prog(["prog", cons(entry, append(rt0, reverse(funs))), "_start"])
