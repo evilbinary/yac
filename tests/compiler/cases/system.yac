@@ -1,0 +1,4 @@
+if system("true") != 0 then 1
+else if system("false") != 1 then 2
+else if system("exit 3") != 3 then 3
+else 0

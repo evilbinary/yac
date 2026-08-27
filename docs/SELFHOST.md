@@ -247,8 +247,9 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | 函数 | 原因 |
 | --- | --- |
 | `gen_alloc` / `gen_gc` | `brk`（8 字节对齐）、`gc_head`/`stack_hi`/alloc_bump/`heap_lo`；标记-清除。alloc 每 16MiB 调 `yac_gc`。x86 栈扫描用 mmap 对象 bitmap（O(堆) 建表 + O(1) 测字），避免 O(栈×堆) 链表查找 |
-| `gen_system` | `fork`/`execve`/`wait4`；指针 argv 与 tagged int 混用；字面量 `/bin/sh` |
 | `gen_apply1` / `gen_apply2` | 动态 `nenv` 跳表 + SysV 寄存器 |
+
+`yac_system` 是 runtime `$proc`（`$syscall` `fork`/`execve`/`wait4`/`exit`，`$lea` argv 槽）。
 
 **已知编译器限制**：小程序里 33 元列表 / 33 个 `let` 都正常；**编译器自己的 `_start`（bundle 几百条顶层 let 合成一帧）里**放 33 元 LIR cons 字面量会被错编（`bytes_to_str` → SIGSEGV 139）。对策：`runtime.yac` 的 insn 列表做成 `rt_*_ins(_)` 小函数。`emit_insn` 已拆成按 op 分组的小函数；不要再把大块逻辑塞回 dispatcher。
 

@@ -31,6 +31,9 @@ let emit_store_rax_slot(b, k) =
 let emit_load_rbx_slot(b, k) =
   if slot_fits8(k) then mov_rbx_mem_rbp(b, band(slot_off(k), 255))
   else mov_r64_mem_rbp32(b, 3, slot_off(k))
+let emit_lea_rax_slot(b, k) =
+  if slot_fits8(k) then lea_rax_rbp_disp8(b, band(slot_off(k), 255))
+  else lea_rax_rbp32(b, slot_off(k))
 let emit_store_param(b, j, k) =
   /* store argreg j into slot k */
   let off = slot_off(k) in
@@ -560,105 +563,7 @@ let cc_of(op) =
   else if op == "==" then 4 else 5
 
 /* yac_argv is rt_argv_ins ($proc / $local). */
-
-
-let emit_cstr(b, s) =
-  let rec(i, n) =
-    if i >= n then bytes_append(b, 0)
-    else
-      let _ = bytes_append(b, str_ref(s, i)) in
-      rec(i + 1, n) in
-  rec(0, str_len(s))
-
-/* yac_system(cmd STR in rdi) -> tagged wait rc.
- * fork; child execve("/bin/sh", ["sh","-c",cmd], NULL); parent wait4. */
-let gen_system(_) =
-  let b = bytes_new() in
-  let _ = push_rbp(b) in
-  let _ = mov_rbp_rsp(b) in
-  let _ = sub_rsp_imm8(b, 32) in
-  let _ = mov_mem_rbp_r64(b, 248, 7) in
-  let _ = xor_rax_rax(b) in
-  let _ = mov_mem_rbp_r64(b, 240, 0) in
-  let _ = mov_r64_imm(b, 0, 57) in
-  let _ = syscall(b) in
-  let _ = test_rax_rax(b) in
-  let _ = jcc_rel32(b, 8, 0) in
-  let jsfork = bytes_len(b) - 4 in
-  let _ = jcc_rel32(b, 4, 0) in
-  let jchild = bytes_len(b) - 4 in
-  let _ = mov_rdi_rax(b) in
-  let _ = lea_rsi_rbp_disp8(b, 240) in
-  let _ = xor_rdx_rdx(b) in
-  let _ = xor_r10_r10(b) in
-  let _ = mov_r64_imm(b, 0, 61) in
-  let _ = syscall(b) in
-  let _ = test_rax_rax(b) in
-  let _ = jcc_rel32(b, 8, 0) in
-  let jswait = bytes_len(b) - 4 in
-  let _ = mov_r64_mem_rbp(b, 0, 240) in
-  let _ = mov_r64_r64(b, 1, 0) in
-  let _ = and_rax_imm8(b, 127) in
-  let _ = test_rax_rax(b) in
-  let _ = jcc_rel32(b, 5, 0) in
-  let jsig = bytes_len(b) - 4 in
-  let _ = mov_r64_r64(b, 0, 1) in
-  let _ = shr_rax_imm8(b, 8) in
-  let _ = and_eax_imm32(b, 255) in
-  let _ = jmp_rel32(b, 0) in
-  let jtag = bytes_len(b) - 4 in
-  let sig = bytes_len(b) in
-  let _ = apply_patch(b, jsig, sig) in
-  let _ = mov_r64_r64(b, 0, 1) in
-  let _ = and_rax_imm8(b, 127) in
-  let _ = add_rax_imm32(b, 128) in
-  let tagged = bytes_len(b) in
-  let _ = apply_patch(b, jtag, tagged) in
-  let _ = shl_rax_1(b) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  let fail = bytes_len(b) in
-  let _ = apply_patch(b, jsfork, fail) in
-  let _ = apply_patch(b, jswait, fail) in
-  let _ = mov_r64_imm(b, 0, 254) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  let child = bytes_len(b) in
-  let _ = apply_patch(b, jchild, child) in
-  let _ = mov_r64_mem_rbp(b, 0, 248) in
-  let _ = and_rax_1(b) in
-  let _ = add_rax_imm32(b, 32) in
-  let _ = mov_rbx_rax(b) in
-  let _ = xor_rax_rax(b) in
-  let _ = push_r64(b, 0) in
-  let _ = push_r64(b, 3) in
-  let pmc = bytes_len(b) in
-  let _ = lea_rax_rip(b) in
-  let _ = push_r64(b, 0) in
-  let psh = bytes_len(b) in
-  let _ = lea_rax_rip(b) in
-  let _ = push_r64(b, 0) in
-  let _ = lea_rsi_rsp(b) in
-  let pbin = bytes_len(b) in
-  let _ = lea_rdi_rip(b) in
-  let _ = xor_rdx_rdx(b) in
-  let _ = mov_r64_imm(b, 0, 59) in
-  let _ = syscall(b) in
-  let _ = mov_rdi_imm(b, 127) in
-  let _ = mov_r64_imm(b, 0, 60) in
-  let _ = syscall(b) in
-  let s_bin = bytes_len(b) in
-  let _ = emit_cstr(b, "/bin/sh") in
-  let s_sh = bytes_len(b) in
-  let _ = emit_cstr(b, "sh") in
-  let s_mc = bytes_len(b) in
-  let _ = emit_cstr(b, "-c") in
-  let _ = apply_patch(b, pmc + 3, s_mc) in
-  let _ = apply_patch(b, psh + 3, s_sh) in
-  let _ = apply_patch(b, pbin + 3, s_bin) in
-  b
+/* yac_system is rt_system_ins ($proc / $local). */
 
 /* yac_read_file is rt_read_file_ins in runtime.yac ($ops). */
 /* yac_write_file is rt_write_file_ins ($proc / $local). */
@@ -1181,6 +1086,10 @@ let emit_x86_raw_nr(name) =
   else if name == "lseek" then 8
   else if name == "read" then 0
   else if name == "write" then 1
+  else if name == "fork" then 57
+  else if name == "wait4" then 61
+  else if name == "execve" then 59
+  else if name == "exit" then 60
   else 3
 
 let emit_x86_i_raw(st, insn) =
@@ -1193,7 +1102,9 @@ let emit_x86_i_raw(st, insn) =
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let imm = nth(insn, 3) in
     let _ =
-      if imm == (0 - 2) then and_rax_1(b) else and_rax_imm8(b, imm) in
+      if imm == (0 - 2) then and_rax_1(b)
+      else if imm >= 0 and imm <= 127 then and_rax_imm8(b, imm)
+      else and_eax_imm32(b, imm) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "$addi" then
@@ -1254,7 +1165,7 @@ let emit_x86_i_raw(st, insn) =
     emit_st4(st, b, cur, labels, cons([gkind, gpat], patches))
   else if k == "$icmp" then
     let op = nth(insn, 1) in
-    let cc = if op == ">=u" then 3 else if op == "==" then 4 else 5 in
+    let cc = if op == ">=u" then 3 else if op == "==" then 4 else if op == "<" then 12 else 5 in
     let _ = emit_load_rax_slot(b, nth(insn, 3)) in
     let _ = emit_load_rbx_slot(b, nth(insn, 4)) in
     let _ = cmp_rax_rbx(b) in
@@ -1272,6 +1183,15 @@ let emit_x86_i_raw(st, insn) =
     let _ = mov_rcx_rax(b) in
     let _ = cld(b) in
     let _ = rep_movsb(b) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$lea" then
+    let _ = emit_lea_rax_slot(b, nth(insn, 2)) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$shr" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = shr_rax_imm8(b, nth(insn, 3)) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
   else
     let _ = emit_x86_sysarg(b, nth(insn, 3), 0) in
@@ -2110,13 +2030,10 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let _ = b_append(b, gen_apply2(0)) in
   let a1_off = bytes_len(b) in
   let _ = b_append(b, gen_apply1(0)) in
-  let sys_off = bytes_len(b) in
-  let _ = b_append(b, gen_system(0)) in
   let funOffsRev2 = cons(["yac_apply1", a1_off],
                          cons(["yac_apply2", a2_off],
                               cons(["yac_alloc", alc_off],
-                                   cons(["yac_gc", gc_off],
-                                        cons(["yac_system", sys_off], funOffsRev))))) in
+                                   cons(["yac_gc", gc_off], funOffsRev)))) in
   let LOAD_VADDR = load_vaddr in
   let TEXT_OFF = text_off in
   /* writable globals: gc_head, argc, argv, stack_hi, gc_free, alloc_bump, heap_lo, prof_st. */
@@ -2140,7 +2057,6 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let _ = list_push(offs, a2_off) in
   let _ = list_push(offs, alc_off) in
   let _ = list_push(offs, gc_off) in
-  let _ = list_push(offs, sys_off) in
   let _ = list_push(extra, [3, alc_off + alc_headaddr]) in
   let _ = list_push(extra, [3, alc_off + nth(alcr, 2)]) in
   let _ = list_push(extra, [1, alc_off + nth(alcr, 3) + 1, emit_map_get(ids, "yac_gc")]) in

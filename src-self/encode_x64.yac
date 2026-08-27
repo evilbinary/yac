@@ -238,6 +238,20 @@ let lea_rsi_rbp_disp8(b, disp8) =
   let _ = e8(b, 117) in   /* mod=01 reg=rsi rm=rbp */
   e8(b, band(disp8, 255))
 
+/* lea rax, [rbp+disp8]  (48 8d 45 ib) */
+let lea_rax_rbp_disp8(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 141) in
+  let _ = e8(b, 69) in
+  e8(b, band(d, 255))
+
+/* lea rax, [rbp+disp32]  (48 8d 85 id32) */
+let lea_rax_rbp32(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 141) in
+  let _ = e8(b, 133) in
+  e32(b, d)
+
 /* imul rax, rdi  (48 0f af c7) */
 let imul_rax_rdi(b) =
   let _ = e8(b, 72) in

@@ -124,6 +124,9 @@ let rv_patch_b(b, pos, target) =
 let rv_slli(b, rd, rs1, sh) =
   rv_u32(b, bshl(band(sh, 63), 20) + bshl(rs1, 15) + 4096 + bshl(rd, 7) + 19)
 
+let rv_srli(b, rd, rs1, sh) =
+  rv_u32(b, bshl(band(sh, 63), 20) + bshl(rs1, 15) + 20480 + bshl(rd, 7) + 19)
+
 let rv_bne(b, rs1, rs2, imm13) =
   let i = band(imm13, 8191) in
   let b12 = band(bshr(i, 12), 1) in

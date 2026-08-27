@@ -113,7 +113,7 @@ let COMPILER_CASES = [
   ["print_list", "out", "[1, [2, 3], x]\n[]"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
-  ["io_rw", "rc", "2"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"],
+  ["io_rw", "rc", "2"], ["system", "rc", "0"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"],
   ["tco_cap", "rc", "42"]]
 
 let compiler_all(st, yc) =
@@ -140,7 +140,7 @@ let ARCH_INT_CASES = [
   ["print_list", "out", "[1, [2, 3], x]\n[]"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
-  ["io_rw", "rc", "2"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"],
+  ["io_rw", "rc", "2"], ["system", "rc", "0"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"],
   ["tco_cap", "rc", "42"]]
 
 let has_cmd(c) =
