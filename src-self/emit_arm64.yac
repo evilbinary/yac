@@ -378,62 +378,7 @@ let a64_clamp0(b) =
   let _ = a64_movz(b, 0, 0, 0) in
   a64_patch_bcond(b, p, bytes_len(b))
 
-let gen_read_file_a64(_) =
-  let b = bytes_new() in
-  let _ = a64_enter(b, 32) in
-  let _ = a64_untag_ptr(b, 0) in
-  let _ = a64_add_imm(b, 1, 0, 32) in
-  let _ = a64_mov_imm64(b, 0, 0 - 100) in
-  let _ = a64_movz(b, 2, 0, 0) in
-  let _ = a64_movz(b, 3, 0, 0) in
-  let _ = a64_movz(b, 8, 56, 0) in
-  let _ = a64_svc(b) in
-  let _ = a64_slot(b, 0, true, 0) in
-  let _ = a64_movz(b, 1, 0, 0) in
-  let _ = a64_movz(b, 2, 2, 0) in
-  let _ = a64_movz(b, 8, 62, 0) in
-  let _ = a64_svc(b) in
-  let _ = a64_clamp0(b) in
-  let _ = a64_slot(b, 2, true, 0) in
-  let _ = a64_slot(b, 0, false, 0) in
-  let _ = a64_movz(b, 1, 0, 0) in
-  let _ = a64_movz(b, 2, 0, 0) in
-  let _ = a64_movz(b, 8, 62, 0) in
-  let _ = a64_svc(b) in
-  let _ = a64_slot(b, 2, false, 0) in
-  let _ = a64_add_imm(b, 0, 0, 33) in
-  let _ = a64_add_imm(b, 0, 0, 7) in
-  let _ = a64_mov_imm64(b, 1, 0 - 8) in
-  let _ = a64_and_reg(b, 0, 0, 1) in
-  let acall = bytes_len(b) in
-  let _ = a64_bl(b, 0) in
-  let _ = a64_untag_ptr(b, 0) in
-  let _ = a64_slot(b, 1, true, 0) in
-  let _ = a64_movz(b, 1, 0, 0) in
-  let _ = a64_stur(b, 1, 0, 8) in
-  let _ = a64_movz(b, 1, 3, 0) in
-  let _ = a64_stur(b, 1, 0, 16) in
-  let _ = a64_movz(b, 1, 0, 0) in
-  let _ = a64_stur(b, 1, 0, 24) in
-  let _ = a64_add_imm(b, 1, 0, 32) in
-  let _ = a64_slot(b, 0, false, 0) in
-  let _ = a64_slot(b, 2, false, 2) in
-  let _ = a64_movz(b, 8, 63, 0) in
-  let _ = a64_svc(b) in
-  let _ = a64_clamp0(b) in
-  let _ = a64_mov_reg(b, 2, 0) in
-  let _ = a64_slot(b, 1, false, 0) in
-  let _ = a64_stur(b, 2, 0, 24) in
-  let _ = a64_add_imm(b, 0, 0, 32) in
-  let _ = a64_add_reg(b, 0, 0, 2) in
-  let _ = a64_strb(b, 31, 0) in
-  let _ = a64_slot(b, 0, false, 0) in
-  let _ = a64_movz(b, 8, 57, 0) in
-  let _ = a64_svc(b) in
-  let _ = a64_slot(b, 1, false, 0) in
-  let _ = a64_tag(b, 0) in
-  let _ = a64_leave(b) in
-  [b, acall]
+/* yac_read_file is rt_read_file_ins ($proc / $local). */
 
 let gen_write_file_a64(_) =
   let b = bytes_new() in
@@ -819,7 +764,7 @@ let emit_a64_i_core(st, insn, is_entry) =
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
   let k = nth(insn, 0) in
-  if k == "local" then
+  if k == "local" or k == "$local" then
     let nlocals = nth(insn, 1) in
     let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
     let nbytes = a64_frame_bytes(nlocals) in
@@ -1002,6 +947,71 @@ let emit_a64_i_sys(st, insn) =
       else a64_movz(b, 8, nr, 0) in
     let _ = a64_svc(b) in
     let _ = a64_lsl1(b, 0, 0) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
+
+let emit_a64_i_raw(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let k = nth(insn, 0) in
+  if k == "$and" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let imm = nth(insn, 3) in
+    let _ =
+      if imm == (0 - 2) then a64_untag_ptr(b, 0)
+      else
+        let _ = a64_mov_imm64(b, 1, imm) in
+        a64_and_reg(b, 0, 0, 1) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$addi" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let _ = a64_add_imm(b, 0, 0, nth(insn, 3)) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$add" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let _ = a64_slot(b, nth(insn, 3), false, 1) in
+    let _ = a64_add_reg(b, 0, 0, 1) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$or" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let _ = a64_tag(b, 0) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$clamp0" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let _ = a64_clamp0(b) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$st64" then
+    let _ = a64_slot(b, nth(insn, 1), false, 0) in
+    let _ = a64_slot(b, nth(insn, 3), false, 1) in
+    let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$st8" then
+    let _ = a64_slot(b, nth(insn, 1), false, 0) in
+    let _ = a64_strb(b, 31, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else
+    let name = nth(insn, 2) in
+    let args = nth(insn, 3) in
+    let _ =
+      if name == "open" then
+        let _ = a64_slot(b, nth(args, 0), false, 1) in
+        let _ = a64_mov_imm64(b, 0, 0 - 100) in
+        let _ = a64_slot(b, nth(args, 1), false, 2) in
+        let _ = a64_movz(b, 3, 0, 0) in
+        a64_movz(b, 8, 56, 0)
+      else
+        let _ = emit_a64_sysarg(b, args, 0) in
+        if name == "lseek" then a64_movz(b, 8, 62, 0)
+        else if name == "read" then a64_movz(b, 8, 63, 0)
+        else a64_movz(b, 8, 57, 0) in
+    let _ = a64_svc(b) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     emit_st4(st, b, cur, labels, patches)
 
@@ -1520,13 +1530,15 @@ let emit_insn_a64_go(st, insn, is_entry) =
   if k == "closure" or k == "apply" or k == "icall"
        or k == "tailapply" or k == "ticall" then
     emit_a64_i_clos(st, insn, is_entry)
-  else if k == "local" or k == "mov_imm" or k == "mov" or is_arith(k)
+  else if is_frame_op(k) or k == "mov_imm" or k == "mov" or is_arith(k)
        or k == "cmp" or k == "icmp" or k == "label" or k == "fcall" or k == "ccall"
        or k == "tcall" or k == "jmp" or k == "cmpjmp" or k == "ret"
        or k == "exit" then
     emit_a64_i_core(st, insn, is_entry)
   else if k == "untag" or k == "syscall" then
     emit_a64_i_sys(st, insn)
+  else if is_raw_op(k) then
+    emit_a64_i_raw(st, insn)
   else if k == "obj_kind" or k == "mref" or k == "mset" or k == "tag"
        or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
        or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64" or k == "print"
@@ -1633,9 +1645,6 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let alc_off = bytes_len(b) in
   let alcr = gen_alloc_a64(0) in
   let _ = b_append(b, nth(alcr, 0)) in
-  let rfr = gen_read_file_a64(0) in
-  let rf_off = bytes_len(b) in
-  let _ = b_append(b, nth(rfr, 0)) in
   let wf_off = bytes_len(b) in
   let _ = b_append(b, gen_write_file_a64(0)) in
   let a2_off = bytes_len(b) in
@@ -1653,11 +1662,10 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let fo = cons(["yac_apply1", a1_off],
                 cons(["yac_apply2", a2_off],
                      cons(["yac_write_file", wf_off],
-                          cons(["yac_read_file", rf_off],
-                               cons(["yac_alloc", alc_off],
+                          cons(["yac_alloc", alc_off],
                                     cons(["yac_gc", gc_off],
                                     cons(["yac_argv", av_off],
-                                         cons(["yac_system", sys_off], fo0)))))))) in
+                                         cons(["yac_system", sys_off], fo0))))))) in
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
@@ -1674,7 +1682,6 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let _ = list_push(offs, a1_off) in
   let _ = list_push(offs, a2_off) in
   let _ = list_push(offs, wf_off) in
-  let _ = list_push(offs, rf_off) in
   let _ = list_push(offs, alc_off) in
   let _ = list_push(offs, gc_off) in
   let _ = list_push(offs, av_off) in
@@ -1685,7 +1692,6 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let _ = list_push(extra, [1, alc_off + nth(alcr, 3), emit_map_get(ids, "yac_gc")]) in
   let _ = list_push(extra, [3, gc_off + nth(gcr, 1)]) in
   let _ = list_push(extra, [6, gc_off + nth(gcr, 2)]) in
-  let _ = list_push(extra, [1, rf_off + nth(rfr, 1), emit_map_get(ids, "yac_alloc")]) in
   let _ = list_push(extra, [1, av_off + nth(avr, 3), emit_map_get(ids, "yac_alloc")]) in
   let _ = list_push(extra, [4, av_off + nth(avr, 1)]) in
   let _ = list_push(extra, [5, av_off + nth(avr, 2)]) in

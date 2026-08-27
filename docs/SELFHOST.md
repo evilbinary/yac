@@ -247,7 +247,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | 函数 | 原因 |
 | --- | --- |
 | `gen_alloc` / `gen_gc` | `brk`（8 字节对齐）、`gc_head`/`stack_hi`/alloc_bump/`heap_lo`；标记-清除。alloc 每 16MiB 调 `yac_gc`。x86 栈扫描用 mmap 对象 bitmap（O(堆) 建表 + O(1) 测字），避免 O(栈×堆) 链表查找 |
-| `gen_read_file` / `gen_write_file` | 多步 syscall，指针与 tagged int 混用 |
+| `gen_write_file` | 多步 syscall，指针与 tagged int 混用（`yac_read_file` 已是 `$proc` + `$local` + `$` ops） |
 | `gen_argv` | Linux `char**` 指针可为奇数，不能当 tagged int 暂存 |
 | `gen_system` | `fork`/`execve`/`wait4`；指针 argv 与 tagged int 混用 |
 | `gen_apply1` / `gen_apply2` | 动态 `nenv` 跳表 + SysV 寄存器 |

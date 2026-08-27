@@ -5,7 +5,8 @@
  * 输出：DESIGN §LIR 的 list，不是构造器、也不是机器码：
  *
  *   ["prog", [proc*], entryName]
- *   ["proc", name, nparams, ncap, [insn*], srcname]   ; 以 ["local", nslots, nparams] 开头
+ *   ["proc"|"$proc", name, nparams, ncap, [insn*], srcname]
+ *   ; 帧：["local"| "$local", nslots, nparams]；$proc 或首条 $local → 原生槽（x86 栈图 nslots=0）
  *   insn 为 ["mov_imm", s, int] | ["add", s, s, s] | ["fcall", s, name, [s*]] | …
  *
  * runtime_funs 在 runtime.yac（本文件之后）。公开入口对标 anf_expr：

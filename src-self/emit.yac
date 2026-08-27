@@ -82,19 +82,41 @@ let emit_map_put(m, k, v) =
   let _ = fmap_put(m, intern(k), v) in
   m
 
-/* Fun id table: prog funs, then helpers last so helper names stay reserved.
+/* Fun id table: bind procs first, then helpers so reserved names win.
  * Duplicate fun names: last-put-wins (runtime prof_* stubs lose to profile.yac).
- * Helper ids are nfun+0..nfun+7 matching offs listbuf after emit_fun. */
+ * Helper ids are nfun+0..nfun+6 matching offs after emit_fun. */
 let emit_ids_helpers(ids, nfun) =
   let _ = emit_map_put(ids, intern("yac_apply1"), nfun) in
   let _ = emit_map_put(ids, intern("yac_apply2"), nfun + 1) in
   let _ = emit_map_put(ids, intern("yac_write_file"), nfun + 2) in
-  let _ = emit_map_put(ids, intern("yac_read_file"), nfun + 3) in
-  let _ = emit_map_put(ids, intern("yac_alloc"), nfun + 4) in
-  let _ = emit_map_put(ids, intern("yac_gc"), nfun + 5) in
-  let _ = emit_map_put(ids, intern("yac_argv"), nfun + 6) in
-  let _ = emit_map_put(ids, intern("yac_system"), nfun + 7) in
+  let _ = emit_map_put(ids, intern("yac_alloc"), nfun + 3) in
+  let _ = emit_map_put(ids, intern("yac_gc"), nfun + 4) in
+  let _ = emit_map_put(ids, intern("yac_argv"), nfun + 5) in
+  let _ = emit_map_put(ids, intern("yac_system"), nfun + 6) in
   ids
+
+/* Native ops: no sar/shl. $syscall names open/lseek/read/close. */
+let is_raw_op(k) =
+  if k == "$and" then true
+  else if k == "$add" then true
+  else if k == "$addi" then true
+  else if k == "$or" then true
+  else if k == "$syscall" then true
+  else if k == "$clamp0" then true
+  else if k == "$st64" then true
+  else k == "$st8"
+
+let is_frame_op(k) =
+  if k == "local" then true
+  else k == "$local"
+
+/* $proc record, or first insn $local. */
+let fun_is_raw(f) =
+  if nth(f, 0) == "$proc" then true
+  else
+    let ins = nth(f, 4) in
+    if len(ins) == 0 then false
+    else nth(nth(ins, 0), 0) == "$local"
 
 let emit_ids_bind(ids, funs, i, n) =
   if i >= n then ids
