@@ -23,7 +23,7 @@ let a64_apply_b26(b, pos, target) =
   let _ = bytes_put(b, pos + 3, band(bshr(w, 24), 255)) in
   0
 
-/* yac_alloc(n in x0) -> x0 raw ptr. Size at [obj-8]; first-fit gc_free; else brk/mmap n+8. */
+/* yac_alloc(n in x0) -> x0 raw ptr. Size at [obj-8]; reuse gc_free head if it fits, else brk/mmap. */
 let gen_alloc_a64(_) =
   let b = bytes_new() in
   let _ = a64_sub_imm(b, 31, 31, 32) in
@@ -53,35 +53,20 @@ let gen_alloc_a64(_) =
   let _ = a64_stur(b, 0, 31, 0) in
   let _ = a64_add_imm(b, 0, 0, 32) in
   let _ = a64_ldur(b, 2, 0, 0) in
-  let _ = a64_movz(b, 3, 0, 0) in
-  let jfl = bytes_len(b) in
   let _ = a64_cmp_reg(b, 2, 31) in
   let pmiss = bytes_len(b) in
   let _ = a64_b_eq(b, 0) in
   let _ = a64_ldur(b, 4, 2, 0 - 8) in
   let _ = a64_cmp_reg(b, 4, 19) in
-  let phit = bytes_len(b) in
-  let _ = a64_b_cond(b, 2, 0) in
-  let _ = a64_mov_reg(b, 3, 2) in
-  let _ = a64_ldur(b, 2, 2, 0) in
-  let jflb = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let _ = a64_apply_b26(b, jflb, jfl) in
-  let _ = a64_patch_bcond(b, phit, bytes_len(b)) in
+  let psmall = bytes_len(b) in
+  let _ = a64_b_cond(b, 3, 0) in
   let _ = a64_ldur(b, 1, 2, 0) in
-  let _ = a64_cmp_reg(b, 3, 31) in
-  let pnf = bytes_len(b) in
-  let _ = a64_b_ne(b, 0) in
   let _ = a64_stur(b, 1, 0, 0) in
-  let pgot = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let _ = a64_patch_bcond(b, pnf, bytes_len(b)) in
-  let _ = a64_stur(b, 1, 3, 0) in
-  let _ = a64_apply_b26(b, pgot, bytes_len(b)) in
   let _ = a64_mov_reg(b, 20, 2) in
   let plink = bytes_len(b) in
   let _ = a64_b(b, 0) in
   let _ = a64_patch_bcond(b, pmiss, bytes_len(b)) in
+  let _ = a64_patch_bcond(b, psmall, bytes_len(b)) in
   let _ = a64_movz(b, 0, 0, 0) in
   let _ = a64_movz(b, 8, 214, 0) in
   let _ = a64_svc(b) in
@@ -1357,31 +1342,11 @@ let emit_a64_i_prim(st, insn) =
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall, "yac_alloc"))
   else if k == "strlit" then
     let dst = nth(insn, 1) in
-    let s = nth(insn, 2) in
-    let n = str_len(s) in
-    let size = bshl(bshr(32 + n + 1 + 7, 3), 3) in
-    let _ = a64_mov_imm64(b, 0, size) in
-    let acall = bytes_len(b) in
-    let _ = a64_bl(b, 0) in
-    let _ = a64_untag_ptr(b, 0) in
-    let _ = a64_stur(b, 31, 0, 8) in
-    let _ = a64_movz(b, 1, 3, 0) in
-    let _ = a64_stur(b, 1, 0, 16) in
-    let _ = a64_mov_imm64(b, 1, n) in
-    let _ = a64_stur(b, 1, 0, 24) in
-    let copy(i) =
-      if i >= n then 0
-      else
-        let _ = a64_add_imm(b, 1, 0, 32 + i) in
-        let _ = a64_movz(b, 2, str_ref(s, i), 0) in
-        let _ = a64_strb(b, 2, 1) in
-        copy(i + 1) in
-    let _ = copy(0) in
-    let _ = a64_add_imm(b, 1, 0, 32 + n) in
-    let _ = a64_strb(b, 31, 1) in
-    let _ = a64_tag(b, 0) in
+    let off = strlit_off(nth(insn, 2)) in
+    let pos = bytes_len(b) in
+    let _ = a64_mov_imm64(b, 0, 0) in
     let _ = a64_slot(b, dst, true, 0) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall, "yac_alloc"))
+    emit_st4(st, b, cur, labels, emit_patch_strlit(patches, pos, off))
   else if k == "str_len" then
     let dst = nth(insn, 1) in
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
@@ -1609,6 +1574,8 @@ let a64_resolve_patch(st, p) =
     a64_mov_imm64_at(b, nth(p, 1), 0, globbase + 56)
   else if tag == 9 then
     a64_apply_b26(b, nth(p, 1), nth(offs, nth(p, 2)))
+  else if tag == 11 then
+    a64_mov_imm64_at(b, nth(p, 1), 0, nth(st, 5) + nth(p, 2) + 1)
   else
     let pos = nth(p, 1) in
     let lab = nth(p, 2) in
@@ -1623,6 +1590,7 @@ let a64_resolve_loop(st, ps, i) =
     a64_resolve_loop(st, ps, i + 1)
 
 let emit_program_arm64(prog, load_vaddr, text_off) =
+  let _ = strlit_pool_reset(0) in
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
   let entry = nth(prog, 2) in
@@ -1683,6 +1651,9 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
   let _ = pad8(0) in
+  let pool_start = bytes_len(b) in
+  let _ = bytes_extend(b, strlit_bytes(0)) in
+  let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
     if i >= 64 then 0
@@ -1707,5 +1678,6 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let _ = list_push(extra, [4, av_off + nth(avr, 1)]) in
   let _ = list_push(extra, [5, av_off + nth(avr, 2)]) in
   let _ = patches_extend(extra, patches) in
-  let _ = a64_resolve_loop([b, offs, load_vaddr + text_off, GLOBALS_BASE, labels], extra, 0) in
+  let _ = a64_resolve_loop([b, offs, load_vaddr + text_off, GLOBALS_BASE, labels,
+                            load_vaddr + text_off + pool_start], extra, 0) in
   [b, fo]

@@ -51,7 +51,9 @@ let emit_store_param(b, j, k) =
     else mov_mem_rbp32_r64(b, off, 9)
 
 /* yac_alloc(n in rdi) -> rax raw ptr.
- * Size lives at [obj-8], not in mark. First-fit gc_free (gc_head+32), else brk n+8.
+ * Size lives at [obj-8], not in mark. Reuse gc_free HEAD if it fits, else brk.
+ * Do not first-fit walk the free list: after GC it is huge and every cons
+ * scanned it (native yc spent ~100% in that ~20-byte loop).
  * GLOBALS+40 is bytes-since-GC; when it exceeds 16MiB call yac_gc.
  * GLOBALS+48 is heap_lo for GC stack bitmap. GLOBALS+56 is prof cell. */
 let gen_alloc(d) =
@@ -78,33 +80,14 @@ let gen_alloc(d) =
   let _ = mov_rbx_rax(b) in
   let _ = add_rax_imm8(b, 32) in
   let _ = mov_rdx_mem_rax(b) in
-  let _ = xor_rcx_rcx(b) in
-  let jfl = bytes_len(b) in
   let _ = test_rdx_rdx(b) in
   let _ = jcc_rel32(b, 4, 0) in
   let pmiss = bytes_len(b) - 4 in
   let _ = cmp_mem_rdx_m8_rdi(b) in
-  let _ = jcc_rel32(b, 3, 0) in
-  let phit = bytes_len(b) - 4 in
-  let _ = mov_rcx_rdx(b) in
-  let _ = mov_rdx_mem_rdx(b) in
-  let _ = jmp_rel32(b, 0) in
-  let jflb = bytes_len(b) - 4 in
-  let _ = apply_patch(b, jflb, jfl) in
-  let hit = bytes_len(b) in
-  let _ = apply_patch(b, phit, hit) in
+  let _ = jcc_rel32(b, 2, 0) in
+  let psmall = bytes_len(b) - 4 in
   let _ = mov_rsi_mem_rdx(b) in
-  let _ = test_rcx_rcx(b) in
-  let _ = jcc_rel32(b, 5, 0) in
-  let pnf = bytes_len(b) - 4 in
   let _ = mov_mem_rax_rsi(b) in
-  let _ = jmp_rel32(b, 0) in
-  let pgot = bytes_len(b) - 4 in
-  let nf = bytes_len(b) in
-  let _ = apply_patch(b, pnf, nf) in
-  let _ = mov_mem_rcx_rsi(b) in
-  let got = bytes_len(b) in
-  let _ = apply_patch(b, pgot, got) in
   let _ = e8(b, 95) in
   let _ = mov_rsi_mem_rbx(b) in
   let _ = mov_mem_rdx_rsi(b) in
@@ -113,6 +96,7 @@ let gen_alloc(d) =
   let _ = ret(b) in
   let miss = bytes_len(b) in
   let _ = apply_patch(b, pmiss, miss) in
+  let _ = apply_patch(b, psmall, miss) in
   let _ = mov_r64_imm(b, 0, 12) in
   let _ = mov_rdi_imm(b, 0) in
   let _ = syscall(b) in
@@ -1744,31 +1728,13 @@ let emit_x86_i_prim(st, insn) =
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_list_push"))
   else if k == "strlit" then
-    /* STR: [next][mark][kind=3][len][bytes...]; size 8-aligned */
+    /* Pooled STR in the image: one object per unique content. */
     let dst = nth(insn, 1) in
-    let s = nth(insn, 2) in
-    let n = str_len(s) in
-    let raw = 32 + n + 1 in
-    let size = bshl(bshr(raw + 7, 3), 3) in
-    let _ = mov_rdi_imm(b, size) in
-    let acall = bytes_len(b) in
-    let _ = call_rel32(b, 0) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rax_disp8_imm32(b, 8, 0) in
-    let _ = mov_rax_disp8_imm32(b, 16, 3) in
-    let _ = mov_rax_disp8_imm32(b, 20, 0) in
-    let _ = mov_rax_disp8_imm32(b, 24, n) in
-    let _ = mov_rax_disp8_imm32(b, 28, 0) in
-    let copy(i) =
-      if i >= n then 0
-      else
-        let _ = mov_rax_disp8_imm8(b, 32 + i, str_ref(s, i)) in
-        copy(i + 1) in
-    let _ = copy(0) in
-    let _ = mov_rax_disp8_imm8(b, 32 + n, 0) in
-    let _ = or_rax_1(b) in
+    let off = strlit_off(nth(insn, 2)) in
+    let _ = mov_rax_imm64(b, 0) in
+    let ipos = bytes_len(b) - 8 in
     let _ = emit_store_rax_slot(b, dst) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_alloc"))
+    emit_st4(st, b, cur, labels, emit_patch_strlit(patches, ipos, off))
   else if k == "str_len" then
     let dst = nth(insn, 1) in
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
@@ -2023,6 +1989,7 @@ let resolve_local_labels(b, labels, patches) =
   step(0)
 
 let emit_program_x86_64(prog, load_vaddr, text_off) =
+  let _ = strlit_pool_reset(0) in
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
   let _ = log_i("emit", "nfun", nfun) in
@@ -2100,6 +2067,9 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
   let _ = pad8(0) in
+  let pool_start = bytes_len(b) in
+  let _ = bytes_extend(b, strlit_bytes(0)) in
+  let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
     if i >= 72 then 0
@@ -2125,7 +2095,8 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let _ = list_push(extra, [1, av_off + nth(avr, 3), emit_map_get(ids, "yac_alloc")]) in
   let _ = patches_extend(extra, patches) in
   let _ = log("emit", "resolve") in
-  let _ = emit_resolve_loop([b, offs, LOAD_VADDR + TEXT_OFF, GLOBALS_BASE], extra, 0, len(extra)) in
+  let _ = emit_resolve_loop([b, offs, LOAD_VADDR + TEXT_OFF, GLOBALS_BASE,
+                             LOAD_VADDR + TEXT_OFF + pool_start], extra, 0, len(extra)) in
   let _ = log_i("emit", "code_len", bytes_len(b)) in
   let _ = log("emit", "done") in
   [b, funOffsRev2]

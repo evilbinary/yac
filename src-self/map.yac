@@ -1,6 +1,8 @@
 /* map.yac — open-addressing string map + intern.
  * Bundled before lexer so tokenize can intern ident/kw/op text.
- * hash_str is the C prim / native yac_str_hash (not a per-char yac loop).
+ * hash_str is content hash (C prim / native yac_str_hash). Do not use
+ * ident_hash here: native GC does not move objects, but shr-untag mixing
+ * collides, and interned keys must hash the same before/after intern.
  */
 
 let hash_str(s) = str_hash(s)
@@ -139,7 +141,7 @@ let intern(s) =
       let _ = list_push(intern_cell, m0) in
       m0
     else nth(intern_cell, 0) in
-  let h = hash_str(s) in
+  let h = str_hash(s) in
   let e = fmap_get_h(m, s, h) in
   if e == 0 then
     let _ = fmap_put_h(m, s, s, h) in

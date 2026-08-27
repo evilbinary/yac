@@ -210,6 +210,75 @@ let lex(s, i, line, acc, n) =
     let _ = list_push(acc, mk_tok("punct", txt, line)) in
     lex(s, i + 1, line, acc, n)
 
+/* Seed intern table with compiler literals (pooled in native yc) so
+ * intern_toks of source text returns the same pointers as k == "ident". */
+let intern_seed(_) =
+  let _ = intern("ident") in
+  let _ = intern("kw") in
+  let _ = intern("op") in
+  let _ = intern("punct") in
+  let _ = intern("num") in
+  let _ = intern("str") in
+  let _ = intern("eof") in
+  let _ = intern("lparen") in
+  let _ = intern("rparen") in
+  let _ = intern("lbrk") in
+  let _ = intern("rbrk") in
+  let _ = intern("lbrace") in
+  let _ = intern("rbrace") in
+  let _ = intern("comma") in
+  let _ = intern("semi") in
+  let _ = intern("let") in
+  let _ = intern("in") in
+  let _ = intern("fun") in
+  let _ = intern("if") in
+  let _ = intern("then") in
+  let _ = intern("else") in
+  let _ = intern("not") in
+  let _ = intern("print") in
+  let _ = intern("and") in
+  let _ = intern("or") in
+  let _ = intern("true") in
+  let _ = intern("false") in
+  let _ = intern("callcc") in
+  let _ = intern("throw") in
+  let _ = intern("->") in
+  let _ = intern("=") in
+  let _ = intern("==") in
+  let _ = intern("!=") in
+  let _ = intern("<") in
+  let _ = intern("<=") in
+  let _ = intern(">") in
+  let _ = intern(">=") in
+  let _ = intern("+") in
+  let _ = intern("-") in
+  let _ = intern("*") in
+  let _ = intern("/") in
+  let _ = intern("%") in
+  let _ = intern("var") in
+  let _ = intern("int") in
+  let _ = intern("bool") in
+  let _ = intern("unit") in
+  let _ = intern("nil") in
+  let _ = intern("error") in
+  let _ = intern("letbin") in
+  let _ = intern("letcall") in
+  let _ = intern("letif") in
+  let _ = intern("letfun") in
+  let _ = intern("letprint") in
+  let _ = intern("cons") in
+  let _ = intern("len") in
+  let _ = intern("nth") in
+  let _ = intern("tail") in
+  let _ = intern("append") in
+  let _ = intern("map") in
+  let _ = intern("filter") in
+  let _ = intern("foldl") in
+  let _ = intern("foldr") in
+  let _ = intern("drop") in
+  let _ = intern("head") in
+  0
+
 /* After lex: intern ident/kw/op/punct/num/str text so later == is pointer-eq
  * on native (and cheap intern-table hits). TCO loop; not nested inside lex. */
 let intern_toks(toks, i, n) =
@@ -226,6 +295,7 @@ let intern_toks(toks, i, n) =
 
 /* public API */
 let tokenize(src) =
+  let _ = intern_seed(0) in
   let acc = list_new() in
   let toks = lex(src, 0, 1, acc, str_len(src)) in
   intern_toks(toks, 0, len(toks))

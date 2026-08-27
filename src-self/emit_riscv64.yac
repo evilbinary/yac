@@ -32,7 +32,7 @@ let rv_apply_jal(b, pos, target, rd) =
   let _ = bytes_put(b, pos + 3, band(bshr(w, 24), 255)) in
   0
 
-/* yac_alloc(n in a0) -> a0 raw ptr. Size at [obj-8]; first-fit gc_free; else brk/mmap n+8. */
+/* yac_alloc(n in a0) -> a0 raw ptr. Size at [obj-8]; reuse gc_free head if it fits, else brk/mmap. */
 let gen_alloc_rv(_) =
   let b = bytes_new() in
   let _ = rv_addi(b, 2, 2, 0 - 32) in
@@ -60,32 +60,18 @@ let gen_alloc_rv(_) =
   let _ = rv_sd(b, 6, 2, 0) in
   let _ = rv_addi(b, 6, 6, 32) in
   let _ = rv_ld(b, 5, 6, 0) in
-  let _ = rv_addi(b, 7, 0, 0) in
-  let jfl = bytes_len(b) in
   let pmiss = bytes_len(b) in
   let _ = rv_beq(b, 5, 0, 0) in
   let _ = rv_ld(b, 11, 5, 0 - 8) in
-  let phit = bytes_len(b) in
-  let _ = rv_bgeu(b, 11, 28, 0) in
-  let _ = rv_addi(b, 7, 5, 0) in
-  let _ = rv_ld(b, 5, 5, 0) in
-  let jflb = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let _ = rv_apply_jal(b, jflb, jfl, 0) in
-  let _ = rv_patch_b(b, phit, bytes_len(b)) in
+  let psmall = bytes_len(b) in
+  let _ = rv_bltu(b, 11, 28, 0) in
   let _ = rv_ld(b, 11, 5, 0) in
-  let pnf = bytes_len(b) in
-  let _ = rv_bne(b, 7, 0, 0) in
   let _ = rv_sd(b, 11, 6, 0) in
-  let pgot = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let _ = rv_patch_b(b, pnf, bytes_len(b)) in
-  let _ = rv_sd(b, 11, 7, 0) in
-  let _ = rv_apply_jal(b, pgot, bytes_len(b), 0) in
   let _ = rv_addi(b, 10, 5, 0) in
   let plink = bytes_len(b) in
   let _ = rv_jal(b, 0, 0) in
   let _ = rv_patch_b(b, pmiss, bytes_len(b)) in
+  let _ = rv_patch_b(b, psmall, bytes_len(b)) in
   let _ = rv_addi(b, 10, 0, 0) in
   let _ = rv_addi(b, 17, 0, 214) in
   let _ = rv_ecall(b) in
@@ -1364,31 +1350,11 @@ let emit_rv_i_prim(st, insn) =
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall, "yac_alloc"))
   else if k == "strlit" then
     let dst = nth(insn, 1) in
-    let s = nth(insn, 2) in
-    let n = str_len(s) in
-    let size = bshl(bshr(32 + n + 1 + 7, 3), 3) in
-    let _ = rv_li(b, 10, size) in
-    let acall = bytes_len(b) in
-    let _ = rv_jal(b, 1, 0) in
-    let _ = rv_untag_ptr(b, 10) in
-    let _ = rv_sd(b, 0, 10, 8) in
-    let _ = rv_addi(b, 11, 0, 3) in
-    let _ = rv_sd(b, 11, 10, 16) in
-    let _ = rv_li(b, 11, n) in
-    let _ = rv_sd(b, 11, 10, 24) in
-    let copy(i) =
-      if i >= n then 0
-      else
-        let _ = rv_addi(b, 11, 10, 32 + i) in
-        let _ = rv_addi(b, 12, 0, str_ref(s, i)) in
-        let _ = rv_sb(b, 12, 11, 0) in
-        copy(i + 1) in
-    let _ = copy(0) in
-    let _ = rv_addi(b, 11, 10, 32 + n) in
-    let _ = rv_sb(b, 0, 11, 0) in
-    let _ = rv_tag(b, 10) in
+    let off = strlit_off(nth(insn, 2)) in
+    let pos = bytes_len(b) in
+    let _ = rv_li32_pair(b, 10, 0) in
     let _ = rv_slot(b, dst, true, 10) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall, "yac_alloc"))
+    emit_st4(st, b, cur, labels, emit_patch_strlit(patches, pos, off))
   else if k == "str_len" then
     let dst = nth(insn, 1) in
     let _ = rv_slot(b, nth(insn, 2), false, 10) in
@@ -1607,6 +1573,8 @@ let rv_resolve_patch(st, p) =
     rv_li32_at(b, nth(p, 1), 6, globbase + 56)
   else if tag == 9 then
     rv_apply_jal(b, nth(p, 1), nth(offs, nth(p, 2)), 0)
+  else if tag == 11 then
+    rv_li32_at(b, nth(p, 1), 10, nth(st, 5) + nth(p, 2) + 1)
   else
     let pos = nth(p, 1) in
     let lab = nth(p, 2) in
@@ -1620,6 +1588,7 @@ let rv_resolve_loop(st, ps, i) =
     rv_resolve_loop(st, ps, i + 1)
 
 let emit_program_riscv64(prog, load_vaddr, text_off) =
+  let _ = strlit_pool_reset(0) in
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
   let entry = nth(prog, 2) in
@@ -1680,6 +1649,9 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
   let _ = pad8(0) in
+  let pool_start = bytes_len(b) in
+  let _ = bytes_extend(b, strlit_bytes(0)) in
+  let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
     if i >= 64 then 0
@@ -1704,5 +1676,6 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = list_push(extra, [4, av_off + nth(avr, 1)]) in
   let _ = list_push(extra, [5, av_off + nth(avr, 2)]) in
   let _ = patches_extend(extra, patches) in
-  let _ = rv_resolve_loop([b, offs, load_vaddr + text_off, GLOBALS_BASE, labels], extra, 0) in
+  let _ = rv_resolve_loop([b, offs, load_vaddr + text_off, GLOBALS_BASE, labels,
+                           load_vaddr + text_off + pool_start], extra, 0) in
   [b, fo]

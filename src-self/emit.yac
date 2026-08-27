@@ -76,23 +76,22 @@ let label_has(labels, name) = label_has_at(labels, name, len(labels) - 1)
 
 let label_put(labels, name, pos) = cons([name, pos], labels)
 
-let emit_map_new(_) = fmap_new(0)
-let emit_map_get(m, k) = fmap_get(m, k)
+let emit_map_get(m, k) = fmap_get(m, intern(k))
 let emit_map_put(m, k, v) =
-  let _ = fmap_put(m, k, v) in
+  let _ = fmap_put(m, intern(k), v) in
   m
 
 /* Fun id table: prog funs, then helpers last so helper names stay reserved.
  * Duplicate fun names: last-put-wins (runtime prof_* stubs lose to profile.yac).
  * Helper ids are nfun+0..nfun+6 matching offs listbuf after emit_fun. */
 let emit_ids_helpers(ids, nfun) =
-  let _ = emit_map_put(ids, "yac_apply1", nfun) in
-  let _ = emit_map_put(ids, "yac_apply2", nfun + 1) in
-  let _ = emit_map_put(ids, "yac_write_file", nfun + 2) in
-  let _ = emit_map_put(ids, "yac_read_file", nfun + 3) in
-  let _ = emit_map_put(ids, "yac_alloc", nfun + 4) in
-  let _ = emit_map_put(ids, "yac_gc", nfun + 5) in
-  let _ = emit_map_put(ids, "yac_argv", nfun + 6) in
+  let _ = emit_map_put(ids, intern("yac_apply1"), nfun) in
+  let _ = emit_map_put(ids, intern("yac_apply2"), nfun + 1) in
+  let _ = emit_map_put(ids, intern("yac_write_file"), nfun + 2) in
+  let _ = emit_map_put(ids, intern("yac_read_file"), nfun + 3) in
+  let _ = emit_map_put(ids, intern("yac_alloc"), nfun + 4) in
+  let _ = emit_map_put(ids, intern("yac_gc"), nfun + 5) in
+  let _ = emit_map_put(ids, intern("yac_argv"), nfun + 6) in
   ids
 
 let emit_ids_bind(ids, funs, i, n) =
@@ -101,7 +100,7 @@ let emit_ids_bind(ids, funs, i, n) =
     let f = nth(funs, i) in
     let _ =
       if len(nth(f, 4)) == 0 then 0
-      else emit_map_put(ids, nth(f, 1), i) in
+      else emit_map_put(ids, intern(nth(f, 1)), i) in
     emit_ids_bind(ids, funs, i + 1, n)
 
 let emit_ids_new(funs) =
@@ -121,6 +120,68 @@ let emit_patch_clos(ids, ps, pos, name) =
 
 let emit_patch_jmpf(ids, ps, pos, name) =
   cons([9, pos, emit_map_get(ids, name)], ps)
+
+/* tag 11: mov-imm64 of pooled STR (va|1). pos = imm64 / movz site. */
+let emit_patch_strlit(ps, pos, off) = cons([11, pos, off], ps)
+
+/* Unique STR objects in the image (not yac_alloc). Same content => same ptr
+ * so native == is pointer-eq. GC only walks gc_head; pool is in the ELF. */
+let strlit_cell = list_new()
+
+let strlit_pool_reset(_) =
+  let m = fmap_new(0) in
+  let _ = fmap_init_n(m, 2048) in
+  if len(strlit_cell) == 0 then
+    let _ = list_push(strlit_cell, m) in
+    list_push(strlit_cell, bytes_new())
+  else
+    let _ = list_set(strlit_cell, 0, m) in
+    list_set(strlit_cell, 1, bytes_new())
+
+let strlit_pad8(b) =
+  if band(bytes_len(b), 7) == 0 then 0
+  else
+    let _ = bytes_append(b, 0) in
+    strlit_pad8(b)
+
+let strlit_u64(b, v) =
+  let _ = bytes_append(b, band(v, 255)) in
+  let _ = bytes_append(b, band(bshr(v, 8), 255)) in
+  let _ = bytes_append(b, band(bshr(v, 16), 255)) in
+  let _ = bytes_append(b, band(bshr(v, 24), 255)) in
+  let _ = bytes_append(b, band(bshr(v, 32), 255)) in
+  let _ = bytes_append(b, band(bshr(v, 40), 255)) in
+  let _ = bytes_append(b, band(bshr(v, 48), 255)) in
+  bytes_append(b, band(bshr(v, 56), 255))
+
+let strlit_put_bytes(b, s, i, n) =
+  if i >= n then bytes_append(b, 0)
+  else
+    let _ = bytes_append(b, str_ref(s, i)) in
+    strlit_put_bytes(b, s, i + 1, n)
+
+let strlit_off(s) =
+  let _ = if len(strlit_cell) == 0 then strlit_pool_reset(0) else 0 in
+  let m = nth(strlit_cell, 0) in
+  let key = intern(s) in
+  let e = fmap_get(m, key) in
+  if e != 0 then e - 1
+  else
+    let buf = nth(strlit_cell, 1) in
+    let _ = strlit_pad8(buf) in
+    let off = bytes_len(buf) in
+    let n = str_len(s) in
+    let _ = strlit_u64(buf, 0) in
+    let _ = strlit_u64(buf, 0) in
+    let _ = strlit_u64(buf, 3) in
+    let _ = strlit_u64(buf, n) in
+    let _ = strlit_put_bytes(buf, s, 0, n) in
+    let _ = strlit_pad8(buf) in
+    let _ = fmap_put(m, key, off + 1) in
+    off
+
+let strlit_bytes(_) =
+  if len(strlit_cell) < 2 then bytes_new() else nth(strlit_cell, 1)
 
 let emit_st4(st, b, cur, labels, ps) =
   [b, cur, labels, ps, nth(st, 4)]
@@ -156,6 +217,8 @@ let emit_resolve_patch(st, p) =
     apply_u64(b, nth(p, 1), globbase + 56)
   else if tag == 8 then
     apply_u64(b, nth(p, 1), globbase + 64)
+  else if tag == 11 then
+    apply_u64(b, nth(p, 1), nth(st, 4) + nth(p, 2) + 1)
   else
     0
 

@@ -155,7 +155,7 @@ let sigma_cons(fs, f) =
   let idx =
     if len(nth(f, 4)) == 0 then 0 - 1
     else len(sigma_list(fs)) in
-  let _ = fmap_put(m, fun_src(f), [nth(f, 1), nth(f, 3), idx]) in
+  let _ = fmap_put(m, intern(fun_src(f)), [nth(f, 1), nth(f, 3), idx]) in
   [cons(f, sigma_list(fs)), m, nth(fs, 2)]
 
 let sigma_ent_h(fs, name, h) =
@@ -264,6 +264,7 @@ let is_prim_name(w) =
   else if w == "head" then true
   else if w == "str_len" then true
   else if w == "str_hash" then true
+  else if w == "ident_hash" then true
   else if w == "str_cat" then true
   else if w == "str_ref" then true
   else if w == "str_slice" then true
@@ -468,6 +469,7 @@ let lir_rt_list(g, dst, ss) =
 let lir_rt_str(g, dst, ss) =
   if g == "str_len" then ["str_len", dst, nth(ss, 0)]
   else if g == "str_hash" then ["ccall", dst, "yac_str_hash", [nth(ss, 0)]]
+  else if g == "ident_hash" then ["ccall", dst, "yac_ident_hash", [nth(ss, 0)]]
   else if g == "str_ref" then ["str_ref", dst, nth(ss, 0), nth(ss, 1)]
   else if g == "str_cat" then ["ccall", dst, "yac_str_cat", [nth(ss, 0), nth(ss, 1)]]
   else if g == "str_slice" then
@@ -607,10 +609,11 @@ let lir_letfun_prep(b, s) =
   let body = nth(b, 3) in
   let nparams = len(params) in
   let uid = nth(s, 4) in
-  let gname =
+  let gname0 =
     if sigma_has(nth(s, 3), name) then
       str_cat(name, str_cat("#", int_to_str(uid)))
     else name in
+  let gname = intern(gname0) in
   let fvs_raw = free_vars(body, params, nth(s, 3)) in
   let is_rec = in_list(name, fvs_raw) in
   let fvs = if is_rec then fv_skip(fvs_raw, name) else fvs_raw in

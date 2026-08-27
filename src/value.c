@@ -8,6 +8,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -439,6 +440,14 @@ static Value prim_str_hash(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
     if (args[0].tag != V_STR) { ctx->errored = true; strcpy(ctx->errmsg, "str_hash: expected a string"); return VALUE_NULL; }
     return v_int(str_hash_of(args[0].u.s));
+}
+
+/* ident_hash(s) -> int; identity of interned string object (not content). */
+static Value prim_ident_hash(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_STR) { ctx->errored = true; strcpy(ctx->errmsg, "ident_hash: expected a string"); return VALUE_NULL; }
+    uintptr_t p = (uintptr_t)args[0].u.s;
+    return v_int((int64_t)((p >> 3) & 16777215));
 }
 
 /* str-cat(a, b) -> string */
@@ -1293,6 +1302,7 @@ static const Prim PRIMS[] = {
     {"exit", 1, false, false, prim_exit},
     {"str_len", 1, true, false, prim_strlen},
     {"str_hash", 1, true, false, prim_str_hash},
+    {"ident_hash", 1, true, false, prim_ident_hash},
     {"str_cat", 2, true, true, prim_strcat},
     {"str_slice", 3, true, true, prim_strslice},
     {"str_ref", 2, true, false, prim_strref},
