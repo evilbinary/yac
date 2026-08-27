@@ -55,9 +55,7 @@ let tco_find(insns, i, slot, gname) =
       tco_find(insns, i - 1, nth(nth(insns, i), 2), gname)
     else 0 - 1
   else if nth(nth(insns, i), 0) == "fcall" then
-    if nth(nth(insns, i), 2) == "yac_prof_leave" then
-      tco_find(insns, i - 1, slot, gname)
-    else tco_hit(nth(insns, i), slot, gname, i)
+    tco_hit(nth(insns, i), slot, gname, i)
   else 0 - 1
 
 let tco_one(ins) =
@@ -673,6 +671,25 @@ let prof_skip(nm) =
   else if is_prof_name(nm) then true
   else is_yac_prof_name(nm)
 
+let prof_is_tco(k) =
+  if k == "tcall" then true
+  else if k == "ticall" then true
+  else if k == "tailapply" then true
+  else false
+
+/* maybe_tcall rewrites tail self-calls before wrap. Insert leave in front of
+ * those jumps or nstk leaks until dump (incl_ns becomes remaining wall time). */
+let prof_copy_tco(src, i, n, dst, ptmp) =
+  if i >= n then dst
+  else
+    let ins = nth(src, i) in
+    let _ =
+      if prof_is_tco(nth(ins, 0)) then
+        list_push(dst, ["fcall", ptmp, "yac_prof_leave", []])
+      else 0 in
+    let _ = list_push(dst, ins) in
+    prof_copy_tco(src, i + 1, n, dst, ptmp)
+
 let prof_wrap_insns(name, head, body, retslot, nslots) =
   if prof_skip(name) then
     insn_push(insn_extend(head, body), ["ret", retslot])
@@ -681,7 +698,7 @@ let prof_wrap_insns(name, head, body, retslot, nslots) =
     let ptmp = nslots - 1 in
     let a = insn_push(head, ["strlit", pnm, name]) in
     let b = insn_push(a, ["fcall", ptmp, "yac_prof_enter", [pnm]]) in
-    let c = insn_extend(b, body) in
+    let c = prof_copy_tco(body, 0, len(body), b, ptmp) in
     let d = insn_push(c, ["fcall", ptmp, "yac_prof_leave", []]) in
     insn_push(d, ["ret", retslot])
 

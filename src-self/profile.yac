@@ -29,6 +29,7 @@ let prof_stk_fill(stk, i, n) =
 let prof_stk_need(stk, n) =
   let cap = len(stk) in
   if n < cap then 0
+  else if n >= 4096 then 0
   else prof_stk_fill(stk, cap, n + 256)
 
 let prof_rec_get(recs, name) =
@@ -67,14 +68,16 @@ let prof_enter_go(name) =
     let recs = nth(t, 2) in
     let nstk = nth(t, 3) in
     let n = box_get(nstk) in
-    let _ = prof_stk_need(stk, n) in
-    let rb = prof_rec_get(recs, name) in
-    let _ = list_set(rb, 1, nth(rb, 1) + 1) in
-    let fr = nth(stk, n) in
-    let _ = list_set(fr, 0, name) in
-    let _ = list_set(fr, 1, time_ns()) in
-    let _ = list_set(fr, 2, 0) in
-    box_set(nstk, n + 1)
+    if n >= 4096 then 0
+    else
+      let _ = prof_stk_need(stk, n) in
+      let rb = prof_rec_get(recs, name) in
+      let _ = list_set(rb, 1, nth(rb, 1) + 1) in
+      let fr = nth(stk, n) in
+      let _ = list_set(fr, 0, name) in
+      let _ = list_set(fr, 1, time_ns()) in
+      let _ = list_set(fr, 2, 0) in
+      box_set(nstk, n + 1)
 
 let prof_leave_go(_) =
   let c = yac_prof_cell() in
