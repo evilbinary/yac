@@ -53,88 +53,8 @@ let emit_store_param(b, j, k) =
     else if j == 4 then mov_mem_rbp32_r64(b, off, 8)
     else mov_mem_rbp32_r64(b, off, 9)
 
-/* yac_alloc(n in rdi) -> rax raw ptr.
- * Size lives at [obj-8], not in mark. Reuse gc_free HEAD if it fits, else brk.
- * Do not first-fit walk the free list: after GC it is huge and every cons
- * scanned it (native yc spent ~100% in that ~20-byte loop).
- * GLOBALS+40 is bytes-since-GC; when it exceeds 16MiB call yac_gc.
- * GLOBALS+48 is heap_lo for GC stack bitmap. GLOBALS+56 caches the prof
- * listbuf pointer (not a GC root; profile.yac prof_roots holds the object). */
-let gen_alloc(d) =
-  let b = bytes_new() in
-  /* rbp frame so GC can walk alloc → caller; without it rbp is still the
-   * user's and [caller_rbp+8] is the wrong retaddr. */
-  let _ = push_rbp(b) in
-  let _ = mov_rbp_rsp(b) in
-  let _ = e8(b, 87) in
-  let _ = mov_rax_imm64(b, 0) in
-  let bumpaddr = bytes_len(b) - 8 in
-  let _ = add_rax_imm8(b, 40) in
-  let _ = e8(b, 72) in let _ = e8(b, 1) in let _ = e8(b, 56) in
-  let _ = e8(b, 72) in let _ = e8(b, 129) in let _ = e8(b, 56) in
-  let _ = e32(b, 16777216) in
-  let _ = jcc_rel32(b, 6, 0) in
-  let pjbe = bytes_len(b) - 4 in
-  let _ = e8(b, 80) in
-  let gccall = bytes_len(b) in
-  let _ = call_rel32(b, 0) in
-  let _ = e8(b, 88) in
-  let _ = e8(b, 72) in let _ = e8(b, 199) in let _ = e8(b, 0) in
-  let _ = e32(b, 0) in
-  let _ = apply_patch(b, pjbe, bytes_len(b)) in
-  let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 60) in let _ = e8(b, 36) in
-  let _ = mov_rax_imm64(b, 0) in
-  let headaddr = bytes_len(b) - 8 in
-  let _ = mov_rbx_rax(b) in
-  let _ = add_rax_imm8(b, 32) in
-  let _ = mov_rdx_mem_rax(b) in
-  let _ = test_rdx_rdx(b) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let pmiss = bytes_len(b) - 4 in
-  let _ = cmp_mem_rdx_m8_rdi(b) in
-  let _ = jcc_rel32(b, 2, 0) in
-  let psmall = bytes_len(b) - 4 in
-  let _ = mov_rsi_mem_rdx(b) in
-  let _ = mov_mem_rax_rsi(b) in
-  let _ = e8(b, 95) in
-  let _ = mov_rsi_mem_rbx(b) in
-  let _ = mov_mem_rdx_rsi(b) in
-  let _ = mov_mem_rbx_rdx(b) in
-  let _ = mov_rax_rdx(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  let miss = bytes_len(b) in
-  let _ = apply_patch(b, pmiss, miss) in
-  let _ = apply_patch(b, psmall, miss) in
-  let _ = mov_r64_imm(b, 0, 12) in
-  let _ = mov_rdi_imm(b, 0) in
-  let _ = syscall(b) in
-  let _ = mov_rsi_rax(b) in
-  /* kernel brk may be 2-mod-8 (ELF filesz); objects must be 8-aligned or GC untag is off-by-one. */
-  let _ = add_rsi_imm8(b, 7) in
-  let _ = and_rsi_imm8(b, 248) in
-  /* GLOBALS+48 = heap_lo (first aligned brk); bitmap mark uses [lo, brk). */
-  let _ = cmp_mem_rbx_disp8_0(b, 48) in
-  let _ = jcc_rel32(b, 5, 0) in
-  let psetlo = bytes_len(b) - 4 in
-  let _ = mov_mem_rbx_disp8_rsi(b, 48) in
-  let _ = apply_patch(b, psetlo, bytes_len(b)) in
-  let _ = e8(b, 95) in
-  let _ = e8(b, 87) in
-  let _ = lea_rdi_rsi_rdi(b) in
-  let _ = lea_rdi_rdi_disp8(b, 8) in
-  let _ = mov_r64_imm(b, 0, 12) in
-  let _ = syscall(b) in
-  let _ = pop_r64(b, 1) in
-  let _ = mov_mem_rsi_rcx(b) in
-  let _ = lea_rdx_rsi_disp8(b, 8) in
-  let _ = mov_rsi_mem_rbx(b) in
-  let _ = mov_mem_rdx_rsi(b) in
-  let _ = mov_mem_rbx_rdx(b) in
-  let _ = mov_rax_rdx(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  [b, headaddr, bumpaddr, gccall]
+/* yac_alloc is rt_alloc_ins ($proc / $local). */
+
 
 let gen_gc_walk(b) =
   let _ = mov_rax_imm64(b, 0) in
@@ -1090,6 +1010,8 @@ let emit_x86_raw_nr(name) =
   else if name == "wait4" then 61
   else if name == "execve" then 59
   else if name == "exit" then 60
+  else if name == "brk" then 12
+  else if name == "mmap" then 9
   else 3
 
 let emit_x86_i_raw(st, insn) =
@@ -1103,7 +1025,7 @@ let emit_x86_i_raw(st, insn) =
     let imm = nth(insn, 3) in
     let _ =
       if imm == (0 - 2) then and_rax_1(b)
-      else if imm >= 0 and imm <= 127 then and_rax_imm8(b, imm)
+      else if imm >= (0 - 128) and imm <= 127 then and_rax_imm8(b, imm)
       else and_eax_imm32(b, imm) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
@@ -1151,6 +1073,11 @@ let emit_x86_i_raw(st, insn) =
     let _ = movzx_eax_rax_disp8(b, nth(insn, 3)) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$gbase" then
+    let _ = mov_rax_imm64(b, 0) in
+    let gpat = bytes_len(b) - 8 in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, cons([3, gpat], patches))
   else if k == "$glob" then
     let which = nth(insn, 2) in
     let _ = mov_rax_imm64(b, 0) in
@@ -2019,10 +1946,6 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let patches = nth(st, 3) in
   let b = nth(st, 0) in
   let _ = log("emit", "helpers") in
-  let alc_off = bytes_len(b) in
-  let alcr = gen_alloc(0) in
-  let _ = b_append(b, nth(alcr, 0)) in
-  let alc_headaddr = nth(alcr, 1) in
   let gcr = gen_gc(0) in
   let gc_off = bytes_len(b) in
   let _ = b_append(b, nth(gcr, 0)) in
@@ -2032,8 +1955,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let _ = b_append(b, gen_apply1(0)) in
   let funOffsRev2 = cons(["yac_apply1", a1_off],
                          cons(["yac_apply2", a2_off],
-                              cons(["yac_alloc", alc_off],
-                                   cons(["yac_gc", gc_off], funOffsRev)))) in
+                              cons(["yac_gc", gc_off], funOffsRev))) in
   let LOAD_VADDR = load_vaddr in
   let TEXT_OFF = text_off in
   /* writable globals: gc_head, argc, argv, stack_hi, gc_free, alloc_bump, heap_lo, prof_st. */
@@ -2055,11 +1977,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
   let _ = list_push(offs, a1_off) in
   let _ = list_push(offs, a2_off) in
-  let _ = list_push(offs, alc_off) in
   let _ = list_push(offs, gc_off) in
-  let _ = list_push(extra, [3, alc_off + alc_headaddr]) in
-  let _ = list_push(extra, [3, alc_off + nth(alcr, 2)]) in
-  let _ = list_push(extra, [1, alc_off + nth(alcr, 3) + 1, emit_map_get(ids, "yac_gc")]) in
   let _ = list_push(extra, [3, gc_off + nth(gcr, 1)]) in
   let _ = list_push(extra, [6, gc_off + nth(gcr, 2)]) in
   let _ = list_push(extra, [12, gc_off + nth(gcr, 3), smap_start]) in
