@@ -877,6 +877,7 @@ let emit_a64_i_core(st, insn, is_entry) =
       else if k == "land" then a64_and_reg(b, 0, 0, 1)
       else if k == "lor" then a64_orr_reg(b, 0, 0, 1)
       else if k == "xor" then a64_eor_reg(b, 0, 0, 1)
+      else if k == "bnot" then a64_mvn(b, 0, 0)
       else if k == "shl" or k == "sal" then a64_lslv(b, 0, 0, 1)
       else if k == "shr" or k == "sar" then a64_lsrv(b, 0, 0, 1)
       else if k == "div" then a64_sdiv(b, 0, 0, 1)

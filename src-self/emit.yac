@@ -23,6 +23,7 @@ let is_arith(k) =
   else if k == "land" then true
   else if k == "lor" then true
   else if k == "xor" then true
+  else if k == "bnot" then true
   else false
 
 /* icall/ticall have no ncap field; apply/tailapply do. */

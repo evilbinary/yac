@@ -857,6 +857,7 @@ let emit_rv_i_core(st, insn, is_entry) =
       else if k == "land" then rv_and(b, 6, 6, 28)
       else if k == "lor" then rv_or(b, 6, 6, 28)
       else if k == "xor" then rv_xor(b, 6, 6, 28)
+      else if k == "bnot" then rv_xori(b, 6, 6, 0 - 1)
       else if k == "shl" or k == "sal" then rv_sll(b, 6, 6, 28)
       else if k == "shr" or k == "sar" then rv_srl(b, 6, 6, 28)
       else if k == "div" then rv_div(b, 6, 6, 28)

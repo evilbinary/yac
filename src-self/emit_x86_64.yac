@@ -1074,6 +1074,7 @@ let emit_x86_i_core(st, insn, is_entry) =
       else if k == "land" then and_rax_rbx(b)
       else if k == "lor" then or_rax_rbx(b)
       else if k == "xor" then xor_rax_rbx(b)
+      else if k == "bnot" then not_rax(b)
       else if k == "shl" or k == "sal" then
         let _ = mov_rcx_rbx(b) in
         shl_rax_cl(b)

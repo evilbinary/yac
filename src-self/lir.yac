@@ -12,6 +12,8 @@
  *   lir_expr(ast, st)  一项 ANF body × 状态 → [insns, slot, Γ, ctr, Σ, uid]
  */
 
+let reverse(xs) = list_rev(xs)
+
 let fv_skip_go(xs, name, i, n, acc) =
   if i >= n then acc
   else if nth(xs, i) == name then fv_skip_go(xs, name, i + 1, n, acc)
@@ -33,7 +35,9 @@ let bin(op, d, a, b) =
   else if op == "<<" then ["shl", d, a, b]
   else if op == ">>" then ["shr", d, a, b]
   else if op == "&" then ["land", d, a, b]
+  else if op == "|" then ["lor", d, a, b]
   else if op == "^" then ["xor", d, a, b]
+  else if op == "~" then ["bnot", d, a, b]
   else ["add", d, a, b]
 
 let tco_hit(ins, slot, gname, i) =

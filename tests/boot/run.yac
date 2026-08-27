@@ -334,7 +334,7 @@ let main =
                      "src-self/lexer.yac", "src-self/parser.yac",
                      "src-self/anf.yac",
                      "src-self/encode_x64.yac", "src-self/elf.yac",
-                     "src-self/lir.yac",
+                     "src-self/lir.yac", "src-self/runtime.yac",
                      "src-self/emit.yac", "src-self/emit_x86_64.yac",
                      str_cat(TMP, "/emit_stub.yac"),
                      "src-self/lower.yac",
