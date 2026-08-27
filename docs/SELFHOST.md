@@ -235,7 +235,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,elf,pe,macho,pack,backend,encode_*,yc}.yac`。
-全量：`./yac tests/run.yac`（C：interp_suite + 引导 `yc_A`；原生 `yc_A`：compiler/qemu/boot lex/parse/anf/lir/pipe/elf/emit；`yc_B` + L5 iso）。
+全量：`./yac tests/run.yac`（C：interp_suite + 引导 `yc_A`；原生 `yc_A`：boot harness、compiler/qemu/boot lex/parse/anf/lir/pipe/elf/emit；`yc_B` + L5 iso）。
 **下一步**：cps/callcc 仍走 C，不要跳 M7。
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
@@ -249,6 +249,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | `gen_alloc` / `gen_gc` | `brk`（8 字节对齐）、`gc_head`/`stack_hi`/alloc_bump/`heap_lo`；标记-清除。alloc 每 16MiB 调 `yac_gc`。x86 栈扫描用 mmap 对象 bitmap（O(堆) 建表 + O(1) 测字），避免 O(栈×堆) 链表查找 |
 | `gen_read_file` / `gen_write_file` | 多步 syscall，指针与 tagged int 混用 |
 | `gen_argv` | Linux `char**` 指针可为奇数，不能当 tagged int 暂存 |
+| `gen_system` | `fork`/`execve`/`wait4`；指针 argv 与 tagged int 混用 |
 | `gen_apply1` / `gen_apply2` | 动态 `nenv` 跳表 + SysV 寄存器 |
 
 **已知编译器限制**：小程序里 33 元列表 / 33 个 `let` 都正常；**编译器自己的 `_start`（bundle 几百条顶层 let 合成一帧）里**放 33 元 LIR cons 字面量会被错编（`bytes_to_str` → SIGSEGV 139）。对策：`runtime.yac` 的 insn 列表做成 `rt_*_ins(_)` 小函数。`emit_insn` 已拆成按 op 分组的小函数；不要再把大块逻辑塞回 dispatcher。
@@ -522,8 +523,8 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 8. **M5**：arm64/riscv64 与 x86 同源 `COMPILER_CASES`（qemu）。emit 跳过空 fun stub；`cmp ==` 走 `yac_str_eq`；`print` 区分 int/STR。`yac_alloc`：`brk`，失败则 `mmap` ANON。
 
 **仍待**：
-1. **M6 L6**：compiler/qemu 只经原生 `yc_A`；boot 的 lex/parse/anf/lir/pipe/elf/emit/encode 用 `yc_A` 编跑。`bxor`/`bnot`/`bshl`/`bshr` 三架构。`loop(100000)` TCO（LIR 后缀 `call`→`tailcall`，C 与 `yc_A` 同构）。boot **harness**（`tests/boot/run.yac`）仍走 C。cps/callcc/float/bignum 仍走 C。`yc_A`/`yc_B` iso 仍在。
-2. **`--emit-asm` / `regalloc.yac` / M7 callcc**：未做。
+1. **M6 L6**：compiler/qemu 只经原生 `yc_A`；boot 的 lex/parse/anf/lir/pipe/elf/emit/encode 用 `yc_A` 编跑。boot harness（`tests/boot/run.yac`）由 `yc_A` 编成 `boot_run` 再执行。原生 `system`（fork/execve `/bin/sh -c` + wait4）；harness 用 `system` + 临时文件代替 `popen`。`bxor`/`bnot`/`bshl`/`bshr` 三架构。`loop(100000)` TCO。cps/callcc/float/bignum 仍走 C。`yc_A`/`yc_B` iso 仍在。顶层 `./yac tests/run.yac` 仍是 C 引导。
+2. **GC 栈图 / `--emit-asm` / `regalloc.yac` / M7 callcc**：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。
 

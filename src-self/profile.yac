@@ -149,30 +149,42 @@ let prof_nl(b) =
   let _ = bytes_append(b, 10) in
   b
 
-let prof_tab(b) =
-  let _ = bytes_append(b, 9) in
-  b
-
 let prof_putn(b, n) = prof_puts(b, int_to_str(n))
+
+let prof_spaces(n, acc) =
+  if n <= 0 then acc
+  else prof_spaces(n - 1, str_cat(acc, " "))
+
+let prof_pad_right(s, w) =
+  let n = str_len(s) in
+  if n >= w then s else str_cat(s, prof_spaces(w - n, ""))
+
+let prof_pad_left(s, w) =
+  let n = str_len(s) in
+  if n >= w then s else str_cat(prof_spaces(w - n, ""), s)
+
+let prof_pct(excl, tot) =
+  if tot == 0 then "0.00"
+  else
+    let x = (excl * 10000) / tot in
+    let f = x % 100 in
+    let fs = if f < 10 then str_cat("0", int_to_str(f)) else int_to_str(f) in
+    str_cat(str_cat(int_to_str(x / 100), "."), fs)
+
+let prof_col(b, s, w) = prof_puts(b, str_cat(prof_pad_left(s, w), "  "))
+
+let prof_namecol(b, s) = prof_puts(b, str_cat(prof_pad_right(s, 24), "  "))
 
 let prof_line(b, rec, tot) =
   let excl = nth(rec, 3) in
   let incl = nth(rec, 2) in
-  let pct = if tot == 0 then 0 else (excl * 100) / tot in
-  let b1 = prof_puts(b, nth(rec, 0)) in
-  let b2 = prof_tab(b1) in
-  let b3 = prof_putn(b2, nth(rec, 1)) in
-  let b4 = prof_tab(b3) in
-  let b5 = prof_putn(b4, incl) in
-  let b6 = prof_tab(b5) in
-  let b7 = prof_putn(b6, excl) in
-  let b8 = prof_tab(b7) in
-  let b9 = prof_putn(b8, incl / 1000000) in
-  let ba = prof_tab(b9) in
-  let bb = prof_putn(ba, excl / 1000000) in
-  let bc = prof_tab(bb) in
-  let bd = prof_putn(bc, pct) in
-  prof_nl(bd)
+  let b1 = prof_namecol(b, nth(rec, 0)) in
+  let b2 = prof_col(b1, int_to_str(nth(rec, 1)), 10) in
+  let b3 = prof_col(b2, int_to_str(incl), 16) in
+  let b4 = prof_col(b3, int_to_str(excl), 16) in
+  let b5 = prof_col(b4, int_to_str(incl / 1000000), 8) in
+  let b6 = prof_col(b5, int_to_str(excl / 1000000), 8) in
+  prof_nl(prof_puts(b6, prof_pad_left(prof_pct(excl, tot), 6)))
 
 let prof_tot(xs, i, acc) =
   if i >= len(xs) then acc
@@ -197,7 +209,14 @@ let yac_prof_dump(_) =
     let b1 = prof_nl(prof_puts(b0, "# yac-prof 1 native")) in
     let b2 = prof_nl(prof_puts(prof_puts(b1, "# file="), path)) in
     let b3 = prof_puts(b2, "# nfuncs=") in
-    let b4 = prof_nl(prof_putn(b3, len(xs))) in
-    let b5 = prof_nl(prof_puts(b4, "# name calls incl_ns excl_ns incl_ms excl_ms pct_excl")) in
-    let b6 = prof_lines(b5, xs, tot, 0) in
+    let b4 = prof_puts(prof_putn(b3, len(xs)), " total_excl_ns=") in
+    let b5 = prof_nl(prof_putn(b4, tot)) in
+    let h0 = prof_namecol(b5, "# name") in
+    let h1 = prof_col(h0, "calls", 10) in
+    let h2 = prof_col(h1, "incl_ns", 16) in
+    let h3 = prof_col(h2, "excl_ns", 16) in
+    let h4 = prof_col(h3, "incl_ms", 8) in
+    let h5 = prof_col(h4, "excl_ms", 8) in
+    let h6 = prof_nl(prof_puts(h5, "   pct")) in
+    let b6 = prof_lines(h6, xs, tot, 0) in
     write_file(path, bytes_to_str(b6))

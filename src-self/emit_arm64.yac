@@ -649,6 +649,13 @@ let gen_apply1_a64(_) =
   let _ = a64_apply_b26(b, j5, lc) in
   b
 
+/* unused on qemu compiler cases; keep helper id nfun+7 valid. */
+let gen_system_a64(_) =
+  let b = bytes_new() in
+  let _ = a64_movz(b, 0, 254, 0) in
+  let _ = a64_ret(b) in
+  b
+
 let gen_argv_a64(_) =
   let b = bytes_new() in
   let _ = a64_enter(b, 48) in
@@ -1637,6 +1644,8 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let avr = gen_argv_a64(0) in
   let av_off = bytes_len(b) in
   let _ = b_append(b, nth(avr, 0)) in
+  let sys_off = bytes_len(b) in
+  let _ = b_append(b, gen_system_a64(0)) in
   let gc_off = bytes_len(b) in
   let gcr = gen_gc_a64(0) in
   let _ = b_append(b, nth(gcr, 0)) in
@@ -1646,7 +1655,8 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
                           cons(["yac_read_file", rf_off],
                                cons(["yac_alloc", alc_off],
                                     cons(["yac_gc", gc_off],
-                                    cons(["yac_argv", av_off], fo0))))))) in
+                                    cons(["yac_argv", av_off],
+                                         cons(["yac_system", sys_off], fo0)))))))) in
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
@@ -1667,6 +1677,7 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let _ = list_push(offs, alc_off) in
   let _ = list_push(offs, gc_off) in
   let _ = list_push(offs, av_off) in
+  let _ = list_push(offs, sys_off) in
   let extra = list_new() in
   let _ = list_push(extra, [3, alc_off + nth(alcr, 1)]) in
   let _ = list_push(extra, [3, alc_off + nth(alcr, 2)]) in

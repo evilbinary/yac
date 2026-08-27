@@ -83,7 +83,7 @@ let emit_map_put(m, k, v) =
 
 /* Fun id table: prog funs, then helpers last so helper names stay reserved.
  * Duplicate fun names: last-put-wins (runtime prof_* stubs lose to profile.yac).
- * Helper ids are nfun+0..nfun+6 matching offs listbuf after emit_fun. */
+ * Helper ids are nfun+0..nfun+7 matching offs listbuf after emit_fun. */
 let emit_ids_helpers(ids, nfun) =
   let _ = emit_map_put(ids, intern("yac_apply1"), nfun) in
   let _ = emit_map_put(ids, intern("yac_apply2"), nfun + 1) in
@@ -92,6 +92,7 @@ let emit_ids_helpers(ids, nfun) =
   let _ = emit_map_put(ids, intern("yac_alloc"), nfun + 4) in
   let _ = emit_map_put(ids, intern("yac_gc"), nfun + 5) in
   let _ = emit_map_put(ids, intern("yac_argv"), nfun + 6) in
+  let _ = emit_map_put(ids, intern("yac_system"), nfun + 7) in
   ids
 
 let emit_ids_bind(ids, funs, i, n) =

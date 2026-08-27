@@ -3,7 +3,7 @@
  *
  *   ./yac tests/run.yac
  * C interpreter: this harness + interp_suite (cps/callcc/float/bignum) + bootstrap yc_A.
- * Native yc_A: compiler cases, qemu, boot frontend (list print via print_val), yc_B/iso.
+ * Native yc_A: boot harness, compiler cases, qemu, boot frontend, yc_B/iso.
  */
 let TMP = "build/test_tmp"
 let BUNDLE = "build/test_tmp/yc_bundle.yac"
@@ -276,8 +276,12 @@ let main =
   let _ = run(["rm", "-f", ya, str_cat(ya, ".bin")]) in
   let _ = run(["./yac", BUNDLE, BUNDLE, "-o", ya]) in
   let _ = run(["chmod", "+x", ya]) in
+  let boot_bin = str_cat(TMP, "/boot_run") in
+  let _ = run(["rm", "-f", boot_bin]) in
+  let _ = run([ya, "tests/boot/run.yac", "-o", boot_bin]) in
+  let _ = run(["chmod", "+x", boot_bin]) in
   let st0 = interp_suite([0, 0]) in
-  let br = run(["./yac", "tests/boot/run.yac"]) in
+  let br = run([boot_bin]) in
   let _ = print(chomp(nth(br, 1))) in
   let st1 = check(st0, "boot frontend", "0", int_to_str(nth(br, 0))) in
   let st2 = compiler_all(st1, [ya]) in

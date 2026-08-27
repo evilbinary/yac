@@ -13,7 +13,17 @@ let join_cmd(xs) =
     else rec(i + 1, str_cat(acc, str_cat(" ", sh_quote(nth(xs, i))))) in
   rec(0, "")
 
-let run(argv) = popen(join_cmd(argv), "")
+let run(argv) =
+  let cmd = join_cmd(argv) in
+  let outp = str_cat(TMP, "/pout") in
+  let errp = str_cat(TMP, "/perr") in
+  let full = str_cat(cmd, str_cat(" >", str_cat(outp, str_cat(" 2>", errp)))) in
+  let rc = system(full) in
+  let out = read_file(outp) in
+  let err = read_file(errp) in
+  let o2 = if out == 0 then "" else out in
+  let e2 = if err == 0 then "" else err in
+  [rc, o2, e2]
 
 let chomp(s) =
   let n = str_len(s) in

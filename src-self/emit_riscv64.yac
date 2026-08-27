@@ -619,6 +619,12 @@ let gen_apply1_rv(_) =
   let _ = rv_apply_jal(b, j5, lc, 0) in
   b
 
+let gen_system_rv(_) =
+  let b = bytes_new() in
+  let _ = rv_li(b, 10, 254) in
+  let _ = rv_jalr(b, 0, 1, 0) in
+  b
+
 let gen_argv_rv(_) =
   let b = bytes_new() in
   let _ = rv_enter(b, 48) in
@@ -1635,6 +1641,8 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let avr = gen_argv_rv(0) in
   let av_off = bytes_len(b) in
   let _ = b_append(b, nth(avr, 0)) in
+  let sys_off = bytes_len(b) in
+  let _ = b_append(b, gen_system_rv(0)) in
   let gc_off = bytes_len(b) in
   let gcr = gen_gc_rv(0) in
   let _ = b_append(b, nth(gcr, 0)) in
@@ -1644,7 +1652,8 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
                           cons(["yac_read_file", rf_off],
                                cons(["yac_alloc", alc_off],
                                     cons(["yac_gc", gc_off],
-                                    cons(["yac_argv", av_off], fo0))))))) in
+                                    cons(["yac_argv", av_off],
+                                         cons(["yac_system", sys_off], fo0)))))))) in
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
@@ -1665,6 +1674,7 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = list_push(offs, alc_off) in
   let _ = list_push(offs, gc_off) in
   let _ = list_push(offs, av_off) in
+  let _ = list_push(offs, sys_off) in
   let extra = list_new() in
   let _ = list_push(extra, [3, alc_off + nth(alcr, 1)]) in
   let _ = list_push(extra, [3, alc_off + nth(alcr, 2)]) in

@@ -1007,3 +1007,26 @@ let mov_rdx_rbx(b) =
 /* mov rdx, rcx  (48 89 ca) */
 let mov_rdx_rcx(b) =
   let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 202)
+/* and rax, imm8  (48 83 e0 ib) */
+let and_rax_imm8(b, v) =
+  let _ = e8(b, 72) in let _ = e8(b, 131) in let _ = e8(b, 224) in
+  e8(b, band(v, 255))
+/* shr rax, imm8  (48 c1 e8 ib) */
+let shr_rax_imm8(b, n) =
+  let _ = e8(b, 72) in let _ = e8(b, 193) in let _ = e8(b, 232) in
+  e8(b, band(n, 255))
+/* xor r10, r10  (4d 31 d2) */
+let xor_r10_r10(b) =
+  let _ = e8(b, 77) in let _ = e8(b, 49) in e8(b, 210)
+/* and eax, imm32  (25 id32) */
+let and_eax_imm32(b, v) =
+  let _ = e8(b, 37) in
+  e32(b, v)
+/* lea rax, [rip+disp32]  (48 8d 05 id32); patch disp at bytes_len-4 */
+let lea_rax_rip(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 5) in
+  e32(b, 0)
+/* lea rdi, [rip+disp32]  (48 8d 3d id32) */
+let lea_rdi_rip(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 61) in
+  e32(b, 0)
