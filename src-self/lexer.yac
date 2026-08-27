@@ -137,9 +137,17 @@ let scan_str(s, i, line, acc, buf) =
       let out = bytes_to_str(buf) in
       [mk_tok("str", out, line), i + 1]
     else if c == 92 then
-      /* escape: use next char raw (simple lexer; no \x decoding) */
       if at_end(s, i + 1) then [["error", "lex", 0], 0]
-      else scan_str(s, i + 2, line, acc, buf)
+      else
+        let e = sat(s, i + 1) in
+        let ch =
+          if e == 110 then 10
+          else if e == 116 then 9
+          else if e == 114 then 13
+          else if e == 48 then 0
+          else e in
+        let _ = bytes_append(buf, ch) in
+        scan_str(s, i + 2, line, acc, buf)
     else
       let _ = bytes_append(buf, c) in
       scan_str(s, i + 1, line, acc, buf)
