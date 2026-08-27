@@ -753,6 +753,35 @@ let rt_read_file_ins(_) =
    ["$or", 8, 8, 1],
    ["ret", 8]]
 
+/* path STR, data BYTES|STR. open(O_WRONLY|O_CREAT|O_TRUNC, 0644). */
+let rt_write_file_ins(_) =
+  [["$local", 12, 2],
+   ["$and", 4, 1, 0 - 2],
+   ["$addi", 4, 4, 32],
+   ["mov_imm", 5, 512 + 64 + 1],
+   ["mov_imm", 6, 420],
+   ["$syscall", 3, "open", [4, 5, 6]],
+   ["$and", 4, 2, 0 - 2],
+   ["$ld64", 9, 4, 16],
+   ["tag", 9, 9],
+   ["mov_imm", 10, 8],
+   ["icmp", "==", 11, 9, 10],
+   ["cmpjmp", 11, "wf_bytes", "wf_str"],
+   ["label", "wf_bytes"],
+   ["$ld64", 7, 4, 40],
+   ["$and", 7, 7, 0 - 2],
+   ["$addi", 7, 7, 32],
+   ["$ld64", 8, 4, 24],
+   ["jmp", "wf_do"],
+   ["label", "wf_str"],
+   ["$addi", 7, 4, 32],
+   ["$ld64", 8, 4, 24],
+   ["label", "wf_do"],
+   ["$syscall", 9, "write", [3, 7, 8]],
+   ["$syscall", 9, "close", [3]],
+   ["mov_imm", 9, 0],
+   ["ret", 9]]
+
 let rt_argc_ins(_) =
   [["local", 4, 0],
    ["glob", 1, 1],
@@ -961,6 +990,7 @@ let runtime_funs(_) =
    ["proc", "print_int", 1, 0, rt_print_int_ins(0), "print_int"],
    ["proc", "print_val", 1, 0, rt_print_val_ins(0), "print_val"],
    ["$proc", "yac_read_file", 1, 0, rt_read_file_ins(0), "yac_read_file"],
+   ["$proc", "yac_write_file", 2, 0, rt_write_file_ins(0), "yac_write_file"],
    ["proc", "gc_collect", 0, 0, rt_gc_ins(0), "gc_collect"],
    ["proc", "yac_argc", 0, 0, rt_argc_ins(0), "yac_argc"],
    ["proc", "time_ms", 0, 0, rt_time_ms_ins(0), "time_ms"],

@@ -353,45 +353,6 @@ let rv_clamp0(b) =
 /* yac_read_file is rt_read_file_ins ($proc / $local). */
 
 
-let gen_write_file_rv(_) =
-  let b = bytes_new() in
-  let _ = rv_enter(b, 32) in
-  let _ = rv_slot(b, 0, true, 11) in
-  let _ = rv_untag_ptr(b, 10) in
-  let _ = rv_addi(b, 11, 10, 32) in
-  let _ = rv_addi(b, 10, 0, 0 - 100) in
-  let _ = rv_li(b, 12, 577) in
-  let _ = rv_addi(b, 13, 0, 420) in
-  let _ = rv_addi(b, 17, 0, 56) in
-  let _ = rv_ecall(b) in
-  let _ = rv_slot(b, 1, true, 10) in
-  let _ = rv_slot(b, 0, false, 10) in
-  let _ = rv_untag_ptr(b, 10) in
-  let _ = rv_ld(b, 11, 10, 16) in
-  let _ = rv_addi(b, 6, 0, 4) in
-  let jne = bytes_len(b) in
-  let _ = rv_bne(b, 11, 6, 0) in
-  let _ = rv_ld(b, 11, 10, 40) in
-  let _ = rv_untag_ptr(b, 11) in
-  let _ = rv_addi(b, 11, 11, 32) in
-  let _ = rv_ld(b, 12, 10, 24) in
-  let jdo = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let dostr = bytes_len(b) in
-  let _ = rv_addi(b, 11, 10, 32) in
-  let _ = rv_ld(b, 12, 10, 24) in
-  let dowr = bytes_len(b) in
-  let _ = rv_slot(b, 1, false, 10) in
-  let _ = rv_addi(b, 17, 0, 64) in
-  let _ = rv_ecall(b) in
-  let _ = rv_slot(b, 1, false, 10) in
-  let _ = rv_addi(b, 17, 0, 57) in
-  let _ = rv_ecall(b) in
-  let _ = rv_addi(b, 10, 0, 0) in
-  let _ = rv_leave(b) in
-  let _ = rv_patch_b(b, jne, dostr) in
-  let _ = rv_apply_jal(b, jdo, dowr, 0) in
-  b
 
 let rv_dyn_loadcap(b) =
   let rec(i) =
@@ -990,6 +951,11 @@ let emit_rv_i_raw(st, insn) =
     let _ = rv_slot(b, nth(insn, 1), false, 10) in
     let _ = rv_sb(b, 0, 10, nth(insn, 2)) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$ld64" then
+    let _ = rv_slot(b, nth(insn, 2), false, 10) in
+    let _ = rv_ld(b, 10, 10, nth(insn, 3)) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, patches)
   else
     let name = nth(insn, 2) in
     let args = nth(insn, 3) in
@@ -998,12 +964,15 @@ let emit_rv_i_raw(st, insn) =
         let _ = rv_slot(b, nth(args, 0), false, 11) in
         let _ = rv_addi(b, 10, 0, 0 - 100) in
         let _ = rv_slot(b, nth(args, 1), false, 12) in
-        let _ = rv_addi(b, 13, 0, 0) in
+        let _ =
+          if len(args) > 2 then rv_slot(b, nth(args, 2), false, 13)
+          else rv_addi(b, 13, 0, 0) in
         rv_addi(b, 17, 0, 56)
       else
         let _ = emit_rv_sysarg(b, args, 0) in
         if name == "lseek" then rv_addi(b, 17, 0, 62)
         else if name == "read" then rv_addi(b, 17, 0, 63)
+        else if name == "write" then rv_addi(b, 17, 0, 64)
         else rv_addi(b, 17, 0, 57) in
     let _ = rv_ecall(b) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
@@ -1645,8 +1614,6 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let alc_off = bytes_len(b) in
   let alcr = gen_alloc_rv(0) in
   let _ = b_append(b, nth(alcr, 0)) in
-  let wf_off = bytes_len(b) in
-  let _ = b_append(b, gen_write_file_rv(0)) in
   let a2_off = bytes_len(b) in
   let _ = b_append(b, gen_apply2_rv(0)) in
   let a1_off = bytes_len(b) in
@@ -1661,11 +1628,10 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = b_append(b, nth(gcr, 0)) in
   let fo = cons(["yac_apply1", a1_off],
                 cons(["yac_apply2", a2_off],
-                     cons(["yac_write_file", wf_off],
-                          cons(["yac_alloc", alc_off],
-                                    cons(["yac_gc", gc_off],
-                                    cons(["yac_argv", av_off],
-                                         cons(["yac_system", sys_off], fo0))))))) in
+                     cons(["yac_alloc", alc_off],
+                          cons(["yac_gc", gc_off],
+                               cons(["yac_argv", av_off],
+                                    cons(["yac_system", sys_off], fo0)))))) in
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
@@ -1681,7 +1647,6 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
   let _ = list_push(offs, a1_off) in
   let _ = list_push(offs, a2_off) in
-  let _ = list_push(offs, wf_off) in
   let _ = list_push(offs, alc_off) in
   let _ = list_push(offs, gc_off) in
   let _ = list_push(offs, av_off) in

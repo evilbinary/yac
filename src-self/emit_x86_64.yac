@@ -744,62 +744,8 @@ let gen_system(_) =
   b
 
 /* yac_read_file is rt_read_file_ins in runtime.yac ($ops). */
+/* yac_write_file is rt_write_file_ins ($proc / $local). */
 
-/* yac_write_file(path STR rdi, data BYTES|STR rsi) -> 0 */
-let gen_write_file(d) =
-  let b = bytes_new() in
-  let _ = push_rbp(b) in
-  let _ = mov_rbp_rsp(b) in
-  let _ = sub_rsp_imm8(b, 32) in
-  let _ = mov_mem_rbp_rsi(b, 240) in
-  let _ = mov_rax_rdi(b) in
-  let _ = and_rax_1(b) in
-  let _ = add_rax_imm32(b, 32) in
-  let _ = mov_rdi_rax(b) in
-  /* open(path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644=420) */
-  let _ = e8(b, 72) in let _ = e8(b, 199) in let _ = e8(b, 198) in
-  let _ = e32(b, 577) in
-  let _ = mov_rdx_imm(b, 420) in
-  let _ = mov_r64_imm(b, 0, 2) in
-  let _ = syscall(b) in
-  let _ = mov_mem_rbp_r64(b, 248, 0) in
-  let _ = mov_r64_mem_rbp(b, 0, 240) in
-  let _ = and_rax_1(b) in
-  /* rbx = obj */
-  let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 195) in
-  let _ = mov_rax_rax_disp8(b, 16) in
-  let _ = cmp_rax_imm8(b, 4) in
-  let _ = jcc_rel32(b, 5, 0) in
-  let jnestr = bytes_len(b) - 4 in
-  /* BYTES path (kind==4): dataptr@40 is tagged STR blob, payload at +32 */
-  let _ = mov_rax_rbx_disp8(b, 40) in
-  let _ = and_rax_1(b) in
-  let _ = add_rax_imm32(b, 32) in
-  let _ = mov_rsi_rax(b) in
-  let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 67) in let _ = e8(b, 24) in
-  let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 194) in
-  let _ = jmp_rel32(b, 0) in
-  let jdo = bytes_len(b) - 4 in
-  let dostr = bytes_len(b) in
-  let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 216) in
-  let _ = add_rax_imm32(b, 32) in
-  let _ = mov_rsi_rax(b) in
-  let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 67) in let _ = e8(b, 24) in
-  let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 194) in
-  let dowrite = bytes_len(b) in
-  let _ = mov_r64_mem_rbp(b, 7, 248) in
-  let _ = mov_r64_imm(b, 0, 1) in
-  let _ = syscall(b) in
-  let _ = mov_r64_mem_rbp(b, 7, 248) in
-  let _ = mov_r64_imm(b, 0, 3) in
-  let _ = syscall(b) in
-  let _ = xor_rax_rax(b) in
-  let _ = mov_rsp_rbp(b) in
-  let _ = pop_rbp(b) in
-  let _ = ret(b) in
-  let _ = apply_patch(b, jnestr, dostr) in
-  let _ = apply_patch(b, jdo, dowrite) in
-  b
 
 /* yac_apply2(clos rdi, a0 rsi, a1 rdx) — dynamic nenv, 2 user args.
  * Returns nothing special; result in rax. */
@@ -1317,6 +1263,7 @@ let emit_x86_raw_nr(name) =
   if name == "open" then 2
   else if name == "lseek" then 8
   else if name == "read" then 0
+  else if name == "write" then 1
   else 3
 
 let emit_x86_i_raw(st, insn) =
@@ -1365,6 +1312,11 @@ let emit_x86_i_raw(st, insn) =
   else if k == "$st8" then
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     let _ = mov_rax_disp8_imm8(b, nth(insn, 2), nth(insn, 3)) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$ld64" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rax_rax_disp8(b, nth(insn, 3)) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
   else
     let _ = emit_x86_sysarg(b, nth(insn, 3), 0) in
@@ -2199,8 +2151,6 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let gcr = gen_gc(0) in
   let gc_off = bytes_len(b) in
   let _ = b_append(b, nth(gcr, 0)) in
-  let wf_off = bytes_len(b) in
-  let _ = b_append(b, gen_write_file(0)) in
   let a2_off = bytes_len(b) in
   let _ = b_append(b, gen_apply2(0)) in
   let a1_off = bytes_len(b) in
@@ -2212,11 +2162,10 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let _ = b_append(b, gen_system(0)) in
   let funOffsRev2 = cons(["yac_apply1", a1_off],
                          cons(["yac_apply2", a2_off],
-                              cons(["yac_write_file", wf_off],
-                                   cons(["yac_alloc", alc_off],
-                                             cons(["yac_gc", gc_off],
-                                                  cons(["yac_argv", av_off],
-                                                       cons(["yac_system", sys_off], funOffsRev))))))) in
+                              cons(["yac_alloc", alc_off],
+                                   cons(["yac_gc", gc_off],
+                                        cons(["yac_argv", av_off],
+                                             cons(["yac_system", sys_off], funOffsRev)))))) in
   let LOAD_VADDR = load_vaddr in
   let TEXT_OFF = text_off in
   /* writable globals: gc_head, argc, argv, stack_hi, gc_free, alloc_bump, heap_lo, prof_st. */
@@ -2238,7 +2187,6 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
   let _ = list_push(offs, a1_off) in
   let _ = list_push(offs, a2_off) in
-  let _ = list_push(offs, wf_off) in
   let _ = list_push(offs, alc_off) in
   let _ = list_push(offs, gc_off) in
   let _ = list_push(offs, av_off) in
