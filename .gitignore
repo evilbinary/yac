@@ -2,7 +2,9 @@ src/*.o
 *.exe
 build/
 yac
-a_native.prof
+*.prof
 a_native1.prof
 yc_A
 yc_B
+yc_C
+yc_D
