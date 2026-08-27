@@ -235,7 +235,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,elf,pe,macho,pack,backend,encode_*,yc}.yac`。
-全量：`./yac tests/run.yac`（C：interp_suite + 引导 `yc_A`；原生 `yc_A`：compiler/qemu/boot lex/parse/anf/elf/emit；`yc_B` + L5 iso）。
+全量：`./yac tests/run.yac`（C：interp_suite + 引导 `yc_A`；原生 `yc_A`：compiler/qemu/boot lex/parse/anf/lir/pipe/elf/emit；`yc_B` + L5 iso）。
 **下一步**：cps/callcc 仍走 C，不要跳 M7。
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
@@ -522,7 +522,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 8. **M5**：arm64/riscv64 与 x86 同源 `COMPILER_CASES`（qemu）。emit 跳过空 fun stub；`cmp ==` 走 `yac_str_eq`；`print` 区分 int/STR。`yac_alloc`：`brk`，失败则 `mmap` ANON。
 
 **仍待**：
-1. **M6 L6**：compiler/qemu 只经原生 `yc_A`；boot 的 lex/parse/anf/elf/emit/encode 用 `yc_A` 编跑。`bxor`/`bnot`/`bshl`/`bshr` 三架构。`loop(100000)` TCO（LIR 后缀 `call`→`tailcall`，C 与 `yc_A` 同构）。boot **harness**（`tests/boot/run.yac`）仍走 C。cps/callcc/float/bignum 仍走 C。`yc_A`/`yc_B` iso 仍在。
+1. **M6 L6**：compiler/qemu 只经原生 `yc_A`；boot 的 lex/parse/anf/lir/pipe/elf/emit/encode 用 `yc_A` 编跑。`bxor`/`bnot`/`bshl`/`bshr` 三架构。`loop(100000)` TCO（LIR 后缀 `call`→`tailcall`，C 与 `yc_A` 同构）。boot **harness**（`tests/boot/run.yac`）仍走 C。cps/callcc/float/bignum 仍走 C。`yc_A`/`yc_B` iso 仍在。
 2. **`--emit-asm` / `regalloc.yac` / M7 callcc**：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。

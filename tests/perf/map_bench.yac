@@ -3,7 +3,7 @@
  *   ./yac tests/perf/map_bench.yac
  *   ./yac $BUNDLE tests/perf/map_bench.yac -o /tmp/map_bench && /tmp/map_bench
  *
- * Table is [vec, n, cap], cap power of 2, slot 0 empty else [k,v].
+ * Table is [vec, n, cap], cap power of 2, slot 0 empty else [k,v,h].
  * fmap (funs): open addressing. env/sh/fv: alist (scope history).
  */
 
@@ -24,59 +24,85 @@ let fmap_fill(b, i, cap) =
     let _ = list_push(b, 0) in
     let _ = list_push(b, 0) in
     let _ = list_push(b, 0) in
-    fmap_fill(b, i + 8, cap)
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    fmap_fill(b, i + 16, cap)
 
 let fmap_new(_) =
   let m = list_new() in
-  let _ = list_push(m, fmap_fill(list_new(), 0, 8)) in
+  let _ = list_push(m, list_new()) in
   let _ = list_push(m, 0) in
-  let _ = list_push(m, 8) in
+  let _ = list_push(m, 0) in
   m
 
 let fmap_probe(vec, k, i, mask) =
-  if nth(vec, i) == 0 then i
-  else if nth(nth(vec, i), 0) == k then i
+  let e = nth(vec, i) in
+  if e == 0 then i
+  else if nth(e, 0) == k then i
   else fmap_probe(vec, k, band(i + 1, mask), mask)
 
 let fmap_got(e) =
   if e == 0 then 0 else nth(e, 1)
 
 let fmap_get(m, k) =
-  fmap_got(nth(nth(m, 0), fmap_probe(nth(m, 0), k,
-            band(hash_str(k), nth(m, 2) - 1), nth(m, 2) - 1)))
+  let cap = nth(m, 2) in
+  if cap == 0 then 0
+  else
+    let vec = nth(m, 0) in
+    let mask = cap - 1 in
+    fmap_got(nth(vec, fmap_probe(vec, k, band(hash_str(k), mask), mask)))
 
-let fmap_fresh(m, i, k, v) =
-  let _ = list_set(nth(m, 0), i, [k, v]) in
-  list_set(m, 1, nth(m, 1) + 1)
+let fmap_put_at(m, k, v, h, i) =
+  let vec = nth(m, 0) in
+  if nth(vec, i) == 0 then
+    let _ = list_set(vec, i, [k, v, h]) in
+    list_set(m, 1, nth(m, 1) + 1)
+  else list_set(vec, i, [k, v, h])
 
-let fmap_put_at(m, k, v, i) =
-  if nth(nth(m, 0), i) == 0 then fmap_fresh(m, i, k, v)
-  else list_set(nth(m, 0), i, [k, v])
+let fmap_install_hash(m, k, v, h) =
+  let vec = nth(m, 0) in
+  let mask = nth(m, 2) - 1 in
+  fmap_put_at(m, k, v, h, fmap_probe(vec, k, band(h, mask), mask))
 
 let fmap_install(m, k, v) =
-  fmap_put_at(m, k, v, fmap_probe(nth(m, 0), k,
-              band(hash_str(k), nth(m, 2) - 1), nth(m, 2) - 1))
+  fmap_install_hash(m, k, v, hash_str(k))
 
 let fmap_rehash(oldv, m, i, oldc) =
   if i >= oldc then 0
-  else if nth(oldv, i) == 0 then fmap_rehash(oldv, m, i + 1, oldc)
   else
-    let _ = fmap_install(m, nth(nth(oldv, i), 0), nth(nth(oldv, i), 1)) in
-    fmap_rehash(oldv, m, i + 1, oldc)
+    let e = nth(oldv, i) in
+    if e == 0 then fmap_rehash(oldv, m, i + 1, oldc)
+    else
+      let _ = fmap_install_hash(m, nth(e, 0), nth(e, 1), nth(e, 2)) in
+      fmap_rehash(oldv, m, i + 1, oldc)
 
 let fmap_grow_prep(m, oldc) =
   let _ = list_set(m, 0, fmap_fill(list_new(), 0, oldc * 2)) in
   let _ = list_set(m, 1, 0) in
   list_set(m, 2, oldc * 2)
 
+let fmap_init(m) =
+  let _ = list_set(m, 0, fmap_fill(list_new(), 0, 16)) in
+  list_set(m, 2, 16)
+
 let fmap_swap(oldv, m, oldc) =
   let _ = fmap_grow_prep(m, oldc) in
   fmap_rehash(oldv, m, 0, oldc)
 
-let fmap_grow(m) = fmap_swap(nth(m, 0), m, nth(m, 2))
+let fmap_grow(m) =
+  let oldv = nth(m, 0) in
+  fmap_swap(oldv, m, nth(m, 2))
 
 let fmap_maybe_grow(m) =
-  if nth(m, 1) * 2 >= nth(m, 2) then fmap_grow(m) else 0
+  if nth(m, 2) == 0 then fmap_init(m)
+  else if nth(m, 1) * 2 >= nth(m, 2) then fmap_grow(m)
+  else 0
 
 let fmap_put(m, k, v) =
   let _ = fmap_maybe_grow(m) in
@@ -141,6 +167,14 @@ let NFUNGET = 1500
 let NFILL = 8
 
 let nm(i) = nth(NAMES, i % 32)
+
+let key_name(i) = str_cat("fn", int_to_str(i))
+
+let make_keys(out, i, n) =
+  if i >= n then out
+  else
+    let _ = list_push(out, key_name(i)) in
+    make_keys(out, i + 1, n)
 
 let line(k, n) =
   let _ = print(str_cat(k, str_cat("=", int_to_str(n)))) in
@@ -224,18 +258,18 @@ let bench_fv(i, acc) =
     let m = fv_puts(list_new(), 0) in
     bench_fv(i + 1, acc + fv_looks(m, len(m) - 1, 0, 0))
 
-let fun_puts(m, i) =
+let fun_puts(m, keys, i) =
   if i >= NFUN then m
   else
-    let _ = fmap_put(m, nm(i), i + 1) in
-    fun_puts(m, i + 1)
+    let _ = fmap_put(m, nth(keys, i), i + 1) in
+    fun_puts(m, keys, i + 1)
 
-let fun_looks(m, i, acc) =
+let fun_looks(m, keys, i, acc) =
   if i >= NFUNGET then acc
-  else fun_looks(m, i + 1, acc + fmap_get(m, nm(i)))
+  else fun_looks(m, keys, i + 1, acc + fmap_get(m, nth(keys, i % NFUN)))
 
-let bench_funs(_) =
-  fun_looks(fun_puts(fmap_new(0), 0), 0, 0)
+let bench_funs(keys) =
+  fun_looks(fun_puts(fmap_new(0), keys, 0), keys, 0, 0)
 
 let fill_n(i) =
   if i >= NFILL then 0
@@ -247,6 +281,7 @@ let main =
   let cr = check_maps(0) in
   if cr != 0 then cr
   else
+    let keys = make_keys(list_new(), 0, NFUN) in
     let t0 = time_ms() in
     let s0 = bench_env(0, 0) in
     let t1 = time_ms() in
@@ -254,7 +289,7 @@ let main =
     let t2 = time_ms() in
     let s2 = bench_fv(0, 0) in
     let t3 = time_ms() in
-    let s3 = bench_funs(0) in
+    let s3 = bench_funs(keys) in
     let t4 = time_ms() in
     let _ = fill_n(0) in
     let t5 = time_ms() in
