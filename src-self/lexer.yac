@@ -19,9 +19,22 @@ let is_space(c) = c == 32 or c == 9 or c == 10 or c == 13
 let is_opchar(c) = c == 43 or c == 45 or c == 42 or c == 47 or c == 37 or
                    c == 61 or c == 60 or c == 62 or c == 33
 
-let kw_set = ["let","in","fun","if","then","else","not","print",
-              "callcc","throw","and","or","true","false"]
-let is_kw(w) = foldl(fun (a,k) -> if a then true else w == k, false, kw_set)
+let is_kw(w) =
+  if w == "let" then true
+  else if w == "in" then true
+  else if w == "fun" then true
+  else if w == "if" then true
+  else if w == "then" then true
+  else if w == "else" then true
+  else if w == "not" then true
+  else if w == "print" then true
+  else if w == "and" then true
+  else if w == "or" then true
+  else if w == "true" then true
+  else if w == "false" then true
+  else if w == "callcc" then true
+  else if w == "throw" then true
+  else false
 
 let slen(s) = str_len(s)
 let sat(s, i) = str_ref(s, i)
@@ -80,11 +93,7 @@ let mk_tok(kind, text, line) = [kind, text, line]
 let scan_ident(s, i, line) =
   let e = read_alnum(s, i) in
   let w = str_slice(s, i, e - i) in
-  let k =
-    if w == "let" or w == "in" or w == "fun" or w == "if" or w == "then" or
-       w == "else" or w == "not" or w == "print" or w == "and" or w == "or" or
-       w == "true" or w == "false" or w == "callcc" or w == "throw"
-    then "kw" else "ident" in
+  let k = if is_kw(w) then "kw" else "ident" in
   [mk_tok(k, w, line), e]
 
 /* scan a number (int or float) starting at pos. Grammar:

@@ -31,22 +31,44 @@ let parse_expr(toks, i, min_prec) =
   let tk_at(j) = if j >= len(toks) then ["eof", "", 0] else nth(toks, j) in
   let kk(j) = nth(tk_at(j), 0) in
   let tt(j) = nth(tk_at(j), 1) in
-  let is_punct(j) = kk(j) == "lparen" or kk(j) == "rparen" or kk(j) == "lbrk" or
-                    kk(j) == "rbrk" or kk(j) == "lbrace" or kk(j) == "rbrace" or
-                    kk(j) == "comma" or kk(j) == "semi" or kk(j) == "punct" in
-  let is_kw(j, t) = kk(j) == "kw" and tt(j) == t in
-  let is_op(j, t) = kk(j) == "op" and tt(j) == t in
+  let is_punct(j) =
+    let k = kk(j) in
+    if k == "lparen" then true
+    else if k == "rparen" then true
+    else if k == "lbrk" then true
+    else if k == "rbrk" then true
+    else if k == "lbrace" then true
+    else if k == "rbrace" then true
+    else if k == "comma" then true
+    else if k == "semi" then true
+    else if k == "punct" then true
+    else false in
+  let is_kw(j, t) =
+    if kk(j) == "kw" then tt(j) == t else false in
+  let is_op(j, t) =
+    if kk(j) == "op" then tt(j) == t else false in
 
   /* ---- precedence ---- */
   let prec_of(op) =
     if op == "or" then 1
     else if op == "and" then 2
-    else if op == "==" or op == "!=" then 3
-    else if op == "<" or op == "<=" or op == ">" or op == ">=" then 4
-    else if op == "+" or op == "-" then 5
-    else if op == "*" or op == "/" or op == "%" then 6
+    else if op == "==" then 3
+    else if op == "!=" then 3
+    else if op == "<" then 4
+    else if op == "<=" then 4
+    else if op == ">" then 4
+    else if op == ">=" then 4
+    else if op == "+" then 5
+    else if op == "-" then 5
+    else if op == "*" then 6
+    else if op == "/" then 6
+    else if op == "%" then 6
     else 0 in
-  let is_binop_tok(j) = (kk(j) == "op" or kk(j) == "kw") and prec_of(tt(j)) > 0 in
+  let is_binop_tok(j) =
+    let k = kk(j) in
+    if k == "op" then prec_of(tt(j)) > 0
+    else if k == "kw" then prec_of(tt(j)) > 0
+    else false in
 
   /* ---- parse a comma-separated argument list inside parens, after '(' ---- */
   let parse_arglist(j, acc) =
@@ -129,15 +151,21 @@ let parse_expr(toks, i, min_prec) =
       /* fn( a, b, c ) — keep consuming further ( args ) */
       let r = parse_arglist(j + 1, []) in
       parse_app(nth(r, 1), ["call", head, nth(r, 0)])
-    else if kk(j) == "ident" or kk(j) == "num" or kk(j) == "str" or
-            kk(j) == "lparen" or kk(j) == "lbrk" or is_kw(j, "fun") then
-      /* fn arg  (same line only; newline starts the next statement) */
-      if nth(nth(toks, j), 2) != nth(nth(toks, j - 1), 2) then [head, j]
-      else
-        let r = parse_expr(toks, j, 0) in
-        if is_err(nth(r, 0)) then [head, j]
-        else parse_app(nth(r, 1), ["call", head, [nth(r, 0)]])
-    else [head, j] in
+    else
+      let k = kk(j) in
+      let juxta(_) =
+        if nth(nth(toks, j), 2) != nth(nth(toks, j - 1), 2) then [head, j]
+        else
+          let r = parse_expr(toks, j, 0) in
+          if is_err(nth(r, 0)) then [head, j]
+          else parse_app(nth(r, 1), ["call", head, [nth(r, 0)]]) in
+      if k == "ident" then juxta(0)
+      else if k == "num" then juxta(0)
+      else if k == "str" then juxta(0)
+      else if k == "lparen" then juxta(0)
+      else if k == "lbrk" then juxta(0)
+      else if is_kw(j, "fun") then juxta(0)
+      else [head, j] in
 
   /* ---- if ---- */
   let parse_if(j) =

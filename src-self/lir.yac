@@ -12,7 +12,14 @@
  *   lir_expr(ast, st)  一项 ANF body × 状态 → [insns, slot, Γ, ctr, Σ, uid]
  */
 
-let reverse(xs) = list_rev(xs)
+let fv_skip_go(xs, name, i, n, acc) =
+  if i >= n then acc
+  else if nth(xs, i) == name then fv_skip_go(xs, name, i + 1, n, acc)
+  else
+    let _ = list_push(acc, nth(xs, i)) in
+    fv_skip_go(xs, name, i + 1, n, acc)
+
+let fv_skip(xs, name) = fv_skip_go(xs, name, 0, len(xs), list_new())
 
 /* DESIGN bin(op,s,a,b) */
 let bin(op, d, a, b) =
@@ -127,12 +134,14 @@ let fmap_fill(b, i, cap) =
     let _ = list_push(b, 0) in
     fmap_fill(b, i + 16, cap)
 
-let fmap_new(_) =
+let fmap_new_cap(cap) =
   let m = list_new() in
-  let _ = list_push(m, list_new()) in
+  let _ = list_push(m, fmap_fill(list_new(), 0, cap)) in
   let _ = list_push(m, 0) in
-  let _ = list_push(m, 0) in
+  let _ = list_push(m, cap) in
   m
+
+let fmap_new(_) = fmap_new_cap(64)
 
 let fmap_probe(vec, k, i, mask) =
   let e = nth(vec, i) in
@@ -193,8 +202,7 @@ let fmap_grow(m) =
   fmap_swap(oldv, m, nth(m, 2))
 
 let fmap_maybe_grow(m) =
-  if nth(m, 2) == 0 then fmap_init(m)
-  else if nth(m, 1) * 2 >= nth(m, 2) then fmap_grow(m)
+  if nth(m, 1) * 2 >= nth(m, 2) then fmap_grow(m)
   else 0
 
 let fmap_put(m, k, v) =
@@ -246,7 +254,7 @@ let fv_acc_add(a, k) =
   if sset_has(nth(a, 1), k) then a
   else let _ = sset_put(nth(a, 1), k) in [cons(k, nth(a, 0)), nth(a, 1)]
 
-let sigma_new(nrt) = [[], fmap_new(0), nrt]
+let sigma_new(nrt) = [[], fmap_new_cap(4096), nrt]
 let sigma_list(fs) = nth(fs, 0)
 let sigma_map(fs) = nth(fs, 1)
 let fun_src(f) = if len(f) > 5 then nth(f, 5) else nth(f, 1)
@@ -259,23 +267,20 @@ let sigma_cons(fs, f) =
   let _ = fmap_put(m, fun_src(f), [nth(f, 1), nth(f, 3), idx]) in
   [cons(f, sigma_list(fs)), m, nth(fs, 2)]
 
+let sigma_ent(fs, name) =
+  if len(fs) < 2 then 0
+  else fmap_get(sigma_map(fs), name)
+
 let sigma_has(fs, name) =
-  if len(fs) < 2 then false
-  else
-    let e = fmap_get(sigma_map(fs), name) in
-    if e == 0 then false else true
+  if sigma_ent(fs, name) == 0 then false else true
 
 let sigma_code(fs, name) =
-  if len(fs) < 2 then name
-  else
-    let e = fmap_get(sigma_map(fs), name) in
-    if e == 0 then name else nth(e, 0)
+  let e = sigma_ent(fs, name) in
+  if e == 0 then name else nth(e, 0)
 
 let sigma_ncap(fs, name) =
-  if len(fs) < 2 then 0
-  else
-    let e = fmap_get(sigma_map(fs), name) in
-    if e == 0 then 0 else nth(e, 1)
+  let e = sigma_ent(fs, name) in
+  if e == 0 then 0 else nth(e, 1)
 
 let str_to_int(s) =
   let n = str_len(s) in
@@ -333,7 +338,13 @@ let env_has(env, name) =
   if e == 0 then false else true
 
 let is_cmp(op) =
-  op == "<" or op == "<=" or op == ">" or op == ">=" or op == "==" or op == "!="
+  if op == "<" then true
+  else if op == "<=" then true
+  else if op == ">" then true
+  else if op == ">=" then true
+  else if op == "==" then true
+  else if op == "!=" then true
+  else false
 
 let in_list_go(name, l) =
   if len(l) == 0 then false
@@ -342,18 +353,56 @@ let in_list_go(name, l) =
 
 let in_list(name, lst) = in_list_go(name, lst)
 
-let prim_names = ["cons", "len", "nth", "tail", "append", "print",
-                  "map", "filter", "foldl", "foldr", "drop", "head",
-                  "str_len", "str_cat", "str_ref", "str_slice", "int_to_str",
-                  "time_ms", "time_ns", "time_str", "argc", "argv",
-                  "bytes_new", "bytes_len", "bytes_append", "bytes_extend",
-                  "bytes_ref", "bytes_put", "bytes_to_str",
-                  "list_new", "list_push", "list_set", "list_rev",
-                  "box_new", "box_get", "box_set", "yac_prof_cell",
-                  "read_file", "write_file", "system", "popen",
-                  "band", "bor", "bxor", "bnot", "bshl", "bshr",
-                  "gc_collect"]
-let is_prim_name(w) = in_list(w, prim_names)
+let is_prim_name(w) =
+  if w == "cons" then true
+  else if w == "len" then true
+  else if w == "nth" then true
+  else if w == "tail" then true
+  else if w == "append" then true
+  else if w == "print" then true
+  else if w == "map" then true
+  else if w == "filter" then true
+  else if w == "foldl" then true
+  else if w == "foldr" then true
+  else if w == "drop" then true
+  else if w == "head" then true
+  else if w == "str_len" then true
+  else if w == "str_cat" then true
+  else if w == "str_ref" then true
+  else if w == "str_slice" then true
+  else if w == "int_to_str" then true
+  else if w == "time_ms" then true
+  else if w == "time_ns" then true
+  else if w == "time_str" then true
+  else if w == "argc" then true
+  else if w == "argv" then true
+  else if w == "bytes_new" then true
+  else if w == "bytes_len" then true
+  else if w == "bytes_append" then true
+  else if w == "bytes_extend" then true
+  else if w == "bytes_ref" then true
+  else if w == "bytes_put" then true
+  else if w == "bytes_to_str" then true
+  else if w == "list_new" then true
+  else if w == "list_push" then true
+  else if w == "list_set" then true
+  else if w == "list_rev" then true
+  else if w == "box_new" then true
+  else if w == "box_get" then true
+  else if w == "box_set" then true
+  else if w == "yac_prof_cell" then true
+  else if w == "read_file" then true
+  else if w == "write_file" then true
+  else if w == "system" then true
+  else if w == "popen" then true
+  else if w == "band" then true
+  else if w == "bor" then true
+  else if w == "bxor" then true
+  else if w == "bnot" then true
+  else if w == "bshl" then true
+  else if w == "bshr" then true
+  else if w == "gc_collect" then true
+  else false
 
 let free_vars(fnbody, params, funs) =
   let fv(anf, acc, shdw) =
@@ -362,9 +411,11 @@ let free_vars(fnbody, params, funs) =
       if k == "var" then
         let nm = nth(atom, 1) in
         if sh_has(sh, nm) then a
-        else if sigma_has(funs, nm) then
-          if sigma_ncap(funs, nm) == 0 then a else fv_acc_add(a, nm)
-        else fv_acc_add(a, nm)
+        else
+          let se = sigma_ent(funs, nm) in
+          if se == 0 then fv_acc_add(a, nm)
+          else if nth(se, 1) == 0 then a
+          else fv_acc_add(a, nm)
       else if k == "fun" then nth(fv(nth(atom, 2), a, sh), 0)
       else a in
     let args_vars(args, j, a, sh) =
@@ -390,11 +441,7 @@ let free_vars(fnbody, params, funs) =
             let fn = nth(b, 2) in
             let a2 =
               if nth(fn, 0) == "var" then
-                let fnm = nth(fn, 1) in
-                if is_prim_name(fnm) then a
-                else if sigma_has(funs, fnm) then
-                  if sigma_ncap(funs, fnm) == 0 then a
-                  else atom_vars(fn, a, sh)
+                if is_prim_name(nth(fn, 1)) then a
                 else atom_vars(fn, a, sh)
               else atom_vars(fn, a, sh) in
             [args_vars(nth(b, 3), 0, a2, sh), sh_put(sh, nth(b, 1))]
@@ -424,15 +471,18 @@ let free_vars(fnbody, params, funs) =
 /* st = [I, Γ, ctr, Σ, uid]. Returns [I, s, Γ, ctr, Σ, uid]. */
 
 let lir_var(atom, st) =
-  if env_slot(nth(st, 1), nth(atom, 1)) != 0 then
-    [nth(st, 0), env_slot(nth(st, 1), nth(atom, 1)),
+  let e = env_rec(nth(st, 1), nth(atom, 1)) in
+  if e != 0 then
+    [nth(st, 0), nth(e, 0),
      nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
-  else if sigma_has(nth(st, 3), nth(atom, 1)) then
-    [insn_push(nth(st, 0),
-       ["closure", nth(st, 2), sigma_code(nth(st, 3), nth(atom, 1)), []]),
-     nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
   else
-    [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
+    let se = sigma_ent(nth(st, 3), nth(atom, 1)) in
+    if se != 0 then
+      [insn_push(nth(st, 0),
+         ["closure", nth(st, 2), nth(se, 0), []]),
+       nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
+    else
+      [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
 
 let lir_atom(atom, st) =
   let k = nth(atom, 0) in
@@ -488,20 +538,21 @@ let cap_slots(n, j, acc) =
 /* callι: Σ then Γ then runtime. Do not turn every ncap>0 into icall.
  * Named self uses fcall/tcall + capture slots 1..n. */
 let lir_user_call(g, dst, ss, env, funs, self) =
-  if env_has(env, g) then
-    if env_ncap(env, g) > 0 then
-      if sigma_code(funs, g) == self then
-        if env_ncap(env, g) + len(ss) > 6 then
-          ["apply", dst, env_slot(env, g), env_ncap(env, g), ss]
-        else
-          ["fcall", dst, sigma_code(funs, g), append(cap_slots(env_ncap(env, g), 1, []), ss)]
+  let e = env_rec(env, g) in
+  if e == 0 then
+    ["fcall", dst, sigma_code(funs, g), ss]
+  else if nth(e, 1) > 0 then
+    if sigma_code(funs, g) == self then
+      if nth(e, 1) + len(ss) > 6 then
+        ["apply", dst, nth(e, 0), nth(e, 1), ss]
       else
-        ["apply", dst, env_slot(env, g), env_ncap(env, g), ss]
-    else if sigma_has(funs, g) then
-      ["fcall", dst, sigma_code(funs, g), ss]
+        ["fcall", dst, sigma_code(funs, g), append(cap_slots(nth(e, 1), 1, []), ss)]
     else
-      ["icall", dst, env_slot(env, g), ss]
-  else ["fcall", dst, sigma_code(funs, g), ss]
+      ["apply", dst, nth(e, 0), nth(e, 1), ss]
+  else if sigma_ent(funs, g) != 0 then
+    ["fcall", dst, sigma_code(funs, g), ss]
+  else
+    ["icall", dst, nth(e, 0), ss]
 
 let lir_rt_list(g, dst, ss) =
   if g == "cons" then ["ccall", dst, "yac_cons", [nth(ss, 0), nth(ss, 1)]]
@@ -565,17 +616,17 @@ let lir_rt(g, dst, ss) =
     if b == 0 then lir_rt_bytes(g, dst, ss) else b
   else a
 
-let is_bound_fn(g, env, funs) =
-  if sigma_has(funs, g) then true
-  else env_has(env, g)
-
 let calli(g, dst, ss, env, funs, self) =
-  if is_bound_fn(g, env, funs) then
+  let e = env_rec(env, g) in
+  if e != 0 then
     lir_user_call(g, dst, ss, env, funs, self)
   else
-    let p = lir_rt(g, dst, ss) in
-    if p == 0 then lir_user_call(g, dst, ss, env, funs, self)
-    else p
+    let se = sigma_ent(funs, g) in
+    if se != 0 then ["fcall", dst, nth(se, 0), ss]
+    else
+      let p = lir_rt(g, dst, ss) in
+      if p == 0 then ["fcall", dst, g, ss]
+      else p
 
 let lir_loadargs(args, p, slots_rev) =
   if nth(p, 0) >= len(args) then
@@ -652,7 +703,7 @@ let lir_letfun_prep(b, s) =
     else name in
   let fvs_raw = free_vars(body, params, nth(s, 3)) in
   let is_rec = in_list(name, fvs_raw) in
-  let fvs = free_vars(body, append([name], params), nth(s, 3)) in
+  let fvs = if is_rec then fv_skip(fvs_raw, name) else fvs_raw in
   let ncap = len(fvs) in
   let need_self = is_rec and ncap > 0 in
   let self_slot = ncap + nparams + 1 in

@@ -11,9 +11,19 @@ let reverse(xs) = list_rev(xs)
 
 /* DESIGN arith tags. */
 let is_arith(k) =
-  k == "add" or k == "sub" or k == "mul" or k == "div" or k == "rem"
-  or k == "sar" or k == "shr" or k == "sal" or k == "shl"
-  or k == "land" or k == "lor" or k == "xor"
+  if k == "add" then true
+  else if k == "sub" then true
+  else if k == "mul" then true
+  else if k == "div" then true
+  else if k == "rem" then true
+  else if k == "sar" then true
+  else if k == "shr" then true
+  else if k == "sal" then true
+  else if k == "shl" then true
+  else if k == "land" then true
+  else if k == "lor" then true
+  else if k == "xor" then true
+  else false
 
 /* icall/ticall have no ncap field; apply/tailapply do. */
 let apply_ncap(insn) =
@@ -78,9 +88,9 @@ let emit_map_fill(b, i, cap) =
 
 let emit_map_new(_) =
   let m = list_new() in
-  let _ = list_push(m, emit_map_fill(list_new(), 0, 8)) in
+  let _ = list_push(m, emit_map_fill(list_new(), 0, 4096)) in
   let _ = list_push(m, 0) in
-  let _ = list_push(m, 8) in
+  let _ = list_push(m, 4096) in
   m
 
 let emit_map_probe(vec, k, i, mask) =
