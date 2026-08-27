@@ -534,84 +534,8 @@ let gen_system_rv(_) =
   let _ = rv_jalr(b, 0, 1, 0) in
   b
 
-let gen_argv_rv(_) =
-  let b = bytes_new() in
-  let _ = rv_enter(b, 48) in
-  let _ = rv_addi(b, 7, 0, 1) in
-  let _ = rv_sra(b, 12, 10, 7) in
-  let acpat = bytes_len(b) in
-  let _ = rv_li32_pair(b, 6, 0) in
-  let _ = rv_ld(b, 10, 6, 0) in
-  let jfail = bytes_len(b) in
-  let _ = rv_bgeu(b, 12, 10, 0) in
-  let avpat = bytes_len(b) in
-  let _ = rv_li32_pair(b, 6, 0) in
-  let _ = rv_ld(b, 10, 6, 0) in
-  let _ = rv_slli(b, 5, 12, 3) in
-  let _ = rv_add(b, 10, 10, 5) in
-  let _ = rv_ld(b, 10, 10, 0) in
-  let jnull = bytes_len(b) in
-  let _ = rv_beq(b, 10, 0, 0) in
-  let _ = rv_slot(b, 0, true, 10) in
-  let _ = rv_addi(b, 12, 0, 0) in
-  let slen = bytes_len(b) in
-  let _ = rv_slot(b, 0, false, 13) in
-  let _ = rv_add(b, 5, 13, 12) in
-  let _ = rv_lbu(b, 11, 5, 0) in
-  let jslen = bytes_len(b) in
-  let _ = rv_beq(b, 11, 0, 0) in
-  let _ = rv_addi(b, 12, 12, 1) in
-  let jbslen = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let slend = bytes_len(b) in
-  let _ = rv_slot(b, 1, true, 12) in
-  let _ = rv_addi(b, 10, 12, 33) in
-  let _ = rv_addi(b, 10, 10, 7) in
-  let _ = rv_addi(b, 6, 0, 0 - 8) in
-  let _ = rv_and(b, 10, 10, 6) in
-  let acall = bytes_len(b) in
-  let _ = rv_jal(b, 1, 0) in
-  let _ = rv_untag_ptr(b, 10) in
-  let _ = rv_slot(b, 2, true, 10) in
-  let _ = rv_sd(b, 0, 10, 8) in
-  let _ = rv_addi(b, 11, 0, 3) in
-  let _ = rv_sd(b, 11, 10, 16) in
-  let _ = rv_slot(b, 1, false, 11) in
-  let _ = rv_sd(b, 11, 10, 24) in
-  let _ = rv_addi(b, 12, 0, 0) in
-  let cpy = bytes_len(b) in
-  let _ = rv_slot(b, 1, false, 11) in
-  let jcpy = bytes_len(b) in
-  let _ = rv_bgeu(b, 12, 11, 0) in
-  let _ = rv_slot(b, 0, false, 13) in
-  let _ = rv_add(b, 5, 13, 12) in
-  let _ = rv_lbu(b, 14, 5, 0) in
-  let _ = rv_slot(b, 2, false, 10) in
-  let _ = rv_addi(b, 10, 10, 32) in
-  let _ = rv_add(b, 10, 10, 12) in
-  let _ = rv_sb(b, 14, 10, 0) in
-  let _ = rv_addi(b, 12, 12, 1) in
-  let jbcpy = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let cpyend = bytes_len(b) in
-  let _ = rv_slot(b, 2, false, 10) in
-  let _ = rv_addi(b, 10, 10, 32) in
-  let _ = rv_slot(b, 1, false, 12) in
-  let _ = rv_add(b, 10, 10, 12) in
-  let _ = rv_sb(b, 0, 10, 0) in
-  let _ = rv_slot(b, 2, false, 10) in
-  let _ = rv_tag(b, 10) in
-  let _ = rv_leave(b) in
-  let fail = bytes_len(b) in
-  let _ = rv_addi(b, 10, 0, 0) in
-  let _ = rv_leave(b) in
-  let _ = rv_patch_b(b, jfail, fail) in
-  let _ = rv_patch_b(b, jnull, fail) in
-  let _ = rv_apply_jal(b, jbslen, slen, 0) in
-  let _ = rv_patch_b(b, jslen, slend) in
-  let _ = rv_apply_jal(b, jbcpy, cpy, 0) in
-  let _ = rv_patch_b(b, jcpy, cpyend) in
-  [b, acpat, avpat, acall]
+/* yac_argv is rt_argv_ins ($proc / $local). */
+
 
 let rv_jal_rt(b, patches, dst, name, ids) =
   let pos = bytes_len(b) in
@@ -955,6 +879,61 @@ let emit_rv_i_raw(st, insn) =
     let _ = rv_slot(b, nth(insn, 2), false, 10) in
     let _ = rv_ld(b, 10, 10, nth(insn, 3)) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$ld8" then
+    let _ = rv_slot(b, nth(insn, 2), false, 10) in
+    let _ = rv_lbu(b, 10, 10, nth(insn, 3)) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$glob" then
+    let which = nth(insn, 2) in
+    let gpos = bytes_len(b) in
+    let _ = rv_li32_pair(b, 6, 0) in
+    let _ = rv_ld(b, 6, 6, 0) in
+    let _ = rv_slot(b, nth(insn, 1), true, 6) in
+    let gkind =
+      if which == 1 then 4
+      else if which == 2 then 5
+      else if which == 3 then 7
+      else 8 in
+    emit_st4(st, b, cur, labels, cons([gkind, gpos], patches))
+  else if k == "$icmp" then
+    let op = nth(insn, 1) in
+    let _ = rv_slot(b, nth(insn, 3), false, 10) in
+    let _ = rv_slot(b, nth(insn, 4), false, 11) in
+    let _ =
+      if op == "==" then
+        let _ = rv_xor(b, 10, 10, 11) in
+        rv_sltiu(b, 10, 10, 1)
+      else if op == ">=u" then
+        let _ = rv_sltu(b, 10, 10, 11) in
+        let _ = rv_xori(b, 10, 10, 1) in
+        0
+      else
+        let _ = rv_xor(b, 10, 10, 11) in
+        let _ = rv_sltiu(b, 10, 10, 1) in
+        rv_xori(b, 10, 10, 1) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_sll(b, 10, 10, 7) in
+    let _ = rv_slot(b, nth(insn, 2), true, 10) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$memcpy" then
+    let _ = rv_slot(b, nth(insn, 1), false, 10) in
+    let _ = rv_slot(b, nth(insn, 2), false, 11) in
+    let _ = rv_slot(b, nth(insn, 3), false, 12) in
+    let loop = bytes_len(b) in
+    let jeq = bytes_len(b) in
+    let _ = rv_beq(b, 12, 0, 0) in
+    let _ = rv_lbu(b, 13, 11, 0) in
+    let _ = rv_sb(b, 13, 10, 0) in
+    let _ = rv_addi(b, 10, 10, 1) in
+    let _ = rv_addi(b, 11, 11, 1) in
+    let _ = rv_addi(b, 12, 12, 0 - 1) in
+    let jb = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let done = bytes_len(b) in
+    let _ = rv_patch_b(b, jeq, done) in
+    let _ = rv_apply_jal(b, jb, loop, 0) in
     emit_st4(st, b, cur, labels, patches)
   else
     let name = nth(insn, 2) in
@@ -1618,9 +1597,6 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = b_append(b, gen_apply2_rv(0)) in
   let a1_off = bytes_len(b) in
   let _ = b_append(b, gen_apply1_rv(0)) in
-  let avr = gen_argv_rv(0) in
-  let av_off = bytes_len(b) in
-  let _ = b_append(b, nth(avr, 0)) in
   let sys_off = bytes_len(b) in
   let _ = b_append(b, gen_system_rv(0)) in
   let gc_off = bytes_len(b) in
@@ -1630,8 +1606,7 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
                 cons(["yac_apply2", a2_off],
                      cons(["yac_alloc", alc_off],
                           cons(["yac_gc", gc_off],
-                               cons(["yac_argv", av_off],
-                                    cons(["yac_system", sys_off], fo0)))))) in
+                               cons(["yac_system", sys_off], fo0))))) in
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
@@ -1649,7 +1624,6 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = list_push(offs, a2_off) in
   let _ = list_push(offs, alc_off) in
   let _ = list_push(offs, gc_off) in
-  let _ = list_push(offs, av_off) in
   let _ = list_push(offs, sys_off) in
   let extra = list_new() in
   let _ = list_push(extra, [3, alc_off + nth(alcr, 1)]) in
@@ -1657,9 +1631,6 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = list_push(extra, [1, alc_off + nth(alcr, 3), emit_map_get(ids, "yac_gc")]) in
   let _ = list_push(extra, [3, gc_off + nth(gcr, 1)]) in
   let _ = list_push(extra, [6, gc_off + nth(gcr, 2)]) in
-  let _ = list_push(extra, [1, av_off + nth(avr, 3), emit_map_get(ids, "yac_alloc")]) in
-  let _ = list_push(extra, [4, av_off + nth(avr, 1)]) in
-  let _ = list_push(extra, [5, av_off + nth(avr, 2)]) in
   let _ = patches_extend(extra, patches) in
   let _ = rv_resolve_loop([b, offs, load_vaddr + text_off, GLOBALS_BASE, labels,
                            load_vaddr + text_off + pool_start], extra, 0) in

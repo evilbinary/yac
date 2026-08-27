@@ -84,14 +84,13 @@ let emit_map_put(m, k, v) =
 
 /* Fun id table: bind procs first, then helpers so reserved names win.
  * Duplicate fun names: last-put-wins (runtime prof_* stubs lose to profile.yac).
- * Helper ids nfun+0..nfun+5. read_file / write_file are $proc, not helpers. */
+ * Helper ids nfun+0..nfun+4. IO / argv are $proc, not helpers. */
 let emit_ids_helpers(ids, nfun) =
   let _ = emit_map_put(ids, intern("yac_apply1"), nfun) in
   let _ = emit_map_put(ids, intern("yac_apply2"), nfun + 1) in
   let _ = emit_map_put(ids, intern("yac_alloc"), nfun + 2) in
   let _ = emit_map_put(ids, intern("yac_gc"), nfun + 3) in
-  let _ = emit_map_put(ids, intern("yac_argv"), nfun + 4) in
-  let _ = emit_map_put(ids, intern("yac_system"), nfun + 5) in
+  let _ = emit_map_put(ids, intern("yac_system"), nfun + 4) in
   ids
 
 /* Native ops: no sar/shl. $syscall names open/lseek/read/write/close. */
@@ -104,7 +103,11 @@ let is_raw_op(k) =
   else if k == "$clamp0" then true
   else if k == "$st64" then true
   else if k == "$st8" then true
-  else k == "$ld64"
+  else if k == "$ld64" then true
+  else if k == "$ld8" then true
+  else if k == "$glob" then true
+  else if k == "$icmp" then true
+  else k == "$memcpy"
 
 let is_frame_op(k) =
   if k == "local" then true

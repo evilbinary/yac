@@ -56,6 +56,9 @@ let rv_xor(b, rd, rs1, rs2) =
 let rv_slt(b, rd, rs1, rs2) =
   rv_u32(b, bshl(rs2, 20) + bshl(rs1, 15) + 8192 + bshl(rd, 7) + 51)
 
+let rv_sltu(b, rd, rs1, rs2) =
+  rv_u32(b, bshl(rs2, 20) + bshl(rs1, 15) + 12288 + bshl(rd, 7) + 51)
+
 let rv_sltiu(b, rd, rs1, imm) =
   rv_u32(b, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + 12288 + bshl(rd, 7) + 19)
 
