@@ -33,7 +33,6 @@ $(YC_BUNDLE): $(YC_SRCS) | $(YC_BUILD)
 	cat $(YC_SRCS) > $@
 
 $(YC_BIN): $(BIN) $(YC_BUNDLE)
-	rm -f $@ $@.bin
 	./$(BIN) $(YC_BUNDLE) $(YC_BUNDLE) -o $@
 	chmod +x $@
 

@@ -265,179 +265,8 @@ let rv_clamp0(b) =
 
 
 
-let rv_dyn_loadcap(b) =
-  let rec(i) =
-    if i >= 6 then 0
-    else
-      let _ = rv_addi(b, 5, 0, i) in
-      let p = bytes_len(b) in
-      let _ = rv_bge(b, 5, 7, 0) in
-      let _ = rv_ld(b, 10 + i, 28, 32 + bshl(i, 3)) in
-      let _ = rv_patch_b(b, p, bytes_len(b)) in
-      rec(i + 1) in
-  rec(0)
+/* yac_apply1 / yac_apply2 are rt_apply*_ins ($proc / $local). */
 
-let gen_apply2_rv(_) =
-  let b = bytes_new() in
-  let _ = rv_enter(b, 32) in
-  let _ = rv_slot(b, 0, true, 11) in
-  let _ = rv_slot(b, 1, true, 12) in
-  let _ = rv_untag_ptr(b, 10) in
-  let _ = rv_addi(b, 28, 10, 0) in
-  let _ = rv_ld(b, 6, 28, 16) in
-  let _ = rv_slot(b, 2, true, 6) in
-  let _ = rv_ld(b, 7, 28, 24) in
-  let _ = rv_dyn_loadcap(b) in
-  let _ = rv_addi(b, 5, 0, 0) in
-  let r0 = bytes_len(b) in
-  let _ = rv_beq(b, 7, 5, 0) in
-  let _ = rv_addi(b, 5, 0, 1) in
-  let r1 = bytes_len(b) in
-  let _ = rv_beq(b, 7, 5, 0) in
-  let _ = rv_addi(b, 5, 0, 2) in
-  let r2 = bytes_len(b) in
-  let _ = rv_beq(b, 7, 5, 0) in
-  let _ = rv_addi(b, 5, 0, 3) in
-  let r3 = bytes_len(b) in
-  let _ = rv_beq(b, 7, 5, 0) in
-  let _ = rv_addi(b, 5, 0, 4) in
-  let r4 = bytes_len(b) in
-  let _ = rv_beq(b, 7, 5, 0) in
-  let r5 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let setu(base) =
-    let _ = rv_slot(b, 0, false, 28) in
-    let _ = rv_slot(b, 1, false, 29) in
-    if base == 0 then
-      let _ = rv_addi(b, 10, 28, 0) in rv_addi(b, 11, 29, 0)
-    else if base == 1 then
-      let _ = rv_addi(b, 11, 28, 0) in rv_addi(b, 12, 29, 0)
-    else if base == 2 then
-      let _ = rv_addi(b, 12, 28, 0) in rv_addi(b, 13, 29, 0)
-    else if base == 3 then
-      let _ = rv_addi(b, 13, 28, 0) in rv_addi(b, 14, 29, 0)
-    else if base == 4 then
-      let _ = rv_addi(b, 14, 28, 0) in rv_addi(b, 15, 29, 0)
-    else
-      let _ = rv_addi(b, 15, 28, 0) in rv_addi(b, 16, 29, 0) in
-  let a0 = bytes_len(b) in
-  let _ = setu(0) in
-  let j0 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let a1 = bytes_len(b) in
-  let _ = setu(1) in
-  let j1 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let a2 = bytes_len(b) in
-  let _ = setu(2) in
-  let j2 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let a3 = bytes_len(b) in
-  let _ = setu(3) in
-  let j3 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let a4 = bytes_len(b) in
-  let _ = setu(4) in
-  let j4 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let a5 = bytes_len(b) in
-  let _ = setu(5) in
-  let j5 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let lc = bytes_len(b) in
-  let _ = rv_slot(b, 2, false, 6) in
-  let _ = rv_jalr(b, 1, 6, 0) in
-  let _ = rv_leave(b) in
-  let _ = rv_patch_b(b, r0, a0) in
-  let _ = rv_patch_b(b, r1, a1) in
-  let _ = rv_patch_b(b, r2, a2) in
-  let _ = rv_patch_b(b, r3, a3) in
-  let _ = rv_patch_b(b, r4, a4) in
-  let _ = rv_apply_jal(b, r5, a5, 0) in
-  let _ = rv_apply_jal(b, j0, lc, 0) in
-  let _ = rv_apply_jal(b, j1, lc, 0) in
-  let _ = rv_apply_jal(b, j2, lc, 0) in
-  let _ = rv_apply_jal(b, j3, lc, 0) in
-  let _ = rv_apply_jal(b, j4, lc, 0) in
-  let _ = rv_apply_jal(b, j5, lc, 0) in
-  b
-
-let gen_apply1_rv(_) =
-  let b = bytes_new() in
-  let _ = rv_enter(b, 32) in
-  let _ = rv_slot(b, 0, true, 11) in
-  let _ = rv_untag_ptr(b, 10) in
-  let _ = rv_addi(b, 28, 10, 0) in
-  let _ = rv_ld(b, 6, 28, 16) in
-  let _ = rv_slot(b, 1, true, 6) in
-  let _ = rv_ld(b, 7, 28, 24) in
-  let _ = rv_dyn_loadcap(b) in
-  let _ = rv_addi(b, 5, 0, 0) in
-  let r0 = bytes_len(b) in
-  let _ = rv_beq(b, 7, 5, 0) in
-  let _ = rv_addi(b, 5, 0, 1) in
-  let r1 = bytes_len(b) in
-  let _ = rv_beq(b, 7, 5, 0) in
-  let _ = rv_addi(b, 5, 0, 2) in
-  let r2 = bytes_len(b) in
-  let _ = rv_beq(b, 7, 5, 0) in
-  let _ = rv_addi(b, 5, 0, 3) in
-  let r3 = bytes_len(b) in
-  let _ = rv_beq(b, 7, 5, 0) in
-  let _ = rv_addi(b, 5, 0, 4) in
-  let r4 = bytes_len(b) in
-  let _ = rv_beq(b, 7, 5, 0) in
-  let r5 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let setu(base) =
-    let _ = rv_slot(b, 0, false, 28) in
-    if base == 0 then rv_addi(b, 10, 28, 0)
-    else if base == 1 then rv_addi(b, 11, 28, 0)
-    else if base == 2 then rv_addi(b, 12, 28, 0)
-    else if base == 3 then rv_addi(b, 13, 28, 0)
-    else if base == 4 then rv_addi(b, 14, 28, 0)
-    else rv_addi(b, 15, 28, 0) in
-  let a0 = bytes_len(b) in
-  let _ = setu(0) in
-  let j0 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let a1 = bytes_len(b) in
-  let _ = setu(1) in
-  let j1 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let a2 = bytes_len(b) in
-  let _ = setu(2) in
-  let j2 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let a3 = bytes_len(b) in
-  let _ = setu(3) in
-  let j3 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let a4 = bytes_len(b) in
-  let _ = setu(4) in
-  let j4 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let a5 = bytes_len(b) in
-  let _ = setu(5) in
-  let j5 = bytes_len(b) in
-  let _ = rv_jal(b, 0, 0) in
-  let lc = bytes_len(b) in
-  let _ = rv_slot(b, 1, false, 6) in
-  let _ = rv_jalr(b, 1, 6, 0) in
-  let _ = rv_leave(b) in
-  let _ = rv_patch_b(b, r0, a0) in
-  let _ = rv_patch_b(b, r1, a1) in
-  let _ = rv_patch_b(b, r2, a2) in
-  let _ = rv_patch_b(b, r3, a3) in
-  let _ = rv_patch_b(b, r4, a4) in
-  let _ = rv_apply_jal(b, r5, a5, 0) in
-  let _ = rv_apply_jal(b, j0, lc, 0) in
-  let _ = rv_apply_jal(b, j1, lc, 0) in
-  let _ = rv_apply_jal(b, j2, lc, 0) in
-  let _ = rv_apply_jal(b, j3, lc, 0) in
-  let _ = rv_apply_jal(b, j4, lc, 0) in
-  let _ = rv_apply_jal(b, j5, lc, 0) in
-  b
 
 /* yac_system is rt_system_ins ($proc / $local). */
 
@@ -858,6 +687,14 @@ let emit_rv_i_raw(st, insn) =
   else if k == "$shr" then
     let _ = rv_slot(b, nth(insn, 2), false, 10) in
     let _ = rv_srli(b, 10, 10, nth(insn, 3)) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$carg" then
+    let _ = rv_slot(b, nth(insn, 2), false, 10 + nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$icall" then
+    let _ = rv_slot(b, nth(insn, 2), false, 6) in
+    let _ = rv_jalr(b, 1, 6, 0) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     emit_st4(st, b, cur, labels, patches)
   else
@@ -1527,16 +1364,10 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let b = nth(st, 0) in
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
-  let a2_off = bytes_len(b) in
-  let _ = b_append(b, gen_apply2_rv(0)) in
-  let a1_off = bytes_len(b) in
-  let _ = b_append(b, gen_apply1_rv(0)) in
   let gc_off = bytes_len(b) in
   let gcr = gen_gc_rv(0) in
   let _ = b_append(b, nth(gcr, 0)) in
-  let fo = cons(["yac_apply1", a1_off],
-                cons(["yac_apply2", a2_off],
-                     cons(["yac_gc", gc_off], fo0))) in
+  let fo = cons(["yac_gc", gc_off], fo0) in
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
@@ -1550,8 +1381,6 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
-  let _ = list_push(offs, a1_off) in
-  let _ = list_push(offs, a2_off) in
   let _ = list_push(offs, gc_off) in
   let extra = list_new() in
   let _ = list_push(extra, [3, gc_off + nth(gcr, 1)]) in

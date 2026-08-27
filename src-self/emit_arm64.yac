@@ -285,179 +285,8 @@ let a64_clamp0(b) =
 /* yac_read_file is rt_read_file_ins ($proc / $local). */
 
 
-let a64_dyn_loadcap(b) =
-  let rec(i) =
-    if i >= 6 then 0
-    else
-      let _ = a64_cmp_imm(b, 11, i) in
-      let p = bytes_len(b) in
-      let _ = a64_b_cond(b, 13, 0) in
-      let _ = a64_ldur(b, i, 17, 32 + bshl(i, 3)) in
-      let _ = a64_patch_bcond(b, p, bytes_len(b)) in
-      rec(i + 1) in
-  rec(0)
+/* yac_apply1 / yac_apply2 are rt_apply*_ins ($proc / $local). */
 
-let gen_apply2_a64(_) =
-  let b = bytes_new() in
-  let _ = a64_enter(b, 32) in
-  let _ = a64_slot(b, 0, true, 1) in
-  let _ = a64_slot(b, 1, true, 2) in
-  let _ = a64_untag_ptr(b, 0) in
-  let _ = a64_mov_reg(b, 17, 0) in
-  let _ = a64_ldur(b, 16, 17, 16) in
-  let _ = a64_slot(b, 2, true, 16) in
-  let _ = a64_ldur(b, 11, 17, 24) in
-  let _ = a64_dyn_loadcap(b) in
-  let _ = a64_cmp_imm(b, 11, 0) in
-  let r0 = bytes_len(b) in
-  let _ = a64_b_cond(b, 0, 0) in
-  let _ = a64_cmp_imm(b, 11, 1) in
-  let r1 = bytes_len(b) in
-  let _ = a64_b_cond(b, 0, 0) in
-  let _ = a64_cmp_imm(b, 11, 2) in
-  let r2 = bytes_len(b) in
-  let _ = a64_b_cond(b, 0, 0) in
-  let _ = a64_cmp_imm(b, 11, 3) in
-  let r3 = bytes_len(b) in
-  let _ = a64_b_cond(b, 0, 0) in
-  let _ = a64_cmp_imm(b, 11, 4) in
-  let r4 = bytes_len(b) in
-  let _ = a64_b_cond(b, 0, 0) in
-  let r5 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let setu(base) =
-    let _ = a64_slot(b, 0, false, 12) in
-    let _ = a64_slot(b, 1, false, 13) in
-    if base == 0 then
-      let _ = a64_mov_reg(b, 0, 12) in a64_mov_reg(b, 1, 13)
-    else if base == 1 then
-      let _ = a64_mov_reg(b, 1, 12) in a64_mov_reg(b, 2, 13)
-    else if base == 2 then
-      let _ = a64_mov_reg(b, 2, 12) in a64_mov_reg(b, 3, 13)
-    else if base == 3 then
-      let _ = a64_mov_reg(b, 3, 12) in a64_mov_reg(b, 4, 13)
-    else if base == 4 then
-      let _ = a64_mov_reg(b, 4, 12) in a64_mov_reg(b, 5, 13)
-    else
-      let _ = a64_mov_reg(b, 5, 12) in a64_mov_reg(b, 6, 13) in
-  let a0 = bytes_len(b) in
-  let _ = setu(0) in
-  let j0 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let a1 = bytes_len(b) in
-  let _ = setu(1) in
-  let j1 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let a2 = bytes_len(b) in
-  let _ = setu(2) in
-  let j2 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let a3 = bytes_len(b) in
-  let _ = setu(3) in
-  let j3 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let a4 = bytes_len(b) in
-  let _ = setu(4) in
-  let j4 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let a5 = bytes_len(b) in
-  let _ = setu(5) in
-  let j5 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let lc = bytes_len(b) in
-  let _ = a64_slot(b, 2, false, 16) in
-  let _ = a64_blr(b, 16) in
-  let _ = a64_leave(b) in
-  let _ = a64_patch_bcond(b, r0, a0) in
-  let _ = a64_patch_bcond(b, r1, a1) in
-  let _ = a64_patch_bcond(b, r2, a2) in
-  let _ = a64_patch_bcond(b, r3, a3) in
-  let _ = a64_patch_bcond(b, r4, a4) in
-  let _ = a64_apply_b26(b, r5, a5) in
-  let _ = a64_apply_b26(b, j0, lc) in
-  let _ = a64_apply_b26(b, j1, lc) in
-  let _ = a64_apply_b26(b, j2, lc) in
-  let _ = a64_apply_b26(b, j3, lc) in
-  let _ = a64_apply_b26(b, j4, lc) in
-  let _ = a64_apply_b26(b, j5, lc) in
-  b
-
-let gen_apply1_a64(_) =
-  let b = bytes_new() in
-  let _ = a64_enter(b, 32) in
-  let _ = a64_slot(b, 0, true, 1) in
-  let _ = a64_untag_ptr(b, 0) in
-  let _ = a64_mov_reg(b, 17, 0) in
-  let _ = a64_ldur(b, 16, 17, 16) in
-  let _ = a64_slot(b, 1, true, 16) in
-  let _ = a64_ldur(b, 11, 17, 24) in
-  let _ = a64_dyn_loadcap(b) in
-  let _ = a64_cmp_imm(b, 11, 0) in
-  let r0 = bytes_len(b) in
-  let _ = a64_b_cond(b, 0, 0) in
-  let _ = a64_cmp_imm(b, 11, 1) in
-  let r1 = bytes_len(b) in
-  let _ = a64_b_cond(b, 0, 0) in
-  let _ = a64_cmp_imm(b, 11, 2) in
-  let r2 = bytes_len(b) in
-  let _ = a64_b_cond(b, 0, 0) in
-  let _ = a64_cmp_imm(b, 11, 3) in
-  let r3 = bytes_len(b) in
-  let _ = a64_b_cond(b, 0, 0) in
-  let _ = a64_cmp_imm(b, 11, 4) in
-  let r4 = bytes_len(b) in
-  let _ = a64_b_cond(b, 0, 0) in
-  let r5 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let setu(base) =
-    let _ = a64_slot(b, 0, false, 9) in
-    if base == 0 then a64_mov_reg(b, 0, 9)
-    else if base == 1 then a64_mov_reg(b, 1, 9)
-    else if base == 2 then a64_mov_reg(b, 2, 9)
-    else if base == 3 then a64_mov_reg(b, 3, 9)
-    else if base == 4 then a64_mov_reg(b, 4, 9)
-    else a64_mov_reg(b, 5, 9) in
-  let a0 = bytes_len(b) in
-  let _ = setu(0) in
-  let j0 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let a1 = bytes_len(b) in
-  let _ = setu(1) in
-  let j1 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let a2 = bytes_len(b) in
-  let _ = setu(2) in
-  let j2 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let a3 = bytes_len(b) in
-  let _ = setu(3) in
-  let j3 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let a4 = bytes_len(b) in
-  let _ = setu(4) in
-  let j4 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let a5 = bytes_len(b) in
-  let _ = setu(5) in
-  let j5 = bytes_len(b) in
-  let _ = a64_b(b, 0) in
-  let lc = bytes_len(b) in
-  let _ = a64_slot(b, 1, false, 16) in
-  let _ = a64_blr(b, 16) in
-  let _ = a64_leave(b) in
-  let _ = a64_patch_bcond(b, r0, a0) in
-  let _ = a64_patch_bcond(b, r1, a1) in
-  let _ = a64_patch_bcond(b, r2, a2) in
-  let _ = a64_patch_bcond(b, r3, a3) in
-  let _ = a64_patch_bcond(b, r4, a4) in
-  let _ = a64_apply_b26(b, r5, a5) in
-  let _ = a64_apply_b26(b, j0, lc) in
-  let _ = a64_apply_b26(b, j1, lc) in
-  let _ = a64_apply_b26(b, j2, lc) in
-  let _ = a64_apply_b26(b, j3, lc) in
-  let _ = a64_apply_b26(b, j4, lc) in
-  let _ = a64_apply_b26(b, j5, lc) in
-  b
 
 /* yac_system is rt_system_ins ($proc / $local). */
 
@@ -852,6 +681,14 @@ let emit_a64_i_raw(st, insn) =
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_movz(b, 1, nth(insn, 3), 0) in
     let _ = a64_lsrv(b, 0, 0, 1) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$carg" then
+    let _ = a64_slot(b, nth(insn, 2), false, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$icall" then
+    let _ = a64_slot(b, nth(insn, 2), false, 16) in
+    let _ = a64_blr(b, 16) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     emit_st4(st, b, cur, labels, patches)
   else
@@ -1515,16 +1352,10 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let b = nth(st, 0) in
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
-  let a2_off = bytes_len(b) in
-  let _ = b_append(b, gen_apply2_a64(0)) in
-  let a1_off = bytes_len(b) in
-  let _ = b_append(b, gen_apply1_a64(0)) in
   let gc_off = bytes_len(b) in
   let gcr = gen_gc_a64(0) in
   let _ = b_append(b, nth(gcr, 0)) in
-  let fo = cons(["yac_apply1", a1_off],
-                cons(["yac_apply2", a2_off],
-                     cons(["yac_gc", gc_off], fo0))) in
+  let fo = cons(["yac_gc", gc_off], fo0) in
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
@@ -1538,8 +1369,6 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
-  let _ = list_push(offs, a1_off) in
-  let _ = list_push(offs, a2_off) in
   let _ = list_push(offs, gc_off) in
   let extra = list_new() in
   let _ = list_push(extra, [3, gc_off + nth(gcr, 1)]) in
