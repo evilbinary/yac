@@ -5,14 +5,20 @@
  * Disabled path: yac_prof_enter sees empty cell and returns.
  * Bundled after lir.yac so fmap and hash_str exist.
  * Overrides runtime.yac no-op prof_enter_go / prof_leave_go (emit last-put-wins).
+ *
+ * glob 3 is only a pointer cache for yac_prof_enter. GC scans the stack, not
+ * GLOBALS, so the cell must also live in a top-level list like intern_cell.
  */
 
+let prof_roots = list_new()
+
 let prof_rec_get(recs, name) =
-  let v = fmap_get(recs, name) in
+  let k = intern(name) in
+  let v = fmap_get(recs, k) in
   if v == 0 then
     let b = box_new() in
-    let _ = box_set(b, [name, 0, 0, 0]) in
-    let _ = fmap_put(recs, name, b) in
+    let _ = box_set(b, [k, 0, 0, 0]) in
+    let _ = fmap_put(recs, k, b) in
     b
   else v
 
@@ -26,8 +32,10 @@ let yac_prof_enable(path) =
   if len(c) != 0 then 0
   else
     let recs = fmap_new(0) in
+    let _ = fmap_init_n(recs, 1024) in
     let b = box_new() in
     let _ = box_set(b, [path, [], recs]) in
+    let _ = list_push(prof_roots, c) in
     list_push(c, b)
 
 let prof_enter_go(name) =
@@ -76,17 +84,19 @@ let prof_unwind(_) =
       let _ = prof_leave_go(0) in
       prof_unwind(0)
 
-let prof_collect_bkt(bkt, out, j, n) =
-  if j >= n then out
+let prof_collect_go(vec, j, cap, out) =
+  if j >= cap then out
   else
-    let _ = list_push(out, box_get(nth(nth(bkt, j), 1))) in
-    prof_collect_bkt(bkt, out, j + 1, n)
+    let e = nth(vec, j) in
+    let _ =
+      if e == 0 then 0
+      else list_push(out, box_get(nth(e, 1))) in
+    prof_collect_go(vec, j + 1, cap, out)
 
-let prof_collect(recs, i, out) =
-  if i >= 256 then out
-  else
-    let bkt = nth(recs, i) in
-    prof_collect(recs, i + 1, prof_collect_bkt(bkt, out, 0, len(bkt)))
+let prof_collect(recs) =
+  let cap = nth(recs, 2) in
+  if cap == 0 then list_new()
+  else prof_collect_go(nth(recs, 0), 0, cap, list_new())
 
 let prof_ins(sorted, rec) =
   if sorted == [] then cons(rec, [])
@@ -151,7 +161,7 @@ let yac_prof_dump(_) =
     let path = nth(t0, 0) in
     let _ = prof_unwind(0) in
     let t = box_get(nth(c, 0)) in
-    let raw = prof_collect(nth(t, 2), 0, list_new()) in
+    let raw = prof_collect(nth(t, 2)) in
     let xs = prof_sort(raw, 0, []) in
     let tot = prof_tot(xs, 0, 0) in
     let b0 = bytes_new() in

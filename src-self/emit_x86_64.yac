@@ -55,7 +55,8 @@ let emit_store_param(b, j, k) =
  * Do not first-fit walk the free list: after GC it is huge and every cons
  * scanned it (native yc spent ~100% in that ~20-byte loop).
  * GLOBALS+40 is bytes-since-GC; when it exceeds 16MiB call yac_gc.
- * GLOBALS+48 is heap_lo for GC stack bitmap. GLOBALS+56 is prof cell. */
+ * GLOBALS+48 is heap_lo for GC stack bitmap. GLOBALS+56 caches the prof
+ * listbuf pointer (not a GC root; profile.yac prof_roots holds the object). */
 let gen_alloc(d) =
   let b = bytes_new() in
   let _ = e8(b, 87) in
