@@ -55,7 +55,9 @@ let tco_find(insns, i, slot, gname) =
       tco_find(insns, i - 1, nth(nth(insns, i), 2), gname)
     else 0 - 1
   else if nth(nth(insns, i), 0) == "fcall" then
-    tco_hit(nth(insns, i), slot, gname, i)
+    if nth(nth(insns, i), 2) == "yac_prof_leave" then
+      tco_find(insns, i - 1, slot, gname)
+    else tco_hit(nth(insns, i), slot, gname, i)
   else 0 - 1
 
 let tco_one(ins) =
@@ -644,17 +646,58 @@ let outer_caps(env, fvs, ncap, j, acc) =
     let _ = list_push(acc, env_slot(env, nth(fvs, j))) in
     outer_caps(env, fvs, ncap, j + 1, acc)
 
+/* Skip profiler helpers only. Runtime yac_* never pass letfun_finish. */
+let is_prof_name(nm) =
+  let n = str_len(nm) in
+  if n < 5 then false
+  else if str_ref(nm, 0) != 112 then false
+  else if str_ref(nm, 1) != 114 then false
+  else if str_ref(nm, 2) != 111 then false
+  else if str_ref(nm, 3) != 102 then false
+  else str_ref(nm, 4) == 95
+
+let is_yac_prof_name(nm) =
+  let n = str_len(nm) in
+  if n < 8 then false
+  else if str_ref(nm, 0) != 121 then false
+  else if str_ref(nm, 1) != 97 then false
+  else if str_ref(nm, 2) != 99 then false
+  else if str_ref(nm, 3) != 95 then false
+  else if str_ref(nm, 4) != 112 then false
+  else if str_ref(nm, 5) != 114 then false
+  else if str_ref(nm, 6) != 111 then false
+  else str_ref(nm, 7) == 102
+
+let prof_skip(nm) =
+  if nm == "_start" then true
+  else if is_prof_name(nm) then true
+  else is_yac_prof_name(nm)
+
+let prof_wrap_insns(name, head, body, retslot, nslots) =
+  if prof_skip(name) then
+    insn_push(insn_extend(head, body), ["ret", retslot])
+  else
+    let pnm = nslots - 2 in
+    let ptmp = nslots - 1 in
+    let a = insn_push(head, ["strlit", pnm, name]) in
+    let b = insn_push(a, ["fcall", ptmp, "yac_prof_enter", [pnm]]) in
+    let c = insn_extend(b, body) in
+    let d = insn_push(c, ["fcall", ptmp, "yac_prof_leave", []]) in
+    insn_push(d, ["ret", retslot])
+
 let lir_letfun_finish(s, p, br) =
   let ncap = nth(p, 3) in
   let ntot = nth(p, 4) in
   let gname = nth(p, 5) in
   let need_self = nth(p, 7) in
-  let f_insns0 = insn_push(list_new(), ["local", nth(br, 3), ntot]) in
+  let nslots = nth(br, 3) + 2 in
+  let f_insns0 = insn_push(list_new(), ["local", nslots, ntot]) in
   let f_insns1 =
     if need_self then
       insn_push(f_insns0, ["closure", nth(p, 8), gname, cap_list(ncap, 0, list_new())])
     else f_insns0 in
-  let f = ["proc", gname, ntot, ncap, insn_push(insn_extend(f_insns1, nth(br, 0)), ["ret", nth(br, 1)]), nth(p, 2)] in
+  let f_insns = prof_wrap_insns(nth(p, 2), f_insns1, nth(br, 0), nth(br, 1), nslots) in
+  let f = ["proc", gname, ntot, ncap, f_insns, nth(p, 2)] in
   [insn_push(nth(s, 0),
      ["closure", nth(s, 2), gname, outer_caps(nth(s, 1), nth(p, 6), ncap, 0, list_new())]),
    env_bind(nth(s, 1), nth(p, 2), nth(s, 2), ncap),

@@ -1,6 +1,6 @@
 /* profile.yac — native yc per-function counts / incl / excl (ns).
  *
- * C interp already dumps via --prof-out (src/profile.c). Native yc_A
+ * C interp already dumps via --prof-out (src/profile.c). Native yc
  * instruments letfun prologues and uses the same TSV shape.
  * Disabled path: yac_prof_enter sees empty cell and returns.
  * Bundled after lir.yac so fmap and hash_str exist.
@@ -8,24 +8,40 @@
  *
  * glob 3 is only a pointer cache for yac_prof_enter. GC scans the stack, not
  * GLOBALS, so the cell must also live in a top-level list like intern_cell.
+ *
+ * Frames and recs are listbufs mutated in place (same as C ProfFrame[]).
+ * Cons-per-enter on skip_sp/read_alnum (per-char recursion) filled the heap
+ * and spent the whole bundle compile in GC.
  */
 
 let prof_roots = list_new()
 
-let prof_rec_get(recs, name) =
-  let k = intern(name) in
-  let v = fmap_get(recs, k) in
-  if v == 0 then
-    let b = box_new() in
-    let _ = box_set(b, [k, 0, 0, 0]) in
-    let _ = fmap_put(recs, k, b) in
-    b
-  else v
+let prof_stk_fill(stk, i, n) =
+  if i >= n then stk
+  else
+    let f = list_new() in
+    let _ = list_push(f, 0) in
+    let _ = list_push(f, 0) in
+    let _ = list_push(f, 0) in
+    let _ = list_push(stk, f) in
+    prof_stk_fill(stk, i + 1, n)
 
-let prof_bump(recs, name) =
-  let b = prof_rec_get(recs, name) in
-  let t = box_get(b) in
-  box_set(b, [nth(t, 0), nth(t, 1) + 1, nth(t, 2), nth(t, 3)])
+let prof_stk_need(stk, n) =
+  let cap = len(stk) in
+  if n < cap then 0
+  else prof_stk_fill(stk, cap, n + 256)
+
+let prof_rec_get(recs, name) =
+  let v = fmap_get(recs, name) in
+  if v == 0 then
+    let r = list_new() in
+    let _ = list_push(r, name) in
+    let _ = list_push(r, 0) in
+    let _ = list_push(r, 0) in
+    let _ = list_push(r, 0) in
+    let _ = fmap_put(recs, name, r) in
+    r
+  else v
 
 let yac_prof_enable(path) =
   let c = yac_prof_cell() in
@@ -33,8 +49,12 @@ let yac_prof_enable(path) =
   else
     let recs = fmap_new(0) in
     let _ = fmap_init_n(recs, 1024) in
+    let stk = list_new() in
+    let _ = prof_stk_fill(stk, 0, 256) in
+    let nstk = box_new() in
+    let _ = box_set(nstk, 0) in
     let b = box_new() in
-    let _ = box_set(b, [path, [], recs]) in
+    let _ = box_set(b, [path, stk, recs, nstk]) in
     let _ = list_push(prof_roots, c) in
     list_push(c, b)
 
@@ -42,44 +62,50 @@ let prof_enter_go(name) =
   let c = yac_prof_cell() in
   if len(c) == 0 then 0
   else
-    let b = nth(c, 0) in
-    let t = box_get(b) in
+    let t = box_get(nth(c, 0)) in
+    let stk = nth(t, 1) in
     let recs = nth(t, 2) in
-    let _ = prof_bump(recs, name) in
-    let fr = [name, time_ns(), 0] in
-    box_set(b, [nth(t, 0), cons(fr, nth(t, 1)), recs])
-
-let prof_add_child(rest, elapsed) =
-  if rest == [] then []
-  else
-    let p = nth(rest, 0) in
-    cons([nth(p, 0), nth(p, 1), nth(p, 2) + elapsed], drop(rest, 1))
+    let nstk = nth(t, 3) in
+    let n = box_get(nstk) in
+    let _ = prof_stk_need(stk, n) in
+    let rb = prof_rec_get(recs, name) in
+    let _ = list_set(rb, 1, nth(rb, 1) + 1) in
+    let fr = nth(stk, n) in
+    let _ = list_set(fr, 0, name) in
+    let _ = list_set(fr, 1, time_ns()) in
+    let _ = list_set(fr, 2, 0) in
+    box_set(nstk, n + 1)
 
 let prof_leave_go(_) =
   let c = yac_prof_cell() in
   if len(c) == 0 then 0
   else
-    let b = nth(c, 0) in
-    let t = box_get(b) in
+    let t = box_get(nth(c, 0)) in
     let stk = nth(t, 1) in
-    if stk == [] then 0
+    let recs = nth(t, 2) in
+    let nstk = nth(t, 3) in
+    let n = box_get(nstk) in
+    if n == 0 then 0
     else
-      let fr = nth(stk, 0) in
+      let n1 = n - 1 in
+      let fr = nth(stk, n1) in
       let elapsed = time_ns() - nth(fr, 1) in
-      let recs = nth(t, 2) in
       let rb = prof_rec_get(recs, nth(fr, 0)) in
-      let rt = box_get(rb) in
       let excl = elapsed - nth(fr, 2) in
-      let _ = box_set(rb, [nth(rt, 0), nth(rt, 1), nth(rt, 2) + elapsed,
-                           nth(rt, 3) + excl]) in
-      box_set(b, [nth(t, 0), prof_add_child(drop(stk, 1), elapsed), recs])
+      let _ = list_set(rb, 2, nth(rb, 2) + elapsed) in
+      let _ = list_set(rb, 3, nth(rb, 3) + excl) in
+      let _ = box_set(nstk, n1) in
+      if n1 == 0 then 0
+      else
+        let p = nth(stk, n1 - 1) in
+        list_set(p, 2, nth(p, 2) + elapsed)
 
 let prof_unwind(_) =
   let c = yac_prof_cell() in
   if len(c) == 0 then 0
   else
-    let t = box_get(nth(c, 0)) in
-    if nth(t, 1) == [] then 0
+    let n = box_get(nth(box_get(nth(c, 0)), 3)) in
+    if n == 0 then 0
     else
       let _ = prof_leave_go(0) in
       prof_unwind(0)
@@ -90,7 +116,7 @@ let prof_collect_go(vec, j, cap, out) =
     let e = nth(vec, j) in
     let _ =
       if e == 0 then 0
-      else list_push(out, box_get(nth(e, 1))) in
+      else list_push(out, nth(e, 1)) in
     prof_collect_go(vec, j + 1, cap, out)
 
 let prof_collect(recs) =
