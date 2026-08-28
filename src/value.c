@@ -380,11 +380,16 @@ static Value prim_not(Value *args, int nargs, PrimCtx *ctx) {
 }
 
 static Value prim_print(Value *args, int nargs, PrimCtx *ctx) {
-    (void)nargs;
     (void)ctx;
     char *s = value_to_string(NULL, args[0]);
     fputs(s, stdout);
-    fputc('\n', stdout);
+    bool nl = true;
+    if (nargs >= 2) {
+        if (args[1].tag == V_BOOL) nl = args[1].u.b;
+        else if (args[1].tag == V_INT) nl = args[1].u.i != 0;
+        else nl = true;
+    }
+    if (nl) fputc('\n', stdout);
     fflush(stdout);
     free(s);
     return args[0];
@@ -1327,7 +1332,7 @@ static const Prim PRIMS[] = {
     {"and", 2, true, false, prim_and},
     {"or", 2, true, false, prim_or},
     {"not", 1, true, false, prim_not},
-    {"print", 1, false, false, prim_print},
+    {"print", -1, false, false, prim_print},
     {"argc", 1, true, false, prim_argc}, /* called as argc(); parser passes unit */
     {"argv", 1, true, true, prim_argv},
     {"exit", 1, false, false, prim_exit},

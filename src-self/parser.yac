@@ -17,7 +17,8 @@
  *   ["if", cond, then, else]
  *   ["let", name, bound, body]
  *   ["binop", op, lhs, rhs]   op: + - * / % == != < <= > >= and or
- *   ["not", x] ["print", x] ["callcc", x] ["throw", k, v]
+ *   ["not", x] ["callcc", x] ["throw", k, v]
+ *   print e / print(e[, nl]) desugars to call print
  *   ["list", [items...]]
  *   ["error", msg]
  */
@@ -123,8 +124,18 @@ let parse_expr(toks, i, min_prec) =
       let r = parse_expr(toks, j + 1, 0) in
       [["not", nth(r, 0)], nth(r, 1)]
     else if is_kw(j, "print") then
-      let r = parse_expr(toks, j + 1, 0) in
-      [["print", nth(r, 0)], nth(r, 1)]
+      if kk(j + 1) == "lparen" then
+        let r = parse_arglist(j + 2, []) in
+        let args = nth(r, 0) in
+        let na = len(args) in
+        if na == 1 then
+          [["call", ["var", "print"], [nth(args, 0), ["bool", "true"]]], nth(r, 1)]
+        else if na == 2 then
+          [["call", ["var", "print"], args], nth(r, 1)]
+        else parse_err(j)
+      else
+        let r = parse_expr(toks, j + 1, 0) in
+        [["call", ["var", "print"], [nth(r, 0), ["bool", "true"]]], nth(r, 1)]
     else if is_kw(j, "callcc") then
       let r = parse_expr(toks, j + 1, 0) in
       [["callcc", nth(r, 0)], nth(r, 1)]

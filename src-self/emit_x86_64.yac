@@ -730,25 +730,6 @@ let emit_x86_i_heap(st, insn) =
     let _ = emit_load_rax_slot(b, nth(insn, 3)) in
     let _ = mov_mem_rbx_rdx_rax(b) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "print" then
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = test_rax_1(b) in
-    let _ = jcc_rel32(b, 5, 0) in
-    let jptr = bytes_len(b) - 4 in
-    let _ = mov_rdi_rax(b) in
-    let c_int = bytes_len(b) in
-    let _ = call_user(b) in
-    let _ = jmp_rel32(b, 0) in
-    let jend = bytes_len(b) - 4 in
-    let ptroff = bytes_len(b) in
-    let _ = apply_patch(b, jptr, ptroff) in
-    let _ = mov_rdi_rax(b) in
-    let c_val = bytes_len(b) in
-    let _ = call_user(b) in
-    let endoff = bytes_len(b) in
-    let _ = apply_patch(b, jend, endoff) in
-    let _ = emit_newline(b) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), emit_patch_rel(nth(st, 4), patches, c_val + 1, "print_val"), c_int + 1, "print_int"))
   else if k == "write1" then
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     let _ = sar_rax_1(b) in
@@ -1402,7 +1383,7 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
       emit_x86_i_raw(st, insn)
     else if k == "obj_kind" or k == "mref" or k == "mset" or k == "tag"
          or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
-         or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64" or k == "print"
+         or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64"
          or k == "write1" or k == "clock" or k == "glob" or k == "gst" or k == "time_ms"
          or k == "time_str" or k == "argc" or k == "argv" then
       emit_x86_i_heap(st, insn)

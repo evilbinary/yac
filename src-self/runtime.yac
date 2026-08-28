@@ -714,6 +714,19 @@ let rt_print_int_ins(_) =
    ["mov_imm", 8, 0 + 0],
    ["ret", 8]]
 
+/* print(v, nl): print_val then optional newline. Returns v. */
+let rt_print_ins(_) =
+  [["local", 8, 2],
+   ["fcall", 3, "print_val", [1]],
+   ["mov_imm", 4, 0 + 0],
+   ["icmp", "==", 5, 2, 4],
+   ["cmpjmp", 5, "pr_done", "pr_nl"],
+   ["label", "pr_nl"],
+   ["mov_imm", 6, 10 + 10],
+   ["write1", 6],
+   ["label", "pr_done"],
+   ["ret", 1]]
+
 /* Mark: bitmap O(1) if G+64 set, else walk gc_head. Recurse by kind. */
 let rt_gc_mark_ins(_) =
   [["$local", 24, 1],
@@ -1656,6 +1669,7 @@ let runtime_funs(_) =
    ["proc", "yac_bytes_to_str", 1, 0, rt_bytes_to_str_ins(0), "yac_bytes_to_str"],
    ["proc", "print_int", 1, 0, rt_print_int_ins(0), "print_int"],
    ["proc", "print_val", 1, 0, rt_print_val_ins(0), "print_val"],
+   ["proc", "print", 2, 0, rt_print_ins(0), "print"],
    ["$proc", "yac_read_file", 1, 0, rt_read_file_ins(0), "yac_read_file"],
    ["$proc", "yac_write_file", 2, 0, rt_write_file_ins(0), "yac_write_file"],
    ["$proc", "yac_argv", 1, 0, rt_argv_ins(0), "yac_argv"],

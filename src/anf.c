@@ -313,10 +313,20 @@ static Anf *norm_tail(const Ast *e, const char *vname, Anf *k, NrmCtx *c, Scope 
     case A_PRINT: {
         char *of = fresh_bind(c, &scope);
         int oslot = current_slot(c, scope, of);
+        if (e->u.print.nl) {
+            char *nf = fresh_bind(c, &scope);
+            int nslot = current_slot(c, scope, nf);
+            Atom *args = (Atom *)arena_alloc(c->a, 2 * sizeof(Atom));
+            args[0] = atom_var_ds(of, 0, oslot);
+            args[1] = atom_var_ds(nf, 0, nslot);
+            Anf *acc = anf_tail_call(c->a, atom_var("print"), args, 2);
+            Anf *npart = norm(e->u.print.nl, nf, acc, c, scope);
+            return norm(e->u.print.val, of, npart, c, scope);
+        }
         Atom *args = (Atom *)arena_alloc(c->a, sizeof(Atom));
         args[0] = atom_var_ds(of, 0, oslot);
         Anf *acc = anf_tail_call(c->a, atom_var("print"), args, 1);
-        return norm(e->u.operand, of, acc, c, scope);
+        return norm(e->u.print.val, of, acc, c, scope);
     }
     case A_CALLCC: {
         char *of = fresh_bind(c, &scope);
@@ -437,10 +447,20 @@ static Anf *norm(const Ast *e, const char *vname, Anf *k, NrmCtx *c, Scope *scop
     case A_PRINT: {
         char *of = fresh_bind(c, &scope);
         int oslot = current_slot(c, scope, of);
+        if (e->u.print.nl) {
+            char *nf = fresh_bind(c, &scope);
+            int nslot = current_slot(c, scope, nf);
+            Atom *args = (Atom *)arena_alloc(c->a, 2 * sizeof(Atom));
+            args[0] = atom_var_ds(of, 0, oslot);
+            args[1] = atom_var_ds(nf, 0, nslot);
+            Anf *call = anf_let_call(c->a, vname, vslot(c, scope, vname), atom_var("print"), args, 2, k);
+            Anf *npart = norm(e->u.print.nl, nf, call, c, scope);
+            return norm(e->u.print.val, of, npart, c, scope);
+        }
         Atom *args = (Atom *)arena_alloc(c->a, sizeof(Atom));
         args[0] = atom_var_ds(of, 0, oslot);
         Anf *call = anf_let_call(c->a, vname, vslot(c, scope, vname), atom_var("print"), args, 1, k);
-        return norm(e->u.operand, of, call, c, scope);
+        return norm(e->u.print.val, of, call, c, scope);
     }
     case A_CALLCC: {
         char *of = fresh_bind(c, &scope);

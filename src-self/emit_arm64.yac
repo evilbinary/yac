@@ -734,34 +734,6 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_tag(b, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_alloc"))
-  else if k == "print" then
-    let _ = a64_slot(b, nth(insn, 1), false, 0) in
-    let _ = a64_movz(b, 9, 1, 0) in
-    let _ = a64_and_reg(b, 10, 0, 9) in
-    let _ = a64_cmp_reg(b, 10, 31) in
-    let jptr = bytes_len(b) in
-    let _ = a64_b_ne(b, 0) in
-    let c_int = bytes_len(b) in
-    let _ = a64_bl(b, 0) in
-    let jend = bytes_len(b) in
-    let _ = a64_b(b, 0) in
-    let ptroff = bytes_len(b) in
-    let _ = a64_patch_bcond(b, jptr, ptroff) in
-    let _ = a64_slot(b, nth(insn, 1), false, 0) in
-    let c_val = bytes_len(b) in
-    let _ = a64_bl(b, 0) in
-    let nl = bytes_len(b) in
-    let _ = a64_apply_b26(b, jend, nl) in
-    let _ = a64_sub_imm(b, 31, 31, 16) in
-    let _ = a64_movz(b, 0, 10, 0) in
-    let _ = a64_strb(b, 0, 31) in
-    let _ = a64_mov_sp(b, 1, 31) in
-    let _ = a64_movz(b, 2, 1, 0) in
-    let _ = a64_movz(b, 0, 1, 0) in
-    let _ = a64_movz(b, 8, 64, 0) in
-    let _ = a64_svc(b) in
-    let _ = a64_add_imm(b, 31, 31, 16) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), emit_patch_rel(nth(st, 4), patches, c_val, "print_val"), c_int, "print_int"))
   else if k == "argc" then
     emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_argc", nth(st, 4)))
   else if k == "time_ms" then
@@ -1141,7 +1113,7 @@ let emit_insn_a64_go(st, insn, is_entry) =
     emit_a64_i_raw(st, insn)
   else if k == "obj_kind" or k == "mref" or k == "mset" or k == "tag"
        or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
-       or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64" or k == "print"
+       or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64"
        or k == "write1" or k == "clock" or k == "glob" or k == "gst" or k == "time_ms"
        or k == "time_str" or k == "argc" or k == "argv" then
     emit_a64_i_heap(st, insn)

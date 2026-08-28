@@ -132,6 +132,7 @@ let compiler_cases(_) = [
   ["foldl_prim", "rc", "10"], ["map_prim", "rc", "4"], ["is_kw", "rc", "1"],
   ["empty_params", "rc", "42"], ["print_int", "out", "123"],
   ["print_list", "out", "[1, [2, 3], x]\n[]"],
+  ["print_nl", "out", "ab"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
   ["io_rw", "rc", "2"], ["system", "rc", "0"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"],

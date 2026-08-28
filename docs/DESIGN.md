@@ -100,14 +100,13 @@ bind      ::= ["let",      name, atom]
             | ["letcall",  name, atom, [atom*]]
             | ["letif",    name, atom, body, body]
             | ["letfun",   name, [name*], body]
-            | ["letprint", name, atom]
 
 op        ::= "+" | "-" | "*" | "/" | "%"
             | "==" | "!=" | "<" | "<=" | ">" | ">="
             | "and" | "or"
 ```
 
-`letfun` 的 body、`letif` 的两支都是完整 `body`（可再嵌套）。`print` 的尾原子是 `["unit"]`。
+`letfun` 的 body、`letif` 的两支都是完整 `body`（可再嵌套）。`print e` 在 parser 里降成 `call print(e, true)`。
 
 #### LIR（跨架构，接近机器）
 
@@ -144,7 +143,7 @@ insn      ::= ["local",    nslots, nparams]
             | ["tailapply",s, s, ncap, [s*]]
             | ["ret",      s]
             | ["syscall",  s, nr, [s*]]        ; nr 未 tag 立即数，≤6 参
-            | ["print",    s]                  ; emit 糖：print_int/print_val + newline
+            | ["print",    s]                  ; leftover; user print is runtime proc
             | ["glob",     s, i] | ["gst", i, s]
             | ["strlit",   s, bytes]           ; rodata，结果 tagged 指针
             | ["closure",  s, name, [s*]]      ; 分配闭包，patch 函数地址
@@ -209,10 +208,7 @@ bin("and",s,a,b)= ["land", s, a, b]          ; 不短路
 bin("or",s,a,b) = ["lor",  s, a, b]          ; 不短路
 bin(cop,s,a,b)  = ["cmp",  cop, s, a, b]     ; cop ∈ {==,!=,<,<=,>,>=}
 
-Γ ⊢ ["letprint", x, a]  ⇒  Γ[x ↦ s]  ▹  Iₐ · [["print", sₐ],
-                                               ["mov_imm", s, 0]]  ▹  ∅
-  where  Γ ⊢ a  ⇒  sₐ  ▹  Iₐ
-  ; `print` 是 emit 糖：按 tag 调 print_int / print_val，再写 newline（对齐 C interp）
+Γ ⊢ ["letcall", x, print, [v, nl]] 走普通 fcall（runtime `print`）。
 
 Γ ⊢ ["letif", x, c, bodyₜ, bodyₑ]  ⇒  Γ[x ↦ s]  ▹  I  ▹  Pₜ ∪ Pₑ
   where  Γ ⊢ c  ⇒  s_c  ▹  I_c
@@ -368,7 +364,7 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 ### 3.2 语义要点
 
 - 整数为 64 位（`int64_t`），浮点为 `double`，布尔为真/假，字符串为字节串。
-- `print` 打印并返回原值（保持表达式性质）。
+- `print` 打印并返回原值（保持表达式性质）。默认换行；`print(e, false)` 不换行。
 - `callcc f`：`f` 是一元函数，收到一个**当前续延**（一个一等值）；调用 `throw k v` 即以 `v` 作为整个 `callcc` 表达式的结果跳回。
 - 顶层最后一个表达式的结果就是程序退出值（ANF 的 `halt`、CPS 的 `halt`）。
 

@@ -766,33 +766,6 @@ let emit_rv_i_heap(st, insn) =
     let _ = rv_tag(b, 10) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_alloc"))
-  else if k == "print" then
-    let _ = rv_slot(b, nth(insn, 1), false, 10) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_and(b, 5, 10, 7) in
-    let jptr = bytes_len(b) in
-    let _ = rv_bne(b, 5, 0, 0) in
-    let c_int = bytes_len(b) in
-    let _ = rv_jal(b, 1, 0) in
-    let jend = bytes_len(b) in
-    let _ = rv_jal(b, 0, 0) in
-    let ptroff = bytes_len(b) in
-    let _ = rv_patch_b(b, jptr, ptroff) in
-    let _ = rv_slot(b, nth(insn, 1), false, 10) in
-    let c_val = bytes_len(b) in
-    let _ = rv_jal(b, 1, 0) in
-    let nl = bytes_len(b) in
-    let _ = rv_apply_jal(b, jend, nl, 0) in
-    let _ = rv_addi(b, 2, 2, 0 - 16) in
-    let _ = rv_addi(b, 6, 0, 10) in
-    let _ = rv_sb(b, 6, 2, 0) in
-    let _ = rv_addi(b, 10, 0, 1) in
-    let _ = rv_addi(b, 11, 2, 0) in
-    let _ = rv_addi(b, 12, 0, 1) in
-    let _ = rv_addi(b, 17, 0, 64) in
-    let _ = rv_ecall(b) in
-    let _ = rv_addi(b, 2, 2, 16) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), emit_patch_rel(nth(st, 4), patches, c_val, "print_val"), c_int, "print_int"))
   else if k == "argc" then
     emit_st4(st, b, cur, labels, rv_jal_rt(b, patches, nth(insn, 1), "yac_argc", nth(st, 4)))
   else if k == "time_ms" then
@@ -1174,7 +1147,7 @@ let emit_insn_rv_go(st, insn, is_entry) =
     emit_rv_i_raw(st, insn)
   else if k == "obj_kind" or k == "mref" or k == "mset" or k == "tag"
        or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
-       or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64" or k == "print"
+       or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64"
        or k == "write1" or k == "clock" or k == "glob" or k == "gst" or k == "time_ms"
        or k == "time_str" or k == "argc" or k == "argv" then
     emit_rv_i_heap(st, insn)

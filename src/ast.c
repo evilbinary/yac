@@ -84,7 +84,11 @@ void ast_dump(const Ast *n, int depth) {
         ast_dump(n->u.bin.rhs, depth + 1);
         break;
     case A_NOT: printf("not\n"); ast_dump(n->u.operand, depth + 1); break;
-    case A_PRINT: printf("print\n"); ast_dump(n->u.operand, depth + 1); break;
+    case A_PRINT:
+        printf("print\n");
+        ast_dump(n->u.print.val, depth + 1);
+        if (n->u.print.nl) ast_dump(n->u.print.nl, depth + 1);
+        break;
     case A_CALLCC: printf("callcc\n"); ast_dump(n->u.operand, depth + 1); break;
     case A_THROW: printf("throw\n"); ast_dump(n->u.thr.k, depth + 1); ast_dump(n->u.thr.v, depth + 1); break;
     case A_LIST:

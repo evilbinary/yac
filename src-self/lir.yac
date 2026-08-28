@@ -374,8 +374,6 @@ let free_vars(fnbody, params, funs) =
             let _ = addp(0) in
             let rr = fv(nth(b, 3), a, sh2) in
             [nth(rr, 0), sh_put(sh, nth(b, 1))]
-          else if k == "letprint" then
-            [atom_vars(nth(b, 2), a, sh), sh_put(sh, nth(b, 1))]
           else if k == "letthrow" then
             [atom_vars(nth(b, 3), atom_vars(nth(b, 2), a, sh), sh),
              sh_put(sh, nth(b, 1))]
@@ -594,13 +592,6 @@ let lir_letbin(b, s) =
   [insn_push(nth(rb, 0), ins),
    env_bind(nth(rb, 2), nth(b, 1), dst, 0), dst + 1,
    nth(rb, 4), nth(rb, 5), nth(s, 5)]
-
-let lir_letprint(b, s) =
-  let ra = lir_atom(nth(b, 2), s) in
-  let dst = nth(ra, 3) in
-  [insn_push(insn_push(nth(ra, 0), ["print", nth(ra, 1)]), ["mov_imm", dst, 0 + 0]),
-   env_bind(nth(ra, 2), nth(b, 1), dst, 0), dst + 1,
-   nth(ra, 4), nth(ra, 5), nth(s, 5)]
 
 let lir_letthrow(b, s) =
   let rk = lir_atom(nth(b, 2), s) in
@@ -848,8 +839,6 @@ let lir_expr_i(ast, pack) =
       lir_expr_i(ast, pack_i(lir_let(b, st), i + 1))
     else if k == "letbin" then
       lir_expr_i(ast, pack_i(lir_letbin(b, st), i + 1))
-    else if k == "letprint" then
-      lir_expr_i(ast, pack_i(lir_letprint(b, st), i + 1))
     else if k == "letcall" then
       lir_expr_i(ast, pack_i(lir_letcall(b, [st, i, nb, tail]), i + 1))
     else if k == "letfun" then
@@ -893,6 +882,8 @@ let start_proc(nslots, result_slot, body) =
 let start_proc_eval(nslots, result_slot, body) =
   ["proc", "_eval", 0, 0, insn_push(
       insn_push(
-        insn_extend(insn_push(list_new(), ["local", nslots, 0]), body),
-        ["print", result_slot]),
+        insn_push(
+          insn_extend(insn_push(list_new(), ["local", nslots + 2, 0]), body),
+          ["mov_imm", nslots, 2]),
+        ["fcall", nslots + 1, "print", [result_slot, nslots]]),
       ["ret", result_slot]), "_eval"]

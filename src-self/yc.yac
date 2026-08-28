@@ -116,7 +116,7 @@ let jit_eval(src) =
   let _ = compile_jit(src, mk_jit_target(0)) in 0
 
 let repl_loop(acc, spec) =
-  let _ = print("yc>") in
+  let _ = print("yc> ", false) in
   let line = read_line() in
   if str_len(line) == 0 then 0
   else

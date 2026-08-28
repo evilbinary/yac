@@ -367,10 +367,29 @@ static Ast *parse_unary(Parser *p) {
     }
     if (at(p, TK_KW_PRINT)) {
         advance(p);
+        Ast *n = mk(p, A_PRINT, t->line, t->col);
+        if (at(p, TK_LPAREN) && paren_is_arg_list(p)) {
+            advance(p);
+            Ast *v = parse_expr(p);
+            if (!v) return NULL;
+            if (!eat(p, TK_COMMA)) {
+                p_err(p, "expected ',' in print(...)");
+                return NULL;
+            }
+            Ast *nl = parse_expr(p);
+            if (!nl) return NULL;
+            if (!eat(p, TK_RPAREN)) {
+                p_err(p, "expected ')' after print arguments");
+                return NULL;
+            }
+            n->u.print.val = v;
+            n->u.print.nl = nl;
+            return n;
+        }
         Ast *op = parse_expr(p);
         if (!op) return NULL;
-        Ast *n = mk(p, A_PRINT, t->line, t->col);
-        n->u.operand = op;
+        n->u.print.val = op;
+        n->u.print.nl = NULL;
         return n;
     }
     if (at(p, TK_KW_CALLCC)) {

@@ -78,12 +78,6 @@ let anf_expr(ast, counter) =
                              [nth(ir, 1), nth(tr, 1)]]]) in
         [binds, ["var", nth(tup, 0)], nth(tup, 1)] in
     build(0, counter)
-  else if k == "print" then
-    /* print expr: normalize operand to atom, bind via letprint; tail unit */
-    let ar = anf_atom(nth(ast, 1), counter) in
-    let tup = fresh(nth(ar, 2)) in
-    [append(nth(ar, 0), [["letprint", nth(tup, 0), nth(ar, 1)]]),
-     ["unit"], nth(tup, 1)]
   else if k == "callcc" then
     let ar = anf_atom(nth(ast, 1), counter) in
     let kn = fresh(nth(ar, 2)) in

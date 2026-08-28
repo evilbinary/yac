@@ -37,6 +37,7 @@ struct Ast {
         struct { char *name; Ast *bound; Ast *body; } let;
         struct { int op; Ast *lhs, *rhs; } bin;
         Ast *operand;
+        struct { Ast *val; Ast *nl; } print; /* nl NULL → newline */
         struct { Ast *k, *v; } thr;
         struct { Ast **items; int n; } list;
     } u;
