@@ -139,8 +139,20 @@ let compiler_cases(_) = [
   ["tco_cap", "rc", "42"], ["callcc", "rc", "42"], ["callcc2", "rc", "99"],
   ["callcc3", "rc", "42"], ["callcc4", "rc", "99"]]
 
+let compile_syntax_err(st, yc, src, name) =
+  let p = str_cat(TMP, "/synerr.yac") in
+  let _ = write_file(p, src) in
+  let r = run(append(yc, [p, "-o", str_cat(TMP, "/synerr.bin")])) in
+  let blob = str_cat(nth(r, 1), nth(r, 2)) in
+  let ok =
+    if nth(r, 0) == 0 then false
+    else contains(blob, "error: syntax") in
+  if ok then check(st, name, "1", "1")
+  else check(st, name, "error: syntax", blob)
+
 let compiler_all(st, yc) =
-  foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0))
+  let st1 = foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)) in
+  compile_syntax_err(st1, yc, "hi(\n", "compiler unclosed call")
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0

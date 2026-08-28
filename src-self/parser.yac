@@ -80,17 +80,18 @@ let parse_expr(toks, i, min_prec) =
     else if k == "kw" then prec_of(nth(tok, 1)) > 0
     else false in
 
-  /* ---- parse a comma-separated argument list inside parens, after '(' ---- */
+  /* ---- parse a comma-separated argument list inside parens, after '(' ----
+   * Returns [ok, args, next]. A missing ')' is an error (not an empty call). */
   let parse_arglist(j, acc) =
-    if kk(j) == "rparen" then [reverse(acc), j + 1]
+    if kk(j) == "rparen" then [true, reverse(acc), j + 1]
     else
       let r = parse_expr(toks, j, 0) in
-      if is_err(nth(r, 0)) then [acc, j]
+      if is_err(nth(r, 0)) then [false, acc, j]
       else if kk(nth(r, 1)) == "comma" then
         parse_arglist(nth(r, 1) + 1, cons(nth(r, 0), acc))
       else if kk(nth(r, 1)) == "rparen" then
-        [reverse(cons(nth(r, 0), acc)), nth(r, 1) + 1]
-      else [reverse(cons(nth(r, 0), acc)), nth(r, 1)] in
+        [true, reverse(cons(nth(r, 0), acc)), nth(r, 1) + 1]
+      else [false, acc, j] in
 
   /* ---- parse lambda params: ( ident, ident, ... ) -> ; j is at first ident
    * after '('. Returns [params, indexAfterRparen]. ---- */
@@ -104,15 +105,15 @@ let parse_expr(toks, i, min_prec) =
 
   /* ---- parse list literal items after '[' ---- */
   let parse_listitems(j, acc) =
-    if kk(j) == "rbrk" then [reverse(acc), j + 1]
+    if kk(j) == "rbrk" then [true, reverse(acc), j + 1]
     else
       let r = parse_expr(toks, j, 0) in
-      if is_err(nth(r, 0)) then [acc, j]
+      if is_err(nth(r, 0)) then [false, acc, j]
       else if kk(nth(r, 1)) == "comma" then
         parse_listitems(nth(r, 1) + 1, cons(nth(r, 0), acc))
       else if kk(nth(r, 1)) == "rbrk" then
-        [reverse(cons(nth(r, 0), acc)), nth(r, 1) + 1]
-      else [reverse(cons(nth(r, 0), acc)), nth(r, 1)] in
+        [true, reverse(cons(nth(r, 0), acc)), nth(r, 1) + 1]
+      else [false, acc, j] in
 
   /* ---- primary / atom ---- */
   let parse_primary(j) =
@@ -123,20 +124,23 @@ let parse_expr(toks, i, min_prec) =
     else if is_kw(j, "false") then [["bool", "false"], j + 1]
     else if kk(j) == "lbrk" then
       let r = parse_listitems(j + 1, []) in
-      [["list", nth(r, 0)], nth(r, 1)]
+      if nth(r, 0) then [["list", nth(r, 1)], nth(r, 2)]
+      else parse_err(j)
     else if is_kw(j, "not") then
       let r = parse_expr(toks, j + 1, 0) in
       [["not", nth(r, 0)], nth(r, 1)]
     else if is_kw(j, "print") then
       if kk(j + 1) == "lparen" then
         let r = parse_arglist(j + 2, []) in
-        let args = nth(r, 0) in
-        let na = len(args) in
-        if na == 1 then
-          [["call", ["var", "print"], [nth(args, 0), ["bool", "true"]]], nth(r, 1)]
-        else if na == 2 then
-          [["call", ["var", "print"], args], nth(r, 1)]
-        else parse_err(j)
+        if not nth(r, 0) then parse_err(j)
+        else
+          let args = nth(r, 1) in
+          let na = len(args) in
+          if na == 1 then
+            [["call", ["var", "print"], [nth(args, 0), ["bool", "true"]]], nth(r, 2)]
+          else if na == 2 then
+            [["call", ["var", "print"], args], nth(r, 2)]
+          else parse_err(j)
       else
         let r = parse_expr(toks, j + 1, 0) in
         [["call", ["var", "print"], [nth(r, 0), ["bool", "true"]]], nth(r, 1)]
@@ -173,6 +177,7 @@ let parse_expr(toks, i, min_prec) =
       else
         let r = parse_expr(toks, j + 1, 0) in
         if is_err(nth(r, 0)) then parse_err(j)
+        else if kk(nth(r, 1)) != "rparen" then parse_err(j)
         else [nth(r, 0), nth(r, 1) + 1]
     else parse_err(j) in
 
@@ -181,7 +186,8 @@ let parse_expr(toks, i, min_prec) =
     if kk(j) == "lparen" then
       /* fn( a, b, c ) — keep consuming further ( args ) */
       let r = parse_arglist(j + 1, []) in
-      parse_app(nth(r, 1), ["call", head, nth(r, 0)])
+      if not nth(r, 0) then parse_err(j)
+      else parse_app(nth(r, 2), ["call", head, nth(r, 1)])
     else
       let k = kk(j) in
       let juxta(_) =
