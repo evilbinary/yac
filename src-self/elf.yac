@@ -111,3 +111,139 @@ let pack_elf(code) = pack_elf_arch(code, E_MACHINE)
 let pack_elf_ex(code, machine, vaddr, text_off, shared) =
   if shared != 0 then pack_elf_dyn(code, machine, vaddr, text_off)
   else pack_elf_exec(code, machine, vaddr, text_off)
+
+let PH_TYPE_INTERP = 3
+let DT_NEEDED = 1
+let DT_PLTRELSZ = 2
+let DT_PLTGOT = 3
+let DT_HASH = 4
+let DT_STRTAB = 5
+let DT_SYMTAB = 6
+let DT_SYMENT = 11
+let DT_PLTREL = 20
+let DT_JMPREL = 23
+let DT_FLAGS = 30
+let DF_BIND_NOW = 8
+let DT_RELA = 7
+let R_JUMP_SLOT = 7
+
+let app8(b, v) = bytes_append(b, band(v, 255))
+
+let app16(b, v) =
+  let _ = app8(b, v) in
+  app8(b, bshr(v, 8))
+
+let app32(b, v) =
+  let _ = app16(b, band(v, 65535)) in
+  app16(b, bshr(v, 16))
+
+let app64(b, v) =
+  let _ = app32(b, band(v, 4294967295)) in
+  app32(b, bshr(v, 32))
+
+let app_str(b, s, i, n) =
+  if i >= n then bytes_append(b, 0)
+  else
+    let _ = bytes_append(b, str_ref(s, i)) in
+    app_str(b, s, i + 1, n)
+
+let pad8b(b) =
+  if band(bytes_len(b), 7) == 0 then 0
+  else
+    let _ = bytes_append(b, 0) in
+    pad8b(b)
+
+let dyn_pair(b, tag, val) =
+  let _ = app64(b, tag) in
+  app64(b, val)
+
+let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
+  let n = len(names) in
+  let out = pack_elf_exec(code, machine, vaddr, text_off) in
+  let interp = "/lib64/ld-linux-x86-64.so.2" in
+  let interp_off = bytes_len(out) in
+  let _ = app_str(out, interp, 0, str_len(interp)) in
+  let _ = pad8b(out) in
+  let dynstr_off = bytes_len(out) in
+  let _ = bytes_append(out, 0) in
+  let name_off(i, acc) =
+    if i >= n then acc
+    else
+      let o = bytes_len(out) - dynstr_off in
+      let _ = app_str(out, nth(names, i), 0, str_len(nth(names, i))) in
+      name_off(i + 1, cons(o, acc)) in
+  let offs_rev = name_off(0, []) in
+  let libc_off = bytes_len(out) - dynstr_off in
+  let _ = app_str(out, "libc.so.6", 0, 9) in
+  let dynstr_sz = bytes_len(out) - dynstr_off in
+  let str_off(i) = nth(offs_rev, n - 1 - i) in
+  let _ = pad8b(out) in
+  let dynsym_off = bytes_len(out) in
+  let zsym(i) =
+    if i >= 24 then 0
+    else let _ = bytes_append(out, 0) in zsym(i + 1) in
+  let _ = zsym(0) in
+  let put_sym(i) =
+    if i >= n then 0
+    else
+      let _ = app32(out, str_off(i)) in
+      let _ = bytes_append(out, 18) in
+      let _ = bytes_append(out, 0) in
+      let _ = app16(out, 0) in
+      let _ = app64(out, 0) in
+      let _ = app64(out, 0) in
+      put_sym(i + 1) in
+  let _ = put_sym(0) in
+  let hash_off = bytes_len(out) in
+  let nsyms = n + 1 in
+  let _ = app32(out, 1) in
+  let _ = app32(out, nsyms) in
+  let _ = app32(out, 1) in
+  let chain(i) =
+    if i >= nsyms then 0
+    else
+      let nxt = if i == 0 then 0 else if i == n then 0 else i + 1 in
+      let _ = app32(out, nxt) in
+      chain(i + 1) in
+  let _ = chain(0) in
+  let _ = pad8b(out) in
+  let rela_off = bytes_len(out) in
+  let put_rela(i) =
+    if i >= n then 0
+    else
+      let roff = vaddr + text_off + got_off + 24 + i * 8 in
+      let info = bshl(i + 1, 32) + R_JUMP_SLOT in
+      let _ = app64(out, roff) in
+      let _ = app64(out, info) in
+      let _ = app64(out, 0) in
+      put_rela(i + 1) in
+  let _ = put_rela(0) in
+  let dyn_off = bytes_len(out) in
+  let va(off) = vaddr + off in
+  let _ = dyn_pair(out, DT_NEEDED, libc_off) in
+  let _ = dyn_pair(out, DT_HASH, va(hash_off)) in
+  let _ = dyn_pair(out, DT_STRTAB, va(dynstr_off)) in
+  let _ = dyn_pair(out, DT_SYMTAB, va(dynsym_off)) in
+  let _ = dyn_pair(out, DT_SYMENT, 24) in
+  let _ = dyn_pair(out, 10, dynstr_sz) in
+  let _ = dyn_pair(out, DT_PLTGOT, va(text_off + got_off)) in
+  let _ = dyn_pair(out, DT_PLTRELSZ, n * 24) in
+  let _ = dyn_pair(out, DT_PLTREL, DT_RELA) in
+  let _ = dyn_pair(out, DT_JMPREL, va(rela_off)) in
+  let _ = dyn_pair(out, DT_FLAGS, DF_BIND_NOW) in
+  let _ = dyn_pair(out, DT_NULL, 0) in
+  let dyn_sz = bytes_len(out) - dyn_off in
+  let ph_off = bytes_len(out) in
+  let file_size = ph_off + 168 in
+  let _ = bytes_put(out, file_size - 1, 0) in
+  let _ = elf_phdr_load(out, ph_off, PH_TYPE_LOAD, PH_FLAGS_RWX, 0, vaddr) in
+  let _ = elf_phdr_sizes(out, ph_off, file_size, file_size, PAGE) in
+  let _ = elf_phdr_load(out, ph_off + 56, PH_TYPE_INTERP, PH_FLAGS_R, interp_off, va(interp_off)) in
+  let _ = elf_phdr_sizes(out, ph_off + 56, str_len(interp) + 1, str_len(interp) + 1, 1) in
+  let _ = elf_phdr_load(out, ph_off + 112, PH_TYPE_DYNAMIC, PH_FLAGS_R, dyn_off, va(dyn_off)) in
+  let _ = elf_phdr_sizes(out, ph_off + 112, dyn_sz, dyn_sz, 8) in
+  let _ = le64(out, ph_off, 32) in
+  let _ = le16(out, 3, 56) in
+  let _ = le64(out, va(dyn_off), text_off + got_off) in
+  out
+

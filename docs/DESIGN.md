@@ -134,8 +134,8 @@ insn      ::= ["local",    nslots, nparams]
             | ["cmpjmp",   s, L, L]            ; 槽真→Lt 否则 Lf
             | ["jmp",      L]
             | ["label",    L]
-            | ["fcall",    s, name, [s*]]      ; yac proc
-            | ["ccall",    s, name, [s*]]      ; runtime（yac_* 等）
+            | ["fcall",    s, name, [s*]]      ; yac proc / yac_* runtime
+            | ["ccall",    s, name, [s*]]      ; C ABI（libc；x86_64 ELF 走 PLT）
             | ["icall",    s, s, [s*]]         ; 闭包在槽里
             | ["apply",    s, s, ncap, [s*]]   ; emit：已知 ncap>0
             | ["tcall",    s, name, [s*]]
@@ -156,7 +156,7 @@ L, name, entryName, srcname            ::= 字符串
 s                                      ::= 槽号（整数）
 ```
 
-`mov_imm` 写入 **已经编码好的** 64 位模式（翻译时完成 tag：int 为 `n<<1`，nil 为 `1`）。源级 `nth`/`cons`/`len`/`str_cat`/`foldl`/`map`/`bytes_`*/*`argc`*/*`argv`*/*`time_`/`read_file`/`write_file` 不是 LIR 指令，一律 `ccall yac_`*（或 `time_ms` 等 runtime 名）。`str_len`/`str_ref`/`bytes_len` 是对象字段读取（同 mref），emit 直出。
+`mov_imm` 写入 **已经编码好的** 64 位模式（翻译时完成 tag：int 为 `n<<1`，nil 为 `1`）。源级 `nth`/`cons`/`len`/`str_cat`/`foldl`/`map`/`bytes_`*/*`argc`*/*`argv`*/*`time_`/`read_file`/`write_file` 不是 LIR 指令，一律 `fcall yac_`*（或 `time_ms` 等 runtime 名）。用户 `+`/`-`/`*`/`/` 走 `yac_num_*`（整数 insn 快路径，否则 runtime 里的 `yac_num_slow` 十进制路径）。`ccall("name", …)` 降成 LIR `ccall`（C ABI / libc；x86_64 ELF）。`str_len`/`str_ref`/`bytes_len` 是对象字段读取（同 mref），emit 直出。
 
 emit 认同一套 DESIGN 标签（`local`/`add`/`cmpjmp`/`fcall`/`ccall`/`tcall`/`icall`/`apply`/`mref`/`mset`/`mref8`…）。`apply`/`tailapply` 带已知 `ncap`；`icall`/`ticall` 无 ncap（运行时读闭包）。
 
@@ -230,7 +230,8 @@ callι(self, x, ["var", g], s, _, ss) =
     ["tcall",  s, ĝ, cap·ss] if  tail(x) ∧ ĝ = self ∧ |cap·ss| ≤ 6
   | ["fcall",  s, ĝ, cap·ss] if  ĝ = self ∧ n > 0 ∧ |cap·ss| ≤ 6
   | ["fcall",  s, ĝ, ss]     if  g ∈ Σ ∧ n = 0
-  | ["ccall",  s, rt(g), ss] if  g 是 runtime 名   ; 在 Σ / env 之后，避免遮蔽 let len
+  | ["fcall",  s, rt(g), ss] if  g 是 runtime 名   ; 在 Σ / env 之后，避免遮蔽 let len
+  | ["ccall",  s, name, ss]  if  g = ccall 且首参是字符串字面量
   | ["apply",  s, Γ(g), n, ss] if  Γ(g) 有已知 ncap = n > 0
   | ["icall",  s, Γ(g), ss]  otherwise        ; 槽里是闭包，nenv 运行时读
   where ĝ = Σ 中 g 的码名（重名加 #uid）
@@ -246,7 +247,7 @@ rt("foldl")="yac_foldl"  rt("map")="yac_map"  rt("argc")="yac_argc"  …
 runtime 名以 yac_* / time_* / gc_collect / argc / argv / print_val 为准。
 
 tail(x)  当且仅当该 letcall 是 body 的最后一条绑定，且尾原子是 ["var", x]。
-只对 self 做 TCO；ccall 不做 TCO。
+只对 self 做 TCO；`ccall`（C）不做 TCO。
 命名 self 走第一条（`fcall`/`tcall` + 捕获槽），不要把所有尾 `icall` 收成 `ticall`（`twice(f,x)=f(f(x))` 会错）。
 
 Γ ⊢ ["letfun", f, ps, body]  ⇒  Γ[f ↦ s]  ▹  I_out  ▹  {proc} ∪ P
@@ -326,7 +327,8 @@ encoded   ::= x86-64 | arm64 | riscv64 字节
 
 - 槽 `s` → 帧上 8 字节格；临时值走返回寄存器（x86 `rax`，arm `x0`，riscv `a0`）
 - `mov_imm`：按立即数原样写入，不再 `<<1`
-- `fcall`/`ccall`：按名 rel32/`bl`/`jal` 到符号表；参数 ≤6
+- `fcall`：按名 rel32/`bl`/`jal` 到本镜像符号表（yac proc / yac_*）；参数 ≤6
+- `ccall`：C ABI；x86_64 ELF 经 PLT/`DT_NEEDED libc.so.6`；参数 ≤6，整数去 tag、堆对象传 payload 指针
 - `syscall`：x86 `syscall`，arm `svc #0`，riscv `ecall`；`nr` 进 syscall 号寄存器（60 = 退出，见上）
 - `cmpjmp`：测 tagged 条件槽（非 0 为真；`true` 的 tag 为 2）
 - `_start`：`local` 后跑顶层绑定，最后 `untag` + `syscall 60`

@@ -379,6 +379,12 @@ static Value prim_not(Value *args, int nargs, PrimCtx *ctx) {
     return v_bool(!args[0].u.b);
 }
 
+static Value prim_is_int(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    (void)ctx;
+    return v_bool(args[0].tag == V_INT);
+}
+
 static Value prim_print(Value *args, int nargs, PrimCtx *ctx) {
     (void)ctx;
     char *s = value_to_string(NULL, args[0]);
@@ -1323,6 +1329,12 @@ static const Prim PRIMS[] = {
     {"*", 2, true, true, prim_mul},
     {"/", 2, true, true, prim_div},
     {"%", 2, true, true, prim_mod},
+    {"iadd", 2, true, true, prim_add},
+    {"isub", 2, true, true, prim_sub},
+    {"imul", 2, true, true, prim_mul},
+    {"idiv", 2, true, true, prim_div},
+    {"irem", 2, true, true, prim_mod},
+    {"is_int", 1, true, false, prim_is_int},
     {"==", 2, true, false, prim_eq},
     {"!=", 2, true, false, prim_ne},
     {"<", 2, true, false, prim_lt},

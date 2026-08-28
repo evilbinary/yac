@@ -201,18 +201,18 @@ let anf_suite(st) =
 let lir_suite(st) =
   foldl(lir_one, st, [
     ["literal", "42", "[[mov_imm, 1, 84]]"],
-    ["addition", "1 + 2", "[[mov_imm, 1, 2], [mov_imm, 2, 4], [add, 3, 1, 2]]"],
+    ["addition", "1 + 2", "[[mov_imm, 1, 2], [mov_imm, 2, 4], [fcall, 3, yac_num_add, [1, 2]]]"],
     ["precedence", "1 + 2 * 3",
-     "[[mov_imm, 1, 4], [mov_imm, 2, 6], [mul, 3, 1, 2], [mov_imm, 4, 2], [add, 5, 4, 3]]"],
+     "[[mov_imm, 1, 4], [mov_imm, 2, 6], [fcall, 3, yac_num_mul, [1, 2]], [mov_imm, 4, 2], [fcall, 5, yac_num_add, [4, 3]]]"],
     ["if true", "if true then 1 else 2",
      "[[mov_imm, 1, 2], [cmpjmp, 1, LIF0, LIF1], [label, LIF0], [mov_imm, 3, 2], [mov, 2, 3], [jmp, LIF2], [label, LIF1], [mov_imm, 3, 4], [mov, 2, 3], [label, LIF2]]"],
     ["if var", "if x then 1 else 2",
      "[[cmpjmp, 0, LIF0, LIF1], [label, LIF0], [mov_imm, 2, 2], [mov, 1, 2], [jmp, LIF2], [label, LIF1], [mov_imm, 2, 4], [mov, 1, 2], [label, LIF2]]"],
     ["let bind", "let x = 5 in x + 1",
-     "[[mov_imm, 1, 10], [mov_imm, 2, 2], [add, 3, 1, 2]]"],
+     "[[mov_imm, 1, 10], [mov_imm, 2, 2], [fcall, 3, yac_num_add, [1, 2]]]"],
     ["letfun call", "let f(x) = x + 1 in f(2)",
      "[[closure, 1, f, []], [mov_imm, 2, 4], [fcall, 3, f, [2]]]"],
-    ["unary minus", "-5", "[[mov_imm, 1, 0], [mov_imm, 2, 10], [sub, 3, 1, 2]]"],
+    ["unary minus", "-5", "[[mov_imm, 1, 0], [mov_imm, 2, 10], [fcall, 3, yac_num_sub, [1, 2]]]"],
     ["call", "f(1, 2)", "[[mov_imm, 1, 2], [mov_imm, 2, 4], [fcall, 3, f, [1, 2]]]"],
     ["lambda", "fun (a) -> a + 1", "[[closure, 1, t1, []]]"]])
 
@@ -280,7 +280,7 @@ let emit_suite(st) =
 
 let unit_suite(st) =
   foldl(unit_one, st, [
-    ["lir bin", ["map.yac", "lir.yac"], "print bin(\"+\", 1, 2, 3);\n0;\n", "[add, 1, 2, 3]\n0"],
+    ["lir bin", ["map.yac", "lir.yac"], "print bin(\"+\", 1, 2, 3);\n0;\n", "[fcall, 1, yac_num_add, [2, 3]]\n0"],
     ["lexer tokenize", ["map.yac", "lexer.yac"], "print tokenize(\"let x = 5 in x + 1\");\nprint \"\";\n0;\n", "[[kw, let, 1], [ident, x, 1], [op, =, 1], [num, 5, 1], [kw, in, 1], [ident, x, 1], [op, +, 1], [num, 1, 1], [eof, , 1]]\n\n0"],
     ["lexer eq minus", ["map.yac", "lexer.yac"], "print tokenize(\"a=-1\");\nprint \"\";\n0;\n", "[[ident, a, 1], [op, =, 1], [op, -, 1], [num, 1, 1], [eof, , 1]]\n\n0"],
     ["lexer scientific", ["map.yac", "lexer.yac"], "print tokenize(\"2.5e-3 + 1e10\");\nprint \"\";\n0;\n", "[[num, 2.5e-3, 1], [op, +, 1], [num, 1e10, 1], [eof, , 1]]\n\n0"],

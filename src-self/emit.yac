@@ -163,6 +163,68 @@ let emit_patch_strlit(ps, pos, off) = cons([11, pos, off], ps)
 /* tag 12: abs64 = codebase + file_off (stack-map retaddrs / table ptr). */
 let emit_patch_codeva(ps, pos, off) = cons([12, pos, off], ps)
 
+let cimport_cell = list_new()
+
+let cimport_reset(_) =
+  if len(cimport_cell) == 0 then
+    let _ = list_push(cimport_cell, list_new()) in
+    let _ = list_push(cimport_cell, list_new()) in
+    list_push(cimport_cell, 0)
+  else
+    let _ = list_set(cimport_cell, 0, list_new()) in
+    let _ = list_set(cimport_cell, 1, list_new()) in
+    list_set(cimport_cell, 2, 0)
+
+let cimport_names(_) =
+  if len(cimport_cell) == 0 then list_new() else nth(cimport_cell, 0)
+
+let cimport_got(_) =
+  if len(cimport_cell) < 3 then 0 else nth(cimport_cell, 2)
+
+let cimport_n(_) = len(cimport_names(0))
+
+let cimport_find(xs, name, i, n) =
+  if i >= n then 0 - 1
+  else if nth(xs, i) == name then i
+  else cimport_find(xs, name, i + 1, n)
+
+let cimport_id(name) =
+  let _ = if len(cimport_cell) == 0 then cimport_reset(0) else 0 in
+  let xs = nth(cimport_cell, 0) in
+  let j = cimport_find(xs, name, 0, len(xs)) in
+  if j >= 0 then j
+  else
+    let _ = list_push(xs, name) in
+    len(xs) - 1
+
+let emit_patch_cimport(ps, pos, name) =
+  cons([15, pos, cimport_id(name)], ps)
+
+let emit_cplt(b) =
+  let xs = cimport_names(0) in
+  let n = len(xs) in
+  if n == 0 then 0
+  else
+    let pad8(_) =
+      if band(bytes_len(b), 7) == 0 then 0
+      else let _ = bytes_append(b, 0) in pad8(0) in
+    let _ = pad8(0) in
+    let got = bytes_len(b) in
+    let _ = list_set(cimport_cell, 2, got) in
+    let fill(i, lim) =
+      if i >= lim then 0
+      else let _ = bytes_append(b, 0) in fill(i + 1, lim) in
+    let _ = fill(0, (3 + n) * 8) in
+    let plts = nth(cimport_cell, 1) in
+    let stub(i) =
+      if i >= n then 0
+      else
+        let _ = list_push(plts, bytes_len(b)) in
+        let slot = got + 24 + i * 8 in
+        let _ = jmp_mem_rip(b, slot - (bytes_len(b) + 6)) in
+        stub(i + 1) in
+    stub(0)
+
 /* Call-site stack maps: [ret_off, nslots]. nslots is the caller's frame. */
 let smap_cell = list_new()
 
@@ -301,6 +363,8 @@ let emit_resolve_patch(st, p) =
     apply_u64(b, nth(p, 1), nth(st, 2) + nth(p, 2))
   else if tag == 14 then
     apply_u64(b, nth(p, 1), nth(st, 2) + nth(st, 5))
+  else if tag == 15 then
+    apply_patch(b, nth(p, 1), nth(nth(cimport_cell, 1), nth(p, 2)))
   else
     0
 

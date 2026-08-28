@@ -93,6 +93,20 @@ let call_rbx_user(b) =
   let _ = call_rbx(b) in
   smap_note(bytes_len(b))
 
+/* Int (tag 0) → untagged; heap ptr → payload after 4 qwords (C char*). */
+let emit_x86_c_untag(b) =
+  let _ = test_rax_1(b) in
+  let je = bytes_len(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let _ = and_rax_1(b) in
+  let _ = add_rax_imm8(b, 32) in
+  let _ = jmp_rel32(b, 0) in
+  let jdone = bytes_len(b) - 4 in
+  let intp = bytes_len(b) in
+  let _ = apply_patch(b, je + 2, intp) in
+  let _ = sar_rax_1(b) in
+  apply_patch(b, jdone, bytes_len(b))
+
 let emit_x86_i_core(st, insn, is_entry, is_raw) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
@@ -308,7 +322,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
   else if k == "label" then
     let nm = nth(insn, 1) in
     emit_st4(st, b, cur, label_put(labels, nm, cur), patches)
-  else if k == "fcall" or k == "ccall" then
+  else if k == "fcall" then
     /* call fn(argSlots...): load args to rdi,rsi,rdx,rcx,r8,r9; call; store. */
     let dst = nth(insn, 1) in
     let fn = nth(insn, 2) in
@@ -331,6 +345,39 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
     let _ = call_user(b) in
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, callstart + 1, fn))
+  else if k == "ccall" then
+    let dst = nth(insn, 1) in
+    let fn = nth(insn, 2) in
+    let args = nth(insn, 3) in
+    let nargs = len(args) in
+    let loadarg(j) =
+      if j >= nargs then 0
+      else
+        let _ = emit_load_rax_slot(b, nth(args, j)) in
+        let _ = emit_x86_c_untag(b) in
+        let _ =
+          if j == 0 then mov_rdi_rax(b)
+          else if j == 1 then mov_rsi_rax(b)
+          else if j == 2 then mov_rdx_rax(b)
+          else if j == 3 then mov_rcx_rax(b)
+          else if j == 4 then mov_r8_rax(b)
+          else mov_r9_rax(b) in
+        loadarg(j + 1) in
+    let _ = loadarg(0) in
+    let _ = push_r64(b, 3) in
+    let _ = mov_r64_r64(b, 3, 4) in
+    let _ = e8(b, 72) in
+    let _ = e8(b, 131) in
+    let _ = e8(b, 228) in
+    let _ = e8(b, 240) in
+    let callstart = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = smap_note(bytes_len(b)) in
+    let _ = mov_r64_r64(b, 4, 3) in
+    let _ = pop_r64(b, 3) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    emit_st4(st, b, cur, labels, emit_patch_cimport(patches, callstart + 1, fn))
   else if k == "tcall" then
     /* TCO: load args, tear down frame, jmp (no extra stack). */
     let fn = nth(insn, 2) in
@@ -1416,6 +1463,7 @@ let resolve_local_labels(b, labels, patches) =
 let emit_program_x86_64(prog, load_vaddr, text_off) =
   let _ = strlit_pool_reset(0) in
   let _ = smap_reset(0) in
+  let _ = cimport_reset(0) in
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
   let _ = log_i("emit", "nfun", nfun) in
@@ -1480,6 +1528,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
     if i >= 96 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
+  let _ = emit_cplt(b) in
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
   let _ = patches_extend(extra, patches) in
   let _ = log("emit", "resolve") in

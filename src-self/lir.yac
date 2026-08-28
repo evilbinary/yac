@@ -24,12 +24,13 @@ let fv_skip_go(xs, name, i, n, acc) =
 
 let fv_skip(xs, name) = fv_skip_go(xs, name, 0, len(xs), list_new())
 
-/* DESIGN bin(op,s,a,b) */
+/* DESIGN bin(op,s,a,b). User + - * / go through yac_num_* (int fast path
+ * or decimal strings). % and bits stay integer insns. */
 let bin(op, d, a, b) =
-  if op == "+" then ["add", d, a, b]
-  else if op == "-" then ["sub", d, a, b]
-  else if op == "*" then ["mul", d, a, b]
-  else if op == "/" then ["div", d, a, b]
+  if op == "+" then ["fcall", d, "yac_num_add", [a, b]]
+  else if op == "-" then ["fcall", d, "yac_num_sub", [a, b]]
+  else if op == "*" then ["fcall", d, "yac_num_mul", [a, b]]
+  else if op == "/" then ["fcall", d, "yac_num_div", [a, b]]
   else if op == "%" then ["rem", d, a, b]
   else if op == "and" then ["land", d, a, b]
   else if op == "or" then ["lor", d, a, b]
@@ -314,6 +315,13 @@ let is_prim_name(w) =
   else if w == "bshl" then true
   else if w == "bshr" then true
   else if w == "gc_collect" then true
+  else if w == "is_int" then true
+  else if w == "iadd" then true
+  else if w == "isub" then true
+  else if w == "imul" then true
+  else if w == "idiv" then true
+  else if w == "irem" then true
+  else if w == "ccall" then true
   else false
 
 /* AST scope check (C ANF in_scope). "" = ok, else the unbound name. */
@@ -523,60 +531,60 @@ let list_ext(dst, src, i, n) =
     list_ext(dst, src, i + 1, n)
 
 let lir_rt_list(g, dst, ss) =
-  if g == "cons" then ["ccall", dst, "yac_cons", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "len" then ["ccall", dst, "yac_len", [nth(ss, 0)]]
-  else if g == "nth" then ["ccall", dst, "yac_nth", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "tail" then ["ccall", dst, "yac_tail", [nth(ss, 0)]]
-  else if g == "append" then ["ccall", dst, "yac_append", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "drop" then ["ccall", dst, "yac_drop", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "foldl" then ["ccall", dst, "yac_foldl", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
-  else if g == "map" then ["ccall", dst, "yac_map", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "list_new" then ["ccall", dst, "yac_list_new", []]
-  else if g == "list_push" then ["ccall", dst, "yac_list_push", [nth(ss, 0), nth(ss, 1)]]
+  if g == "cons" then ["fcall", dst, "yac_cons", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "len" then ["fcall", dst, "yac_len", [nth(ss, 0)]]
+  else if g == "nth" then ["fcall", dst, "yac_nth", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "tail" then ["fcall", dst, "yac_tail", [nth(ss, 0)]]
+  else if g == "append" then ["fcall", dst, "yac_append", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "drop" then ["fcall", dst, "yac_drop", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "foldl" then ["fcall", dst, "yac_foldl", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
+  else if g == "map" then ["fcall", dst, "yac_map", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "list_new" then ["fcall", dst, "yac_list_new", []]
+  else if g == "list_push" then ["fcall", dst, "yac_list_push", [nth(ss, 0), nth(ss, 1)]]
   else if g == "list_set" then
-    ["ccall", dst, "yac_list_set", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
-  else if g == "list_rev" then ["ccall", dst, "yac_list_rev", [nth(ss, 0)]]
+    ["fcall", dst, "yac_list_set", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
+  else if g == "list_rev" then ["fcall", dst, "yac_list_rev", [nth(ss, 0)]]
   else 0
 
 let lir_rt_str(g, dst, ss) =
   if g == "str_len" then ["str_len", dst, nth(ss, 0)]
-  else if g == "str_hash" then ["ccall", dst, "yac_str_hash", [nth(ss, 0)]]
-  else if g == "ident_hash" then ["ccall", dst, "yac_ident_hash", [nth(ss, 0)]]
+  else if g == "str_hash" then ["fcall", dst, "yac_str_hash", [nth(ss, 0)]]
+  else if g == "ident_hash" then ["fcall", dst, "yac_ident_hash", [nth(ss, 0)]]
   else if g == "str_ref" then ["str_ref", dst, nth(ss, 0), nth(ss, 1)]
-  else if g == "str_cat" then ["ccall", dst, "yac_str_cat", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "str_cat" then ["fcall", dst, "yac_str_cat", [nth(ss, 0), nth(ss, 1)]]
   else if g == "str_slice" then
-    ["ccall", dst, "yac_str_slice", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
-  else if g == "str_chr" then ["ccall", dst, "yac_str_chr", [nth(ss, 0)]]
-  else if g == "int_to_str" then ["ccall", dst, "yac_int_to_str", [nth(ss, 0)]]
-  else if g == "time_ms" then ["ccall", dst, "time_ms", []]
-  else if g == "time_ns" then ["ccall", dst, "time_ns", []]
-  else if g == "time_str" then ["ccall", dst, "time_str", []]
-  else if g == "box_new" then ["ccall", dst, "yac_box_new", []]
-  else if g == "box_get" then ["ccall", dst, "yac_box_get", [nth(ss, 0)]]
+    ["fcall", dst, "yac_str_slice", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
+  else if g == "str_chr" then ["fcall", dst, "yac_str_chr", [nth(ss, 0)]]
+  else if g == "int_to_str" then ["fcall", dst, "yac_int_to_str", [nth(ss, 0)]]
+  else if g == "time_ms" then ["fcall", dst, "time_ms", []]
+  else if g == "time_ns" then ["fcall", dst, "time_ns", []]
+  else if g == "time_str" then ["fcall", dst, "time_str", []]
+  else if g == "box_new" then ["fcall", dst, "yac_box_new", []]
+  else if g == "box_get" then ["fcall", dst, "yac_box_get", [nth(ss, 0)]]
   else if g == "box_set" then
-    ["ccall", dst, "yac_box_set", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "yac_prof_cell" then ["ccall", dst, "yac_prof_cell", []]
-  else if g == "argc" then ["ccall", dst, "yac_argc", []]
-  else if g == "argv" then ["ccall", dst, "yac_argv", [nth(ss, 0)]]
+    ["fcall", dst, "yac_box_set", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "yac_prof_cell" then ["fcall", dst, "yac_prof_cell", []]
+  else if g == "argc" then ["fcall", dst, "yac_argc", []]
+  else if g == "argv" then ["fcall", dst, "yac_argv", [nth(ss, 0)]]
   else 0
 
 let lir_rt_bytes(g, dst, ss) =
-  if g == "bytes_to_str" then ["ccall", dst, "yac_bytes_to_str", [nth(ss, 0)]]
-  else if g == "bytes_new" then ["ccall", dst, "yac_bytes_new", []]
+  if g == "bytes_to_str" then ["fcall", dst, "yac_bytes_to_str", [nth(ss, 0)]]
+  else if g == "bytes_new" then ["fcall", dst, "yac_bytes_new", []]
   else if g == "bytes_len" then ["bytes_len", dst, nth(ss, 0)]
-  else if g == "bytes_ref" then ["ccall", dst, "yac_bytes_ref", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "bytes_ref" then ["fcall", dst, "yac_bytes_ref", [nth(ss, 0), nth(ss, 1)]]
   else if g == "bytes_put" then
-    ["ccall", dst, "yac_bytes_put", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
-  else if g == "bytes_append" then ["ccall", dst, "yac_bytes_append", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "bytes_extend" then ["ccall", dst, "yac_bytes_extend", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "read_file" then ["ccall", dst, "yac_read_file", [nth(ss, 0)]]
-  else if g == "write_file" then ["ccall", dst, "yac_write_file", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "system" then ["ccall", dst, "yac_system", [nth(ss, 0)]]
-  else if g == "read_line" then ["ccall", dst, "yac_read_line", []]
+    ["fcall", dst, "yac_bytes_put", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
+  else if g == "bytes_append" then ["fcall", dst, "yac_bytes_append", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "bytes_extend" then ["fcall", dst, "yac_bytes_extend", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "read_file" then ["fcall", dst, "yac_read_file", [nth(ss, 0)]]
+  else if g == "write_file" then ["fcall", dst, "yac_write_file", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "system" then ["fcall", dst, "yac_system", [nth(ss, 0)]]
+  else if g == "read_line" then ["fcall", dst, "yac_read_line", []]
   else if g == "jit_run" then
-    ["ccall", dst, "yac_jit_run", [nth(ss, 0), nth(ss, 1)]]
+    ["fcall", dst, "yac_jit_run", [nth(ss, 0), nth(ss, 1)]]
   else if g == "exit" then ["exit", nth(ss, 0)]
-  else if g == "gc_collect" then ["ccall", dst, "gc_collect", []]
+  else if g == "gc_collect" then ["fcall", dst, "gc_collect", []]
   else if g == "band" then bin("&", dst, nth(ss, 0), nth(ss, 1))
   else if g == "bor" then bin("|", dst, nth(ss, 0), nth(ss, 1))
   else if g == "bxor" then bin("^", dst, nth(ss, 0), nth(ss, 1))
@@ -585,11 +593,23 @@ let lir_rt_bytes(g, dst, ss) =
   else if g == "bshr" then bin(">>", dst, nth(ss, 0), nth(ss, 1))
   else 0
 
+let lir_rt_num(g, dst, ss) =
+  if g == "is_int" then ["is_int", dst, nth(ss, 0)]
+  else if g == "iadd" then ["add", dst, nth(ss, 0), nth(ss, 1)]
+  else if g == "isub" then ["sub", dst, nth(ss, 0), nth(ss, 1)]
+  else if g == "imul" then ["mul", dst, nth(ss, 0), nth(ss, 1)]
+  else if g == "idiv" then ["div", dst, nth(ss, 0), nth(ss, 1)]
+  else if g == "irem" then ["rem", dst, nth(ss, 0), nth(ss, 1)]
+  else 0
+
 let lir_rt(g, dst, ss) =
   let a = lir_rt_list(g, dst, ss) in
   if a == 0 then
     let b = lir_rt_str(g, dst, ss) in
-    if b == 0 then lir_rt_bytes(g, dst, ss) else b
+    if b == 0 then
+      let c = lir_rt_bytes(g, dst, ss) in
+      if c == 0 then lir_rt_num(g, dst, ss) else c
+    else b
   else a
 
 /* callι: Σ then Γ then runtime. Do not turn every ncap>0 into icall.
@@ -696,18 +716,37 @@ let lir_letcallcc_finish(s, p, br, rslot) =
    env_bind(nth(br, 2), nth(p, 4), rslot, 0),
    next, nth(br, 4), uid + 2, nth(s, 5)]
 
-let lir_letcall(b, pack) =
+let ccall_cname(b) =
+  let fn = nth(b, 2) in
+  if nth(fn, 0) != "var" then ""
+  else if nth(fn, 1) != "ccall" then ""
+  else if len(nth(b, 3)) == 0 then ""
+  else if nth(nth(nth(b, 3), 0), 0) != "str" then ""
+  else nth(nth(nth(b, 3), 0), 1)
+
+let lir_letccall(b, pack) =
   let s = nth(pack, 0) in
   let lr = lir_loadargs(nth(b, 3),
-            [0, nth(s, 0), nth(s, 1), nth(s, 2), nth(s, 3)], []) in
+            [1, nth(s, 0), nth(s, 1), nth(s, 2), nth(s, 3)], []) in
   let dst = nth(lr, 3) in
-  let ins = maybe_tcall(
-    rest_is_tail(nth(s, 5), [nth(pack, 1), nth(pack, 2), nth(pack, 3), nth(b, 1)]),
-    calli(nth(nth(b, 2), 1), dst, nth(lr, 1), nth(s, 1), nth(s, 3), nth(s, 5)),
-    nth(s, 5)) in
-  [insn_push(nth(lr, 0), ins),
+  [insn_push(nth(lr, 0), ["ccall", dst, ccall_cname(b), nth(lr, 1)]),
    env_bind(nth(lr, 2), nth(b, 1), dst, 0), dst + 1,
    nth(s, 3), nth(s, 4), nth(s, 5)]
+
+let lir_letcall(b, pack) =
+  if ccall_cname(b) != "" then lir_letccall(b, pack)
+  else
+    let s = nth(pack, 0) in
+    let lr = lir_loadargs(nth(b, 3),
+              [0, nth(s, 0), nth(s, 1), nth(s, 2), nth(s, 3)], []) in
+    let dst = nth(lr, 3) in
+    let ins = maybe_tcall(
+      rest_is_tail(nth(s, 5), [nth(pack, 1), nth(pack, 2), nth(pack, 3), nth(b, 1)]),
+      calli(nth(nth(b, 2), 1), dst, nth(lr, 1), nth(s, 1), nth(s, 3), nth(s, 5)),
+      nth(s, 5)) in
+    [insn_push(nth(lr, 0), ins),
+     env_bind(nth(lr, 2), nth(b, 1), dst, 0), dst + 1,
+     nth(s, 3), nth(s, 4), nth(s, 5)]
 
 let bind_caps(fvs, ncap, env, j, e) =
   if j >= ncap then e

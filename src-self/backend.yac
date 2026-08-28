@@ -2,7 +2,13 @@
 
 let backend_emit(t, ast) = nth(lower_expr(ast, t), 0)
 
-let backend_pack(t, code) = pack_image(t, code)
+let backend_pack(t, code) =
+  if target_format(t) != "elf" then pack_image(t, code)
+  else if target_shared(t) then pack_image(t, code)
+  else if cimport_n(0) == 0 then pack_image(t, code)
+  else if target_emachine(t) != 62 then pack_image(t, code)
+  else pack_elf_libc(code, target_emachine(t), target_vaddr(t),
+                    target_text_off(t), cimport_names(0), cimport_got(0))
 
 let backend_compile(prog) = pack_elf(nth(lower_program(prog), 0))
 
@@ -93,7 +99,7 @@ let compile_jit(src, t, named) =
 
 let make_pipeline(t) =
   let pass_lower(ast) = nth(lower_expr(ast, t), 0) in
-  let pass_pack(code) = pack_image(t, code) in
+  let pass_pack(code) = backend_pack(t, code) in
   [mk_pass("lex", pass_lex),
    mk_pass("parse", pass_parse),
    mk_pass("anf", pass_anf),

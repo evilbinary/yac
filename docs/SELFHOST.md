@@ -146,7 +146,7 @@ let anf = ["tailcall", ["var","fact"], [["int",5]]]
 
 ISA 以 `docs/DESIGN.md` §2.1 为准。构造器与 emit 同一套标签（`local`/`add`/`cmpjmp`/`fcall`/`mref`/…）。手写 boot LIR 可带 `exit` 糖。
 
-槽机：值为栈槽，临时值走返回寄存器。没有独立寄存器分配。`nth`/`cons`/`len`/`str_cat` 不是 LIR 指令，走 `ccall yac_*`。
+槽机：值为栈槽，临时值走返回寄存器。没有独立寄存器分配。`nth`/`cons`/`len`/`str_cat` 不是 LIR 指令，走 `fcall yac_*`。`ccall("name", …)` 走 C ABI。
 
 ### 6.2 后端流程
 

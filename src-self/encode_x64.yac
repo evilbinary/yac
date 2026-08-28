@@ -300,6 +300,11 @@ let jcc_rel32(b, cc, off) =
 let jcc_rel8(b, cc, off) =
   let _ = e8(b, bor(112, cc)) in
   e8(b, band(off, 255))
+/* jmp qword ptr [rip+disp32]: ff 25 id32 */
+let jmp_mem_rip(b, disp) =
+  let _ = e8(b, 255) in
+  let _ = e8(b, 37) in
+  e32(b, disp)
 /* jmp rel32: e9 id32 */
 let jmp_rel32(b, off) =
   let _ = e8(b, 233) in
