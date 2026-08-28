@@ -229,12 +229,16 @@ void gc_collect(Gc *g) {
         o = next;
     }
     *p = NULL;
-    g->live = live;
-    g->live_objs = nobjs;
-    g->total_objs = nobjs;
-    g->allocated = 0;
     {
+        size_t old_live = g->live;
+        g->live = live;
+        g->live_objs = nobjs;
+        g->total_objs = nobjs;
+        g->allocated = 0;
         size_t next = live > ((size_t)-1) / 2 ? (size_t)-1 : live * 2;
+        /* Live barely dropped: grow faster so we don't re-mark a stable heap. */
+        if (old_live && live * 4 >= old_live * 3 && next < ((size_t)-1) / 2)
+            next = live * 4;
         if (next < g->min_threshold) next = g->min_threshold;
         g->threshold = next;
     }
@@ -246,7 +250,7 @@ void gc_collect(Gc *g) {
 
 void gc_init(Gc *g, size_t threshold) {
     memset(g, 0, sizeof(*g));
-    g->threshold = threshold > 0 ? threshold : 1024 * 1024;
+    g->threshold = threshold > 0 ? threshold : 8u * 1024 * 1024;
     g->min_threshold = g->threshold;
     g->enabled = true;
     g->envroot = NULL;

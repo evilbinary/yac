@@ -248,7 +248,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **riscv64 / arm64**：与 x86 同源 `COMPILER_CASES` 在 qemu 下全过。`rv_li32_at` 必须保留原 `lui` 的 rd（`yac_alloc` 的 bump 用 t0）；若写成固定 t1，堆指针读到垃圾，用户函数/闭包会挂死或 SIGSEGV。
 
-**近期完成（perf）**：全量 bundle 自编译曾 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）。`emit_insn` 已按 core/heap/clos/prim 拆开。`str_cat` / `str_slice` / `bytes_extend` / `bytes_to_str` 走 kernel `memcpy`（x86 `rep movsb`）。
+**近期完成（perf）**：全量 bundle 自编译曾 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）。C 解释器 GC：收集后阈值为 `max(8MiB, 2×live)`，本轮几乎不回收则 `4×live`（避免每 1MiB 重扫大堆）。L4 客机约 **34s**、~257 次收集。`emit_insn` 已按 core/heap/clos/prim 拆开。`str_cat` / `str_slice` / `bytes_extend` / `bytes_to_str` 走 kernel `memcpy`（x86 `rep movsb`）。
 
 ### 10.2 计划（按用户确定的路线图）
 
@@ -516,7 +516,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 **仍待**：
 1. **M6 L6（已完成）**：`make test` 用原生 `yc_a` 编译 `tests/run.yac`（`system` + `build/test_tmp/pout|perr`，不用 `popen`）。compiler/qemu/boot/`yc_b`/iso 经原生 `yc`。cps/callcc/float/bignum 与属性测试仍走 C。`./yac tests/run.yac` 仍可解释该 harness（需已有 `build/yc_tmp/yc_a`）。
-2. **M7（进行中）**：原生 `callcc`/`throw`（CONT 对象 + 栈帧 longjmp；捕获点是整个 `let x = callcc(e) in body` 的续延，与 C CPS 一致）。scheme 前端未做。
+2. **M7（进行中）**：原生 `callcc`/`throw`（CONT 对象 + 栈帧 longjmp；捕获点是整个 `let x = callcc(e) in body` 的续延，与 C CPS 一致）。scheme 子集在 `scheme.yac`（`--scheme`）。ANF→CPS dump 与 C 级 `--both` 仍未做。
 3. **GC**：`yac_gc` 已是 `$proc`；x86 读栈图，其它架构保守扫栈。`--emit-asm` / `regalloc.yac`：未做。
 
 **L4 已通（原生 `yc_a`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_a` / `yc_b`。

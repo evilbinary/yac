@@ -62,7 +62,7 @@ usage: yac [options] file.yac
 
 调试钩子（环境变量）：
 
-- `YAC_GC_THRESHOLD=N` — GC 触发下限（字节）。每次收集后阈值变为 `max(N, 2×live)`，避免大堆被每 1MiB 重扫一遍。
+- `YAC_GC_THRESHOLD=N` — GC 触发下限（默认 8MiB）。收集后阈值为 `max(N, 2×live)`；若本轮几乎没回收则用 `4×live`。
 - `YAC_GC_DBG=1` — 每次回收打印存活对象数。
 
 ## 运行时持久化
