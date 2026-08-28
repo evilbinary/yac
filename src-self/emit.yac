@@ -115,7 +115,8 @@ let is_raw_op(k) =
   else if k == "$bt" then true
   else if k == "$fp" then true
   else if k == "$smap" then true
-  else k == "$jcc"
+  else if k == "$jcc" then true
+  else k == "$memset"
 
 let is_frame_op(k) =
   if k == "local" then true

@@ -504,6 +504,22 @@ let emit_a64_i_raw(st, insn) =
     let _ = a64_patch_bcond(b, jeq, done) in
     let _ = a64_apply_b26(b, jb, loop) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$memset" then
+    let _ = a64_slot(b, nth(insn, 1), false, 0) in
+    let _ = a64_slot(b, nth(insn, 2), false, 1) in
+    let loop = bytes_len(b) in
+    let _ = a64_cmp_imm(b, 1, 0) in
+    let jeq = bytes_len(b) in
+    let _ = a64_b_eq(b, 0) in
+    let _ = a64_strb(b, 31, 0) in
+    let _ = a64_add_imm(b, 0, 0, 1) in
+    let _ = a64_sub_imm(b, 1, 1, 1) in
+    let jb = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    let done = bytes_len(b) in
+    let _ = a64_patch_bcond(b, jeq, done) in
+    let _ = a64_apply_b26(b, jb, loop) in
+    emit_st4(st, b, cur, labels, patches)
   else if k == "$lea" then
     let off = bshl(nth(insn, 2) + 1, 3) in
     let _ = a64_sub_imm(b, 0, 29, off) in
@@ -1194,7 +1210,7 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 88 then 0
+    if i >= 96 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in

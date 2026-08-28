@@ -525,6 +525,21 @@ let emit_rv_i_raw(st, insn) =
     let _ = rv_patch_b(b, jeq, done) in
     let _ = rv_apply_jal(b, jb, loop, 0) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$memset" then
+    let _ = rv_slot(b, nth(insn, 1), false, 10) in
+    let _ = rv_slot(b, nth(insn, 2), false, 11) in
+    let loop = bytes_len(b) in
+    let jeq = bytes_len(b) in
+    let _ = rv_beq(b, 11, 0, 0) in
+    let _ = rv_sb(b, 0, 10, 0) in
+    let _ = rv_addi(b, 10, 10, 1) in
+    let _ = rv_addi(b, 11, 11, 0 - 1) in
+    let jb = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let done = bytes_len(b) in
+    let _ = rv_patch_b(b, jeq, done) in
+    let _ = rv_apply_jal(b, jb, loop, 0) in
+    emit_st4(st, b, cur, labels, patches)
   else if k == "$lea" then
     let off = 0 - bshl(nth(insn, 2) + 1, 3) in
     let _ = rv_addi(b, 10, 8, off) in
@@ -1220,7 +1235,7 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 88 then 0
+    if i >= 96 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in

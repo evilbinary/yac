@@ -579,6 +579,15 @@ let emit_x86_i_raw(st, insn) =
     let _ = cld(b) in
     let _ = rep_movsb(b) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$memset" then
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = mov_rdi_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rcx_rax(b) in
+    let _ = xor_rax_rax(b) in
+    let _ = cld(b) in
+    let _ = rep_stosb(b) in
+    emit_st4(st, b, cur, labels, patches)
   else if k == "$lea" then
     let _ = emit_lea_rax_slot(b, nth(insn, 2)) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
@@ -1425,7 +1434,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let b = nth(st, 0) in
   let LOAD_VADDR = load_vaddr in
   let TEXT_OFF = text_off in
-  /* writable globals: gc_head, argc, argv, stack_hi, gc_free, alloc_bump, heap_lo, prof_st, gc_bm, gc_hi, gc_bmlo. */
+  /* writable globals: gc_head, argc, argv, stack_hi, gc_free, alloc_bump, heap_lo, prof_st, gc_bm, gc_hi, gc_bmlo, gc_bmsz. */
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
@@ -1438,7 +1447,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 88 then 0
+    if i >= 96 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
