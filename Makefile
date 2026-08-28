@@ -9,13 +9,15 @@ YC_BUNDLE = $(YC_BUILD)/yc_bundle.yac
 YC_BIN = $(YC_BUILD)/yc
 YC_A = $(YC_BUILD)/yc_a
 YC_B = $(YC_BUILD)/yc_b
-YC_SRCS = src-self/log.yac src-self/pass.yac src-self/target.yac src-self/map.yac \
-	src-self/lexer.yac src-self/parser.yac src-self/anf.yac \
-	src-self/encode_x64.yac src-self/encode_arm64.yac src-self/encode_riscv64.yac \
-	src-self/elf.yac src-self/pe.yac src-self/macho.yac src-self/pack.yac \
-	src-self/lir.yac src-self/runtime.yac src-self/emit.yac \
-	src-self/emit_x86_64.yac src-self/emit_arm64.yac src-self/emit_riscv64.yac \
-	src-self/lower.yac src-self/profile.yac src-self/backend.yac src-self/scheme.yac src-self/yc.yac
+YC_SRCS = src-self/lib/log.yac src-self/lib/pass.yac src-self/lib/map.yac \
+	src-self/front/lexer.yac src-self/front/parser.yac src-self/front/anf.yac src-self/front/lir.yac \
+	src-self/pack/target.yac src-self/pack/elf.yac src-self/pack/pe.yac src-self/pack/macho.yac src-self/pack/pack.yac \
+	src-self/rt/runtime.yac \
+	src-self/back/encode/encode_x64.yac src-self/back/encode/encode_arm64.yac src-self/back/encode/encode_riscv64.yac \
+	src-self/back/emit/emit.yac \
+	src-self/back/emit/emit_x86_64.yac src-self/back/emit/emit_arm64.yac src-self/back/emit/emit_riscv64.yac \
+	src-self/back/lower.yac src-self/back/profile.yac src-self/back/backend.yac \
+	src-self/lang/scheme.yac src-self/yc.yac
 
 all: $(BIN)
 

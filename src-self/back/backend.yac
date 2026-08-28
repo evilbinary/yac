@@ -32,7 +32,7 @@ let file_or_0(p) =
   if r == 0 then 0 else r
 
 let stdlib_src(name) =
-  let rel = str_cat("src-self/", name) in
+  let rel = str_cat("src-self/rt/", name) in
   let a = file_or_0(rel) in
   if a != 0 then a
   else

@@ -110,10 +110,33 @@ let emit_one(st, c) =
     let _ = run(["chmod", "+x", str_cat(TMP, "/emit.bin")]) in
     check(st, nth(c, 0), nth(c, 2), int_to_str(nth(run([str_cat(TMP, "/emit.bin")]), 0)))
 
+let src_self_rel(n) =
+  if n == "log.yac" then "lib/log.yac"
+  else if n == "pass.yac" then "lib/pass.yac"
+  else if n == "map.yac" then "lib/map.yac"
+  else if n == "target.yac" then "pack/target.yac"
+  else if n == "lexer.yac" then "front/lexer.yac"
+  else if n == "parser.yac" then "front/parser.yac"
+  else if n == "anf.yac" then "front/anf.yac"
+  else if n == "lir.yac" then "front/lir.yac"
+  else if n == "runtime.yac" then "rt/runtime.yac"
+  else if n == "elf.yac" then "pack/elf.yac"
+  else if n == "pe.yac" then "pack/pe.yac"
+  else if n == "macho.yac" then "pack/macho.yac"
+  else if n == "pack.yac" then "pack/pack.yac"
+  else if n == "lower.yac" then "back/lower.yac"
+  else if n == "profile.yac" then "back/profile.yac"
+  else if n == "backend.yac" then "back/backend.yac"
+  else if n == "scheme.yac" then "lang/scheme.yac"
+  else if n == "emit.yac" then "back/emit/emit.yac"
+  else if str_slice(n, 0, 7) == "encode_" then str_cat("back/encode/", n)
+  else if str_slice(n, 0, 5) == "emit_" then str_cat("back/emit/", n)
+  else n
+
 let src_self(names) =
   let rec(i, acc) =
     if i >= len(names) then acc
-    else rec(i + 1, str_cat(acc, read_file(str_cat("src-self/", nth(names, i))))) in
+    else rec(i + 1, str_cat(acc, read_file(str_cat("src-self/", src_self_rel(nth(names, i)))))) in
   rec(0, "")
 
 let unit_one(st, c) =
@@ -226,7 +249,7 @@ let pipe_suite(st) =
     ["letfun f(2)", "let f(x) = x + 1 in f(2)\n", "3"]])
 
 let elf_suite(st) =
-  let _ = cat_files(["src-self/elf.yac", "src-self/driver_elf.yac"], str_cat(TMP, "/elf_run.yac")) in
+  let _ = cat_files(["src-self/pack/elf.yac", "src-self/drivers/driver_elf.yac"], str_cat(TMP, "/elf_run.yac")) in
   let br = native_build(str_cat(TMP, "/elf_run.yac"), str_cat(TMP, "/elf_run")) in
   if nth(br, 0) != 0 then
     check(st, "ELF magic", "ok", str_cat("yc_a rc=", int_to_str(nth(br, 0))))
@@ -315,34 +338,34 @@ let unit_suite(st) =
 
 let main =
   let _ = run(["mkdir", "-p", TMP]) in
-  let _ = cat_files(["src-self/map.yac", "src-self/lexer.yac", "src-self/driver_lex.yac"], str_cat(TMP, "/lex_run.yac")) in
-  let _ = cat_files(["src-self/map.yac", "src-self/lexer.yac", "src-self/parser.yac", "src-self/driver_parse.yac"], str_cat(TMP, "/parse_run.yac")) in
-  let _ = cat_files(["src-self/map.yac", "src-self/lexer.yac", "src-self/parser.yac", "src-self/anf.yac", "src-self/driver_anf.yac"], str_cat(TMP, "/anf_run.yac")) in
-  let _ = cat_files(["src-self/map.yac", "src-self/lexer.yac", "src-self/parser.yac", "src-self/anf.yac", "src-self/lir.yac", "src-self/driver_lir.yac"], str_cat(TMP, "/lir_run.yac")) in
+  let _ = cat_files(["src-self/lib/map.yac", "src-self/front/lexer.yac", "src-self/drivers/driver_lex.yac"], str_cat(TMP, "/lex_run.yac")) in
+  let _ = cat_files(["src-self/lib/map.yac", "src-self/front/lexer.yac", "src-self/front/parser.yac", "src-self/drivers/driver_parse.yac"], str_cat(TMP, "/parse_run.yac")) in
+  let _ = cat_files(["src-self/lib/map.yac", "src-self/front/lexer.yac", "src-self/front/parser.yac", "src-self/front/anf.yac", "src-self/drivers/driver_anf.yac"], str_cat(TMP, "/anf_run.yac")) in
+  let _ = cat_files(["src-self/lib/map.yac", "src-self/front/lexer.yac", "src-self/front/parser.yac", "src-self/front/anf.yac", "src-self/front/lir.yac", "src-self/drivers/driver_lir.yac"], str_cat(TMP, "/lir_run.yac")) in
   let _ = write_file(str_cat(TMP, "/log_stub.yac"), LOG_STUB) in
   let _ = write_file(str_cat(TMP, "/emit_stub.yac"), EMIT_STUB) in
   let _ = cat_files([str_cat(TMP, "/log_stub.yac"),
-                     "src-self/target.yac",
-                     "src-self/map.yac",
-                     "src-self/lexer.yac", "src-self/parser.yac",
-                     "src-self/encode_x64.yac", "src-self/elf.yac",
-                     "src-self/lir.yac",
-                     "src-self/emit.yac", "src-self/emit_x86_64.yac",
+                     "src-self/pack/target.yac",
+                     "src-self/lib/map.yac",
+                     "src-self/front/lexer.yac", "src-self/front/parser.yac",
+                     "src-self/back/encode/encode_x64.yac", "src-self/pack/elf.yac",
+                     "src-self/front/lir.yac",
+                     "src-self/back/emit/emit.yac", "src-self/back/emit/emit_x86_64.yac",
                      str_cat(TMP, "/emit_stub.yac"),
-                     "src-self/lower.yac",
-                     "src-self/driver_emit.yac"],
+                     "src-self/back/lower.yac",
+                     "src-self/drivers/driver_emit.yac"],
                     str_cat(TMP, "/emit_run.yac")) in
   let _ = cat_files([str_cat(TMP, "/log_stub.yac"),
-                     "src-self/target.yac",
-                     "src-self/map.yac",
-                     "src-self/lexer.yac", "src-self/parser.yac",
-                     "src-self/anf.yac",
-                     "src-self/encode_x64.yac", "src-self/elf.yac",
-                     "src-self/lir.yac", "src-self/runtime.yac",
-                     "src-self/emit.yac", "src-self/emit_x86_64.yac",
+                     "src-self/pack/target.yac",
+                     "src-self/lib/map.yac",
+                     "src-self/front/lexer.yac", "src-self/front/parser.yac",
+                     "src-self/front/anf.yac",
+                     "src-self/back/encode/encode_x64.yac", "src-self/pack/elf.yac",
+                     "src-self/front/lir.yac", "src-self/rt/runtime.yac",
+                     "src-self/back/emit/emit.yac", "src-self/back/emit/emit_x86_64.yac",
                      str_cat(TMP, "/emit_stub.yac"),
-                     "src-self/lower.yac",
-                     "src-self/driver_pipe.yac"],
+                     "src-self/back/lower.yac",
+                     "src-self/drivers/driver_pipe.yac"],
                     str_cat(TMP, "/pipe_run.yac")) in
   let _ = native_build(str_cat(TMP, "/lex_run.yac"), str_cat(TMP, "/lex_run")) in
   let _ = native_build(str_cat(TMP, "/parse_run.yac"), str_cat(TMP, "/parse_run")) in
