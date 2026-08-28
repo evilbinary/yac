@@ -25,9 +25,34 @@
 
 let reverse(xs) = list_rev(xs)
 let is_err(a) = nth(a, 0) == "error"
+/* Nested ["error", ...] (e.g. print without an argument) must not reach ANF. */
+let ast_has_err(a) =
+  let xs_err(xs, i) =
+    if i >= len(xs) then false
+    else if ast_has_err(nth(xs, i)) then true
+    else xs_err(xs, i + 1) in
+  let k = nth(a, 0) in
+  if k == "error" then true
+  else if k == "call" then
+    if ast_has_err(nth(a, 1)) then true else xs_err(nth(a, 2), 0)
+  else if k == "fun" then ast_has_err(nth(a, 2))
+  else if k == "if" then
+    if ast_has_err(nth(a, 1)) then true
+    else if ast_has_err(nth(a, 2)) then true
+    else ast_has_err(nth(a, 3))
+  else if k == "let" then
+    if ast_has_err(nth(a, 2)) then true else ast_has_err(nth(a, 3))
+  else if k == "binop" then
+    if ast_has_err(nth(a, 2)) then true else ast_has_err(nth(a, 3))
+  else if k == "not" then ast_has_err(nth(a, 1))
+  else if k == "callcc" then ast_has_err(nth(a, 1))
+  else if k == "throw" then
+    if ast_has_err(nth(a, 1)) then true else ast_has_err(nth(a, 2))
+  else if k == "list" then xs_err(nth(a, 1), 0)
+  else false
 let prog_has_err(p, i) =
   if i >= len(p) then false
-  else if is_err(nth(p, i)) then true
+  else if ast_has_err(nth(p, i)) then true
   else prog_has_err(p, i + 1)
 /* Top-level helper so parse_expr stays ncap=0 (no self-closure alloc). */
 let parse_err(j) = [["error", "parse"], j]
@@ -128,7 +153,8 @@ let parse_expr(toks, i, min_prec) =
       else parse_err(j)
     else if is_kw(j, "not") then
       let r = parse_expr(toks, j + 1, 0) in
-      [["not", nth(r, 0)], nth(r, 1)]
+      if is_err(nth(r, 0)) then parse_err(j)
+      else [["not", nth(r, 0)], nth(r, 1)]
     else if is_kw(j, "print") then
       if kk(j + 1) == "lparen" then
         let r = parse_arglist(j + 2, []) in
@@ -143,10 +169,12 @@ let parse_expr(toks, i, min_prec) =
           else parse_err(j)
       else
         let r = parse_expr(toks, j + 1, 0) in
-        [["call", ["var", "print"], [nth(r, 0), ["bool", "true"]]], nth(r, 1)]
+        if is_err(nth(r, 0)) then parse_err(j)
+        else [["call", ["var", "print"], [nth(r, 0), ["bool", "true"]]], nth(r, 1)]
     else if is_kw(j, "callcc") then
       let r = parse_expr(toks, j + 1, 0) in
-      [["callcc", nth(r, 0)], nth(r, 1)]
+      if is_err(nth(r, 0)) then parse_err(j)
+      else [["callcc", nth(r, 0)], nth(r, 1)]
     else if is_kw(j, "throw") then
       /* Two primaries (not juxta-app): `throw exit 999` is two args, not exit(999). */
       let kr = parse_primary(j + 1) in

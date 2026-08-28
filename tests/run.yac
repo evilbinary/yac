@@ -150,9 +150,28 @@ let compile_syntax_err(st, yc, src, name) =
   if ok then check(st, name, "1", "1")
   else check(st, name, "error: syntax", blob)
 
+/* Incomplete / junk input must not compile or JIT. */
+let syntax_bads(_) = [
+  ["unclosed call", "hi("],
+  ["bare print", "print"],
+  ["bare not", "not"],
+  ["bare callcc", "callcc"],
+  ["unclosed list", "[1, 2"],
+  ["unclosed paren", "(1"],
+  ["unclosed print(", "print("],
+  ["empty print()", "print()"],
+  ["let unclosed params", "let a("],
+  ["if no then", "if 1"],
+  ["if no else", "if 1 then 2"],
+  ["fun no arrow", "fun (x)"],
+  ["throw one arg", "throw k"],
+  ["trailing plus", "1 +"],
+  ["unclosed string call", "f(1,"]]
+
 let compiler_all(st, yc) =
   let st1 = foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)) in
-  compile_syntax_err(st1, yc, "hi(\n", "compiler unclosed call")
+  foldl(fun(s, c) -> compile_syntax_err(s, yc, nth(c, 1),
+                  str_cat("syntax ", nth(c, 0))), st1, syntax_bads(0))
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
