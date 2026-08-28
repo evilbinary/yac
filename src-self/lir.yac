@@ -967,6 +967,15 @@ let lir_expr_i(ast, pack) =
 /* ast = ANF body [binds, atom]. st = [insns, Γ, ctr, Σ, uid, self]. */
 let lir_expr(ast, st) = lir_expr_i(ast, pack_i(st, 0))
 
+/* st = [env, ctr, Σ, uid, insns, slot] */
+let lir_all(i, items, st, n) =
+  if i >= n then st
+  else
+    let r = lir_expr(nth(items, i),
+              st_no([nth(st, 4), nth(st, 0), nth(st, 1), nth(st, 2), nth(st, 3)])) in
+    lir_all(i + 1, items,
+      [nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5), nth(r, 0), nth(r, 1)], n)
+
 let start_proc(nslots, result_slot, body) =
   ["proc", "_start", 0, 0, insn_push(
       insn_push(

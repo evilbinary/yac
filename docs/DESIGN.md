@@ -156,7 +156,7 @@ L, name, entryName, srcname            ::= 字符串
 s                                      ::= 槽号（整数）
 ```
 
-`mov_imm` 写入 **已经编码好的** 64 位模式（翻译时完成 tag：int 为 `n<<1`，nil 为 `1`）。源级 `nth`/`cons`/`len`/`str_cat`/`foldl`/`map`/`bytes_`*/*`argc`*/*`argv`*/*`time_`/`read_file`/`write_file` 不是 LIR 指令，一律 `fcall yac_`*（或 `time_ms` 等 runtime 名）。用户 `+`/`-`/`*`/`/` 走 `yac_num_*`（整数 insn 快路径，否则 runtime 里的 `yac_num_slow` 十进制路径）。`ccall("name", …)` 降成 LIR `ccall`（C ABI / libc；x86_64 ELF）。`str_len`/`str_ref`/`bytes_len` 是对象字段读取（同 mref），emit 直出。
+`mov_imm` 写入 **已经编码好的** 64 位模式（翻译时完成 tag：int 为 `n<<1`，nil 为 `1`）。源级 `nth`/`cons`/`len`/`str_cat`/`foldl`/`map`/`bytes_`*/*`argc`*/*`argv`*/*`time_`/`read_file`/`write_file` 不是 LIR 指令，一律 `fcall yac_`*（或 `time_ms` 等 runtime 名）。用户 `+`/`-`/`*`/`/` 走 `yac_num_*`（整数 insn 快路径，否则 `yac_num_slow`）。backend 把 `num.yac` 的 `let` ANF→LIR 后经 `runtime_add` 挂进客镜像。`ccall("name", …)` 降成 LIR `ccall`（C ABI / libc；x86_64 ELF）。`str_len`/`str_ref`/`bytes_len` 是对象字段读取（同 mref），emit 直出。
 
 emit 认同一套 DESIGN 标签（`local`/`add`/`cmpjmp`/`fcall`/`ccall`/`tcall`/`icall`/`apply`/`mref`/`mset`/`mref8`…）。`apply`/`tailapply` 带已知 `ncap`；`icall`/`ticall` 无 ncap（运行时读闭包）。
 

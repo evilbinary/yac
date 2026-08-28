@@ -163,3 +163,13 @@ let anf_expr(ast, counter) =
       let bbindings2 = append(bbindings, [["let", name, batom]]) in
       [append(bbindings2, nth(bodyr, 0)), nth(bodyr, 1), nth(bodyr, 2)]
   else [["error", "anf"], ["unit"], counter]
+
+let anf_top(item) =
+  let r = anf_expr(item, 0) in
+  [nth(r, 0), nth(r, 1)]
+
+let anf_all(i, prog, acc, n) =
+  if i >= n then acc
+  else
+    let _ = list_push(acc, anf_top(nth(prog, i))) in
+    anf_all(i + 1, prog, acc, n)

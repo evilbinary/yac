@@ -1,0 +1,126 @@
+/* Decimal path for yac_num_slow (float STR / mixed int).
+ * Integer ops use iadd/isub/imul/idiv so this file does not recurse through
+ * yac_num_add. Backend lowers this file and runtime_add's the procs. */
+
+let yac_num_p10(n, acc) =
+  if n == 0 then acc else yac_num_p10(isub(n, 1), imul(acc, 10))
+
+let yac_num_nempty(_) = ""
+
+let yac_num_nzeros(k) =
+  if k <= 0 then yac_num_nempty(0)
+  else str_cat("0", yac_num_nzeros(isub(k, 1)))
+
+let yac_num_pexp_d(s, st) =
+  let i = nth(st, 0) in
+  let n = nth(st, 1) in
+  if i >= n then st
+  else
+    let c = str_ref(s, i) in
+    if c >= 48 then
+      if c <= 57 then
+        yac_num_pexp_d(s, [iadd(i, 1), n, nth(st, 2), nth(st, 3), nth(st, 4),
+                   iadd(imul(nth(st, 5), 10), isub(c, 48))])
+      else st
+    else st
+
+let yac_num_pexp_go(s, i, n, mant, frac) =
+  let i1 = iadd(i, 1) in
+  let es = if i1 < n then str_ref(s, i1) else 0 in
+  let i2 = if es == 45 then iadd(i1, 1) else if es == 43 then iadd(i1, 1) else i1 in
+  let esign = if es == 45 then 1 else 0 in
+  let st = yac_num_pexp_d(s, [i2, n, mant, frac, esign, 0]) in
+  let acc = nth(st, 5) in
+  let eexp = if nth(st, 4) == 1 then isub(0, acc) else acc in
+  [nth(st, 2), iadd(isub(0, nth(st, 3)), eexp)]
+
+let yac_num_pdigits(s, i, n, mant, frac, dot) =
+  if i >= n then [mant, isub(0, frac)]
+  else
+    let c = str_ref(s, i) in
+    if c == 46 then yac_num_pdigits(s, iadd(i, 1), n, mant, frac, 1)
+    else if c == 101 then yac_num_pexp_go(s, i, n, mant, frac)
+    else if c == 69 then yac_num_pexp_go(s, i, n, mant, frac)
+    else if c >= 48 then
+      if c <= 57 then
+        let m2 = iadd(imul(mant, 10), isub(c, 48)) in
+        let f2 = if dot == 1 then iadd(frac, 1) else frac in
+        yac_num_pdigits(s, iadd(i, 1), n, m2, f2, dot)
+      else [mant, isub(0, frac)]
+    else [mant, isub(0, frac)]
+
+let yac_num_parse_str(s) =
+  let n = str_len(s) in
+  let neg = if n > 0 then if str_ref(s, 0) == 45 then 1 else 0 else 0 in
+  let i0 = if neg == 1 then 1 else 0 in
+  let i1 = if i0 < n then if str_ref(s, i0) == 43 then iadd(i0, 1) else i0 else i0 in
+  let me = yac_num_pdigits(s, i1, n, 0, 0, 0) in
+  [neg, nth(me, 0), nth(me, 1)]
+
+let yac_num_parse_val(v) =
+  if is_int(v) then
+    if v < 0 then [1, isub(0, v), 0] else [0, v, 0]
+  else yac_num_parse_str(v)
+
+let yac_num_fmt_frac(ds, need) =
+  let dn = str_len(ds) in
+  if dn <= need then
+    str_cat("0.", str_cat(yac_num_nzeros(isub(need, dn)), ds))
+  else
+    str_cat(str_slice(ds, 0, isub(dn, need)),
+      str_cat(".", str_slice(ds, isub(dn, need), need)))
+
+let yac_num_fmt_body(ds, e) =
+  if e >= 0 then str_cat(ds, yac_num_nzeros(e))
+  else yac_num_fmt_frac(ds, isub(0, e))
+
+let yac_num_fmt(n) =
+  let s = nth(n, 0) in
+  let m = nth(n, 1) in
+  let e = nth(n, 2) in
+  if m == 0 then
+    if s == 1 then "-0" else "0"
+  else
+    let body = yac_num_fmt_body(int_to_str(m), e) in
+    if s == 1 then str_cat("-", body) else body
+
+let yac_num_align(m1, e1, m2, e2) =
+  if e1 == e2 then [m1, m2, e1]
+  else if e1 < e2 then [m1, imul(m2, yac_num_p10(isub(e2, e1), 1)), e1]
+  else [imul(m1, yac_num_p10(isub(e1, e2), 1)), m2, e2]
+
+let yac_num_add_dec(n1, n2) =
+  let al = yac_num_align(nth(n1, 1), nth(n1, 2), nth(n2, 1), nth(n2, 2)) in
+  let a = if nth(n1, 0) == 1 then isub(0, nth(al, 0)) else nth(al, 0) in
+  let b = if nth(n2, 0) == 1 then isub(0, nth(al, 1)) else nth(al, 1) in
+  let s = iadd(a, b) in
+  if s < 0 then [1, isub(0, s), nth(al, 2)] else [0, s, nth(al, 2)]
+
+let yac_num_pack(n) =
+  let m = nth(n, 1) in
+  if m == 0 then 0
+  else
+    let e = nth(n, 2) in
+    if e >= 0 then
+      let v = imul(m, yac_num_p10(e, 1)) in
+      if nth(n, 0) == 1 then isub(0, v) else v
+    else yac_num_fmt(n)
+
+let yac_num_slow(a, b, op) =
+  let n1 = yac_num_parse_val(a) in
+  let n2 = yac_num_parse_val(b) in
+  if op == 0 then yac_num_pack(yac_num_add_dec(n1, n2))
+  else if op == 1 then
+    yac_num_pack(yac_num_add_dec(n1,
+      [if nth(n2, 0) == 0 then 1 else 0, nth(n2, 1), nth(n2, 2)]))
+  else if op == 2 then
+    yac_num_pack([if nth(n1, 0) == nth(n2, 0) then 0 else 1,
+              imul(nth(n1, 1), nth(n2, 1)),
+              iadd(nth(n1, 2), nth(n2, 2))])
+  else
+    let m2 = nth(n2, 1) in
+    if m2 == 0 then 0
+    else
+      yac_num_pack([if nth(n1, 0) == nth(n2, 0) then 0 else 1,
+                idiv(imul(nth(n1, 1), yac_num_p10(6, 1)), m2),
+                isub(isub(nth(n1, 2), nth(n2, 2)), 6)])
