@@ -282,6 +282,7 @@ let unit_suite(st) =
   foldl(unit_one, st, [
     ["lir bin", ["map.yac", "lir.yac"], "print bin(\"+\", 1, 2, 3);\n0;\n", "[add, 1, 2, 3]\n0"],
     ["lexer tokenize", ["map.yac", "lexer.yac"], "print tokenize(\"let x = 5 in x + 1\");\nprint \"\";\n0;\n", "[[kw, let, 1], [ident, x, 1], [op, =, 1], [num, 5, 1], [kw, in, 1], [ident, x, 1], [op, +, 1], [num, 1, 1], [eof, , 1]]\n\n0"],
+    ["lexer eq minus", ["map.yac", "lexer.yac"], "print tokenize(\"a=-1\");\nprint \"\";\n0;\n", "[[ident, a, 1], [op, =, 1], [op, -, 1], [num, 1, 1], [eof, , 1]]\n\n0"],
     ["lexer scientific", ["map.yac", "lexer.yac"], "print tokenize(\"2.5e-3 + 1e10\");\nprint \"\";\n0;\n", "[[num, 2.5e-3, 1], [op, +, 1], [num, 1e10, 1], [eof, , 1]]\n\n0"],
     ["elf pack_elf size", ["elf.yac"], "let b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet elf = pack_elf(b);\nprint bytes_len(elf);\nprint \"\";\nprint bytes_ref(elf, 0);\nprint \"\";\nprint bytes_ref(elf, 1);\nprint \"\";\nprint bytes_ref(elf, 4);\nprint \"\";\n0;\n", "121\n\n127\n\n69\n\n2\n\n0"],
     ["pe mz magic", ["target.yac", "pe.yac"], "let t = mk_target(\"x86_64\", \"pe\", \"exec\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet pe = pack_pe_target(t, b);\nprint bytes_ref(pe, 0);\nprint \"\";\nprint bytes_ref(pe, 1);\nprint \"\";\n0;\n", "77\n\n90\n\n0"],

@@ -31,6 +31,7 @@ let anf_expr(ast, counter) =
   let anf_atom(expr, c) =
     let k = nth(expr, 0) in
     if k == "int" then [[], expr, c]
+    else if k == "float" then [[], expr, c]
     else if k == "str" then [[], expr, c]
     else if k == "bool" then [[], expr, c]
     else if k == "unit" then [[], expr, c]
@@ -50,6 +51,7 @@ let anf_expr(ast, counter) =
 
   let k = nth(ast, 0) in
   if k == "int" then [[], ast, counter]
+  else if k == "float" then [[], ast, counter]
   else if k == "str" then [[], ast, counter]
   else if k == "bool" then [[], ast, counter]
   else if k == "unit" then [[], ast, counter]

@@ -1,0 +1,2 @@
+print(0.001, false)
+print(0.000)

@@ -88,6 +88,39 @@ let read_opchars(s, i, n) =
 /* --- token constructors --- */
 let mk_tok(kind, text, line) = [kind, text, line]
 
+/* C lexer: longest valid operator, not a run of op chars (`=-` is `=` then `-`). */
+let scan_op(s, i, line, n) =
+  let c = sat(s, i) in
+  let has1 = i + 1 < n in
+  let c1 = if has1 then sat(s, i + 1) else 0 in
+  if c == 61 then
+    if has1 then
+      if c1 == 61 then [mk_tok("op", "==", line), i + 2]
+      else if c1 == 62 then [mk_tok("op", "->", line), i + 2]
+      else [mk_tok("op", "=", line), i + 1]
+    else [mk_tok("op", "=", line), i + 1]
+  else if c == 33 then
+    if has1 then
+      if c1 == 61 then [mk_tok("op", "!=", line), i + 2]
+      else [mk_tok("op", "!", line), i + 1]
+    else [mk_tok("op", "!", line), i + 1]
+  else if c == 60 then
+    if has1 then
+      if c1 == 61 then [mk_tok("op", "<=", line), i + 2]
+      else [mk_tok("op", "<", line), i + 1]
+    else [mk_tok("op", "<", line), i + 1]
+  else if c == 62 then
+    if has1 then
+      if c1 == 61 then [mk_tok("op", ">=", line), i + 2]
+      else [mk_tok("op", ">", line), i + 1]
+    else [mk_tok("op", ">", line), i + 1]
+  else if c == 45 then
+    if has1 then
+      if c1 == 62 then [mk_tok("op", "->", line), i + 2]
+      else [mk_tok("op", "-", line), i + 1]
+    else [mk_tok("op", "-", line), i + 1]
+  else [mk_tok("op", str_slice(s, i, 1), line), i + 1]
+
 /* scan an identifier or keyword starting at pos */
 let scan_ident(s, i, line, n) =
   let e = read_alnum(s, i, n) in
@@ -204,10 +237,9 @@ let lex(s, i, line, acc, n) =
       let _ = list_push(acc, nth(r, 0)) in
       lex(s, nth(r, 1), line, acc, n)
   else if is_opchar(sat(s, i)) then
-    let e = read_opchars(s, i, n) in
-    let txt = str_slice(s, i, e - i) in
-    let _ = list_push(acc, mk_tok("op", txt, line)) in
-    lex(s, e, line, acc, n)
+    let r = scan_op(s, i, line, n) in
+    let _ = list_push(acc, nth(r, 0)) in
+    lex(s, nth(r, 1), line, acc, n)
   else if is_punct(sat(s, i)) then
     let c = sat(s, i) in
     let txt = str_slice(s, i, 1) in
@@ -265,6 +297,7 @@ let intern_seed(_) =
   let _ = intern("%") in
   let _ = intern("var") in
   let _ = intern("int") in
+  let _ = intern("float") in
   let _ = intern("bool") in
   let _ = intern("unit") in
   let _ = intern("nil") in

@@ -709,10 +709,17 @@ let rt_print_val_ins(_) =
 
 let rt_print_int_ins(_) =
   [["local", 10, 1],
+   ["mov_imm", 5, 0 + 0],
+   ["icmp", "<", 6, 1, 5],
+   ["cmpjmp", 6, "pi_neg", "pi_abs"],
+   ["label", "pi_neg"],
+   ["mov_imm", 4, 45 + 45],
+   ["write1", 4],
+   ["sub", 1, 5, 1],
+   ["label", "pi_abs"],
    ["mov_imm", 2, 10 + 10],
    ["div", 3, 1, 2],
    ["rem", 4, 1, 2],
-   ["mov_imm", 5, 0 + 0],
    ["icmp", "==", 6, 3, 5],
    ["cmpjmp", 6, "pi_d", "pi_r"],
    ["label", "pi_r"],

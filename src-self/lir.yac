@@ -188,7 +188,12 @@ let str_to_int(s) =
   let start = if isneg then 1 else 0 in
   let acc(i, v) =
     if i >= n then v
-    else acc(i + 1, v * 10 + (str_ref(s, i) - 48)) in
+    else
+      let c = str_ref(s, i) in
+      if c >= 48 then
+        if c <= 57 then acc(i + 1, v * 10 + (c - 48))
+        else v
+      else v in
   let v = acc(start, 0) in
   if isneg then 0 - v else v
 
@@ -459,6 +464,9 @@ let lir_atom(atom, st) =
   let k = nth(atom, 0) in
   if k == "int" then
     [insn_push(nth(st, 0), ["mov_imm", nth(st, 2), str_to_int(nth(atom, 1)) + str_to_int(nth(atom, 1))]),
+     nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
+  else if k == "float" then
+    [insn_push(nth(st, 0), ["strlit", nth(st, 2), nth(atom, 1)]),
      nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
   else if k == "nil" then
     [insn_push(nth(st, 0), ["mov_imm", nth(st, 2), 1]),

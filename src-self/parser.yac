@@ -142,7 +142,18 @@ let parse_expr(toks, i, min_prec) =
 
   /* ---- primary / atom ---- */
   let parse_primary(j) =
-    if kk(j) == "num" then [["int", tt(j)], j + 1]
+    if kk(j) == "num" then
+      let t = tt(j) in
+      let rec(i) =
+        if i >= str_len(t) then false
+        else
+          let c = str_ref(t, i) in
+          if c == 46 then true
+          else if c == 101 then true
+          else if c == 69 then true
+          else rec(i + 1) in
+      if rec(0) then [["float", t], j + 1]
+      else [["int", t], j + 1]
     else if kk(j) == "str" then [["str", tt(j)], j + 1]
     else if kk(j) == "ident" then [["var", tt(j)], j + 1]
     else if is_kw(j, "true") then [["bool", "true"], j + 1]
