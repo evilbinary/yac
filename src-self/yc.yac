@@ -16,6 +16,7 @@ let usage(_) =
   let _ = print("  --dump-rt FILE   print compiled ANF (not C rtio format)") in
   let _ = print("  --load-rt FILE   not supported in native yc") in
   let _ = print("  --repl           interactive loop; each line is compiled and jumped to") in
+  let _ = print("                   empty line ignored; :q / :quit exits") in
   let _ = print("  --scheme         translate a Scheme subset, then run or compile") in
   let _ = print("  -o out           write an executable instead of running") in
   let _ = print("  --arch x86_64|arm64|riscv64") in
@@ -118,7 +119,9 @@ let jit_eval(src) =
 let repl_loop(acc, spec) =
   let _ = print("yc> ", false) in
   let line = read_line() in
-  if str_len(line) == 0 then 0
+  if line == 0 then 0
+  else if str_len(line) == 0 then repl_loop(acc, spec)
+  else if line == ":q" or line == ":quit" then 0
   else
     let acc2 = str_cat(acc, str_cat(line, "\n")) in
     let rc = jit_eval(prep_src(acc2, spec)) in

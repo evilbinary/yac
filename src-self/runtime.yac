@@ -1566,7 +1566,7 @@ let rt_bytes_to_str_ins(_) =
    ["mset8", 5, 9, 10],
    ["ret", 5]]
 
-/* read(0, buf, 4096) on a tty returns one line. EOF → empty string. */
+/* read(0, buf, 4096) on a tty returns one line. EOF → 0; empty line → "". */
 let rt_read_line_ins(_) =
   [["$local", 16, 0],
    ["mov_imm", 6, 4129],
@@ -1601,9 +1601,7 @@ let rt_read_line_ins(_) =
    ["$or", 8, 8, 1],
    ["ret", 8],
    ["label", "rl_empty"],
-   ["$st64", 8, 24, 9],
-   ["$st8", 2, 0, 0],
-   ["$or", 8, 8, 1],
+   ["mov_imm", 8, 0],
    ["ret", 8]]
 
 /* mmap RWX at 2^33, copy code, call _eval. args: bytes, tagged entry off. */

@@ -17,19 +17,27 @@
  *   # or YAC_PROF_OUT=FILE.prof ./yac ...
  * Native yc_a: same --prof-out TSV (enter/leave around each letfun).
  *
- * Requires prims: time_str, str_cat, int_to_str, print.
+ * Requires prims: time_str, str_cat, int_to_str, print, box_*.
  * Bundle this file first so drivers / stages can call it.
  */
 
+let log_hush =
+  let b = box_new() in
+  let _ = box_set(b, false) in
+  b
+let log_set_hush(v) = box_set(log_hush, v)
+
 let log(mod, msg) =
-  let line =
-    str_cat("[",
-      str_cat(time_str(),
-        str_cat("] [",
-          str_cat(mod,
-            str_cat("] ", msg))))) in
-  let _ = print line in
-  0
+  if box_get(log_hush) then 0
+  else
+    let line =
+      str_cat("[",
+        str_cat(time_str(),
+          str_cat("] [",
+            str_cat(mod,
+              str_cat("] ", msg))))) in
+    let _ = print line in
+    0
 
 let log_i(mod, key, n) =
   log(mod, str_cat(key, str_cat("=", int_to_str(n))))
