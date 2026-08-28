@@ -1091,3 +1091,14 @@ let cmp_rbx_rax(b) =
 /* test rdi, rdi  (48 85 ff) */
 let test_rdi_rdi(b) =
   let _ = e8(b, 72) in let _ = e8(b, 133) in e8(b, 255)
+/* jmp qword [rbx+disp8]  (ff 63 id8) */
+let jmp_mem_rbx_disp8(b, d) =
+  let _ = e8(b, 255) in let _ = e8(b, 99) in e8(b, band(d, 255))
+/* mov rbp, [rbx+disp8]  (48 8b 6b id8) */
+let mov_rbp_rbx_disp8(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 107) in
+  e8(b, band(d, 255))
+/* mov rsp, [rbx+disp8]  (48 8b 63 id8) */
+let mov_rsp_rbx_disp8(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 99) in
+  e8(b, band(d, 255))

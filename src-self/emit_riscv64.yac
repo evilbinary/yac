@@ -1119,6 +1119,45 @@ let emit_rv_i_memcpy(st, insn) =
   let _ = rv_apply_jal(b, jb, loop, 0) in
   emit_st4(st, b, cur, labels, patches)
 
+let emit_rv_i_cc(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let k = nth(insn, 0) in
+  if k == "mkcont" then
+    let _ = rv_li(b, 10, 48) in
+    let pos = bytes_len(b) in
+    let _ = rv_jal(b, 1, 0) in
+    let _ = rv_untag_ptr(b, 10) in
+    let _ = rv_sd(b, 0, 10, 8) in
+    let _ = rv_li(b, 11, 6) in
+    let _ = rv_sd(b, 11, 10, 16) in
+    let _ = rv_sd(b, 8, 10, 24) in
+    let _ = rv_sd(b, 2, 10, 32) in
+    let labpos = bytes_len(b) in
+    let _ = rv_li32_pair(b, 6, 0) in
+    let _ = rv_sd(b, 6, 10, 40) in
+    let _ = rv_tag(b, 10) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels,
+      emit_patch_rel(nth(st, 4),
+        cons(["cclab", labpos, nth(insn, 2)], patches), pos, "yac_alloc"))
+  else if k == "throwk" then
+    let _ = rv_slot(b, nth(insn, 1), false, 11) in
+    let _ = rv_untag_ptr(b, 11) in
+    let _ = rv_slot(b, nth(insn, 2), false, 10) in
+    let _ = rv_ld(b, 8, 11, 24) in
+    let _ = rv_ld(b, 6, 11, 32) in
+    let _ = rv_ld(b, 7, 11, 40) in
+    let _ = rv_addi(b, 2, 6, 0) in
+    let _ = rv_jalr(b, 0, 7, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "cc_recv" then
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, patches)
+  else st
+
 let emit_insn_rv_go(st, insn, is_entry) =
   let k = nth(insn, 0) in
   if k == "closure" or k == "apply" or k == "icall"
@@ -1140,6 +1179,8 @@ let emit_insn_rv_go(st, insn, is_entry) =
        or k == "time_str" or k == "argc" or k == "argv" then
     emit_rv_i_heap(st, insn)
   else if k == "memcpy" then emit_rv_i_memcpy(st, insn)
+  else if k == "mkcont" or k == "throwk" or k == "cc_recv" then
+    emit_rv_i_cc(st, insn)
   else emit_rv_i_prim(st, insn)
 
 let emit_insn_rv(st, insn, is_entry) =
@@ -1181,6 +1222,8 @@ let rv_resolve_patch(st, p) =
     rv_apply_jal(b, nth(p, 1), nth(offs, nth(p, 2)), 0)
   else if tag == 11 then
     rv_li32_at(b, nth(p, 1), 10, nth(st, 5) + nth(p, 2) + 1)
+  else if tag == "cclab" then
+    rv_li32_at(b, nth(p, 1), 6, codebase + rv_lookup(labels, nth(p, 2)))
   else
     let pos = nth(p, 1) in
     let lab = nth(p, 2) in

@@ -1,0 +1,2 @@
+let k = callcc(fun (k) -> k) in
+throw k 42

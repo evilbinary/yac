@@ -1084,6 +1084,47 @@ let emit_a64_i_memcpy(st, insn) =
   let _ = a64_apply_b26(b, jb, loop) in
   emit_st4(st, b, cur, labels, patches)
 
+let emit_a64_i_cc(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let k = nth(insn, 0) in
+  if k == "mkcont" then
+    let _ = a64_mov_imm64(b, 0, 48) in
+    let pos = bytes_len(b) in
+    let _ = a64_bl(b, 0) in
+    let _ = a64_untag_ptr(b, 0) in
+    let _ = a64_movz(b, 1, 0, 0) in
+    let _ = a64_stur(b, 1, 0, 8) in
+    let _ = a64_movz(b, 1, 6, 0) in
+    let _ = a64_stur(b, 1, 0, 16) in
+    let _ = a64_stur(b, 29, 0, 24) in
+    let _ = a64_mov_sp(b, 9, 31) in
+    let _ = a64_stur(b, 9, 0, 32) in
+    let labpos = bytes_len(b) in
+    let _ = a64_mov_imm64(b, 8, 0) in
+    let _ = a64_stur(b, 8, 0, 40) in
+    let _ = a64_tag(b, 0) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels,
+      emit_patch_rel(nth(st, 4),
+        cons(["cclab", labpos, nth(insn, 2)], patches), pos, "yac_alloc"))
+  else if k == "throwk" then
+    let _ = a64_slot(b, nth(insn, 1), false, 1) in
+    let _ = a64_untag_ptr(b, 1) in
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let _ = a64_ldur(b, 29, 1, 24) in
+    let _ = a64_ldur(b, 9, 1, 32) in
+    let _ = a64_mov_sp(b, 31, 9) in
+    let _ = a64_ldur(b, 8, 1, 40) in
+    let _ = a64_br(b, 8) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "cc_recv" then
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else st
+
 let emit_insn_a64_go(st, insn, is_entry) =
   let k = nth(insn, 0) in
   if k == "closure" or k == "apply" or k == "icall"
@@ -1105,6 +1146,8 @@ let emit_insn_a64_go(st, insn, is_entry) =
        or k == "time_str" or k == "argc" or k == "argv" then
     emit_a64_i_heap(st, insn)
   else if k == "memcpy" then emit_a64_i_memcpy(st, insn)
+  else if k == "mkcont" or k == "throwk" or k == "cc_recv" then
+    emit_a64_i_cc(st, insn)
   else emit_a64_i_prim(st, insn)
 
 let emit_insn_a64(st, insn, is_entry) =
@@ -1159,7 +1202,9 @@ let a64_resolve_patch(st, p) =
     let pos = nth(p, 1) in
     let lab = nth(p, 2) in
     let targ = a64_lookup(labels, lab) in
-    if tag == "beq" then a64_patch_beq(b, pos, targ)
+    if tag == "cclab" then
+      a64_mov_imm64_at(b, pos, 8, nth(st, 2) + targ)
+    else if tag == "beq" then a64_patch_beq(b, pos, targ)
     else a64_apply_b26(b, pos, targ)
 
 let a64_resolve_loop(st, ps, i) =

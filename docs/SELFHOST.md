@@ -236,7 +236,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,elf,pe,macho,pack,backend,encode_*,yc}.yac`。
 全量：`make test`（原生 `yc_A` 编译 `tests/run.yac` 再执行）。C 仅作为子进程：interp_suite（cps/callcc/float/bignum）与 harness 内 L4 引导 `yc_A`。compiler/qemu/boot/`yc_B`/iso 走原生。
-**下一步**：cps/callcc 仍走 C，不要跳 M7。
+**下一步**：scheme 前端与 CPS 变换仍未做；不要把 M7 当成已完成。
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
 
@@ -261,7 +261,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | M4  | 自举：`yc.yac` 编译 `yc.yac` → 原生 `yc`；L4 烟测 42/letfun/fact；L5 `yc_A`/`yc_B` 对同一输入同构 | L4/L5 ✅ |
 | M5  | arm64 / riscv64 后端 + `--arch` 交叉编译（qemu 验证）                                                                        | 三架构同源跑通 ✅ |
 | M6  | rt yac 化 + GC 栈图；测试 harness 迁到原生 `yc`（L6）                                                                       | `make test` 由 `yc_A` 编跑 harness；C 只留 L0/interp |
-| M7  | 完善 callcc / CPS（ANF→CPS 转换、续延原生实现）与 scheme 前端                                                                      | callcc / scheme 测试通过                 |
+| M7  | 完善 callcc / CPS（ANF→CPS 转换、续延原生实现）与 scheme 前端                                                                      | callcc 四例原生已通；CPS 变换 / scheme 未做 |
 
 
 
@@ -516,7 +516,8 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 **仍待**：
 1. **M6 L6（已完成）**：`make test` 用原生 `yc_A` 编译 `tests/run.yac`（`system` + `build/test_tmp/pout|perr`，不用 `popen`）。compiler/qemu/boot/`yc_B`/iso 经原生 `yc`。cps/callcc/float/bignum 与属性测试仍走 C。`./yac tests/run.yac` 仍可解释该 harness。
-2. **GC**：`yac_gc` 已是 `$proc`；x86 读栈图，其它架构保守扫栈。`--emit-asm` / `regalloc.yac` / M7 callcc：未做。
+2. **M7（进行中）**：原生 `callcc`/`throw`（CONT 对象 + 栈帧 longjmp；捕获点是整个 `let x = callcc(e) in body` 的续延，与 C CPS 一致）。scheme 前端未做。
+3. **GC**：`yac_gc` 已是 `$proc`；x86 读栈图，其它架构保守扫栈。`--emit-asm` / `regalloc.yac`：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。
 

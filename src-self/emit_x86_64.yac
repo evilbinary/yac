@@ -1336,6 +1336,50 @@ let emit_x86_i_memcpy(st, insn) =
   let _ = rep_movsb(b) in
   emit_st4(st, b, cur, labels, patches)
 
+let emit_x86_i_cc(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let k = nth(insn, 0) in
+  if k == "mkcont" then
+    let dst = nth(insn, 1) in
+    let lab = nth(insn, 2) in
+    let _ = mov_rdi_imm(b, 48) in
+    let acall = bytes_len(b) in
+    let _ = call_user(b) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rax_disp8_imm32(b, 8, 0) in
+    let _ = mov_rax_disp8_imm32(b, 12, 0) in
+    let _ = mov_rax_disp8_imm32(b, 16, 6) in
+    let _ = mov_rax_disp8_imm32(b, 20, 0) in
+    let _ = mov_rbx_rax(b) in
+    let _ = mov_rax_rbp(b) in
+    let _ = mov_mem_rbx_disp8_rax(b, 24) in
+    let _ = mov_rax_rsp(b) in
+    let _ = mov_mem_rbx_disp8_rax(b, 32) in
+    let _ = lea_rax_rip(b) in
+    let lpos = bytes_len(b) - 4 in
+    let _ = mov_mem_rbx_disp8_rax(b, 40) in
+    let _ = mov_rax_rbx(b) in
+    let _ = or_rax_1(b) in
+    let _ = emit_store_rax_slot(b, dst) in
+    emit_st4(st, b, cur, labels,
+      emit_patch_rel(nth(st, 4), cons([lpos, lab], patches), acall + 1, "yac_alloc"))
+  else if k == "throwk" then
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = and_rax_1(b) in
+    let _ = mov_rbx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rbp_rbx_disp8(b, 24) in
+    let _ = mov_rsp_rbx_disp8(b, 32) in
+    let _ = jmp_mem_rbx_disp8(b, 40) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "cc_recv" then
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, patches)
+  else st
+
 /* emit one instruction; st = [bytes, cur, labelsRev, patchesRev, funIds].
  * Helpers keep this frame small (huge emit_insn miscompiles under L5). */
 let emit_insn_go(st, insn, is_entry, is_raw) =
@@ -1363,6 +1407,8 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
          or k == "time_str" or k == "argc" or k == "argv" then
       emit_x86_i_heap(st, insn)
     else if k == "memcpy" then emit_x86_i_memcpy(st, insn)
+    else if k == "mkcont" or k == "throwk" or k == "cc_recv" then
+      emit_x86_i_cc(st, insn)
     else emit_x86_i_prim(st, insn) in
   let newlen = bytes_len(nth(done, 0)) in
   [nth(done, 0), cur + (newlen - len0), nth(done, 2), nth(done, 3), nth(done, 4)]

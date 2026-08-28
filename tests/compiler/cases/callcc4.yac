@@ -1,0 +1,5 @@
+let find(n) =
+  let k = callcc(fun (k) -> k) in
+  if n > 5 then throw k 99 else n
+in
+find(100)

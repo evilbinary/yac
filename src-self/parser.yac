@@ -17,7 +17,8 @@
  *   ["if", cond, then, else]
  *   ["let", name, bound, body]
  *   ["binop", op, lhs, rhs]   op: + - * / % == != < <= > >= and or
- *   ["not", x] ["print", x] ["list", [items...]]
+ *   ["not", x] ["print", x] ["callcc", x] ["throw", k, v]
+ *   ["list", [items...]]
  *   ["error", msg]
  */
 
@@ -124,6 +125,17 @@ let parse_expr(toks, i, min_prec) =
     else if is_kw(j, "print") then
       let r = parse_expr(toks, j + 1, 0) in
       [["print", nth(r, 0)], nth(r, 1)]
+    else if is_kw(j, "callcc") then
+      let r = parse_expr(toks, j + 1, 0) in
+      [["callcc", nth(r, 0)], nth(r, 1)]
+    else if is_kw(j, "throw") then
+      /* Two primaries (not juxta-app): `throw exit 999` is two args, not exit(999). */
+      let kr = parse_primary(j + 1) in
+      if is_err(nth(kr, 0)) then parse_err(j)
+      else
+        let vr = parse_primary(nth(kr, 1)) in
+        if is_err(nth(vr, 0)) then parse_err(j)
+        else [["throw", nth(kr, 0), nth(vr, 0)], nth(vr, 1)]
     else if is_kw(j, "fun") then
       /* fun ( params ) -> body */
       if kk(j + 1) == "lparen" then

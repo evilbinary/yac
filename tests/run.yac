@@ -128,7 +128,8 @@ let compiler_cases(_) = [
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
   ["io_rw", "rc", "2"], ["system", "rc", "0"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"],
-  ["tco_cap", "rc", "42"]]
+  ["tco_cap", "rc", "42"], ["callcc", "rc", "42"], ["callcc2", "rc", "99"],
+  ["callcc3", "rc", "42"], ["callcc4", "rc", "99"]]
 
 let compiler_all(st, yc) =
   foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0))
