@@ -302,7 +302,15 @@ let parse_expr(toks, i, min_prec) =
     let ur = parse_expr(toks, i + 1, 7) in
     if is_err(nth(ur, 0)) then parse_err(i)
     else
-      let un = ["binop", "-", ["int", "0"], nth(ur, 0)] in
+      let u = nth(ur, 0) in
+      let un =
+        if nth(u, 0) == "float" then
+          let t = nth(u, 1) in
+          if str_len(t) == 0 then u
+          else if str_ref(t, 0) == 45 then
+            ["float", str_slice(t, 1, str_len(t) - 1)]
+          else ["float", str_cat("-", t)]
+        else ["binop", "-", ["int", "0"], u] in
       parse_binloop(nth(ur, 1), un, min_prec)
   else
     let pr = parse_primary(i) in
