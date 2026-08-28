@@ -54,7 +54,7 @@
 | L3  | `yc.yac` 编译普通程序 → 机器码二进制                     | C 解释器跑 `yc.yac` | 原生二进制           |
 | L4  | `yc.yac` **编译** `yc.yac` **自身**              | C 解释器跑 `yc.yac` | 第一个原生 `yc`      |
 | L5  | 用原生 `yc` 再编译 `yc.yac`                        | 原生 `yc`         | 自举验证（两产物同构）     |
-| L6  | 全测试迁移到原生 `yc`，不用 C 解释器                       | 原生 `yc`         | 完全自举            |
+| L6  | 测试 harness 由原生 `yc` 编译执行；C 仅引导 L4 + interp（cps/callcc/float/bignum） | 原生 `yc` | 测试不再经 C 解释 harness |
 
 
 **验证关键点（L4/L5 差分）**：
@@ -235,7 +235,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,elf,pe,macho,pack,backend,encode_*,yc}.yac`。
-全量：`./yac tests/run.yac`（C：interp_suite + 引导 `yc_A`；原生 `yc_A`：boot harness、compiler/qemu/boot lex/parse/anf/lir/pipe/elf/emit；`yc_B` + L5 iso）。
+全量：`make test`（原生 `yc_A` 编译 `tests/run.yac` 再执行）。C 仅作为子进程：interp_suite（cps/callcc/float/bignum）与 harness 内 L4 引导 `yc_A`。compiler/qemu/boot/`yc_B`/iso 走原生。
 **下一步**：cps/callcc 仍走 C，不要跳 M7。
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
@@ -260,7 +260,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | M3  | x86-64 后端：**整数子集端到端**（整数算术/比较/if/尾递归函数 → 可运行 ELF，输出与解释器一致）→ 随后**补齐闭包/GC/字符串/列表/全部原语**（见 §10.3）。**闭包与 GC 是必需项，不省略** | `yc` 编译 fact/fib/闭包/GC 程序 → 输出与解释器一致 |
 | M4  | 自举：`yc.yac` 编译 `yc.yac` → 原生 `yc`；L4 烟测 42/letfun/fact；L5 `yc_A`/`yc_B` 对同一输入同构 | L4/L5 ✅ |
 | M5  | arm64 / riscv64 后端 + `--arch` 交叉编译（qemu 验证）                                                                        | 三架构同源跑通 ✅ |
-| M6  | rt yac 化 + GC 栈图；迁移全测试到原生 `yc`                                                                                     | 弃用 C 解释器（完全自举）                       |
+| M6  | rt yac 化 + GC 栈图；测试 harness 迁到原生 `yc`（L6）                                                                       | `make test` 由 `yc_A` 编跑 harness；C 只留 L0/interp |
 | M7  | 完善 callcc / CPS（ANF→CPS 转换、续延原生实现）与 scheme 前端                                                                      | callcc / scheme 测试通过                 |
 
 
@@ -515,12 +515,13 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 8. **M5**：arm64/riscv64 与 x86 同源 `COMPILER_CASES`（qemu）。emit 跳过空 fun stub；`cmp ==` 走 `yac_str_eq`；`print` 区分 int/STR。`yac_alloc`：`brk`，失败则 `mmap` ANON。
 
 **仍待**：
-1. **M6 L6**：compiler/qemu 只经原生 `yc_A`；boot 的 lex/parse/anf/lir/pipe/elf/emit/encode 用 `yc_A` 编跑。boot harness（`tests/boot/run.yac`）由 `yc_A` 编成 `boot_run` 再执行。原生 `system`（fork/execve `/bin/sh -c` + wait4）；harness 用 `system` + 临时文件代替 `popen`。原生 `exit` 为 `exit` 指令（syscall 60）。字符串转义 `\n` `\t` `\r` `\0` 与 C 一致（`\"` `\\` 用下一字符本身）。`bxor`/`bnot`/`bshl`/`bshr` 三架构。cps/callcc/float/bignum 仍走 C。顶层 `./yac tests/run.yac` 仍是 C 引导。
+1. **M6 L6（已完成）**：`make test` 用原生 `yc_A` 编译 `tests/run.yac`（`system` + `build/test_tmp/pout|perr`，不用 `popen`）。compiler/qemu/boot/`yc_B`/iso 经原生 `yc`。cps/callcc/float/bignum 与属性测试仍走 C。`./yac tests/run.yac` 仍可解释该 harness。
 2. **GC**：`yac_gc` 已是 `$proc`；x86 读栈图，其它架构保守扫栈。`--emit-asm` / `regalloc.yac` / M7 callcc：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。
 
-**L5 已通**：`make yc` 为 L4（C `yac` 编 bundle → `build/yc_tmp/yc_A`，并复制为 `yc`）。`make bootstrap` 再让 `yc_A` 编 bundle → `yc_B`（数秒）。`make yc-iso` 检查二者对同一输入 ELF 逐字节相同。`yc_A` 与 `yc_B` 自身不必相同。全量 `make test` 仍走 C 引导的 `tests/run.yac`。
+**L5 已通**：`make yc` 为 L4（C `yac` 编 bundle → `build/yc_tmp/yc_A`，并复制为 `yc`）。`make bootstrap` 再让 `yc_A` 编 bundle → `yc_B`（数秒）。`make yc-iso` 检查二者对同一输入 ELF 逐字节相同。`yc_A` 与 `yc_B` 自身不必相同。
+**L6 已通**：`make test` 依赖 `yc_A`，原生编译并执行 `tests/run.yac`。
 
 **关键修复**：
 - **letif 丢函数**：then 臂 `letfun` 未并入 funs，闭包 fnptr 变成 `_start`。

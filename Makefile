@@ -63,10 +63,20 @@ yc-iso: bootstrap
 	$(YC_B) tests/compiler/cases/l4_42.yac -o $(YC_BUILD)/isoB_l4_42
 	cmp -s $(YC_BUILD)/isoA_l4_42 $(YC_BUILD)/isoB_l4_42
 
-test: $(BIN)
-	./yac tests/run.yac
+# L6: native yc_A compiles and runs the harness. C yac is only a subprocess
+# (interp_suite + L4 bootstrap of yc_A inside the harness).
+test: $(YC_A)
+	mkdir -p build/test_tmp
+	$(YC_A) tests/run.yac -o build/test_tmp/run_tests
+	chmod +x build/test_tmp/run_tests
+	./build/test_tmp/run_tests
 
-test-boot: yc
+test-boot: $(YC_A)
+	mkdir -p build/test_tmp
+	cp -f $(YC_A) build/test_tmp/yc_A
+	$(YC_A) tests/boot/run.yac -o build/test_tmp/boot_run
+	chmod +x build/test_tmp/boot_run
+	./build/test_tmp/boot_run
 
 prop: $(BIN)
 	./yac tests/prop.yac
