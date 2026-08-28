@@ -4,7 +4,7 @@ build/
 yac
 *.prof
 a_native1.prof
-yc_A
-yc_B
+yc_a
+yc_b
 yc_C
 yc_D

@@ -1,11 +1,11 @@
 /* tests/run.yac — yac tests yac (L6: compiled and run by native yc).
  * Layout: tests/interp, tests/compiler/cases, tests/boot
  *
- *   make test          → yc_A compiles this file, then the binary runs it
+ *   make test          → yc_a compiles this file, then the binary runs it
  *   ./yac tests/run.yac  still works (C interp of this harness)
  *
  * C interpreter is only a subprocess for interp_suite (cps/callcc/float/bignum).
- * yc_A is copied from Makefile L4 (build/yc_tmp/yc_A); boot suite compiles yc_B natively.
+ * yc_a is copied from Makefile L4 (build/yc_tmp/yc_a); boot suite compiles yc_b natively.
  */
 
 let TMP = "build/test_tmp"
@@ -248,13 +248,13 @@ let iso_one(st, ya, yb, name) =
   check(st, str_cat("boot iso ", name), "0", int_to_str(nth(run(["cmp", "-s", a, b]), 0)))
 
 let boot_suite(st, ya) =
-  let yb = str_cat(TMP, "/yc_B") in
+  let yb = str_cat(TMP, "/yc_b") in
   let _ = run(["rm", "-f", yb, str_cat(yb, ".bin")]) in
-  let st1 = check(st, "boot yc_A exists", "0", int_to_str(exists_rc(ya))) in
-  let st2 = check(st1, "boot yc_A not .bin", "1", int_to_str(exists_rc(str_cat(ya, ".bin")))) in
+  let st1 = check(st, "boot yc_a exists", "0", int_to_str(exists_rc(ya))) in
+  let st2 = check(st1, "boot yc_a not .bin", "1", int_to_str(exists_rc(str_cat(ya, ".bin")))) in
   let _ = run([ya, BUNDLE, "-o", yb]) in
-  let st3 = check(st2, "boot yc_B exists", "0", int_to_str(exists_rc(yb))) in
-  let st4 = check(st3, "boot yc_B not .bin", "1", int_to_str(exists_rc(str_cat(yb, ".bin")))) in
+  let st3 = check(st2, "boot yc_b exists", "0", int_to_str(exists_rc(yb))) in
+  let st4 = check(st3, "boot yc_b not .bin", "1", int_to_str(exists_rc(str_cat(yb, ".bin")))) in
   let _ = run(["chmod", "+x", yb]) in
   let stB = compiler_all(st4, [yb]) in
   let psrc = str_cat(TMP, "/p42.yac") in
@@ -271,9 +271,9 @@ let boot_suite(st, ya) =
 let main =
   let _ = system(str_cat("mkdir -p ", TMP)) in
   let _ = cat_bundle(0) in
-  let ya = str_cat(TMP, "/yc_A") in
+  let ya = str_cat(TMP, "/yc_a") in
   let _ = run(["rm", "-f", ya, str_cat(ya, ".bin")]) in
-  let _ = run(["cp", "-f", "build/yc_tmp/yc_A", ya]) in
+  let _ = run(["cp", "-f", "build/yc_tmp/yc_a", ya]) in
   let _ = run(["chmod", "+x", ya]) in
   let boot_bin = str_cat(TMP, "/boot_run") in
   let _ = run(["rm", "-f", boot_bin]) in

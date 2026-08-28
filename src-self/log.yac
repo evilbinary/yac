@@ -15,7 +15,7 @@
  * C interpreter function profile (counts + incl/excl ns):
  *   ./yac --prof-out FILE.prof bundle.yac input.yac
  *   # or YAC_PROF_OUT=FILE.prof ./yac ...
- * Native yc_A: same --prof-out TSV (enter/leave around each letfun).
+ * Native yc_a: same --prof-out TSV (enter/leave around each letfun).
  *
  * Requires prims: time_str, str_cat, int_to_str, print.
  * Bundle this file first so drivers / stages can call it.

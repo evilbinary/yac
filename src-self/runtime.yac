@@ -11,7 +11,7 @@
  *
  * Insn lists are thunks (rt_*_ins(_)) so big cons literals are not built
  * inside yc's _start. A 33-element literal in that huge frame is mis-emitted
- * (yc_A bytes_to_str → SIGSEGV); the same literal in a small function is fine.
+ * (yc_a bytes_to_str → SIGSEGV); the same literal in a small function is fine.
  */
 
 let rt_cons_ins(_) =

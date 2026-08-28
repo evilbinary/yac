@@ -59,9 +59,9 @@
 
 **验证关键点（L4/L5 差分）**：
 
-- 用 C 解释器跑 `yc.yac` 编译 `yc.yac` → `yc_A`
-- 再用 `yc_A` 编译 `yc.yac` → `yc_B`
-- 要求 `yc_A` 与 `yc_B` 对同一输入产生逐字节相同输出 → 证明编译器"已稳定/自举正确"。
+- 用 C 解释器跑 `yc.yac` 编译 `yc.yac` → `yc_a`
+- 再用 `yc_a` 编译 `yc.yac` → `yc_b`
+- 要求 `yc_a` 与 `yc_b` 对同一输入产生逐字节相同输出 → 证明编译器"已稳定/自举正确"。
 
 
 
@@ -206,7 +206,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | 前端单元     | 解释器跑 `lexer.yac/parser.yac/anf.yac`，对固定输入比对 token/AST/ANF dump |
 | 后端单条指令   | `emit-<arch>` 对单指令产出，与汇编器 `as` 产出逐字节比对                         |
 | 端到端差分    | `yc.yac` 编译 `fact.yac` → 二进制，运行输出 == 解释器输出                     |
-| **自举同构** | `yc_A` 与 `yc_B` 编译同一输入，输出逐字节相同（§3 L4/L5）                       |
+| **自举同构** | `yc_a` 与 `yc_b` 编译同一输入，输出逐字节相同（§3 L4/L5）                       |
 | 跨架构      | `--arch arm64/riscv64` 生成目标 ELF，用 `qemu-<arch>` 运行比对           |
 | 全量回归     | 把 `tests/*.yac` 全部经 `yc` 编译运行，与解释器比对                           |
 
@@ -235,7 +235,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,elf,pe,macho,pack,backend,encode_*,yc}.yac`。
-全量：`make test`（原生 `yc_A` 编译 `tests/run.yac` 再执行）。C 仅作为子进程跑 interp_suite（cps/callcc/float/bignum）。`yc_A` 复用 Makefile L4 产物（拷贝，不再在 harness 里用 C 编一遍）。compiler/qemu/boot/`yc_B`/iso 走原生。
+全量：`make test`（原生 `yc_a` 编译 `tests/run.yac` 再执行）。C 仅作为子进程跑 interp_suite（cps/callcc/float/bignum）。`yc_a` 复用 Makefile L4 产物（拷贝，不再在 harness 里用 C 编一遍）。compiler/qemu/boot/`yc_b`/iso 走原生。
 **CLI（原生 yc）**：默认仍 `yc file.yac` 写出可执行文件（引导测试依赖）。`--cps`/`--both`/`--uncps`/`--scheme`（无 `-o`）以及 `--repl` 在同一进程里编译到 `0x200000000`、mmap RWX 后 `call` `_eval`（普通函数 ABI；`prog` 的进程入口名仍是 `_start`，镜像里没有该过程）。`--ast`/`--dump-anf` 打印列表。`--dump-cps` 暂打印 ANF。scheme 子集在 `scheme.yac`。
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
@@ -258,9 +258,9 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | 阶段  | 内容                                                                                                                 | 验收                                   |
 | --- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
 | M3  | x86-64 后端：**整数子集端到端**（整数算术/比较/if/尾递归函数 → 可运行 ELF，输出与解释器一致）→ 随后**补齐闭包/GC/字符串/列表/全部原语**（见 §10.3）。**闭包与 GC 是必需项，不省略** | `yc` 编译 fact/fib/闭包/GC 程序 → 输出与解释器一致 |
-| M4  | 自举：`yc.yac` 编译 `yc.yac` → 原生 `yc`；L4 烟测 42/letfun/fact；L5 `yc_A`/`yc_B` 对同一输入同构 | L4/L5 ✅ |
+| M4  | 自举：`yc.yac` 编译 `yc.yac` → 原生 `yc`；L4 烟测 42/letfun/fact；L5 `yc_a`/`yc_b` 对同一输入同构 | L4/L5 ✅ |
 | M5  | arm64 / riscv64 后端 + `--arch` 交叉编译（qemu 验证）                                                                        | 三架构同源跑通 ✅ |
-| M6  | rt yac 化 + GC 栈图；测试 harness 迁到原生 `yc`（L6）                                                                       | `make test` 由 `yc_A` 编跑 harness；C 只留 L0/interp |
+| M6  | rt yac 化 + GC 栈图；测试 harness 迁到原生 `yc`（L6）                                                                       | `make test` 由 `yc_a` 编跑 harness；C 只留 L0/interp |
 | M7  | 完善 callcc / CPS（ANF→CPS 转换、续延原生实现）与 scheme 前端                                                                      | callcc 四例原生已通；JIT REPL/`--cps` 已接；ANF→CPS dump 与 C 级 `--both` 仍未做 |
 
 
@@ -511,24 +511,24 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 4. **bytes**：BYTES 堆对象（kind=4；外层 48B，payload 在独立 STR blob，`dataptr@40`）。初容 16，按需倍增（与 C `realloc` 同语义，外层指针不变）。`bytes_new/len/ref/put/append` / `bytes_to_str`。
 5. **IO**：`read_file` / `write_file`；位运算；`and`/`or`；bool 字面量。
 6. **HO 原语**：`yac_apply1`/`yac_apply2` + 原生 `foldl`/`map`（含捕获）。
-7. **M4 起步**：`make yc`（`yc_A`）；`make bootstrap`（`yc_B`）；L4 烟测 `l4_42` / letfun / fact。
+7. **M4 起步**：`make yc`（`yc_a`）；`make bootstrap`（`yc_b`）；L4 烟测 `l4_42` / letfun / fact。
 8. **M5**：arm64/riscv64 与 x86 同源 `COMPILER_CASES`（qemu）。emit 跳过空 fun stub；`cmp ==` 走 `yac_str_eq`；`print` 区分 int/STR。`yac_alloc`：`brk`，失败则 `mmap` ANON。
 
 **仍待**：
-1. **M6 L6（已完成）**：`make test` 用原生 `yc_A` 编译 `tests/run.yac`（`system` + `build/test_tmp/pout|perr`，不用 `popen`）。compiler/qemu/boot/`yc_B`/iso 经原生 `yc`。cps/callcc/float/bignum 与属性测试仍走 C。`./yac tests/run.yac` 仍可解释该 harness（需已有 `build/yc_tmp/yc_A`）。
+1. **M6 L6（已完成）**：`make test` 用原生 `yc_a` 编译 `tests/run.yac`（`system` + `build/test_tmp/pout|perr`，不用 `popen`）。compiler/qemu/boot/`yc_b`/iso 经原生 `yc`。cps/callcc/float/bignum 与属性测试仍走 C。`./yac tests/run.yac` 仍可解释该 harness（需已有 `build/yc_tmp/yc_a`）。
 2. **M7（进行中）**：原生 `callcc`/`throw`（CONT 对象 + 栈帧 longjmp；捕获点是整个 `let x = callcc(e) in body` 的续延，与 C CPS 一致）。scheme 前端未做。
 3. **GC**：`yac_gc` 已是 `$proc`；x86 读栈图，其它架构保守扫栈。`--emit-asm` / `regalloc.yac`：未做。
 
-**L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。
+**L4 已通（原生 `yc_a`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_a` / `yc_b`。
 
-**L5 已通**：`make yc` 为 L4（C `yac` 编 bundle → `build/yc_tmp/yc_A`，并复制为 `yc`）。`make bootstrap` 再让 `yc_A` 编 bundle → `yc_B`（数秒）。`make yc-iso` 检查二者对同一输入 ELF 逐字节相同。`yc_A` 与 `yc_B` 自身不必相同。
-**L6 已通**：`make test` 依赖 `yc_A`，原生编译并执行 `tests/run.yac`。
+**L5 已通**：`make yc` 为 L4（C `yac` 编 bundle → `build/yc_tmp/yc_a`，并复制为 `yc`）。`make bootstrap` 再让 `yc_a` 编 bundle → `yc_b`（数秒）。`make yc-iso` 检查二者对同一输入 ELF 逐字节相同。`yc_a` 与 `yc_b` 自身不必相同。
+**L6 已通**：`make test` 依赖 `yc_a`，原生编译并执行 `tests/run.yac`。
 
 **关键修复**：
 - **letif 丢函数**：then 臂 `letfun` 未并入 funs，闭包 fnptr 变成 `_start`。
 - **`read_file` 64KiB 上限**：改为 `lseek` 按文件大小分配。
 - **TCO**：只改**同名**后缀 `call` 为拆栈 `jmp`（不要 `apply`、不要把 `parse_expr` 尾调用成 `parse_binloop`）。`tco_prog` 对全部 fun（含 compiler bundle 里的 `lex`）。C lower `maybe_tailcall` 同样只认当前 gname。`loop(100000)` 用例。
-- **编译速度**：`tokenize` 用 `list_push`。driver 每 pass 打 `[prof] <name>=<ms>`。**函数级 profile**：`./yac --prof-out FILE.prof …`（C 解释器）或 `yc_A --prof-out FILE.prof …`（原生 enter/leave），TSV（name/calls/incl_ns/excl_ns），按 exclusive 排序。原生 dump 的 pct 是整数百分比。
+- **编译速度**：`tokenize` 用 `list_push`。driver 每 pass 打 `[prof] <name>=<ms>`。**函数级 profile**：`./yac --prof-out FILE.prof …`（C 解释器）或 `yc_a --prof-out FILE.prof …`（原生 enter/leave），TSV（name/calls/incl_ns/excl_ns），按 exclusive 排序。原生 dump 的 pct 是整数百分比。
 - **bytes 按需扩容**：外层 kind=4 固定小对象（len/cap/dataptr），数据在独立 STR blob。`yac_bytes_grow` 倍增 cap 并 `memcpy`，外层指针不变（C 是 `realloc` 同一 `Bytes*`）。GC 标记 kind=4 的 `+40`。`write_file` 从 blob+32 写出。
 - **`and` 非短路**：`skip_block_cm` 里 `* /` 判断在含 ` * ` 的块注释上误匹配；改为嵌套 `if`。
 - **空参 `let f() =`**：消耗 `)`；`has_params`（不要用 `len(params)>0`）才包装成 `fun`，否则 `f()` 会去调用整数。

@@ -55,9 +55,12 @@ let fun_off(fo, name) =
   else fun_off(drop(fo, 1), name)
 
 let compile_jit(src, t) =
-  let prog = pass_lir_eval(pass_anf(pass_parse(pass_lex(src)))) in
-  let r = lower_expr(prog, t) in
-  jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"))
+  let ast = pass_parse(pass_lex(src)) in
+  if prog_has_err(ast, 0) then
+    let _ = print("error: syntax") in 1
+  else
+    let r = lower_expr(pass_lir_eval(pass_anf(ast)), t) in
+    let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval")) in 0
 
 let make_pipeline(t) =
   let pass_lower(ast) = nth(lower_expr(ast, t), 0) in
@@ -73,21 +76,29 @@ let dump_ast(src) =
   let _ = print(pass_parse(pass_lex(src))) in 0
 
 let dump_anf(src) =
-  let _ = print(pass_anf(pass_parse(pass_lex(src)))) in 0
+  let ast = pass_parse(pass_lex(src)) in
+  if prog_has_err(ast, 0) then
+    let _ = print("error: syntax") in 1
+  else
+    let _ = print(pass_anf(ast)) in 0
 
 let compile_src(src, outpath, t, profpath) =
-  let t0 = time_ms() in
-  let _ = if profpath == "" then 0 else yac_prof_enable(profpath) in
-  let _ = log("yc", "start") in
-  let _ = log_i("yc", "src_len", str_len(src)) in
-  let bin = run_passes(make_pipeline(t), src) in
-  let _ = log_i("yc", "bin_len", bytes_len(bin)) in
-  let _ = log("yc", "write") in
-  let _ = write_file(outpath, bin) in
-  let _ = log_i("prof", "total", time_ms() - t0) in
-  let _ = log("yc", "done") in
-  let _ = if profpath == "" then 0 else yac_prof_dump(0) in
-  0
+  let ast0 = pass_parse(pass_lex(src)) in
+  if prog_has_err(ast0, 0) then
+    let _ = print("error: syntax") in 1
+  else
+    let t0 = time_ms() in
+    let _ = if profpath == "" then 0 else yac_prof_enable(profpath) in
+    let _ = log("yc", "start") in
+    let _ = log_i("yc", "src_len", str_len(src)) in
+    let bin = run_passes(make_pipeline(t), src) in
+    let _ = log_i("yc", "bin_len", bytes_len(bin)) in
+    let _ = log("yc", "write") in
+    let _ = write_file(outpath, bin) in
+    let _ = log_i("prof", "total", time_ms() - t0) in
+    let _ = log("yc", "done") in
+    let _ = if profpath == "" then 0 else yac_prof_dump(0) in
+    0
 
 let compile_file(inpath, outpath, t, profpath) =
   compile_src(read_file(inpath), outpath, t, profpath)

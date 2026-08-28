@@ -25,6 +25,10 @@
 
 let reverse(xs) = list_rev(xs)
 let is_err(a) = nth(a, 0) == "error"
+let prog_has_err(p, i) =
+  if i >= len(p) then false
+  else if is_err(nth(p, i)) then true
+  else prog_has_err(p, i + 1)
 /* Top-level helper so parse_expr stays ncap=0 (no self-closure alloc). */
 let parse_err(j) = [["error", "parse"], j]
 

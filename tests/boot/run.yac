@@ -1,6 +1,6 @@
 /* tests/boot/run.yac — self-hosted frontend + unit tests (yac, not sh). */
 let TMP = "build/test_tmp"
-let YC = "build/test_tmp/yc_A"
+let YC = "build/test_tmp/yc_a"
 let LOG_STUB = "let log(mod, msg) = 0\nlet log_i(mod, key, n) = 0\n"
 let EMIT_STUB = "let emit_program_arm64(p, v, o) = emit_program_x86_64(p, v, o)\nlet emit_program_riscv64(p, v, o) = emit_program_x86_64(p, v, o)\n"
 
@@ -133,7 +133,7 @@ let unit_one(st, c) =
     let bin = str_cat(TMP, "/unit.bin") in
     let br = native_build(p, bin) in
     if nth(br, 0) != 0 then
-      check(st, nth(c, 0), nth(c, 3), str_cat("yc_A rc=", int_to_str(nth(br, 0))))
+      check(st, nth(c, 0), nth(c, 3), str_cat("yc_a rc=", int_to_str(nth(br, 0))))
     else
       let r = run([bin]) in
       let g = rchomp(nth(r, 1)) in
@@ -229,7 +229,7 @@ let elf_suite(st) =
   let _ = cat_files(["src-self/elf.yac", "src-self/driver_elf.yac"], str_cat(TMP, "/elf_run.yac")) in
   let br = native_build(str_cat(TMP, "/elf_run.yac"), str_cat(TMP, "/elf_run")) in
   if nth(br, 0) != 0 then
-    check(st, "ELF magic", "ok", str_cat("yc_A rc=", int_to_str(nth(br, 0))))
+    check(st, "ELF magic", "ok", str_cat("yc_a rc=", int_to_str(nth(br, 0))))
   else
     let _ = run([str_cat(TMP, "/elf_run")]) in
     let elf = read_file(str_cat(TMP, "/elf.bin")) in
@@ -246,7 +246,7 @@ let elf_suite(st) =
 let emit_suite(st) =
   let br = native_build(str_cat(TMP, "/emit_run.yac"), str_cat(TMP, "/emit_run")) in
   if nth(br, 0) != 0 then
-    check(st, "emit_run yc_A", "ok", str_cat("yc_A rc=", int_to_str(nth(br, 0))))
+    check(st, "emit_run yc_a", "ok", str_cat("yc_a rc=", int_to_str(nth(br, 0))))
   else
     let _ = write_file(str_cat(TMP, "/emitin.yac"),
       "[\"prog\",[[\"proc\",\"_start\",0,0,[[\"local\",2,0],[\"mov_imm\",1,21],[\"exit\",1]],\"_start\"]],\"_start\"]") in
