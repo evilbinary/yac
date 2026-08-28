@@ -557,6 +557,18 @@ let emit_x86_i_raw(st, insn) =
     let _ = shl_rax_1(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 2)) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$jcc" then
+    let op = nth(insn, 1) in
+    let cc = if op == ">=u" then 3 else if op == "==" then 4 else if op == "<" then 12 else 5 in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = emit_load_rbx_slot(b, nth(insn, 3)) in
+    let _ = cmp_rax_rbx(b) in
+    let jcc_at = bytes_len(b) in
+    let _ = jcc_rel32(b, cc, 0) in
+    let jmp_at = bytes_len(b) in
+    let _ = jmp_rel32(b, 0) in
+    emit_st4(st, b, cur, labels,
+     cons([jcc_at + 2, nth(insn, 4)], cons([jmp_at + 1, nth(insn, 5)], patches)))
   else if k == "$memcpy" then
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     let _ = mov_rdi_rax(b) in

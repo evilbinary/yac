@@ -471,6 +471,20 @@ let emit_a64_i_raw(st, insn) =
     let _ = a64_lsl1(b, 0, 0) in
     let _ = a64_slot(b, nth(insn, 2), true, 0) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$jcc" then
+    let op = nth(insn, 1) in
+    let inv = if op == ">=u" then 3 else if op == "==" then 1 else if op == "<" then 10 else 0 in
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let _ = a64_slot(b, nth(insn, 3), false, 1) in
+    let _ = a64_cmp_reg(b, 0, 1) in
+    let _ = a64_b_cond(b, inv, 2) in
+    let pt = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    let pf = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    emit_st4(st, b, cur, labels,
+     cons(["b26", pt, nth(insn, 4)],
+          cons(["b26", pf, nth(insn, 5)], patches)))
   else if k == "$memcpy" then
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
     let _ = a64_slot(b, nth(insn, 2), false, 1) in

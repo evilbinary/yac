@@ -492,6 +492,21 @@ let emit_rv_i_raw(st, insn) =
     let _ = rv_sll(b, 10, 10, 7) in
     let _ = rv_slot(b, nth(insn, 2), true, 10) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$jcc" then
+    let op = nth(insn, 1) in
+    let _ = rv_slot(b, nth(insn, 2), false, 10) in
+    let _ = rv_slot(b, nth(insn, 3), false, 11) in
+    let _ =
+      if op == "==" then rv_bne(b, 10, 11, 8)
+      else if op == ">=u" then rv_bltu(b, 10, 11, 8)
+      else rv_bge(b, 10, 11, 8) in
+    let pt = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let pf = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    emit_st4(st, b, cur, labels,
+     cons(["jal", pt, nth(insn, 4)],
+          cons(["jal", pf, nth(insn, 5)], patches)))
   else if k == "$memcpy" then
     let _ = rv_slot(b, nth(insn, 1), false, 10) in
     let _ = rv_slot(b, nth(insn, 2), false, 11) in

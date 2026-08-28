@@ -242,7 +242,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 `lir_expr` 把一项 ANF 编成槽指令；整表 `["prog", [_start] · runtime · procs, "_start"]` 在 backend 里拼出。runtime 约 **41** 个过程。手写 `gen_*` helper 已清空。
 
-`yac_gc` / `yac_gc_mark` 是 `$proc`：清 mark、可选 mmap 对象 bitmap（1 bit / 8 字节槽）、`$sp` 到 `stack_hi` 扫栈、按 kind 递归、sweep 进 `gc_free`。无 bitmap 时回退链表查找。
+`yac_gc` / `yac_gc_mark` 是 `$proc`：清 mark、可选 mmap 对象 bitmap（1 bit / 8 字节槽）。x86 用 `$smap`/`$fp` 按 rbp 栈图扫槽；arm64/riscv64 的 `$smap` 为 0，从 `$sp` 扫到 `stack_hi`。热路径用 `$jcc`（裸 cmp+jcc），不物化 tagged bool。无 bitmap 时回退链表查找。
 
 **已知编译器限制**：小程序里 33 元列表 / 33 个 `let` 都正常；**编译器自己的 `_start`（bundle 几百条顶层 let 合成一帧）里**放 33 元 LIR cons 字面量会被错编（`bytes_to_str` → SIGSEGV 139）。对策：`runtime.yac` 的 insn 列表做成 `rt_*_ins(_)` 小函数。`emit_insn` 已拆成按 op 分组的小函数；不要再把大块逻辑塞回 dispatcher。
 
@@ -516,11 +516,11 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 **仍待**：
 1. **M6 L6**：compiler/qemu 只经原生 `yc_A`；boot 的 lex/parse/anf/lir/pipe/elf/emit/encode 用 `yc_A` 编跑。boot harness（`tests/boot/run.yac`）由 `yc_A` 编成 `boot_run` 再执行。原生 `system`（fork/execve `/bin/sh -c` + wait4）；harness 用 `system` + 临时文件代替 `popen`。原生 `exit` 为 `exit` 指令（syscall 60）。字符串转义 `\n` `\t` `\r` `\0` 与 C 一致（`\"` `\\` 用下一字符本身）。`bxor`/`bnot`/`bshl`/`bshr` 三架构。cps/callcc/float/bignum 仍走 C。顶层 `./yac tests/run.yac` 仍是 C 引导。
-2. **GC**：`yac_gc` 已是 `$proc`；三架构都从 `$sp` 扫到 `stack_hi`。x86 栈图表仍 emit，GC 不再读。`--emit-asm` / `regalloc.yac` / M7 callcc：未做。
+2. **GC**：`yac_gc` 已是 `$proc`；x86 读栈图，其它架构保守扫栈。`--emit-asm` / `regalloc.yac` / M7 callcc：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。
 
-**L5 已通**：`make yc` 为 L4（C `yac` 编 bundle → `build/yc_tmp/yc_A`，并复制为 `yc`）。`make bootstrap` 再让 `yc_A` 编 bundle → `yc_B`（保守 GC 下可能很慢）。`make yc-iso` 检查二者对同一输入 ELF 逐字节相同。`yc_A` 与 `yc_B` 自身不必相同。全量 `make test` 仍走 C 引导的 `tests/run.yac`。
+**L5 已通**：`make yc` 为 L4（C `yac` 编 bundle → `build/yc_tmp/yc_A`，并复制为 `yc`）。`make bootstrap` 再让 `yc_A` 编 bundle → `yc_B`（数秒）。`make yc-iso` 检查二者对同一输入 ELF 逐字节相同。`yc_A` 与 `yc_B` 自身不必相同。全量 `make test` 仍走 C 引导的 `tests/run.yac`。
 
 **关键修复**：
 - **letif 丢函数**：then 臂 `letfun` 未并入 funs，闭包 fnptr 变成 `_start`。
