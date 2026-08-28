@@ -89,7 +89,7 @@ let emit_ids_helpers(ids, nfun) =
   let _ = nfun in
   ids
 
-/* Native ops: no sar/shl. $syscall names open/lseek/read/write/close/fork/wait4/execve/exit/brk/mmap. */
+/* Native ops: no sar/shl. $syscall names open/lseek/read/write/close/fork/wait4/execve/exit/brk/mmap/munmap. */
 let is_raw_op(k) =
   if k == "$and" then true
   else if k == "$add" then true
@@ -109,7 +109,12 @@ let is_raw_op(k) =
   else if k == "$shr" then true
   else if k == "$carg" then true
   else if k == "$icall" then true
-  else k == "$sp"
+  else if k == "$sp" then true
+  else if k == "$sub" then true
+  else if k == "$bts" then true
+  else if k == "$bt" then true
+  else if k == "$fp" then true
+  else k == "$smap"
 
 let is_frame_op(k) =
   if k == "local" then true
@@ -292,6 +297,8 @@ let emit_resolve_patch(st, p) =
     apply_u64(b, nth(p, 1), nth(st, 4) + nth(p, 2) + 1)
   else if tag == 12 then
     apply_u64(b, nth(p, 1), nth(st, 2) + nth(p, 2))
+  else if tag == 14 then
+    apply_u64(b, nth(p, 1), nth(st, 2) + nth(st, 5))
   else
     0
 

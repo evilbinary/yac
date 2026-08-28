@@ -430,6 +430,7 @@ let emit_x86_raw_nr(name) =
   else if name == "exit" then 60
   else if name == "brk" then 12
   else if name == "mmap" then 9
+  else if name == "munmap" then 11
   else 3
 
 let emit_x86_i_raw(st, insn) =
@@ -456,6 +457,30 @@ let emit_x86_i_raw(st, insn) =
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let _ = emit_load_rbx_slot(b, nth(insn, 3)) in
     let _ = add_rax_rbx(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$sub" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = emit_load_rbx_slot(b, nth(insn, 3)) in
+    let _ = sub_rax_rbx(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$bts" then
+    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = mov_rdx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rcx_rax(b) in
+    let _ = bts_mem_rdx_rcx(b) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$bt" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = mov_rdx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let _ = mov_rcx_rax(b) in
+    let _ = bt_mem_rdx_rcx(b) in
+    let _ = setcc_r8(b, 2) in
+    let _ = movzx_eax_al(b) in
+    let _ = shl_rax_1(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "$or" then
@@ -495,6 +520,15 @@ let emit_x86_i_raw(st, insn) =
     let _ = mov_rax_rsp(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$fp" then
+    let _ = mov_rax_rbp(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$smap" then
+    let _ = mov_rax_imm64(b, 0) in
+    let spat = bytes_len(b) - 8 in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, cons([14, spat], patches))
   else if k == "$gbase" then
     let _ = mov_rax_imm64(b, 0) in
     let gpat = bytes_len(b) - 8 in
@@ -1379,7 +1413,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let b = nth(st, 0) in
   let LOAD_VADDR = load_vaddr in
   let TEXT_OFF = text_off in
-  /* writable globals: gc_head, argc, argv, stack_hi, gc_free, alloc_bump, heap_lo, prof_st. */
+  /* writable globals: gc_head, argc, argv, stack_hi, gc_free, alloc_bump, heap_lo, prof_st, gc_bm, gc_hi, gc_bmlo. */
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
@@ -1388,18 +1422,18 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let _ = bytes_extend(b, strlit_bytes(0)) in
   let _ = pad8(0) in
   let extra = list_new() in
-  let _ = smap_emit_table(b, extra) in
+  let smap_start = smap_emit_table(b, extra) in
   let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 72 then 0
+    if i >= 88 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
   let _ = patches_extend(extra, patches) in
   let _ = log("emit", "resolve") in
   let _ = emit_resolve_loop([b, offs, LOAD_VADDR + TEXT_OFF, GLOBALS_BASE,
-                             LOAD_VADDR + TEXT_OFF + pool_start], extra, 0, len(extra)) in
+                             LOAD_VADDR + TEXT_OFF + pool_start, smap_start], extra, 0, len(extra)) in
   let _ = log_i("emit", "code_len", bytes_len(b)) in
   let _ = log("emit", "done") in
   [b, funOffsRev]

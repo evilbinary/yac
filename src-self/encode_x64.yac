@@ -277,6 +277,12 @@ let mov_rax_rsp(b) =
   let _ = e8(b, 137) in
   e8(b, 224)
 
+/* mov rax, rbp  (48 89 e8) */
+let mov_rax_rbp(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  e8(b, 232)
+
 /* ---- branches ---- */
 
 /* test rax, rax (48 85 c0) */

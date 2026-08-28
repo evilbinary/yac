@@ -387,6 +387,31 @@ let emit_rv_i_raw(st, insn) =
     let _ = rv_add(b, 10, 10, 11) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$sub" then
+    let _ = rv_slot(b, nth(insn, 2), false, 10) in
+    let _ = rv_slot(b, nth(insn, 3), false, 11) in
+    let _ = rv_sub(b, 10, 10, 11) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$bts" then
+    let _ = rv_slot(b, nth(insn, 1), false, 10) in
+    let _ = rv_slot(b, nth(insn, 2), false, 11) in
+    let _ = rv_lbu(b, 12, 10, 0) in
+    let _ = rv_addi(b, 13, 0, 1) in
+    let _ = rv_sll(b, 13, 13, 11) in
+    let _ = rv_or(b, 12, 12, 13) in
+    let _ = rv_sb(b, 12, 10, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$bt" then
+    let _ = rv_slot(b, nth(insn, 2), false, 10) in
+    let _ = rv_slot(b, nth(insn, 3), false, 11) in
+    let _ = rv_lbu(b, 10, 10, 0) in
+    let _ = rv_srl(b, 10, 10, 11) in
+    let _ = rv_addi(b, 11, 0, 1) in
+    let _ = rv_and(b, 10, 10, 11) in
+    let _ = rv_slli(b, 10, 10, 1) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, patches)
   else if k == "$or" then
     let _ = rv_slot(b, nth(insn, 2), false, 10) in
     let _ = rv_tag(b, 10) in
@@ -418,6 +443,14 @@ let emit_rv_i_raw(st, insn) =
     emit_st4(st, b, cur, labels, patches)
   else if k == "$sp" then
     let _ = rv_addi(b, 10, 2, 0) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$fp" then
+    let _ = rv_addi(b, 10, 8, 0) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$smap" then
+    let _ = rv_addi(b, 10, 0, 0) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "$gbase" then
@@ -524,6 +557,7 @@ let emit_rv_i_raw(st, insn) =
         else if name == "exit" then rv_addi(b, 17, 0, 93)
         else if name == "brk" then rv_addi(b, 17, 0, 214)
         else if name == "mmap" then rv_addi(b, 17, 0, 222)
+        else if name == "munmap" then rv_addi(b, 17, 0, 215)
         else rv_addi(b, 17, 0, 57) in
     let _ = rv_ecall(b) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
@@ -1171,7 +1205,7 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 64 then 0
+    if i >= 88 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in

@@ -34,8 +34,11 @@ $(BUILD)/%.o: src/%.c $(wildcard src/*.h) | $(BUILD)
 $(YC_BUNDLE): $(YC_SRCS) | $(YC_BUILD)
 	cat $(YC_SRCS) > $@
 
-# L4: C interpreter runs the bundle and compiles it to a native compiler.
+# L4: C interpreter compiles the bundle to native yc_A.
+# This is NOT native yc; C GC on the interpreter heap often takes 1–3 min.
+# Native compile (yc_A compiling a .yac) is a separate step and should be seconds.
 $(YC_A): $(BIN) $(YC_BUNDLE)
+	@echo "L4: ./yac compiling bundle with C GC (slow; not the native <3s path)"
 	./$(BIN) $(YC_BUNDLE) $(YC_BUNDLE) -o $@
 	chmod +x $@
 
@@ -51,7 +54,7 @@ $(YC_BIN): $(YC_A)
 
 yc: $(YC_A) $(YC_BIN)
 
-# L5 native self-compile. Conservative GC is O(stack×heap); this can take a long time.
+# L5 native self-compile. Needs a yc_A built with the bitmap GC.
 bootstrap: $(YC_A) $(YC_B) $(YC_BIN)
 
 # yc_A and yc_B must emit the same ELF for a given program (L5 iso).

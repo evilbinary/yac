@@ -373,6 +373,31 @@ let emit_a64_i_raw(st, insn) =
     let _ = a64_add_reg(b, 0, 0, 1) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$sub" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let _ = a64_slot(b, nth(insn, 3), false, 1) in
+    let _ = a64_sub_reg(b, 0, 0, 1) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$bts" then
+    let _ = a64_slot(b, nth(insn, 1), false, 0) in
+    let _ = a64_slot(b, nth(insn, 2), false, 1) in
+    let _ = a64_ldrb(b, 3, 0) in
+    let _ = a64_movz(b, 2, 1, 0) in
+    let _ = a64_lslv(b, 2, 2, 1) in
+    let _ = a64_orr_reg(b, 3, 3, 2) in
+    let _ = a64_strb(b, 3, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$bt" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let _ = a64_slot(b, nth(insn, 3), false, 1) in
+    let _ = a64_ldrb(b, 0, 0) in
+    let _ = a64_lsrv(b, 0, 0, 1) in
+    let _ = a64_movz(b, 1, 1, 0) in
+    let _ = a64_and_reg(b, 0, 0, 1) in
+    let _ = a64_lsl1(b, 0, 0) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
   else if k == "$or" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_tag(b, 0) in
@@ -406,6 +431,14 @@ let emit_a64_i_raw(st, insn) =
     emit_st4(st, b, cur, labels, patches)
   else if k == "$sp" then
     let _ = a64_mov_sp(b, 0, 31) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$fp" then
+    let _ = a64_mov_sp(b, 0, 29) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
+  else if k == "$smap" then
+    let _ = a64_movz(b, 0, 0, 0) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "$gbase" then
@@ -505,6 +538,7 @@ let emit_a64_i_raw(st, insn) =
         else if name == "exit" then a64_movz(b, 8, 93, 0)
         else if name == "brk" then a64_movz(b, 8, 214, 0)
         else if name == "mmap" then a64_movz(b, 8, 222, 0)
+        else if name == "munmap" then a64_movz(b, 8, 215, 0)
         else a64_movz(b, 8, 57, 0) in
     let _ = a64_svc(b) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
@@ -1146,7 +1180,7 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 64 then 0
+    if i >= 88 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
