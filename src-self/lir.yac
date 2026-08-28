@@ -927,12 +927,24 @@ let start_proc(nslots, result_slot, body) =
         ["untag", nslots, result_slot]),
       ["syscall", 0, 60, [nslots]]), "_start"]
 
-/* Callable entry for in-process JIT: print the last value, then ret. */
-let start_proc_eval(nslots, result_slot, body) =
-  ["proc", "_eval", 0, 0, insn_push(
-      insn_push(
-        insn_push(
-          insn_extend(insn_push(list_new(), ["local", nslots + 2, 0]), body),
-          ["mov_imm", nslots, 2]),
-        ["fcall", nslots + 1, "print", [result_slot, nslots]]),
-      ["ret", result_slot]), "_eval"]
+/* Callable entry for in-process JIT: print the last value, then ret.
+ * If name is non-empty (REPL top-level let), print `name = value` like C yac. */
+let start_eval_ins(nslots, pslot, body, name) =
+  let b0 = insn_extend(insn_push(list_new(), ["local", nslots + 8, 0]), body) in
+  if name == "" then
+    insn_push(insn_push(insn_push(b0,
+      ["mov_imm", nslots, 2]),
+      ["fcall", nslots + 1, "print", [pslot, nslots]]),
+      ["ret", pslot])
+  else
+    let b1 = insn_push(b0, ["strlit", nslots, name]) in
+    let b2 = insn_push(b1, ["strlit", nslots + 1, " = "]) in
+    let b3 = insn_push(b2, ["mov_imm", nslots + 2, 0]) in
+    let b4 = insn_push(b3, ["mov_imm", nslots + 3, 2]) in
+    let b5 = insn_push(b4, ["fcall", nslots + 4, "print", [nslots, nslots + 2]]) in
+    let b6 = insn_push(b5, ["fcall", nslots + 5, "print", [nslots + 1, nslots + 2]]) in
+    let b7 = insn_push(b6, ["fcall", nslots + 6, "print", [pslot, nslots + 3]]) in
+    insn_push(b7, ["ret", pslot])
+
+let start_proc_eval(nslots, result_slot, body, name) =
+  ["proc", "_eval", 0, 0, start_eval_ins(nslots, result_slot, body, name), "_eval"]

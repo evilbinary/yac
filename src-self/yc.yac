@@ -114,7 +114,10 @@ let prep_src(raw, spec) =
   if fl(spec, "scheme") then scheme_to_yac(raw) else raw
 
 let jit_eval(src) =
-  compile_jit(src, mk_jit_target(0))
+  compile_jit(src, mk_jit_target(0), false)
+
+let jit_eval_repl(src) =
+  compile_jit(src, mk_jit_target(0), true)
 
 let repl_loop(acc, spec) =
   let _ = print("yc> ", false) in
@@ -124,7 +127,7 @@ let repl_loop(acc, spec) =
   else if line == ":q" or line == ":quit" then 0
   else
     let acc2 = str_cat(acc, str_cat(line, "\n")) in
-    let rc = jit_eval(prep_src(acc2, spec)) in
+    let rc = jit_eval_repl(prep_src(acc2, spec)) in
     if rc == 0 then repl_loop(acc2, spec)
     else repl_loop(acc, spec)
 
@@ -149,7 +152,7 @@ let run_cli(pr) =
         let acc1 = if acc0 == 0 then "" else acc0 in
         let _ =
           if acc1 == "" then 0
-          else jit_eval(prep_src(acc1, spec)) in
+          else jit_eval_repl(prep_src(acc1, spec)) in
         repl_loop(acc1, spec)
       else if inpath == "" then
         let _ = usage(0) in 2

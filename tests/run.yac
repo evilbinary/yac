@@ -180,8 +180,14 @@ let compiler_all(st, yc) =
   let st1 = foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)) in
   let st2 = foldl(fun(s, c) -> compile_syntax_err(s, yc, nth(c, 1),
                   str_cat("syntax ", nth(c, 0))), st1, syntax_bads(0)) in
-  foldl(fun(s, c) -> compile_msg_err(s, yc, nth(c, 1),
-                  str_cat("unbound ", nth(c, 0)), nth(c, 2)), st2, unbound_bads(0))
+  let st3 = foldl(fun(s, c) -> compile_msg_err(s, yc, nth(c, 1),
+                  str_cat("unbound ", nth(c, 0)), nth(c, 2)), st2, unbound_bads(0)) in
+  let cmd = str_cat("printf 'let a = 1\\n' | ",
+              str_cat(sh_quote(nth(yc, 0)), " --repl")) in
+  let rr = run(["sh", "-c", cmd]) in
+  let blob = str_cat(nth(rr, 1), nth(rr, 2)) in
+  if contains(blob, "a = 1") then check(st3, "repl let a = 1", "1", "1")
+  else check(st3, "repl let a = 1", "a = 1", blob)
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
