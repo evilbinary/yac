@@ -54,7 +54,7 @@
 | L3  | `yc.yac` 编译普通程序 → 机器码二进制                     | C 解释器跑 `yc.yac` | 原生二进制           |
 | L4  | `yc.yac` **编译** `yc.yac` **自身**              | C 解释器跑 `yc.yac` | 第一个原生 `yc`      |
 | L5  | 用原生 `yc` 再编译 `yc.yac`                        | 原生 `yc`         | 自举验证（两产物同构）     |
-| L6  | 测试 harness 由原生 `yc` 编译执行；C 仅引导 L4 + interp（cps/callcc/float/bignum） | 原生 `yc` | 测试不再经 C 解释 harness |
+| L6  | 测试 harness 由原生 `yc` 编译执行；C 仅 `make yc` 的 L4 与 interp（cps/callcc/float/bignum） | 原生 `yc` | 测试不再经 C 解释 harness |
 
 
 **验证关键点（L4/L5 差分）**：
@@ -235,7 +235,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,elf,pe,macho,pack,backend,encode_*,yc}.yac`。
-全量：`make test`（原生 `yc_A` 编译 `tests/run.yac` 再执行）。C 仅作为子进程：interp_suite（cps/callcc/float/bignum）与 harness 内 L4 引导 `yc_A`。compiler/qemu/boot/`yc_B`/iso 走原生。
+全量：`make test`（原生 `yc_A` 编译 `tests/run.yac` 再执行）。C 仅作为子进程跑 interp_suite（cps/callcc/float/bignum）。`yc_A` 复用 Makefile L4 产物（拷贝，不再在 harness 里用 C 编一遍）。compiler/qemu/boot/`yc_B`/iso 走原生。
 **CLI（原生 yc）**：默认仍 `yc file.yac` 写出可执行文件（引导测试依赖）。`--cps`/`--both`/`--uncps`/`--scheme`（无 `-o`）以及 `--repl` 在同一进程里编译到 `0x200000000`、mmap RWX 后 `call` `_eval`（普通函数 ABI；`prog` 的进程入口名仍是 `_start`，镜像里没有该过程）。`--ast`/`--dump-anf` 打印列表。`--dump-cps` 暂打印 ANF。scheme 子集在 `scheme.yac`。
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
@@ -515,7 +515,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 8. **M5**：arm64/riscv64 与 x86 同源 `COMPILER_CASES`（qemu）。emit 跳过空 fun stub；`cmp ==` 走 `yac_str_eq`；`print` 区分 int/STR。`yac_alloc`：`brk`，失败则 `mmap` ANON。
 
 **仍待**：
-1. **M6 L6（已完成）**：`make test` 用原生 `yc_A` 编译 `tests/run.yac`（`system` + `build/test_tmp/pout|perr`，不用 `popen`）。compiler/qemu/boot/`yc_B`/iso 经原生 `yc`。cps/callcc/float/bignum 与属性测试仍走 C。`./yac tests/run.yac` 仍可解释该 harness。
+1. **M6 L6（已完成）**：`make test` 用原生 `yc_A` 编译 `tests/run.yac`（`system` + `build/test_tmp/pout|perr`，不用 `popen`）。compiler/qemu/boot/`yc_B`/iso 经原生 `yc`。cps/callcc/float/bignum 与属性测试仍走 C。`./yac tests/run.yac` 仍可解释该 harness（需已有 `build/yc_tmp/yc_A`）。
 2. **M7（进行中）**：原生 `callcc`/`throw`（CONT 对象 + 栈帧 longjmp；捕获点是整个 `let x = callcc(e) in body` 的续延，与 C CPS 一致）。scheme 前端未做。
 3. **GC**：`yac_gc` 已是 `$proc`；x86 读栈图，其它架构保守扫栈。`--emit-asm` / `regalloc.yac`：未做。
 

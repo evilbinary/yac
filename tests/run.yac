@@ -4,8 +4,8 @@
  *   make test          → yc_A compiles this file, then the binary runs it
  *   ./yac tests/run.yac  still works (C interp of this harness)
  *
- * C interpreter is only a subprocess: interp_suite (cps/callcc/float/bignum)
- * and L4 bootstrap of yc_A. Compiler/qemu/boot/iso are native yc.
+ * C interpreter is only a subprocess for interp_suite (cps/callcc/float/bignum).
+ * yc_A is copied from Makefile L4 (build/yc_tmp/yc_A); boot suite compiles yc_B natively.
  */
 
 let TMP = "build/test_tmp"
@@ -39,9 +39,16 @@ let run(argv) =
 
 let chomp(s) =
   let n = str_len(s) in
-  if n == 0 then s
-  else if str_ref(s, n - 1) == 10 then str_slice(s, 0, n - 1)
-  else s
+  let rec(i) =
+    if i >= n then n
+    else if str_ref(s, i) == 0 then i
+    else rec(i + 1) in
+  let m = rec(0) in
+  let t = if m == n then s else str_slice(s, 0, m) in
+  let k = str_len(t) in
+  if k == 0 then t
+  else if str_ref(t, k - 1) == 10 then str_slice(t, 0, k - 1)
+  else t
 
 let check(st, name, want, got) =
   let pass = nth(st, 0) in
@@ -265,7 +272,7 @@ let main =
   let _ = cat_bundle(0) in
   let ya = str_cat(TMP, "/yc_A") in
   let _ = run(["rm", "-f", ya, str_cat(ya, ".bin")]) in
-  let _ = run(["./yac", BUNDLE, BUNDLE, "-o", ya]) in
+  let _ = run(["cp", "-f", "build/yc_tmp/yc_A", ya]) in
   let _ = run(["chmod", "+x", ya]) in
   let boot_bin = str_cat(TMP, "/boot_run") in
   let _ = run(["rm", "-f", boot_bin]) in

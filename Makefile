@@ -64,9 +64,11 @@ yc-iso: bootstrap
 	cmp -s $(YC_BUILD)/isoA_l4_42 $(YC_BUILD)/isoB_l4_42
 
 # L6: native yc_A compiles and runs the harness. C yac is only a subprocess
-# (interp_suite + L4 bootstrap of yc_A inside the harness).
+# for interp_suite. L4 yc_A is reused (copied); harness does not re-run C L4.
 test: $(YC_A)
 	mkdir -p build/test_tmp
+	cp -f $(YC_A) build/test_tmp/yc_A
+	chmod +x build/test_tmp/yc_A
 	$(YC_A) tests/run.yac -o build/test_tmp/run_tests
 	chmod +x build/test_tmp/run_tests
 	./build/test_tmp/run_tests
