@@ -7,6 +7,8 @@ BIN = yac
 YC_BUILD = $(BUILD)/yc_tmp
 YC_BUNDLE = $(YC_BUILD)/yc_bundle.yac
 YC_BIN = $(YC_BUILD)/yc
+YC_A = $(YC_BUILD)/yc_A
+YC_B = $(YC_BUILD)/yc_B
 YC_SRCS = src-self/log.yac src-self/pass.yac src-self/target.yac src-self/map.yac \
 	src-self/lexer.yac src-self/parser.yac src-self/anf.yac \
 	src-self/encode_x64.yac src-self/encode_arm64.yac src-self/encode_riscv64.yac \
@@ -32,16 +34,36 @@ $(BUILD)/%.o: src/%.c $(wildcard src/*.h) | $(BUILD)
 $(YC_BUNDLE): $(YC_SRCS) | $(YC_BUILD)
 	cat $(YC_SRCS) > $@
 
-$(YC_BIN): $(BIN) $(YC_BUNDLE)
+# L4: C interpreter runs the bundle and compiles it to a native compiler.
+$(YC_A): $(BIN) $(YC_BUNDLE)
 	./$(BIN) $(YC_BUNDLE) $(YC_BUNDLE) -o $@
 	chmod +x $@
 
-yc: $(YC_BIN)
+# L5: native yc_A compiles the same bundle. yc_A and yc_B need not match.
+$(YC_B): $(YC_A) $(YC_BUNDLE)
+	$(YC_A) $(YC_BUNDLE) -o $@
+	chmod +x $@
+
+# Convenience name used by scripts; same bits as yc_A.
+$(YC_BIN): $(YC_A)
+	cp -f $(YC_A) $@
+	chmod +x $@
+
+yc: $(YC_A) $(YC_BIN)
+
+# L5 native self-compile. Conservative GC is O(stack×heap); this can take a long time.
+bootstrap: $(YC_A) $(YC_B) $(YC_BIN)
+
+# yc_A and yc_B must emit the same ELF for a given program (L5 iso).
+yc-iso: bootstrap
+	$(YC_A) tests/compiler/cases/l4_42.yac -o $(YC_BUILD)/isoA_l4_42
+	$(YC_B) tests/compiler/cases/l4_42.yac -o $(YC_BUILD)/isoB_l4_42
+	cmp -s $(YC_BUILD)/isoA_l4_42 $(YC_BUILD)/isoB_l4_42
 
 test: $(BIN)
 	./yac tests/run.yac
 
-test-boot: test
+test-boot: yc
 
 prop: $(BIN)
 	./yac tests/prop.yac
@@ -54,4 +76,4 @@ clean:
 	rm -rf $(BUILD)
 	rm -f src/*.o
 
-.PHONY: all clean test test-boot prop yc
+.PHONY: all clean test test-boot prop yc bootstrap yc-iso

@@ -240,15 +240,9 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
 
-`lir_expr` 把一项 ANF 编成槽指令；整表 `["prog", [_start] · runtime · procs, "_start"]` 在 backend 里拼出。runtime 约 **39** 个过程（手写 helper 不占 fun 表）。
+`lir_expr` 把一项 ANF 编成槽指令；整表 `["prog", [_start] · runtime · procs, "_start"]` 在 backend 里拼出。runtime 约 **41** 个过程。手写 `gen_*` helper 已清空。
 
-**无法再迁进 LIR 的手写 `gen_*`**（`emit_program_x86_64` 末尾追加）：
-
-| 函数 | 原因 |
-| --- | --- |
-| `gen_gc` | 标记-清除。x86 栈扫描用 mmap 对象 bitmap（O(堆) 建表 + O(1) 测字），避免 O(栈×堆) 链表查找 |
-
-`yac_apply1` / `yac_apply2` 是 runtime `$proc`（`$carg` + `$icall`，按 nenv 展开）。`yac_alloc` 是 `$proc`。`yac_system` 是 `$proc`。
+`yac_gc` / `yac_gc_mark` 是 `$proc`：清 mark、`$sp` 到 `stack_hi` 保守扫栈、按 kind 递归、sweep 进 `gc_free`。三架构同一路径（O(栈×堆) 链表查找；不再用 x86 mmap bitmap / 栈图）。`yac_apply1` / `yac_apply2` / `yac_alloc` / `yac_system` 也是 `$proc`。
 
 **已知编译器限制**：小程序里 33 元列表 / 33 个 `let` 都正常；**编译器自己的 `_start`（bundle 几百条顶层 let 合成一帧）里**放 33 元 LIR cons 字面量会被错编（`bytes_to_str` → SIGSEGV 139）。对策：`runtime.yac` 的 insn 列表做成 `rt_*_ins(_)` 小函数。`emit_insn` 已拆成按 op 分组的小函数；不要再把大块逻辑塞回 dispatcher。
 
@@ -517,16 +511,16 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 4. **bytes**：BYTES 堆对象（kind=4；外层 48B，payload 在独立 STR blob，`dataptr@40`）。初容 16，按需倍增（与 C `realloc` 同语义，外层指针不变）。`bytes_new/len/ref/put/append` / `bytes_to_str`。
 5. **IO**：`read_file` / `write_file`；位运算；`and`/`or`；bool 字面量。
 6. **HO 原语**：`yac_apply1`/`yac_apply2` + 原生 `foldl`/`map`（含捕获）。
-7. **M4 起步**：`yc.yac` + `selfhost_yc.sh`；L4 烟测 `selfhost_l4_lex.sh`（原生 is_kw）。
+7. **M4 起步**：`make yc`（`yc_A`）；`make bootstrap`（`yc_B`）；L4 烟测 `l4_42` / letfun / fact。
 8. **M5**：arm64/riscv64 与 x86 同源 `COMPILER_CASES`（qemu）。emit 跳过空 fun stub；`cmp ==` 走 `yac_str_eq`；`print` 区分 int/STR。`yac_alloc`：`brk`，失败则 `mmap` ANON。
 
 **仍待**：
 1. **M6 L6**：compiler/qemu 只经原生 `yc_A`；boot 的 lex/parse/anf/lir/pipe/elf/emit/encode 用 `yc_A` 编跑。boot harness（`tests/boot/run.yac`）由 `yc_A` 编成 `boot_run` 再执行。原生 `system`（fork/execve `/bin/sh -c` + wait4）；harness 用 `system` + 临时文件代替 `popen`。原生 `exit` 为 `exit` 指令（syscall 60）。字符串转义 `\n` `\t` `\r` `\0` 与 C 一致（`\"` `\\` 用下一字符本身）。`bxor`/`bnot`/`bshl`/`bshr` 三架构。cps/callcc/float/bignum 仍走 C。顶层 `./yac tests/run.yac` 仍是 C 引导。
-2. **GC 栈图（x86，已完成）**：调用点记录 `nslots`；`yac_gc` 沿 rbp 链用返回地址查表，只扫调用者帧的 LIR slot。`yac_alloc` 带 rbp 帧以便链上能看到调用者。arm64/riscv 仍保守扫栈。`--emit-asm` / `regalloc.yac` / M7 callcc：未做。
+2. **GC**：`yac_gc` 已是 `$proc`；三架构都从 `$sp` 扫到 `stack_hi`。x86 栈图表仍 emit，GC 不再读。`--emit-asm` / `regalloc.yac` / M7 callcc：未做。
 
 **L4 已通（原生 `yc_A`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_A` / `yc_B`。
 
-**L5 已通**：`tests/selfhost_bootstrap.sh`（`make test`）：`yac` 编 bundle → `yc_A`，同一套 e2e 再跑 `yc_A`；`yc_A` 编 bundle → `yc_B`，e2e 再跑 `yc_B`；`yc_A`/`yc_B` 对同一输入 ELF **逐字节相同**。`yc_A` 与 `yc_B` 自身不必相同（引导器 vs 原生编出）。
+**L5 已通**：`make yc` 为 L4（C `yac` 编 bundle → `build/yc_tmp/yc_A`，并复制为 `yc`）。`make bootstrap` 再让 `yc_A` 编 bundle → `yc_B`（保守 GC 下可能很慢）。`make yc-iso` 检查二者对同一输入 ELF 逐字节相同。`yc_A` 与 `yc_B` 自身不必相同。全量 `make test` 仍走 C 引导的 `tests/run.yac`。
 
 **关键修复**：
 - **letif 丢函数**：then 臂 `letfun` 未并入 funs，闭包 fnptr 变成 `_start`。
