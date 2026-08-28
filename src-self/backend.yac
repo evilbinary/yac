@@ -52,7 +52,7 @@ let pass_lir_eval(anf_list) =
 let fun_off(fo, name) =
   if fo == [] then 0
   else if nth(nth(fo, 0), 0) == name then nth(nth(fo, 0), 1)
-  else fun_off(tail(fo), name)
+  else fun_off(drop(fo, 1), name)
 
 let compile_jit(src, t) =
   let prog = pass_lir_eval(pass_anf(pass_parse(pass_lex(src)))) in
@@ -69,11 +69,16 @@ let make_pipeline(t) =
    mk_pass("lower", pass_lower),
    mk_pass("pack", pass_pack)]
 
-let compile_file(inpath, outpath, t, profpath) =
+let dump_ast(src) =
+  let _ = print(pass_parse(pass_lex(src))) in 0
+
+let dump_anf(src) =
+  let _ = print(pass_anf(pass_parse(pass_lex(src)))) in 0
+
+let compile_src(src, outpath, t, profpath) =
   let t0 = time_ms() in
   let _ = if profpath == "" then 0 else yac_prof_enable(profpath) in
   let _ = log("yc", "start") in
-  let src = read_file(inpath) in
   let _ = log_i("yc", "src_len", str_len(src)) in
   let bin = run_passes(make_pipeline(t), src) in
   let _ = log_i("yc", "bin_len", bytes_len(bin)) in
@@ -83,3 +88,6 @@ let compile_file(inpath, outpath, t, profpath) =
   let _ = log("yc", "done") in
   let _ = if profpath == "" then 0 else yac_prof_dump(0) in
   0
+
+let compile_file(inpath, outpath, t, profpath) =
+  compile_src(read_file(inpath), outpath, t, profpath)

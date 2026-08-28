@@ -15,7 +15,7 @@ YC_SRCS = src-self/log.yac src-self/pass.yac src-self/target.yac src-self/map.ya
 	src-self/elf.yac src-self/pe.yac src-self/macho.yac src-self/pack.yac \
 	src-self/lir.yac src-self/runtime.yac src-self/emit.yac \
 	src-self/emit_x86_64.yac src-self/emit_arm64.yac src-self/emit_riscv64.yac \
-	src-self/lower.yac src-self/profile.yac src-self/backend.yac src-self/yc.yac
+	src-self/lower.yac src-self/profile.yac src-self/backend.yac src-self/scheme.yac src-self/yc.yac
 
 all: $(BIN)
 

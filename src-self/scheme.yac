@@ -1,0 +1,330 @@
+/* scheme.yac — Scheme subset → yac source (native --scheme). */
+
+let scm_sp(c) = c == 32 or c == 9 or c == 10 or c == 13
+let scm_digit(c) = c >= 48 and c <= 57
+let scm_atomc(c) =
+  if scm_sp(c) then false
+  else if c == 40 then false
+  else if c == 41 then false
+  else if c == 39 then false
+  else if c == 34 then false
+  else c != 59
+
+let scm_skip(src, i, n) =
+  if i >= n then i
+  else
+    let c = str_ref(src, i) in
+    if scm_sp(c) then scm_skip(src, i + 1, n)
+    else if c == 59 then
+      let rec(j) =
+        if j >= n then j
+        else if str_ref(src, j) == 10 then j + 1
+        else rec(j + 1) in
+      scm_skip(src, rec(i + 1), n)
+    else i
+
+let scm_lex_str(src, i, n) =
+  let rec(j, acc) =
+    if j >= n then [acc, j]
+    else
+      let c = str_ref(src, j) in
+      if c == 34 then [acc, j + 1]
+      else if c == 92 then
+        if j + 1 >= n then [acc, j]
+        else
+          let e = str_ref(src, j + 1) in
+          let bit =
+            if e == 110 then "\n"
+            else if e == 116 then "\t"
+            else str_slice(src, j + 1, 1) in
+          rec(j + 2, str_cat(acc, bit))
+      else rec(j + 1, str_cat(acc, str_slice(src, j, 1))) in
+  rec(i, "")
+
+let scm_lex_atom(src, i, n) =
+  let rec(j) =
+    if j >= n then j
+    else if scm_atomc(str_ref(src, j)) then rec(j + 1)
+    else j in
+  let e = rec(i) in
+  [str_slice(src, i, e - i), e]
+
+let scm_lex(src) =
+  let n = str_len(src) in
+  let acc = list_new() in
+  let rec(i) =
+    let j = scm_skip(src, i, n) in
+    if j >= n then
+      let _ = list_push(acc, ["eof", ""]) in acc
+    else
+      let c = str_ref(src, j) in
+      if c == 40 then
+        let _ = list_push(acc, ["lp", ""]) in rec(j + 1)
+      else if c == 41 then
+        let _ = list_push(acc, ["rp", ""]) in rec(j + 1)
+      else if c == 39 then
+        let _ = list_push(acc, ["qt", ""]) in rec(j + 1)
+      else if c == 34 then
+        let r = scm_lex_str(src, j + 1, n) in
+        let _ = list_push(acc, ["str", nth(r, 0)]) in rec(nth(r, 1))
+      else
+        let r = scm_lex_atom(src, j, n) in
+        let _ = list_push(acc, ["atom", nth(r, 0)]) in rec(nth(r, 1)) in
+  rec(0)
+
+let scm_k(t) = nth(t, 0)
+let scm_t(t) = nth(t, 1)
+let scm_at(toks, i) = if i >= len(toks) then ["eof", ""] else nth(toks, i)
+
+let scm_parse(toks, i) =
+  let tk = scm_at(toks, i) in
+  let k = scm_k(tk) in
+  if k == "eof" then [["err", "eof"], i]
+  else if k == "rp" then [["err", "rp"], i]
+  else if k == "str" then [["s", scm_t(tk)], i + 1]
+  else if k == "atom" then [["a", scm_t(tk)], i + 1]
+  else if k == "qt" then
+    let r = scm_parse(toks, i + 1) in
+    [["q", nth(r, 0)], nth(r, 1)]
+  else if k == "lp" then
+    let rec(j, acc) =
+      let u = scm_at(toks, j) in
+      if scm_k(u) == "eof" then [["err", "unclosed"], j]
+      else if scm_k(u) == "rp" then [["l", list_rev(acc)], j + 1]
+      else
+        let r = scm_parse(toks, j) in
+        rec(nth(r, 1), cons(nth(r, 0), acc)) in
+    rec(i + 1, [])
+  else [["err", "tok"], i]
+
+let scm_parse_all(toks, i, acc) =
+  if scm_k(scm_at(toks, i)) == "eof" then list_rev(acc)
+  else
+    let r = scm_parse(toks, i) in
+    scm_parse_all(toks, nth(r, 1), cons(nth(r, 0), acc))
+
+let scm_esc(s) =
+  let n = str_len(s) in
+  let rec(i, acc) =
+    if i >= n then acc
+    else
+      let c = str_ref(s, i) in
+      let bit =
+        if c == 34 then "\\\""
+        else if c == 92 then "\\\\"
+        else if c == 10 then "\\n"
+        else str_slice(s, i, 1) in
+      rec(i + 1, str_cat(acc, bit)) in
+  rec(0, "")
+
+let scm_is_int(s) =
+  let n = str_len(s) in
+  if n == 0 then false
+  else
+    let rec(i) =
+      if i >= n then true
+      else if scm_digit(str_ref(s, i)) then rec(i + 1)
+      else false in
+    if str_ref(s, 0) == 45 then
+      if n < 2 then false else rec(1)
+    else rec(0)
+
+let scm_kw(s) =
+  if s == "let" then true
+  else if s == "in" then true
+  else if s == "fun" then true
+  else if s == "if" then true
+  else if s == "then" then true
+  else if s == "else" then true
+  else if s == "not" then true
+  else if s == "print" then true
+  else if s == "callcc" then true
+  else if s == "throw" then true
+  else if s == "and" then true
+  else if s == "or" then true
+  else if s == "true" then true
+  else s == "false"
+
+let scm_mangle(s) =
+  let n = str_len(s) in
+  let rec(i, acc) =
+    if i >= n then acc
+    else
+      let c = str_ref(s, i) in
+      let bit =
+        if c == 45 then "_"
+        else if c == 63 then "_p"
+        else if c == 33 then "_b"
+        else str_slice(s, i, 1) in
+      rec(i + 1, str_cat(acc, bit)) in
+  let m = rec(0, "") in
+  if scm_kw(m) then str_cat(m, "_") else m
+
+let scm_join(xs, sep, i, acc) =
+  if i >= len(xs) then acc
+  else if i == 0 then scm_join(xs, sep, 1, nth(xs, 0))
+  else scm_join(xs, sep, i + 1, str_cat(acc, str_cat(sep, nth(xs, i))))
+
+let scm_map_em(xs, em, i, acc) =
+  if i >= len(xs) then list_rev(acc)
+  else scm_map_em(xs, em, i + 1, cons(em(nth(xs, i)), acc))
+
+let scm_atom_lit(s) =
+  if s == "#t" then "true"
+  else if s == "#f" then "false"
+  else if scm_is_int(s) then s
+  else scm_mangle(s)
+
+let scm_quote(e) =
+  let k = nth(e, 0) in
+  if k == "s" then str_cat("\"", str_cat(scm_esc(nth(e, 1)), "\""))
+  else if k == "a" then
+    if scm_is_int(nth(e, 1)) then nth(e, 1)
+    else str_cat("\"", str_cat(scm_esc(nth(e, 1)), "\""))
+  else if k == "l" then
+    let xs = nth(e, 1) in
+    str_cat("[", str_cat(scm_join(scm_map_em(xs, scm_quote, 0, []), ", ", 0, ""), "]"))
+  else if k == "q" then scm_quote(nth(e, 1))
+  else "[]"
+
+let scm_op(s) =
+  if s == "+" then "+"
+  else if s == "-" then "-"
+  else if s == "*" then "*"
+  else if s == "/" then "/"
+  else if s == "modulo" then "%"
+  else if s == "remainder" then "%"
+  else if s == "=" then "=="
+  else if s == "eq?" then "=="
+  else if s == "equal?" then "=="
+  else if s == "<" then "<"
+  else if s == ">" then ">"
+  else if s == "<=" then "<="
+  else if s == ">=" then ">="
+  else if s == "and" then "and"
+  else if s == "or" then "or"
+  else ""
+
+let scm_cad(s) =
+  let n = str_len(s) in
+  if n < 3 then false
+  else if str_ref(s, 0) != 99 then false
+  else if str_ref(s, n - 1) != 114 then false
+  else true
+
+let scm_expr(e) =
+  let begin(xs, i) =
+    let n = len(xs) in
+    if n == 0 then "0"
+    else if i >= n - 1 then scm_expr(nth(xs, i))
+    else
+      str_cat("(let _ = ", str_cat(scm_expr(nth(xs, i)),
+        str_cat(" in ", str_cat(begin(xs, i + 1), ")")))) in
+  let letex(rest) =
+    let binds = nth(nth(rest, 0), 1) in
+    let body = drop(rest, 1) in
+    let rec(i, acc) =
+      if i >= len(binds) then acc
+      else
+        let pair = nth(nth(binds, i), 1) in
+        let nm = scm_mangle(nth(nth(pair, 0), 1)) in
+        rec(i + 1, str_cat(acc, str_cat("let ", str_cat(nm, str_cat(" = ",
+          str_cat(scm_expr(nth(pair, 1)), " in ")))))) in
+    str_cat("(", str_cat(rec(0, ""), str_cat(begin(body, 0), ")"))) in
+  let cxr(s, inner) =
+    let n = str_len(s) in
+    let rec(i, acc) =
+      if i < 1 then acc
+      else
+        let c = str_ref(s, i) in
+        let nxt =
+          if c == 97 then str_cat("nth(", str_cat(acc, ", 0)"))
+          else str_cat("tail(", str_cat(acc, ")")) in
+        rec(i - 1, nxt) in
+    rec(n - 2, inner) in
+  let k = nth(e, 0) in
+  if k == "s" then str_cat("\"", str_cat(scm_esc(nth(e, 1)), "\""))
+  else if k == "a" then scm_atom_lit(nth(e, 1))
+  else if k == "q" then scm_quote(nth(e, 1))
+  else if k == "err" then "0"
+  else if k == "l" then
+    let xs = nth(e, 1) in
+    if len(xs) == 0 then "[]"
+    else
+      let h = nth(xs, 0) in
+      if nth(h, 0) != "a" then
+        str_cat("(", str_cat(scm_expr(h), str_cat("(", str_cat(
+          scm_join(scm_map_em(drop(xs, 1), scm_expr, 0, []), ", ", 0, ""), "))"))))
+      else
+        let s = nth(h, 1) in
+        let rest = drop(xs, 1) in
+        if s == "quote" then
+          if len(rest) == 0 then "[]" else scm_quote(nth(rest, 0))
+        else if s == "if" then
+          str_cat("(if ", str_cat(scm_expr(nth(rest, 0)),
+            str_cat(" then ", str_cat(scm_expr(nth(rest, 1)),
+              str_cat(" else ", str_cat(scm_expr(nth(rest, 2)), ")"))))))
+        else if s == "not" then str_cat("(not ", str_cat(scm_expr(nth(rest, 0)), ")"))
+        else if s == "lambda" then
+          let names = scm_map_em(nth(nth(rest, 0), 1), fun(p) -> scm_mangle(nth(p, 1)), 0, []) in
+          str_cat("(fun (", str_cat(scm_join(names, ", ", 0, ""),
+            str_cat(") -> ", str_cat(begin(drop(rest, 1), 0), ")"))))
+        else if s == "begin" then str_cat("(", str_cat(begin(rest, 0), ")"))
+        else if s == "let" then letex(rest)
+        else if s == "let*" then letex(rest)
+        else if s == "call/cc" then
+          str_cat("callcc(", str_cat(scm_expr(nth(rest, 0)), ")"))
+        else if s == "display" then str_cat("print ", scm_expr(nth(rest, 0)))
+        else if s == "newline" then "print \"\""
+        else if s == "null?" then str_cat("(", str_cat(scm_expr(nth(rest, 0)), " == [])"))
+        else if s == "car" then str_cat("nth(", str_cat(scm_expr(nth(rest, 0)), ", 0)"))
+        else if s == "cdr" then str_cat("tail(", str_cat(scm_expr(nth(rest, 0)), ")"))
+        else if s == "cons" then
+          str_cat("cons(", str_cat(scm_expr(nth(rest, 0)),
+            str_cat(", ", str_cat(scm_expr(nth(rest, 1)), ")"))))
+        else if s == "list" then
+          str_cat("[", str_cat(scm_join(scm_map_em(rest, scm_expr, 0, []), ", ", 0, ""), "]"))
+        else if s == "length" then str_cat("len(", str_cat(scm_expr(nth(rest, 0)), ")"))
+        else if s == "append" then
+          str_cat("append(", str_cat(scm_expr(nth(rest, 0)),
+            str_cat(", ", str_cat(scm_expr(nth(rest, 1)), ")"))))
+        else if s == "reverse" then str_cat("list_rev(", str_cat(scm_expr(nth(rest, 0)), ")"))
+        else if scm_cad(s) then cxr(s, scm_expr(nth(rest, 0)))
+        else
+          let op = scm_op(s) in
+          if op != "" then
+            str_cat("(", str_cat(scm_join(scm_map_em(rest, scm_expr, 0, []),
+              str_cat(" ", str_cat(op, " ")), 0, ""), ")"))
+          else
+            str_cat(scm_mangle(s), str_cat("(",
+              str_cat(scm_join(scm_map_em(rest, scm_expr, 0, []), ", ", 0, ""), ")")))
+  else "0"
+
+let scm_top(e) =
+  if nth(e, 0) != "l" then scm_expr(e)
+  else
+    let xs = nth(e, 1) in
+    if len(xs) == 0 then "0"
+    else
+      let h = nth(xs, 0) in
+      if nth(h, 0) != "a" then scm_expr(e)
+      else if nth(h, 1) != "define" then scm_expr(e)
+      else
+        let xs2 = drop(xs, 1) in
+        let head = nth(xs2, 0) in
+        if nth(head, 0) == "a" then
+          str_cat("let ", str_cat(scm_mangle(nth(head, 1)),
+            str_cat(" = ", scm_expr(nth(xs2, 1)))))
+        else
+          let parts = nth(head, 1) in
+          let fn = scm_mangle(nth(nth(parts, 0), 1)) in
+          let names = scm_map_em(drop(parts, 1), fun(p) -> scm_mangle(nth(p, 1)), 0, []) in
+          str_cat("let ", str_cat(fn, str_cat("(", str_cat(scm_join(names, ", ", 0, ""),
+            str_cat(") = ", scm_expr(["l", cons(["a", "begin"], drop(xs2, 1))]))))))
+
+let scheme_to_yac(src) =
+  let forms = scm_parse_all(scm_lex(src), 0, []) in
+  let rec(i, acc) =
+    if i >= len(forms) then acc
+    else rec(i + 1, str_cat(acc, str_cat(scm_top(nth(forms, i)), ";\n"))) in
+  rec(0, "")

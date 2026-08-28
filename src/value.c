@@ -812,6 +812,37 @@ static Value prim_system(Value *args, int nargs, PrimCtx *ctx) {
     return v_int(wait_status_to_rc(st));
 }
 
+/* Native yc maps these to $proc. C only needs them bound so the self-host
+ * bundle can ANF (L4 never calls jit_run). */
+static Value prim_read_line(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    char buf[4096];
+    if (!fgets(buf, (int)sizeof(buf), stdin)) {
+        Str *st = (Str *)arena_alloc(ctx->a, sizeof(Str));
+        st->len = 0;
+        st->data = (char *)arena_alloc(ctx->a, 1);
+        st->data[0] = '\0';
+        return wrap_str(st);
+    }
+    size_t n = strlen(buf);
+    if (n > 0 && buf[n - 1] == '\n') buf[--n] = '\0';
+    char *p = (char *)arena_alloc(ctx->a, n + 1);
+    memcpy(p, buf, n + 1);
+    Str *st = (Str *)arena_alloc(ctx->a, sizeof(Str));
+    st->len = (int)n;
+    st->data = p;
+    return wrap_str(st);
+}
+
+static Value prim_jit_run(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    ctx->errored = true;
+    strcpy(ctx->errmsg, "jit_run: only available in native yc");
+    return VALUE_NULL;
+}
+
 /* popen(cmd, stdin) -> [rc, stdout, stderr].
  * Same /bin/sh -c as system, but stdio is three pipes: stdin is the
  * given string (or bytes); stdout/stderr are collected. Compose a
@@ -1321,6 +1352,8 @@ static const Prim PRIMS[] = {
     {"read_file", 1, false, true, prim_read_file},
     {"write_file", 2, false, true, prim_write_file},
     {"system", 1, false, false, prim_system},
+    {"read_line", -1, false, true, prim_read_line},
+    {"jit_run", 2, false, true, prim_jit_run},
     {"popen", 2, false, true, prim_popen},
     {"bshl", 2, true, false, prim_bshl},
     {"bshr", 2, true, false, prim_bshr},

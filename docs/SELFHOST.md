@@ -236,7 +236,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **已落地文件**：`src-self/{lexer,parser,anf,lower,lir,runtime,emit,emit_x86_64,emit_arm64,emit_riscv64,elf,pe,macho,pack,backend,encode_*,yc}.yac`。
 全量：`make test`（原生 `yc_A` 编译 `tests/run.yac` 再执行）。C 仅作为子进程：interp_suite（cps/callcc/float/bignum）与 harness 内 L4 引导 `yc_A`。compiler/qemu/boot/`yc_B`/iso 走原生。
-**下一步**：scheme 前端与 CPS 变换仍未做；不要把 M7 当成已完成。
+**CLI（原生 yc）**：默认仍 `yc file.yac` 写出可执行文件（引导测试依赖）。`--cps`/`--both`/`--uncps`/`--scheme`（无 `-o`）以及 `--repl` 在同一进程里编译到 `0x200000000`、mmap RWX 后 `call` `_eval`（普通函数 ABI；`prog` 的进程入口名仍是 `_start`，镜像里没有该过程）。`--ast`/`--dump-anf` 打印列表。`--dump-cps` 暂打印 ANF。scheme 子集在 `scheme.yac`。
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**
 
@@ -261,7 +261,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | M4  | 自举：`yc.yac` 编译 `yc.yac` → 原生 `yc`；L4 烟测 42/letfun/fact；L5 `yc_A`/`yc_B` 对同一输入同构 | L4/L5 ✅ |
 | M5  | arm64 / riscv64 后端 + `--arch` 交叉编译（qemu 验证）                                                                        | 三架构同源跑通 ✅ |
 | M6  | rt yac 化 + GC 栈图；测试 harness 迁到原生 `yc`（L6）                                                                       | `make test` 由 `yc_A` 编跑 harness；C 只留 L0/interp |
-| M7  | 完善 callcc / CPS（ANF→CPS 转换、续延原生实现）与 scheme 前端                                                                      | callcc 四例原生已通；CPS 变换 / scheme 未做 |
+| M7  | 完善 callcc / CPS（ANF→CPS 转换、续延原生实现）与 scheme 前端                                                                      | callcc 四例原生已通；JIT REPL/`--cps` 已接；ANF→CPS dump 与 C 级 `--both` 仍未做 |
 
 
 
