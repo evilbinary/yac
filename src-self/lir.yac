@@ -311,6 +311,55 @@ let is_prim_name(w) =
   else if w == "gc_collect" then true
   else false
 
+/* AST scope check (C ANF in_scope). "" = ok, else the unbound name. */
+let ub_expr(e, sc) =
+  let xs(ys, i) =
+    if i >= len(ys) then ""
+    else
+      let u = ub_expr(nth(ys, i), sc) in
+      if u != "" then u else xs(ys, i + 1) in
+  let k = nth(e, 0) in
+  if k == "var" then
+    let nm = nth(e, 1) in
+    if in_list(nm, sc) then ""
+    else if is_prim_name(nm) then ""
+    else nm
+  else if k == "call" then
+    let u = ub_expr(nth(e, 1), sc) in
+    if u != "" then u else xs(nth(e, 2), 0)
+  else if k == "fun" then ub_expr(nth(e, 2), append(nth(e, 1), sc))
+  else if k == "if" then
+    let u = ub_expr(nth(e, 1), sc) in
+    if u != "" then u
+    else
+      let u2 = ub_expr(nth(e, 2), sc) in
+      if u2 != "" then u2 else ub_expr(nth(e, 3), sc)
+  else if k == "let" then
+    let nm = nth(e, 1) in
+    let bound = nth(e, 2) in
+    let scb = if nth(bound, 0) == "fun" then cons(nm, sc) else sc in
+    let u = ub_expr(bound, scb) in
+    if u != "" then u else ub_expr(nth(e, 3), cons(nm, sc))
+  else if k == "binop" then
+    let u = ub_expr(nth(e, 2), sc) in
+    if u != "" then u else ub_expr(nth(e, 3), sc)
+  else if k == "not" then ub_expr(nth(e, 1), sc)
+  else if k == "callcc" then ub_expr(nth(e, 1), sc)
+  else if k == "throw" then
+    let u = ub_expr(nth(e, 1), sc) in
+    if u != "" then u else ub_expr(nth(e, 2), sc)
+  else if k == "list" then xs(nth(e, 1), 0)
+  else ""
+
+let ub_prog(p, i, sc) =
+  if i >= len(p) then ""
+  else
+    let e = nth(p, i) in
+    let u = ub_expr(e, sc) in
+    if u != "" then u
+    else if nth(e, 0) == "let" then ub_prog(p, i + 1, cons(nth(e, 1), sc))
+    else ub_prog(p, i + 1, sc)
+
 let free_vars(fnbody, params, funs) =
   let fv(anf, acc, shdw) =
     let atom_vars(atom, a, sh) =

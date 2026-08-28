@@ -139,16 +139,19 @@ let compiler_cases(_) = [
   ["tco_cap", "rc", "42"], ["callcc", "rc", "42"], ["callcc2", "rc", "99"],
   ["callcc3", "rc", "42"], ["callcc4", "rc", "99"]]
 
-let compile_syntax_err(st, yc, src, name) =
+let compile_msg_err(st, yc, src, name, needle) =
   let p = str_cat(TMP, "/synerr.yac") in
   let _ = write_file(p, src) in
   let r = run(append(yc, [p, "-o", str_cat(TMP, "/synerr.bin")])) in
   let blob = str_cat(nth(r, 1), nth(r, 2)) in
   let ok =
     if nth(r, 0) == 0 then false
-    else contains(blob, "error: syntax") in
+    else contains(blob, needle) in
   if ok then check(st, name, "1", "1")
-  else check(st, name, "error: syntax", blob)
+  else check(st, name, needle, blob)
+
+let compile_syntax_err(st, yc, src, name) =
+  compile_msg_err(st, yc, src, name, "error: syntax")
 
 /* Incomplete / junk input must not compile or JIT. */
 let syntax_bads(_) = [
@@ -168,10 +171,17 @@ let syntax_bads(_) = [
   ["trailing plus", "1 +"],
   ["unclosed string call", "f(1,"]]
 
+let unbound_bads(_) = [
+  ["asdf", "asdf", "error: 1:1: unbound variable 'asdf'"],
+  ["asdf call", "asdf()", "unbound variable 'asdf'"],
+  ["let y", "let x = 1 in y + 1", "unbound variable 'y'"]]
+
 let compiler_all(st, yc) =
   let st1 = foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)) in
-  foldl(fun(s, c) -> compile_syntax_err(s, yc, nth(c, 1),
-                  str_cat("syntax ", nth(c, 0))), st1, syntax_bads(0))
+  let st2 = foldl(fun(s, c) -> compile_syntax_err(s, yc, nth(c, 1),
+                  str_cat("syntax ", nth(c, 0))), st1, syntax_bads(0)) in
+  foldl(fun(s, c) -> compile_msg_err(s, yc, nth(c, 1),
+                  str_cat("unbound ", nth(c, 0)), nth(c, 2)), st2, unbound_bads(0))
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
