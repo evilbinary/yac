@@ -11,12 +11,15 @@
  * ANF continuation frames, and call-argument value arrays. The IR (AST/ANF/
  * CPS) and string literals stay in the arena and are never collected. The
  * machine keeps its current environment and any in-flight values on the
- * collector's root set; gc_alloc triggers a collection when the allocation
- * budget since the last collection is exceeded. */
+ * collector's root set; gc_alloc triggers a collection when bytes allocated
+ * since the last GC exceed `threshold`. After each collection the threshold
+ * becomes max(min_threshold, 2 * live) so a large live heap is not re-marked
+ * every megabyte. */
 
 typedef struct Gc {
     GObj *all;            /* all-objects list (used by sweep) */
-    size_t threshold;     /* bytes allocated before a collection */
+    size_t threshold;     /* bytes of new allocs before the next collection */
+    size_t min_threshold; /* floor for threshold (init / YAC_GC_THRESHOLD) */
     size_t allocated;     /* bytes allocated since the last collection */
     size_t live;          /* approximate live bytes */
     size_t live_objs;     /* live object count (for --limit-nodes) */

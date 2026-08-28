@@ -335,7 +335,10 @@ int main(int argc, char **argv) {
     arena_init(&r.a, YAC_ARENA_BLOCK_SIZE);
     gc_init(&r.gc, YAC_GC_THRESHOLD);
     const char *th = getenv("YAC_GC_THRESHOLD");
-    if (th && *th) r.gc.threshold = (size_t)strtoul(th, NULL, 10);
+    if (th && *th) {
+        r.gc.threshold = (size_t)strtoul(th, NULL, 10);
+        r.gc.min_threshold = r.gc.threshold;
+    }
     r.gc.enabled = !no_gc;
     r.gc.max_objs = limit_nodes;
 

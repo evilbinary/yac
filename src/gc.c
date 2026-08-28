@@ -214,6 +214,14 @@ void gc_collect(Gc *g) {
             *p = o;
             p = &o->next;
             live += o->size;
+            if (o->kind == G_LIST) {
+                List *l = (List *)o;
+                if (l->cap > 0)
+                    live += (size_t)l->cap * sizeof(Value);
+            } else if (o->kind == G_BYTES) {
+                Bytes *b = (Bytes *)o;
+                if (b->cap > 0) live += (size_t)b->cap;
+            }
             nobjs++;
         } else {
             free_obj(o);
@@ -225,14 +233,21 @@ void gc_collect(Gc *g) {
     g->live_objs = nobjs;
     g->total_objs = nobjs;
     g->allocated = 0;
+    {
+        size_t next = live > ((size_t)-1) / 2 ? (size_t)-1 : live * 2;
+        if (next < g->min_threshold) next = g->min_threshold;
+        g->threshold = next;
+    }
     if (getenv("YAC_GC_DBG"))
-        fprintf(stderr, "gc: live=%zu objs=%zu roots=%d\n", live, nobjs, g->nroots);
+        fprintf(stderr, "gc: live=%zu objs=%zu roots=%d next=%zu\n",
+                live, nobjs, g->nroots, g->threshold);
     if (g->max_objs && nobjs > g->max_objs) runaway(g);
 }
 
 void gc_init(Gc *g, size_t threshold) {
     memset(g, 0, sizeof(*g));
     g->threshold = threshold > 0 ? threshold : 1024 * 1024;
+    g->min_threshold = g->threshold;
     g->enabled = true;
     g->envroot = NULL;
     g->roots = NULL;
