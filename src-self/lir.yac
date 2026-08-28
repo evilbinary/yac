@@ -297,6 +297,8 @@ let is_prim_name(w) =
   else if w == "read_file" then true
   else if w == "write_file" then true
   else if w == "system" then true
+  else if w == "read_line" then true
+  else if w == "jit_run" then true
   else if w == "popen" then true
   else if w == "exit" then true
   else if w == "band" then true
@@ -513,6 +515,9 @@ let lir_rt_bytes(g, dst, ss) =
   else if g == "read_file" then ["ccall", dst, "yac_read_file", [nth(ss, 0)]]
   else if g == "write_file" then ["ccall", dst, "yac_write_file", [nth(ss, 0), nth(ss, 1)]]
   else if g == "system" then ["ccall", dst, "yac_system", [nth(ss, 0)]]
+  else if g == "read_line" then ["ccall", dst, "yac_read_line", []]
+  else if g == "jit_run" then
+    ["ccall", dst, "yac_jit_run", [nth(ss, 0), nth(ss, 1)]]
   else if g == "exit" then ["exit", nth(ss, 0)]
   else if g == "gc_collect" then ["ccall", dst, "gc_collect", []]
   else if g == "band" then bin("&", dst, nth(ss, 0), nth(ss, 1))
@@ -881,3 +886,11 @@ let start_proc(nslots, result_slot, body) =
         insn_extend(insn_push(list_new(), ["local", nslots, 0]), body),
         ["untag", nslots, result_slot]),
       ["syscall", 0, 60, [nslots]]), "_start"]
+
+/* Callable entry for in-process JIT: print the last value, then ret. */
+let start_proc_eval(nslots, result_slot, body) =
+  ["proc", "_eval", 0, 0, insn_push(
+      insn_push(
+        insn_extend(insn_push(list_new(), ["local", nslots, 0]), body),
+        ["print", result_slot]),
+      ["ret", result_slot]), "_eval"]

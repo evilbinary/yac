@@ -1453,6 +1453,9 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
         if i == 0 or ((i % 20) == 0) then log_i("emit", "fun", i) else 0 in
       let f = nth(funs, i) in
       let name = nth(f, 1) in
+      /* Kernel process ABI (argc/argv on the stack, no call frame).
+       * That's whoever prog[2] names — often _start, not a hard-coded name.
+       * A JIT callable (_eval) must not be prog[2], or call/ret would break. */
       let is_entry = name == entry in
       let fstart = nth(st, 1) in
       let st0 = [nth(st, 0), nth(st, 1), [], [], nth(st, 4)] in

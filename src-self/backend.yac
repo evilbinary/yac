@@ -38,6 +38,27 @@ let pass_lir(anf_list) =
   let entry = start_proc(nth(st, 1), nth(st, 5), nth(st, 4)) in
   tco_prog(["prog", cons(entry, append(rt0, reverse(funs))), "_start"])
 
+let pass_lir_eval(anf_list) =
+  let rt0 = runtime_funs(0) in
+  let st = lir_all(0, anf_list,
+             [env_new(0), 1, sigma_new(len(rt0)), 0, list_new(), 0],
+             len(anf_list)) in
+  let funs = sigma_list(nth(st, 2)) in
+  let entry = start_proc_eval(nth(st, 1), nth(st, 5), nth(st, 4)) in
+  /* prog[2] is the Linux process entry (is_entry in emit). JIT jumps to
+   * _eval by name; it must not be prog[2] or it would get _start's ABI. */
+  tco_prog(["prog", cons(entry, append(rt0, reverse(funs))), "_start"])
+
+let fun_off(fo, name) =
+  if fo == [] then 0
+  else if nth(nth(fo, 0), 0) == name then nth(nth(fo, 0), 1)
+  else fun_off(tail(fo), name)
+
+let compile_jit(src, t) =
+  let prog = pass_lir_eval(pass_anf(pass_parse(pass_lex(src)))) in
+  let r = lower_expr(prog, t) in
+  jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"))
+
 let make_pipeline(t) =
   let pass_lower(ast) = nth(lower_expr(ast, t), 0) in
   let pass_pack(code) = pack_image(t, code) in

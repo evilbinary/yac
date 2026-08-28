@@ -12,6 +12,7 @@
  */
 
 let T_VADDR = 4194304
+let JIT_VADDR = 8589934592
 
 let target_arch(t) = nth(t, 1)
 let target_format(t) = nth(t, 2)
@@ -49,6 +50,10 @@ let mk_target(arch, format, kind) =
     ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
      nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(format, kind)]
   else 0
+
+/* In-process JIT: text at a high MAP_FIXED address, no ELF header. */
+let mk_jit_target(_) =
+  ["target", "x86_64", "elf", "exec", 62, 34404, 16777223, 3, JIT_VADDR, 0]
 
 let target_by_name(s) = mk_target(s, "elf", "exec")
 
