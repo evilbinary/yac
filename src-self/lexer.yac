@@ -273,7 +273,6 @@ let intern_seed(_) =
   let _ = intern("letcall") in
   let _ = intern("letif") in
   let _ = intern("letfun") in
-  let _ = intern("letprint") in
   let _ = intern("cons") in
   let _ = intern("len") in
   let _ = intern("nth") in
