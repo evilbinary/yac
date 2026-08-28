@@ -114,16 +114,16 @@ let src_self_rel(n) =
   if n == "log.yac" then "lib/log.yac"
   else if n == "pass.yac" then "lib/pass.yac"
   else if n == "map.yac" then "lib/map.yac"
-  else if n == "target.yac" then "pack/target.yac"
+  else if n == "target.yac" then "back/pack/target.yac"
   else if n == "lexer.yac" then "front/lexer.yac"
   else if n == "parser.yac" then "front/parser.yac"
   else if n == "anf.yac" then "front/anf.yac"
   else if n == "lir.yac" then "front/lir.yac"
   else if n == "runtime.yac" then "rt/runtime.yac"
-  else if n == "elf.yac" then "pack/elf.yac"
-  else if n == "pe.yac" then "pack/pe.yac"
-  else if n == "macho.yac" then "pack/macho.yac"
-  else if n == "pack.yac" then "pack/pack.yac"
+  else if n == "elf.yac" then "back/pack/elf.yac"
+  else if n == "pe.yac" then "back/pack/pe.yac"
+  else if n == "macho.yac" then "back/pack/macho.yac"
+  else if n == "pack.yac" then "back/pack/pack.yac"
   else if n == "lower.yac" then "back/lower.yac"
   else if n == "profile.yac" then "back/profile.yac"
   else if n == "backend.yac" then "back/backend.yac"
@@ -249,7 +249,7 @@ let pipe_suite(st) =
     ["letfun f(2)", "let f(x) = x + 1 in f(2)\n", "3"]])
 
 let elf_suite(st) =
-  let _ = cat_files(["src-self/pack/elf.yac", "src-self/drivers/driver_elf.yac"], str_cat(TMP, "/elf_run.yac")) in
+  let _ = cat_files(["src-self/back/pack/elf.yac", "src-self/drivers/driver_elf.yac"], str_cat(TMP, "/elf_run.yac")) in
   let br = native_build(str_cat(TMP, "/elf_run.yac"), str_cat(TMP, "/elf_run")) in
   if nth(br, 0) != 0 then
     check(st, "ELF magic", "ok", str_cat("yc_a rc=", int_to_str(nth(br, 0))))
@@ -345,10 +345,10 @@ let main =
   let _ = write_file(str_cat(TMP, "/log_stub.yac"), LOG_STUB) in
   let _ = write_file(str_cat(TMP, "/emit_stub.yac"), EMIT_STUB) in
   let _ = cat_files([str_cat(TMP, "/log_stub.yac"),
-                     "src-self/pack/target.yac",
+                     "src-self/back/pack/target.yac",
                      "src-self/lib/map.yac",
                      "src-self/front/lexer.yac", "src-self/front/parser.yac",
-                     "src-self/back/encode/encode_x64.yac", "src-self/pack/elf.yac",
+                     "src-self/back/encode/encode_x64.yac", "src-self/back/pack/elf.yac",
                      "src-self/front/lir.yac",
                      "src-self/back/emit/emit.yac", "src-self/back/emit/emit_x86_64.yac",
                      str_cat(TMP, "/emit_stub.yac"),
@@ -356,11 +356,11 @@ let main =
                      "src-self/drivers/driver_emit.yac"],
                     str_cat(TMP, "/emit_run.yac")) in
   let _ = cat_files([str_cat(TMP, "/log_stub.yac"),
-                     "src-self/pack/target.yac",
+                     "src-self/back/pack/target.yac",
                      "src-self/lib/map.yac",
                      "src-self/front/lexer.yac", "src-self/front/parser.yac",
                      "src-self/front/anf.yac",
-                     "src-self/back/encode/encode_x64.yac", "src-self/pack/elf.yac",
+                     "src-self/back/encode/encode_x64.yac", "src-self/back/pack/elf.yac",
                      "src-self/front/lir.yac", "src-self/rt/runtime.yac",
                      "src-self/back/emit/emit.yac", "src-self/back/emit/emit_x86_64.yac",
                      str_cat(TMP, "/emit_stub.yac"),

@@ -109,25 +109,22 @@ let anf = ["tailcall", ["var","fact"], [["int",5]]]
 
 ### 5.2 模块划分（全部 .yac）
 
-**已实现**：
-
-
-| 文件                                        | 职责                                        | 状态  |
-| ----------------------------------------- | ----------------------------------------- | --- |
-| `src-self/front/lexer.yac`                | 字符流 → token 流（空白/注释/标识符/数字含科学计数法/字符串/操作符） | ✅   |
-| `src-self/front/parser.yac`               | token 流 → AST（递归下降 + 优先级爬升）               | ✅   |
-| `src-self/front/anf.yac`                  | AST → ANF（`[bindings, tailExpr]`，求值顺序显式）  | ✅   |
-| `src-self/front/lir.yac`                  | ANF → LIR（`lir_expr`，对标 `anf_expr`） | ✅   |
-| `src-self/back/lower.yac`                 | LIR → 机器码（调用 `emit_*`）                              | ✅   |
-| `src-self/rt/runtime.yac`                 | `yac_*` 运行时过程（列表/字符串/bytes/print/time）   | ✅   |
-| `src-self/back/encode/encode_{x64,arm64,riscv64}.yac` | 单条目标指令 → 字节                         | ✅   |
-| `src-self/back/emit/emit.yac` + `emit_<arch>.yac` | LIR → 机器码（x86-64 / arm64 / riscv64）     | ✅   |
-| `src-self/pack/{target,elf,pe,macho,pack}.yac` | 目标三元组 + 机器码 → ELF / PE / Mach-O         | ✅   |
-| `src-self/back/backend.yac`               | 管线 + `compile_file`；`backend_compile` = emit+pack_elf | ✅   |
-| `src-self/yc.yac`                         | CLI：`--arch` / `--format`、argv                         | ✅   |
-| `src-self/rt/num.yac`                     | 客 stdlib（十进制 `yac_num_slow`）                    | ✅   |
-| `src-self/drivers/driver_{lex,parse,anf,elf}.yac` | 各阶段测试驱动                                   | ✅   |
-
+```
+src-self/
+  lib/           log / pass / map
+  front/         lexer → parser → anf → lir
+  rt/            runtime.yac（进 bundle）；num.yac（客 stdlib，不 cat）
+  back/
+    pack/        target + elf / pe / macho
+    encode/      单条目标指令 → 字节
+    emit/        LIR → .text（调用 encode）
+    lower.yac    按 target 调 emit_*
+    profile.yac
+    backend.yac  管线 + compile_file
+  lang/          scheme.yac
+  yc.yac         CLI（--arch / --format）
+  drivers/       各阶段测试驱动（不进 bundle）
+```
 
 没有单独的 `regalloc.yac` / `link.yac`：M3 值为栈槽（`[rbp+off]`），符号/入口在 emit+pack 里完成。
 
@@ -235,7 +232,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | M3.5d | 一等函数/高阶、列表/字符串/bytes/IO 原语、`yc.yac` 驱动                               | ✅ 完成*  |
 
 
-**已落地文件**：`src-self/{lib,front,pack,back,lang,rt}/`，CLI `yc.yac`，驱动 `drivers/`。
+**已落地文件**：`src-self/{lib,front,rt,back,lang}/`，CLI `yc.yac`，驱动 `drivers/`。
 全量：`make test`（原生 `yc_a` 编译 `tests/run.yac` 再执行）。C 仅作为子进程跑 interp_suite（cps/callcc/float/bignum）。`yc_a` 复用 Makefile L4 产物（拷贝，不再在 harness 里用 C 编一遍）。compiler/qemu/boot/`yc_b`/iso 走原生。
 **CLI（原生 yc）**：默认仍 `yc file.yac` 写出可执行文件（引导测试依赖）。`--cps`/`--both`/`--uncps`/`--scheme`（无 `-o`）以及 `--repl` 在同一进程里编译到 `0x200000000`、mmap RWX 后 `call` `_eval`（普通函数 ABI；`prog` 的进程入口名仍是 `_start`，镜像里没有该过程）。`--ast`/`--dump-anf` 打印列表。`--dump-cps` 暂打印 ANF。scheme 子集在 `scheme.yac`。
 
