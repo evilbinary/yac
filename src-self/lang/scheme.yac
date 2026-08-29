@@ -1,4 +1,6 @@
-/* scheme.yac — Scheme subset → yac source (native --scheme). */
+/* scheme.yac — Scheme subset → yac source (native --scheme).
+ * Identifiers use Scheme spelling (read-file, str-len, eq?); '-' '?' '!'
+ * mangle to yac '_' '_p' '_b'. */
 
 let scm_sp(c) = c == 32 or c == 9 or c == 10 or c == 13
 let scm_digit(c) = c >= 48 and c <= 57
@@ -145,6 +147,7 @@ let scm_kw(s) =
   else if s == "true" then true
   else s == "false"
 
+/* Scheme `read-file` / `str-len` → yac `read_file` / `str_len`. */
 let scm_mangle(s) =
   let n = str_len(s) in
   let rec(i, acc) =

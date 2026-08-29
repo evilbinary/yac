@@ -4,8 +4,9 @@
  * quote/' of lists, and/or/not, arithmetic (+ - * / modulo remainder),
  * comparisons (= < > <= >= eq? equal?), car/cdr/c[ad]+r, null?, length,
  * cons, append, list, reverse, map, filter, foldl, foldr, display, newline.
- * Unknown applications are emitted as yac function calls; identifiers are
- * mangled ('-' -> '_'). Unsupported forms are rejected with an error.
+ * Unknown applications are emitted as yac function calls; identifiers use
+ * Scheme spelling (read-file, not read_file) and are mangled ('-' -> '_').
+ * Unsupported forms are rejected with an error.
  *
  * Notes:
  *  - yac has no zero-arity application: (f) and (define (f) ...) are

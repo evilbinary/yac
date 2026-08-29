@@ -222,6 +222,14 @@ let compiler_all(st, yc) =
     else
       let _ = run(["chmod", "+x", bscm]) in
       check(st4, "scheme compile plus", "3", chomp(nth(run([bscm]), 1))) in
+  let _ = write_file(pscm, "(display (str-len \"abc\"))\n") in
+  let crslen = run(append(yc, ["--scheme", pscm, "-o", bscm])) in
+  let st5b =
+    if nth(run(["test", "-f", bscm]), 0) != 0 then
+      check(st5, "scheme compile str-len", "wrote binary", str_cat("compile rc=", int_to_str(nth(crslen, 0))))
+    else
+      let _ = run(["chmod", "+x", bscm]) in
+      check(st5, "scheme compile str-len", "3", chomp(nth(run([bscm]), 1))) in
   let _ = write_file(pscm, "(set! x 1)\n") in
   let rbad = run(append(yc, ["--scheme", pscm])) in
   let blob = str_cat(nth(rbad, 1), nth(rbad, 2)) in
@@ -229,8 +237,8 @@ let compiler_all(st, yc) =
     if nth(rbad, 0) == 0 then false
     else contains(blob, "unsupported Scheme form") in
   let st6 =
-    if ok then check(st5, "scheme set!", "1", "1")
-    else check(st5, "scheme set!", "unsupported Scheme form", blob) in
+    if ok then check(st5b, "scheme set!", "1", "1")
+    else check(st5b, "scheme set!", "unsupported Scheme form", blob) in
   let radd = run(append(yc, ["--eval-cps", "tests/compiler/cases/add.yac"])) in
   let st7 = check(st6, "eval-cps add", "3", chomp(nth(radd, 1))) in
   let rcc = run(append(yc, ["--eval-cps", "tests/interp/callcc.yac"])) in
