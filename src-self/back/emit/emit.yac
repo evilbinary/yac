@@ -9,6 +9,12 @@
 
 let reverse(xs) = list_rev(xs)
 
+/* 0-cap closures are 32 bytes. Cons cdr / BYTES cap live at +32, which is
+ * the next object's size/next (heap dump: next=6, size=0x3c/0x2000). */
+let clos_bytes(nenv) =
+  let s = bshl(4 + nenv, 3) in
+  if s < 48 then 48 else s
+
 /* DESIGN arith tags. */
 let is_arith(k) =
   if k == "add" then true
@@ -82,6 +88,12 @@ let emit_map_put(m, k, v) =
   let _ = fmap_put(m, intern(k), v) in
   m
 
+/* GC root while fmap_fill(4096) runs. A local cons is DCE'd back to `funs`. */
+let emit_ids_hold =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
 /* Fun id table: bind procs first, then helpers so reserved names win.
  * Duplicate fun names: last-put-wins (runtime prof_* stubs lose to profile.yac).
  * No handwritten helpers; yac_gc is a $proc. */
@@ -142,8 +154,10 @@ let emit_ids_bind(ids, funs, i, n) =
 let emit_ids_new(funs) =
   let nfun = len(funs) in
   let ids = fmap_new(0) in
+  let _ = box_set(emit_ids_hold, [funs, ids]) in
   let _ = fmap_init_n(ids, 4096) in
-  emit_ids_helpers(emit_ids_bind(ids, funs, 0, nfun), nfun)
+  let funs2 = nth(box_get(emit_ids_hold), 0) in
+  emit_ids_helpers(emit_ids_bind(ids, funs2, 0, nfun), nfun)
 
 /* Patch tags: 1=call to fun id (x86 rel32 / a64 bl / rv jal ra),
  * 2=closure fnptr, 3+=globals, 9=tail jmp to fun id (a64 b26 / rv jal).
@@ -163,23 +177,37 @@ let emit_patch_strlit(ps, pos, off) = cons([11, pos, off], ps)
 /* tag 12: abs64 = codebase + file_off (stack-map retaddrs / table ptr). */
 let emit_patch_codeva(ps, pos, off) = cons([12, pos, off], ps)
 
-let cimport_cell = list_new()
+let cimport_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let cimport_buf(_) =
+  let v = box_get(cimport_box) in
+  if v == 0 then
+    let l = list_new() in
+    let _ = box_set(cimport_box, l) in
+    l
+  else v
 
 let cimport_reset(_) =
-  if len(cimport_cell) == 0 then
-    let _ = list_push(cimport_cell, list_new()) in
-    let _ = list_push(cimport_cell, list_new()) in
-    list_push(cimport_cell, 0)
+  let c = cimport_buf(0) in
+  if len(c) == 0 then
+    let _ = list_push(c, list_new()) in
+    let _ = list_push(c, list_new()) in
+    list_push(c, 0)
   else
-    let _ = list_set(cimport_cell, 0, list_new()) in
-    let _ = list_set(cimport_cell, 1, list_new()) in
-    list_set(cimport_cell, 2, 0)
+    let _ = list_set(c, 0, list_new()) in
+    let _ = list_set(c, 1, list_new()) in
+    list_set(c, 2, 0)
 
 let cimport_names(_) =
-  if len(cimport_cell) == 0 then list_new() else nth(cimport_cell, 0)
+  let c = cimport_buf(0) in
+  if len(c) == 0 then list_new() else nth(c, 0)
 
 let cimport_got(_) =
-  if len(cimport_cell) < 3 then 0 else nth(cimport_cell, 2)
+  let c = cimport_buf(0) in
+  if len(c) < 3 then 0 else nth(c, 2)
 
 let cimport_n(_) = len(cimport_names(0))
 
@@ -189,8 +217,8 @@ let cimport_find(xs, name, i, n) =
   else cimport_find(xs, name, i + 1, n)
 
 let cimport_id(name) =
-  let _ = if len(cimport_cell) == 0 then cimport_reset(0) else 0 in
-  let xs = nth(cimport_cell, 0) in
+  let _ = if len(cimport_buf(0)) == 0 then cimport_reset(0) else 0 in
+  let xs = nth(cimport_buf(0), 0) in
   let j = cimport_find(xs, name, 0, len(xs)) in
   if j >= 0 then j
   else
@@ -210,12 +238,12 @@ let emit_cplt(b) =
       else let _ = bytes_append(b, 0) in pad8(0) in
     let _ = pad8(0) in
     let got = bytes_len(b) in
-    let _ = list_set(cimport_cell, 2, got) in
+    let _ = list_set(cimport_buf(0), 2, got) in
     let fill(i, lim) =
       if i >= lim then 0
       else let _ = bytes_append(b, 0) in fill(i + 1, lim) in
     let _ = fill(0, (3 + n) * 8) in
-    let plts = nth(cimport_cell, 1) in
+    let plts = nth(cimport_buf(0), 1) in
     let stub(i) =
       if i >= n then 0
       else
@@ -226,40 +254,67 @@ let emit_cplt(b) =
     stub(0)
 
 /* Call-site stack maps: [ret_off, nslots]. nslots is the caller's frame. */
-let smap_cell = list_new()
+let smap_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let smap_buf(_) =
+  let v = box_get(smap_box) in
+  if v == 0 then
+    let l = list_new() in
+    let _ = box_set(smap_box, l) in
+    l
+  else v
 
 let smap_reset(_) =
-  if len(smap_cell) == 0 then
-    let _ = list_push(smap_cell, 0) in
-    list_push(smap_cell, list_new())
+  let c = smap_buf(0) in
+  if len(c) == 0 then
+    let _ = list_push(c, 0) in
+    list_push(c, list_new())
   else
-    let _ = list_set(smap_cell, 0, 0) in
-    list_set(smap_cell, 1, list_new())
+    let _ = list_set(c, 0, 0) in
+    list_set(c, 1, list_new())
 
 let smap_set_nslots(n) =
-  let _ = if len(smap_cell) == 0 then smap_reset(0) else 0 in
-  list_set(smap_cell, 0, n)
+  let c = smap_buf(0) in
+  let _ = if len(c) == 0 then smap_reset(0) else 0 in
+  list_set(c, 0, n)
 
 let smap_note(ret_off) =
-  let _ = if len(smap_cell) < 2 then smap_reset(0) else 0 in
-  list_push(nth(smap_cell, 1), [ret_off, nth(smap_cell, 0)])
+  let c = smap_buf(0) in
+  let _ = if len(c) < 2 then smap_reset(0) else 0 in
+  list_push(nth(c, 1), [ret_off, nth(c, 0)])
 
 let smap_recs(_) =
-  if len(smap_cell) < 2 then list_new() else nth(smap_cell, 1)
+  let c = smap_buf(0) in
+  if len(c) < 2 then list_new() else nth(c, 1)
 
 /* Unique STR objects in the image (not yac_alloc). Same content => same ptr
  * so native == is pointer-eq. GC only walks gc_head; pool is in the ELF. */
-let strlit_cell = list_new()
+let strlit_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let strlit_buf(_) =
+  let v = box_get(strlit_box) in
+  if v == 0 then
+    let l = list_new() in
+    let _ = box_set(strlit_box, l) in
+    l
+  else v
 
 let strlit_pool_reset(_) =
   let m = fmap_new(0) in
   let _ = fmap_init_n(m, 2048) in
-  if len(strlit_cell) == 0 then
-    let _ = list_push(strlit_cell, m) in
-    list_push(strlit_cell, bytes_new())
+  let c = strlit_buf(0) in
+  if len(c) == 0 then
+    let _ = list_push(c, m) in
+    list_push(c, bytes_new())
   else
-    let _ = list_set(strlit_cell, 0, m) in
-    list_set(strlit_cell, 1, bytes_new())
+    let _ = list_set(c, 0, m) in
+    list_set(c, 1, bytes_new())
 
 let strlit_pad8(b) =
   if band(bytes_len(b), 7) == 0 then 0
@@ -284,13 +339,14 @@ let strlit_put_bytes(b, s, i, n) =
     strlit_put_bytes(b, s, i + 1, n)
 
 let strlit_off(s) =
-  let _ = if len(strlit_cell) == 0 then strlit_pool_reset(0) else 0 in
-  let m = nth(strlit_cell, 0) in
+  let c = strlit_buf(0) in
+  let _ = if len(c) == 0 then strlit_pool_reset(0) else 0 in
+  let m = nth(c, 0) in
   let key = intern(s) in
   let e = fmap_get(m, key) in
   if e != 0 then e - 1
   else
-    let buf = nth(strlit_cell, 1) in
+    let buf = nth(strlit_buf(0), 1) in
     let _ = strlit_pad8(buf) in
     let off = bytes_len(buf) in
     let n = str_len(s) in
@@ -304,7 +360,8 @@ let strlit_off(s) =
     off
 
 let strlit_bytes(_) =
-  if len(strlit_cell) < 2 then bytes_new() else nth(strlit_cell, 1)
+  let c = strlit_buf(0) in
+  if len(c) < 2 then bytes_new() else nth(c, 1)
 
 let smap_emit_table(b, extra) =
   let recs = smap_recs(0) in
@@ -364,7 +421,7 @@ let emit_resolve_patch(st, p) =
   else if tag == 14 then
     apply_u64(b, nth(p, 1), nth(st, 2) + nth(st, 5))
   else if tag == 15 then
-    apply_patch(b, nth(p, 1), nth(nth(cimport_cell, 1), nth(p, 2)))
+    apply_patch(b, nth(p, 1), nth(nth(cimport_buf(0), 1), nth(p, 2)))
   else
     0
 

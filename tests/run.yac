@@ -185,9 +185,10 @@ let compiler_all(st, yc) =
                   str_cat("syntax ", nth(c, 0))), st1, syntax_bads(0)) in
   let st3 = foldl(fun(s, c) -> compile_msg_err(s, yc, nth(c, 1),
                   str_cat("unbound ", nth(c, 0)), nth(c, 2)), st2, unbound_bads(0)) in
-  let cmd = str_cat("printf 'let a = 1\\n' | ",
-              str_cat(sh_quote(nth(yc, 0)), " --repl")) in
-  let rr = run(["sh", "-c", cmd]) in
+  let repl_in = str_cat(TMP, "/repl_line.yac") in
+  let _ = write_file(repl_in, "let a = 1\n") in
+  let rr = run(["sh", "-c",
+                str_cat(nth(yc, 0), str_cat(" --repl <", repl_in))]) in
   let blob = str_cat(nth(rr, 1), nth(rr, 2)) in
   if contains(blob, "a = 1") then check(st3, "repl let a = 1", "1", "1")
   else check(st3, "repl let a = 1", "a = 1", blob)
@@ -219,7 +220,7 @@ let qemu_one(st, yc, qemu, arch, c) =
     check(st, tag, "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
   else
     let _ = run(["chmod", "+x", bin]) in
-    let r = run([qemu, bin]) in
+    let r = run(["timeout", "-s", "KILL", "8", qemu, bin]) in
     if kind == "rc" then check(st, tag, want, int_to_str(nth(r, 0)))
     else check(st, tag, want, chomp(nth(r, 1)))
 

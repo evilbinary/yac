@@ -424,6 +424,7 @@ let emit_rv_i_raw(st, insn) =
     emit_st4(st, b, cur, labels, patches)
   else if k == "$st64" then
     let _ = rv_slot(b, nth(insn, 1), false, 10) in
+    let _ = rv_untag_ptr(b, 10) in
     let _ = rv_slot(b, nth(insn, 3), false, 11) in
     let _ = rv_sd(b, 11, 10, nth(insn, 2)) in
     emit_st4(st, b, cur, labels, patches)
@@ -433,6 +434,7 @@ let emit_rv_i_raw(st, insn) =
     emit_st4(st, b, cur, labels, patches)
   else if k == "$ld64" then
     let _ = rv_slot(b, nth(insn, 2), false, 10) in
+    let _ = rv_untag_ptr(b, 10) in
     let _ = rv_ld(b, 10, 10, nth(insn, 3)) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     emit_st4(st, b, cur, labels, patches)
@@ -791,7 +793,7 @@ let emit_rv_i_clos(st, insn, is_entry) =
     let fnName = nth(insn, 2) in
     let caps = nth(insn, 3) in
     let nenv = len(caps) in
-    let size = bshl(4 + nenv, 3) in
+    let size = clos_bytes(nenv) in
     let _ = rv_li(b, 10, size) in
     let acall = bytes_len(b) in
     let _ = rv_jal(b, 1, 0) in
@@ -1168,6 +1170,22 @@ let rv_lookup_at(xs, name, i) =
 
 let rv_lookup(xs, name) = rv_lookup_at(xs, name, len(xs) - 1)
 
+let rv_resolve_fun_patches(b, labels, patches) =
+  let n = len(patches) in
+  let keep = list_new() in
+  let step(i) =
+    if i >= n then keep
+    else
+      let p = nth(patches, i) in
+      let tag = nth(p, 0) in
+      let _ =
+        if is_int(tag) then list_push(keep, p)
+        else if tag == "cclab" then
+          list_push(keep, ["cclab", nth(p, 1), rv_lookup(labels, nth(p, 2))])
+        else rv_apply_jal(b, nth(p, 1), rv_lookup(labels, nth(p, 2)), 0) in
+      step(i + 1) in
+  step(0)
+
 let rv_resolve_patch(st, p) =
   let b = nth(st, 0) in
   let offs = nth(st, 1) in
@@ -1196,7 +1214,7 @@ let rv_resolve_patch(st, p) =
   else if tag == 11 then
     rv_li32_at(b, nth(p, 1), 10, nth(st, 5) + nth(p, 2) + 1)
   else if tag == "cclab" then
-    rv_li32_at(b, nth(p, 1), 6, codebase + rv_lookup(labels, nth(p, 2)))
+    rv_li32_at(b, nth(p, 1), 6, codebase + nth(p, 2))
   else
     let pos = nth(p, 1) in
     let lab = nth(p, 2) in
@@ -1224,7 +1242,7 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
       let name = nth(f, 1) in
       let is_entry = name == entry in
       let fstart = bytes_len(nth(st, 0)) in
-      let st0 = [nth(st, 0), 0, nth(st, 2), nth(st, 3), nth(st, 4)] in
+      let st0 = [nth(st, 0), 0, [], [], nth(st, 4)] in
       let insns = nth(f, 4) in
       if len(insns) == 0 then
         let _ = list_push(offs, 0) in
@@ -1235,8 +1253,11 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
           if j >= len(insns) then s
           else run(j + 1, emit_insn_rv(s, nth(insns, j), is_entry)) in
         let s1 = run(0, st0) in
-        emit_fun(i + 1, s1, cons([name, fstart], fo)) in
-  let r1 = emit_fun(0, [out, 0, [], [], ids], []) in
+        let kept = rv_resolve_fun_patches(nth(s1, 0), nth(s1, 2), nth(s1, 3)) in
+        let _ = patches_extend(nth(st, 3), kept) in
+        let s2 = [nth(s1, 0), 0, [], nth(st, 3), nth(st, 4)] in
+        emit_fun(i + 1, s2, cons([name, fstart], fo)) in
+  let r1 = emit_fun(0, [out, 0, [], list_new(), ids], []) in
   let st = nth(r1, 0) in
   let fo0 = nth(r1, 1) in
   let b = nth(st, 0) in
@@ -1251,7 +1272,7 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 96 then 0
+    if i >= 112 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in

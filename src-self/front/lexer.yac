@@ -317,6 +317,7 @@ let intern_seed(_) =
   let _ = intern("foldr") in
   let _ = intern("drop") in
   let _ = intern("head") in
+  let _ = intern("ccall") in
   0
 
 /* After lex: intern ident/kw/op/punct/num/str text so later == is pointer-eq

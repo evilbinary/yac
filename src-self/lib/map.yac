@@ -38,25 +38,33 @@ let fmap_new(_) =
 let fmap_probe(vec, k, h, i, mask) =
   let e = nth(vec, i) in
   if e == 0 then i
-  else if nth(e, 2) == h then
-    if nth(e, 0) == k then i
-    else fmap_probe(vec, k, h, band(i + 1, mask), mask)
   else
-    let i2 = band(i + 1, mask) in
-    let e2 = nth(vec, i2) in
-    if e2 == 0 then i2
-    else if nth(e2, 2) == h then
-      if nth(e2, 0) == k then i2
-      else fmap_probe(vec, k, h, band(i2 + 1, mask), mask)
-    else fmap_probe(vec, k, h, band(i2 + 1, mask), mask)
+    let hit =
+      if nth(e, 2) == h then
+        if nth(e, 0) == k then true else false
+      else false in
+    if hit then i
+    else
+      let i2 = band(i + 1, mask) in
+      if i2 == band(h, mask) then 0 - 1
+      else fmap_probe(vec, k, h, i2, mask)
 
 let fmap_got(e) =
   if e == 0 then 0 else nth(e, 1)
 
+let fmap_cap_ok(cap) =
+  if is_int(cap) then
+    if cap < 1 then false
+    else if cap > 1048576 then false
+    else band(cap, cap - 1) == 0
+  else false
+
 let fmap_get_h(m, k, h) =
   let cap = nth(m, 2) in
-  if cap == 0 then 0
-  else fmap_got(nth(nth(m, 0), fmap_probe(nth(m, 0), k, h, band(h, cap - 1), cap - 1)))
+  if fmap_cap_ok(cap) then
+    let p = fmap_probe(nth(m, 0), k, h, band(h, cap - 1), cap - 1) in
+    if p < 0 then 0 else fmap_got(nth(nth(m, 0), p))
+  else 0
 
 let fmap_get(m, k) =
   let cap = nth(m, 2) in
@@ -73,7 +81,9 @@ let fmap_put_at(m, k, v, h, i) =
 let fmap_install_hash(m, k, v, h) =
   let vec = nth(m, 0) in
   let mask = nth(m, 2) - 1 in
-  fmap_put_at(m, k, v, h, fmap_probe(vec, k, h, band(h, mask), mask))
+  let p = fmap_probe(vec, k, h, band(h, mask), mask) in
+  if p < 0 then fmap_put_at(m, k, v, h, band(h, mask))
+  else fmap_put_at(m, k, v, h, p)
 
 let fmap_install(m, k, v) =
   fmap_install_hash(m, k, v, hash_str(k))
@@ -114,9 +124,10 @@ let fmap_grow(m) =
   fmap_swap(oldv, m, nth(m, 2))
 
 let fmap_maybe_grow(m) =
-  if nth(m, 2) == 0 then fmap_init(m)
-  else if nth(m, 1) * 2 >= nth(m, 2) then fmap_grow(m)
-  else 0
+  let cap = nth(m, 2) in
+  if fmap_cap_ok(cap) then
+    if nth(m, 1) * 2 >= cap then fmap_grow(m) else 0
+  else fmap_init(m)
 
 let fmap_put_h(m, k, v, h) =
   let _ = fmap_maybe_grow(m) in
@@ -130,17 +141,24 @@ let fmap_push(m, k, v) =
   if old == 0 then fmap_put_h(m, k, [v], h)
   else fmap_put_h(m, k, cons(v, old), h)
 
-/* One intern table per process; keys are canonical string objects. */
-let intern_cell = list_new()
+/* One intern table per process; keys are canonical string objects.
+ * Box (cons) so GC marks the map via car; a listbuf cell was collected
+ * and reused, then nth(m,2) was nil, cap-1=-1, probe index = full hash. */
+let intern_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let intern_init(_) =
+  let nm = fmap_new(0) in
+  let _ = fmap_init_n(nm, 4096) in
+  let _ = box_set(intern_box, nm) in
+  nm
 
 let intern(s) =
-  let m =
-    if len(intern_cell) == 0 then
-      let m0 = fmap_new(0) in
-      let _ = fmap_init_n(m0, 4096) in
-      let _ = list_push(intern_cell, m0) in
-      m0
-    else nth(intern_cell, 0) in
+  let m0 = box_get(intern_box) in
+  let cap = if m0 == 0 then 0 else nth(m0, 2) in
+  let m = if fmap_cap_ok(cap) then m0 else intern_init(0) in
   let h = str_hash(s) in
   let e = fmap_get_h(m, s, h) in
   if e == 0 then

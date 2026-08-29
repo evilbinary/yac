@@ -41,6 +41,9 @@ let stdlib_src(name) =
     if b != 0 then b
     else file_or_0(str_cat(d, str_cat("/../", rel)))
 
+/* num.yac lets only. Do not call runtime_funs() here: that rebuilds every
+ * kernel insn list (cons thunks) and was doubling the compiler heap so the
+ * first guest compile hit yac_gc during lir. sigma nrt is unused. */
 let lir_funs_of_src(src) =
   if src == 0 then []
   else
@@ -48,9 +51,8 @@ let lir_funs_of_src(src) =
     if prog_has_err(ast, 0) then []
     else
       let anf = pass_anf(ast) in
-      let rt0 = runtime_funs(0) in
       let st = lir_all(0, anf,
-        [env_new(0), 1, sigma_new(len(rt0)), 0, list_new(), 0],
+        [env_new(0), 1, sigma_new(0), 0, list_new(), 0],
         len(anf)) in
       reverse(sigma_list(nth(st, 2)))
 
@@ -62,7 +64,7 @@ let rt_num_cache =
 let rt_image(_) =
   let c = box_get(rt_num_cache) in
   if c == 0 then
-    let v = runtime_add(lir_funs_of_src(stdlib_src("num.yac"))) in
+    let v = append(runtime_funs(0), lir_funs_of_src(stdlib_src("num.yac"))) in
     let _ = box_set(rt_num_cache, v) in
     v
   else c

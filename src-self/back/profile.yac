@@ -6,8 +6,9 @@
  * Bundled after lir.yac so fmap and hash_str exist.
  * Overrides runtime.yac no-op prof_enter_go / prof_leave_go (emit last-put-wins).
  *
- * glob 3 is only a pointer cache for yac_prof_enter. GC scans the stack, not
- * GLOBALS, so the cell must also live in a top-level list like intern_cell.
+ * glob 3 is only a pointer cache for yac_prof_enter. Kernel GLOBALS are
+ * not traced; after the stack map, GC conservatively scans [sp, stack_hi)
+ * so _start slots (intern_box, prof_roots) stay live.
  *
  * Frames and recs are listbufs mutated in place (same as C ProfFrame[]).
  * Cons-per-enter on skip_sp/read_alnum (per-char recursion) filled the heap

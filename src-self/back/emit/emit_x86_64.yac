@@ -546,6 +546,7 @@ let emit_x86_i_raw(st, insn) =
     emit_st4(st, b, cur, labels, patches)
   else if k == "$st64" then
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+    let _ = and_rax_1(b) in
     let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
     let _ = mov_rax_disp8_rdi(b, nth(insn, 2)) in
     emit_st4(st, b, cur, labels, patches)
@@ -555,6 +556,7 @@ let emit_x86_i_raw(st, insn) =
     emit_st4(st, b, cur, labels, patches)
   else if k == "$ld64" then
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let _ = and_rax_1(b) in
     let _ = mov_rax_rax_disp8(b, nth(insn, 3)) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
@@ -867,7 +869,7 @@ let emit_x86_i_clos(st, insn, is_entry) =
     let fnName = nth(insn, 2) in
     let caps = nth(insn, 3) in
     let nenv = len(caps) in
-    let size = (4 + nenv) * 8 in
+    let size = clos_bytes(nenv) in
     let _ = mov_rdi_imm(b, size) in
     let acall = bytes_len(b) in
     let _ = call_user(b) in
@@ -1464,6 +1466,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let _ = strlit_pool_reset(0) in
   let _ = smap_reset(0) in
   let _ = cimport_reset(0) in
+  let ckeep = cimport_buf(0) in
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
   let _ = log_i("emit", "nfun", nfun) in
@@ -1512,7 +1515,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let b = nth(st, 0) in
   let LOAD_VADDR = load_vaddr in
   let TEXT_OFF = text_off in
-  /* writable globals: gc_head, argc, argv, stack_hi, gc_free, alloc_bump, heap_lo, prof_st, gc_bm, gc_hi, gc_bmlo, gc_bmsz. */
+  /* writable globals: gc_head, argc, argv, stack_hi, gc_free, alloc_bump, heap_lo, prof_st, gc_bm, gc_hi, gc_bmlo, gc_bmsz, arena_cur, arena_end. */
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
@@ -1525,10 +1528,11 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let _ = pad8(0) in
   let data_start = bytes_len(b) in
   let fill_data(i) =
-    if i >= 96 then 0
+    if i >= 112 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let _ = emit_cplt(b) in
+  let _ = ckeep in
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
   let _ = patches_extend(extra, patches) in
   let _ = log("emit", "resolve") in
