@@ -242,7 +242,13 @@ let compiler_all(st, yc) =
   let rcc4 = run(append(yc, ["--eval-cps", "tests/interp/callcc4.yac"])) in
   let st11 = check(st10, "eval-cps callcc4", "999", chomp(nth(rcc4, 1))) in
   let rfact = run(append(yc, ["--eval-cps", "tests/interp/fact.yac"])) in
-  check(st11, "eval-cps fact", "3628800", chomp(nth(rfact, 1)))
+  let st12 = check(st11, "eval-cps fact", "3628800", chomp(nth(rfact, 1))) in
+  let rhi = run(append(yc, ["--eval-cps", "tests/interp/higher.yac"])) in
+  let st13 = check(st12, "eval-cps higher", "7", chomp(nth(rhi, 1))) in
+  let rlist = run(append(yc, ["--eval-cps", "tests/interp/list.yac"])) in
+  check(st13, "eval-cps list",
+    "3\n20\n[0, 1, 2]\n[1, 2, 3]\n[2, 4, 6]\n[2, 3]\n10\n2\n[1, [2, 3], x]\n[]\n1\n42",
+    chomp(nth(rlist, 1)))
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
