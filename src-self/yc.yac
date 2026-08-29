@@ -5,7 +5,7 @@ let usage(_) =
   let _ = print("options:") in
   let _ = print("  --cps            compile to machine code and run (in-process)") in
   let _ = print("  --dump-anf       print the ANF and exit") in
-  let _ = print("  --dump-cps       print ANF (CPS dump not yet) and exit") in
+  let _ = print("  --dump-cps       print ANF->CPS and exit") in
   let _ = print("  --both           compile and run (native path is one machine)") in
   let _ = print("  --uncps          compile and run") in
   let _ = print("  --dump-uncps     print the ANF and exit") in
@@ -164,7 +164,7 @@ let run_cli(pr) =
           let src = prep_src(raw, spec) in
           if fl(spec, "ast") then dump_ast(src)
           else if fl(spec, "dump-anf") then dump_anf(src)
-          else if fl(spec, "dump-cps") then dump_anf(src)
+          else if fl(spec, "dump-cps") then dump_cps(src)
           else if fl(spec, "dump-uncps") then dump_anf(src)
           else if fl(spec, "dump-rt") then dump_anf(src)
           else

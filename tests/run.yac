@@ -256,6 +256,7 @@ let cat_bundle(_) =
   cat_files(["src-self/lib/log.yac", "src-self/lib/pass.yac",
              "src-self/lib/map.yac",
              "src-self/front/lexer.yac", "src-self/front/parser.yac", "src-self/front/anf.yac",
+             "src-self/front/cps.yac",
              "src-self/front/lir.yac",
              "src-self/rt/runtime.yac",
              "src-self/back/pack/target.yac", "src-self/back/pack/elf.yac", "src-self/back/pack/pe.yac",

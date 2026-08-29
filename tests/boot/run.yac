@@ -120,6 +120,7 @@ let src_self_rel(n) =
   else if n == "lexer.yac" then "front/lexer.yac"
   else if n == "parser.yac" then "front/parser.yac"
   else if n == "anf.yac" then "front/anf.yac"
+  else if n == "cps.yac" then "front/cps.yac"
   else if n == "lir.yac" then "front/lir.yac"
   else if n == "runtime.yac" then "rt/runtime.yac"
   else if n == "elf.yac" then "back/pack/elf.yac"
@@ -327,6 +328,7 @@ let unit_suite(st) =
     ["parser bare print", ["map.yac", "lexer.yac", "parser.yac"], "let src = \"print\";\nlet toks = tokenize(src);\nlet prog = parse_program(toks, 0, []);\nlet e = if prog_has_err(prog, 0) then 1 else 0 in\nprint e;\n0;\n", "1\n0"],
     ["parser bare not", ["map.yac", "lexer.yac", "parser.yac"], "let src = \"not\";\nlet toks = tokenize(src);\nlet prog = parse_program(toks, 0, []);\nlet e = if prog_has_err(prog, 0) then 1 else 0 in\nprint e;\n0;\n", "1\n0"],
     ["anf precedence", ["map.yac", "lexer.yac", "parser.yac", "anf.yac"], "let ast = [\"binop\", \"+\", [\"int\", \"1\"], [\"binop\", \"*\", [\"int\", \"2\"], [\"int\", \"3\"]]];\nlet r = anf_expr(ast, 0);\nprint [nth(r, 0), nth(r, 1)];\n0;\n", "[[[letbin, t0, *, [int, 2], [int, 3]], [letbin, t1, +, [int, 1], [var, t0]]], [var, t1]]\n0"],
+    ["cps addition", ["map.yac", "anf.yac", "cps.yac"], "let r = anf_expr([\"binop\", \"+\", [\"int\", \"1\"], [\"int\", \"2\"]], 0);\nlet st = box_new();\nlet _ = box_set(st, 0) in\nprint cps_expr([nth(r, 0), nth(r, 1)], [\"halt\"], st);\n0;\n", "[call, [prim, +], [[int, 1], [int, 2], [cont, #k0, [let, t0, [var, #k0], [halt, [var, t0]]]]]]\n0"],
     ["lir free_vars", ["map.yac", "lir.yac"], "let body = [ [[\"letbin\", \"t0\", \"+\", [\"var\",\"n\"], [\"var\",\"x\"]]], [\"var\",\"t0\"] ];\nprint free_vars(body, [\"n\"], []);\n0;\n", "[x]\n0"],
     ["lir free_vars nested", ["map.yac", "lir.yac"], "let body = [ [[\"letfun\",\"g\",[\"m\"], [ [[\"letbin\",\"s0\",\"+\",[\"var\",\"n\"],[\"var\",\"m\"]]], [\"var\",\"s0\"] ]]],\n              [\"var\",\"g\"] ];\nprint free_vars(body, [\"n\"], []);\n0;\n", "[]\n0"],
     ["lir str_to_int", ["map.yac", "lir.yac"], "print str_to_int(\"42\");\n0;\n", "42\n0"],

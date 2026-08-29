@@ -1,0 +1,89 @@
+/* cps.yac — ANF [bindings, tail] → CPS (lists).
+ *
+ * cexp: [halt, atom]
+ *       [let, name, atom, cexp]
+ *       [call, head, args]          -- last arg is the continuation
+ *       [throw, k, v]
+ *       [if, cond, then, else]
+ * cval: atoms / [prim, op] / [fun, params, cexp] / [cont, param, cexp]
+ *
+ * No mutual top-level recursion: cps_expr nests the bind walker.
+ */
+
+let cps_newk(st) =
+  let n = box_get(st) in
+  let _ = box_set(st, n + 1) in
+  intern(str_cat("#k", int_to_str(n)))
+
+let cps_apply(k, v) =
+  if nth(k, 0) == "halt" then ["halt", v]
+  else ["call", k, [v]]
+
+let cps_expr(term, k, st) =
+  let rec(binds, i, pack) =
+    let n = nth(pack, 3) in
+    if i >= n then cps_apply(nth(pack, 1), nth(pack, 0))
+    else
+      let b = nth(binds, i) in
+      let bk = nth(b, 0) in
+      let k0 = nth(pack, 1) in
+      let st0 = nth(pack, 2) in
+      if bk == "let" then
+        ["let", nth(b, 1), nth(b, 2), rec(binds, i + 1, pack)]
+      else if bk == "letfun" then
+        let kn = cps_newk(st0) in
+        let fb = nth(b, 3) in
+        let body = rec(nth(fb, 0), 0,
+                       [nth(fb, 1), ["var", kn], st0, len(nth(fb, 0))]) in
+        ["let", nth(b, 1), ["fun", append(nth(b, 2), [kn]), body],
+         rec(binds, i + 1, pack)]
+      else if bk == "letcall" then
+        let r = cps_newk(st0) in
+        let rest = rec(binds, i + 1, pack) in
+        let kappa = ["cont", r, ["let", nth(b, 1), ["var", r], rest]] in
+        ["call", nth(b, 2), append(nth(b, 3), [kappa])]
+      else if bk == "letbin" then
+        let r = cps_newk(st0) in
+        let rest = rec(binds, i + 1, pack) in
+        let kappa = ["cont", r, ["let", nth(b, 1), ["var", r], rest]] in
+        ["call", ["prim", nth(b, 2)], [nth(b, 3), nth(b, 4), kappa]]
+      else if bk == "letif" then
+        let r = cps_newk(st0) in
+        let rest = rec(binds, i + 1, pack) in
+        let kappa = ["cont", r, ["let", nth(b, 1), ["var", r], rest]] in
+        let th = nth(b, 3) in
+        let el = nth(b, 4) in
+        ["if", nth(b, 2),
+         rec(nth(th, 0), 0, [nth(th, 1), kappa, st0, len(nth(th, 0))]),
+         rec(nth(el, 0), 0, [nth(el, 1), kappa, st0, len(nth(el, 0))])]
+      else if bk == "letthrow" then
+        ["throw", nth(b, 2), nth(b, 3)]
+      else if bk == "letcallcc" then
+        let ck = cps_newk(st0) in
+        let cr = cps_newk(st0) in
+        let bp = nth(b, 4) in
+        let rest = rec(binds, i + 1, pack) in
+        let krest = ["cont", cps_newk(st0), rest] in
+        let inner = rec(nth(bp, 0), 0,
+                        [nth(bp, 1), krest, st0, len(nth(bp, 0))]) in
+        let kcap = ["cont", ck, ["throw", k0, ["var", ck]]] in
+        let kret = ["cont", cr, ["let", nth(b, 1), ["var", cr], inner]] in
+        ["call", nth(b, 3), [kcap, kret]]
+      else rec(binds, i + 1, pack) in
+  rec(nth(term, 0), 0, [nth(term, 1), k, st, len(nth(term, 0))])
+
+let cps_halt(_) = ["halt"]
+
+let cps_item(item, st) = cps_expr(item, cps_halt(0), st)
+
+let cps_all(anf_list) =
+  let st = box_new() in
+  let _ = box_set(st, 0) in
+  let acc = list_new() in
+  let n = len(anf_list) in
+  let loop(i) =
+    if i >= n then acc
+    else
+      let _ = list_push(acc, cps_item(nth(anf_list, i), st)) in
+      loop(i + 1) in
+  loop(0)
