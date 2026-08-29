@@ -209,9 +209,27 @@ let compiler_all(st, yc) =
                   str_cat("syntax ", nth(c, 0))), st1, syntax_bads(0)) in
   let st3 = foldl(fun(s, c) -> compile_msg_err(s, yc, nth(c, 1),
                   str_cat("unbound ", nth(c, 0)), nth(c, 2)), st2, unbound_bads(0)) in
-  foldl(fun(s, c) ->
+  let st4 = foldl(fun(s, c) ->
     repl_check(s, yc, str_cat("repl ", nth(c, 0)), nth(c, 1), nth(c, 2)),
-    st3, repl_cases(0))
+    st3, repl_cases(0)) in
+  let pscm = str_cat(TMP, "/t.scm") in
+  let bscm = str_cat(TMP, "/t_scm") in
+  let _ = write_file(pscm, "(display (+ 1 2))\n") in
+  let crscm = run(append(yc, ["--scheme", pscm, "-o", bscm])) in
+  let st5 =
+    if nth(run(["test", "-f", bscm]), 0) != 0 then
+      check(st4, "scheme compile plus", "wrote binary", str_cat("compile rc=", int_to_str(nth(crscm, 0))))
+    else
+      let _ = run(["chmod", "+x", bscm]) in
+      check(st4, "scheme compile plus", "3", chomp(nth(run([bscm]), 1))) in
+  let _ = write_file(pscm, "(set! x 1)\n") in
+  let rbad = run(append(yc, ["--scheme", pscm])) in
+  let blob = str_cat(nth(rbad, 1), nth(rbad, 2)) in
+  let ok =
+    if nth(rbad, 0) == 0 then false
+    else contains(blob, "unsupported Scheme form") in
+  if ok then check(st5, "scheme set!", "1", "1")
+  else check(st5, "scheme set!", "unsupported Scheme form", blob)
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0

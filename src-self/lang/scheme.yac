@@ -160,6 +160,16 @@ let scm_mangle(s) =
   let m = rec(0, "") in
   if scm_kw(m) then str_cat(m, "_") else m
 
+let scm_err =
+  let b = box_new() in
+  let _ = box_set(b, "") in
+  b
+
+let scm_fail(msg) =
+  let cur = box_get(scm_err) in
+  let _ = if cur == "" then box_set(scm_err, msg) else 0 in
+  "0"
+
 let scm_join(xs, sep, i, acc) =
   if i >= len(xs) then acc
   else if i == 0 then scm_join(xs, sep, 1, nth(xs, 0))
@@ -210,7 +220,25 @@ let scm_cad(s) =
   if n < 3 then false
   else if str_ref(s, 0) != 99 then false
   else if str_ref(s, n - 1) != 114 then false
-  else true
+  else
+    let rec(i) =
+      if i >= n - 1 then true
+      else
+        let c = str_ref(s, i) in
+        if c == 97 then rec(i + 1)
+        else if c == 100 then rec(i + 1)
+        else false in
+    rec(1)
+
+let scm_ns =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let scm_fresh(_) =
+  let n = box_get(scm_ns) in
+  let _ = box_set(scm_ns, n + 1) in
+  str_cat("_s2y_", int_to_str(n))
 
 let scm_expr(e) =
   let begin(xs, i) =
@@ -253,8 +281,16 @@ let scm_expr(e) =
     else
       let h = nth(xs, 0) in
       if nth(h, 0) != "a" then
-        str_cat("(", str_cat(scm_expr(h), str_cat("(", str_cat(
-          scm_join(scm_map_em(drop(xs, 1), scm_expr, 0, []), ", ", 0, ""), "))"))))
+        let rest0 = drop(xs, 1) in
+        if len(rest0) == 0 then scm_fail("zero-argument functions are not supported")
+        else
+          let args = scm_join(scm_map_em(rest0, scm_expr, 0, []), ", ", 0, "") in
+          if nth(h, 0) != "l" then
+            str_cat("(", str_cat(scm_expr(h), str_cat("(", str_cat(args, "))"))))
+          else
+            let tmp = scm_fresh(0) in
+            str_cat("(let ", str_cat(tmp, str_cat(" = ", str_cat(scm_expr(h),
+              str_cat(" in ", str_cat(tmp, str_cat("(", str_cat(args, "))"))))))))
       else
         let s = nth(h, 1) in
         let rest = drop(xs, 1) in
@@ -267,11 +303,37 @@ let scm_expr(e) =
         else if s == "not" then str_cat("(not ", str_cat(scm_expr(nth(rest, 0)), ")"))
         else if s == "lambda" then
           let names = scm_map_em(nth(nth(rest, 0), 1), fun(p) -> scm_mangle(nth(p, 1)), 0, []) in
-          str_cat("(fun (", str_cat(scm_join(names, ", ", 0, ""),
+          if len(names) == 0 then scm_fail("zero-argument functions are not supported")
+          else str_cat("(fun (", str_cat(scm_join(names, ", ", 0, ""),
             str_cat(") -> ", str_cat(begin(drop(rest, 1), 0), ")"))))
         else if s == "begin" then str_cat("(", str_cat(begin(rest, 0), ")"))
         else if s == "let" then letex(rest)
         else if s == "let*" then letex(rest)
+        else if s == "cond" then
+          let cond(xs, i) =
+            if i >= len(xs) then "false"
+            else
+              let cl = nth(xs, i) in
+              if nth(cl, 0) != "l" then scm_fail("expected a cond clause")
+              else
+                let body = nth(cl, 1) in
+                if len(body) == 0 then scm_fail("expected a cond clause")
+                else
+                  let test = nth(body, 0) in
+                  if nth(test, 0) == "a" then
+                    if nth(test, 1) == "else" then
+                      if i + 1 < len(xs) then
+                        scm_fail("else clause must be the last cond clause")
+                      else begin(drop(body, 1), 0)
+                    else
+                      str_cat("(if ", str_cat(scm_expr(test),
+                        str_cat(" then ", str_cat(begin(drop(body, 1), 0),
+                          str_cat(" else ", str_cat(cond(xs, i + 1), ")"))))))
+                  else
+                    str_cat("(if ", str_cat(scm_expr(test),
+                      str_cat(" then ", str_cat(begin(drop(body, 1), 0),
+                        str_cat(" else ", str_cat(cond(xs, i + 1), ")")))))) in
+          cond(rest, 0)
         else if s == "call/cc" then
           str_cat("callcc(", str_cat(scm_expr(nth(rest, 0)), ")"))
         else if s == "display" then str_cat("print ", scm_expr(nth(rest, 0)))
@@ -289,12 +351,39 @@ let scm_expr(e) =
           str_cat("append(", str_cat(scm_expr(nth(rest, 0)),
             str_cat(", ", str_cat(scm_expr(nth(rest, 1)), ")"))))
         else if s == "reverse" then str_cat("list_rev(", str_cat(scm_expr(nth(rest, 0)), ")"))
+        else if s == "map" then
+          str_cat("map(", str_cat(scm_join(scm_map_em(rest, scm_expr, 0, []), ", ", 0, ""), ")"))
+        else if s == "filter" then
+          str_cat("filter(", str_cat(scm_join(scm_map_em(rest, scm_expr, 0, []), ", ", 0, ""), ")"))
+        else if s == "foldl" then
+          str_cat("foldl(", str_cat(scm_join(scm_map_em(rest, scm_expr, 0, []), ", ", 0, ""), ")"))
+        else if s == "foldr" then
+          str_cat("foldr(", str_cat(scm_join(scm_map_em(rest, scm_expr, 0, []), ", ", 0, ""), ")"))
+        else if s == "apply" then
+          if len(rest) == 0 then scm_fail("'apply' expects a function")
+          else if len(rest) < 2 then scm_fail("zero-argument functions are not supported")
+          else
+            let fh = nth(rest, 0) in
+            let a1 = drop(rest, 1) in
+            let args = scm_join(scm_map_em(a1, scm_expr, 0, []), ", ", 0, "") in
+            if nth(fh, 0) == "l" then
+              let tmp = scm_fresh(0) in
+              str_cat("(let ", str_cat(tmp, str_cat(" = ", str_cat(scm_expr(fh),
+                str_cat(" in ", str_cat(tmp, str_cat("(", str_cat(args, "))"))))))))
+            else str_cat(scm_expr(fh), str_cat("(", str_cat(args, ")")))
+        else if s == "set!" then scm_fail("unsupported Scheme form 'set!'")
+        else if s == "letrec" then scm_fail("unsupported Scheme form 'letrec'")
+        else if s == "do" then scm_fail("unsupported Scheme form 'do'")
+        else if s == "case" then scm_fail("unsupported Scheme form 'case'")
+        else if s == "vector" then scm_fail("unsupported Scheme form 'vector'")
         else if scm_cad(s) then cxr(s, scm_expr(nth(rest, 0)))
         else
           let op = scm_op(s) in
           if op != "" then
             str_cat("(", str_cat(scm_join(scm_map_em(rest, scm_expr, 0, []),
               str_cat(" ", str_cat(op, " ")), 0, ""), ")"))
+          else if len(rest) == 0 then
+            scm_fail("zero-argument functions are not supported")
           else
             str_cat(scm_mangle(s), str_cat("(",
               str_cat(scm_join(scm_map_em(rest, scm_expr, 0, []), ", ", 0, ""), ")")))
@@ -318,13 +407,18 @@ let scm_top(e) =
           let parts = nth(head, 1) in
           let fn = scm_mangle(nth(nth(parts, 0), 1)) in
           let names = scm_map_em(drop(parts, 1), fun(p) -> scm_mangle(nth(p, 1)), 0, []) in
-          str_cat("let ", str_cat(fn, str_cat("(", str_cat(scm_join(names, ", ", 0, ""),
+          if len(names) == 0 then scm_fail("zero-argument functions are not supported")
+          else str_cat("let ", str_cat(fn, str_cat("(", str_cat(scm_join(names, ", ", 0, ""),
             str_cat(") = ", scm_expr(["l", cons(["a", "begin"], drop(xs2, 1))]))))))
       else scm_expr(e)
 
 let scheme_to_yac(src) =
+  let _ = box_set(scm_err, "") in
+  let _ = box_set(scm_ns, 0) in
   let forms = scm_parse_all(scm_lex(src), 0, []) in
   let rec(i, acc) =
     if i >= len(forms) then acc
     else rec(i + 1, str_cat(acc, str_cat(scm_top(nth(forms, i)), ";\n"))) in
-  rec(0, "")
+  let out = rec(0, "") in
+  let e = box_get(scm_err) in
+  if e == "" then out else str_cat("error: ", e)

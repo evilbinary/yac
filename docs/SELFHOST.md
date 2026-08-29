@@ -514,7 +514,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 **仍待**：
 1. **M6 L6（已完成）**：`make test` 用原生 `yc_a` 编译 `tests/run.yac`。
-2. **M7（进行中）**：原生 `callcc`/`throw` 已通；`cps.yac` / `uncps.yac` / `--opt`（eta + 整型折叠）。`--scheme` 的 `define` 用 `==` 匹配（`!=` 对切片字符串不能当内容比较）。C `--both` 仍是 ANF 机 vs CPS 机。
+2. **M7（进行中）**：原生 `callcc`/`throw` 已通；`cps.yac` / `uncps.yac` / `--opt`。`--scheme`：`cond`/`map`/`apply`、拒绝 `set!`/`letrec` 与零元函数。C `--both` 仍是 ANF 机 vs CPS 机。
 3. **GC**：`yac_gc` 已是 `$proc`；x86 读栈图，其它架构保守扫栈。`--emit-asm` / `regalloc.yac`：未做。
 
 **L4 已通（原生 `yc_a`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_a` / `yc_b`。

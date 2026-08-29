@@ -162,7 +162,14 @@ let run_cli(pr) =
           let _ = print(str_cat("cannot read file: ", inpath)) in 2
         else
           let src = prep_src(raw, spec) in
-          if fl(spec, "ast") then dump_ast(src)
+          let bad_scm =
+            if fl(spec, "scheme") then
+              if str_len(src) < 7 then false
+              else str_slice(src, 0, 7) == "error: "
+            else false in
+          if bad_scm then
+            let _ = print(src) in 1
+          else if fl(spec, "ast") then dump_ast(src)
           else if fl(spec, "dump-anf") then dump_anf(src)
           else if fl(spec, "dump-cps") then dump_cps(src, fl(spec, "opt"))
           else if fl(spec, "dump-uncps") then dump_uncps(src, fl(spec, "opt"))
