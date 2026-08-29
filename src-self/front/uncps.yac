@@ -1,0 +1,218 @@
+/* uncps.yac — restricted CPS → ANF [bindings, tail].
+ * Dispatch is boxed so each clause can be a small top-level function
+ * (a single huge function overflows the compiler frame).
+ */
+
+let uncps_take(xs, n, i, acc) =
+  if i >= n then list_rev(acc)
+  else uncps_take(xs, n, i + 1, cons(nth(xs, i), acc))
+
+let uncps_fresh(st) =
+  let n = box_get(st) in
+  let _ = box_set(st, n + 1) in
+  intern(str_cat("#u", int_to_str(n)))
+
+let kenv_get(kenv, name) =
+  if kenv == [] then 0
+  else if nth(nth(kenv, 0), 0) == name then nth(kenv, 0)
+  else kenv_get(drop(kenv, 1), name)
+
+let uncps_fail(u, msg) =
+  let _ = box_set(u, msg) in
+  ["error", msg]
+
+let uncps_is_err(x) =
+  if is_int(x) then false
+  else if x == [] then false
+  else if len(x) != 2 then false
+  else nth(x, 0) == "error"
+
+let uncps_noesc(args, n, i, kenv, u) =
+  if i >= n then true
+  else
+    let a = nth(args, i) in
+    if nth(a, 0) == "cont" then
+      let _ = uncps_fail(u, "cannot un-CPS: continuation escapes (used as a value)") in
+      false
+    else if nth(a, 0) == "var" then
+      if kenv_get(kenv, nth(a, 1)) != 0 then
+        let _ = uncps_fail(u, "cannot un-CPS: continuation escapes (passed as an argument)") in
+        false
+      else uncps_noesc(args, n, i + 1, kenv, u)
+    else uncps_noesc(args, n, i + 1, kenv, u)
+
+let uncps_bind(param, hd, args, rest) =
+  if uncps_is_err(rest) then rest
+  else if uncps_is_err(hd) then hd
+  else
+    let b =
+      if nth(hd, 0) == "prim" then
+        if len(args) == 2 then
+          ["letbin", param, nth(hd, 1), nth(args, 0), nth(args, 1)]
+        else ["letcall", param, ["var", nth(hd, 1)], args]
+      else ["letcall", param, hd, args] in
+    [cons(b, nth(rest, 0)), nth(rest, 1)]
+
+let uncps_atom(a, pack, go) =
+  let u = nth(pack, 1) in
+  let st = nth(pack, 2) in
+  let vk = nth(a, 0) in
+  if vk == "cont" then
+    uncps_fail(u, "cannot un-CPS: continuation value used as a data value")
+  else if vk == "fun" then
+    let ps = nth(a, 1) in
+    let np = len(ps) in
+    if np == 0 then uncps_fail(u, "cannot un-CPS: empty fun")
+    else
+      let kn = nth(ps, np - 1) in
+      let ups = uncps_take(ps, np - 1, 0, []) in
+      let body = go("cexp", nth(a, 2), [cons([kn, "return"], []), u, st]) in
+      if uncps_is_err(body) then body
+      else ["fun", ups, body]
+  else if vk == "prim" then ["var", nth(a, 1)]
+  else a
+
+let uncps_app(a, pack, go) =
+  let body = go("cexp", nth(a, 1), pack) in
+  let val = nth(a, 2) in
+  if uncps_is_err(body) then body
+  else if uncps_is_err(val) then val
+  else [cons(["let", nth(a, 0), val], nth(body, 0)), nth(body, 1)]
+
+let uncps_let(C, pack, go) =
+  let kenv = nth(pack, 0) in
+  let u = nth(pack, 1) in
+  let st = nth(pack, 2) in
+  let name = nth(C, 1) in
+  let val = nth(C, 2) in
+  let bodyC = nth(C, 3) in
+  if nth(val, 0) == "cont" then
+    go("cexp", bodyC, [cons([name, "app", nth(val, 1), nth(val, 2)], kenv), u, st])
+  else if nth(val, 0) == "var" then
+    let ent = kenv_get(kenv, nth(val, 1)) in
+    if ent != 0 then
+      go("cexp", bodyC, [cons(append([name], drop(ent, 1)), kenv), u, st])
+    else
+      let at = go("atom", val, pack) in
+      let rest = go("cexp", bodyC, pack) in
+      if uncps_is_err(at) then at
+      else if uncps_is_err(rest) then rest
+      else [cons(["let", name, at], nth(rest, 0)), nth(rest, 1)]
+  else if nth(val, 0) == "fun" then
+    let at = go("atom", val, pack) in
+    let rest = go("cexp", bodyC, pack) in
+    if uncps_is_err(at) then at
+    else if uncps_is_err(rest) then rest
+    else [cons(["letfun", name, nth(at, 1), nth(at, 2)], nth(rest, 0)), nth(rest, 1)]
+  else
+    let at = go("atom", val, pack) in
+    let rest = go("cexp", bodyC, pack) in
+    if uncps_is_err(at) then at
+    else if uncps_is_err(rest) then rest
+    else [cons(["let", name, at], nth(rest, 0)), nth(rest, 1)]
+
+let uncps_throw(C, pack, go) =
+  let kenv = nth(pack, 0) in
+  let u = nth(pack, 1) in
+  let k = nth(C, 1) in
+  if nth(k, 0) != "var" then
+    uncps_fail(u, "cannot un-CPS: throw to a value that is not a known continuation")
+  else
+    let ent = kenv_get(kenv, nth(k, 1)) in
+    if ent == 0 then
+      uncps_fail(u, "cannot un-CPS: throw to a value that is not a known continuation")
+    else if nth(ent, 1) == "halt" then [[], go("atom", nth(C, 2), pack)]
+    else if nth(ent, 1) == "return" then [[], go("atom", nth(C, 2), pack)]
+    else go("app", [nth(ent, 2), nth(ent, 3), go("atom", nth(C, 2), pack)], pack)
+
+let uncps_if(C, pack, go) =
+  let cond = go("atom", nth(C, 1), pack) in
+  let th = go("cexp", nth(C, 2), pack) in
+  let el = go("cexp", nth(C, 3), pack) in
+  if uncps_is_err(cond) then cond
+  else if uncps_is_err(th) then th
+  else if uncps_is_err(el) then el
+  else
+    let t = uncps_fresh(nth(pack, 2)) in
+    [[["letif", t, cond, th, el]], ["var", t]]
+
+let uncps_call_tail(head, args, pack, go) =
+  let kenv = nth(pack, 0) in
+  let u = nth(pack, 1) in
+  let st = nth(pack, 2) in
+  let nargs = len(args) in
+  if nargs < 1 then uncps_fail(u, "cannot un-CPS: call without arguments")
+  else if uncps_noesc(args, nargs - 1, 0, kenv, u) == false then ["error", box_get(u)]
+  else
+    let last = nth(args, nargs - 1) in
+    let uargs = uncps_take(args, nargs - 1, 0, []) in
+    let hd = if nth(head, 0) == "prim" then head else go("atom", head, pack) in
+    if nth(last, 0) == "cont" then
+      uncps_bind(nth(last, 1), hd, uargs, go("cexp", nth(last, 2), pack))
+    else if nth(last, 0) == "var" then
+      let e2 = kenv_get(kenv, nth(last, 1)) in
+      if e2 == 0 then
+        uncps_fail(u, "cannot un-CPS: call without a recognizable continuation")
+      else if nth(e2, 1) == "halt" then
+        let t = uncps_fresh(st) in
+        uncps_bind(t, hd, uargs, [[], ["var", t]])
+      else if nth(e2, 1) == "return" then
+        let t = uncps_fresh(st) in
+        uncps_bind(t, hd, uargs, [[], ["var", t]])
+      else uncps_bind(nth(e2, 2), hd, uargs, go("cexp", nth(e2, 3), pack))
+    else uncps_fail(u, "cannot un-CPS: call without a recognizable continuation")
+
+let uncps_call(C, pack, go) =
+  let kenv = nth(pack, 0) in
+  let u = nth(pack, 1) in
+  let head = nth(C, 1) in
+  let args = nth(C, 2) in
+  let nargs = len(args) in
+  if nth(head, 0) == "cont" then
+    if nargs != 1 then
+      uncps_fail(u, "cannot un-CPS: continuation applied to the wrong arity")
+    else go("app", [nth(head, 1), nth(head, 2), go("atom", nth(args, 0), pack)], pack)
+  else if nth(head, 0) == "var" then
+    let ent = kenv_get(kenv, nth(head, 1)) in
+    if ent != 0 then
+      if nargs != 1 then
+        uncps_fail(u, "cannot un-CPS: continuation applied to the wrong arity")
+      else if nth(ent, 1) == "halt" then [[], go("atom", nth(args, 0), pack)]
+      else if nth(ent, 1) == "return" then [[], go("atom", nth(args, 0), pack)]
+      else go("app", [nth(ent, 2), nth(ent, 3), go("atom", nth(args, 0), pack)], pack)
+    else uncps_call_tail(head, args, pack, go)
+  else uncps_call_tail(head, args, pack, go)
+
+let uncps_dispatch(op, a, pack) =
+  let u = nth(pack, 1) in
+  if box_get(u) != 0 then ["error", box_get(u)]
+  else if op == "atom" then uncps_atom(a, pack, uncps_dispatch)
+  else if op == "app" then uncps_app(a, pack, uncps_dispatch)
+  else if nth(a, 0) == "halt" then
+    let at = uncps_dispatch("atom", nth(a, 1), pack) in
+    if uncps_is_err(at) then at else [[], at]
+  else if nth(a, 0) == "let" then uncps_let(a, pack, uncps_dispatch)
+  else if nth(a, 0) == "throw" then uncps_throw(a, pack, uncps_dispatch)
+  else if nth(a, 0) == "if" then uncps_if(a, pack, uncps_dispatch)
+  else if nth(a, 0) == "call" then uncps_call(a, pack, uncps_dispatch)
+  else uncps_fail(u, "cannot un-CPS: bad CPS node")
+
+let uncps_item(C, u, st) = uncps_dispatch("cexp", C, [[], u, st])
+
+let uncps_all(cps_list) =
+  let u = box_new() in
+  let _ = box_set(u, 0) in
+  let st = box_new() in
+  let _ = box_set(st, 0) in
+  let acc = list_new() in
+  let n = len(cps_list) in
+  let loop(i) =
+    if box_get(u) != 0 then ["error", box_get(u)]
+    else if i >= n then acc
+    else
+      let one = uncps_item(nth(cps_list, i), u, st) in
+      if uncps_is_err(one) then one
+      else
+        let _ = list_push(acc, one) in
+        loop(i + 1) in
+  loop(0)

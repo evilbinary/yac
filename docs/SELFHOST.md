@@ -259,7 +259,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 | M4  | 自举：`yc.yac` 编译 `yc.yac` → 原生 `yc`；L4 烟测 42/letfun/fact；L5 `yc_a`/`yc_b` 对同一输入同构 | L4/L5 ✅ |
 | M5  | arm64 / riscv64 后端 + `--arch` 交叉编译（qemu 验证）                                                                        | 三架构同源跑通 ✅ |
 | M6  | rt yac 化 + GC 栈图；测试 harness 迁到原生 `yc`（L6）                                                                       | `make test` 由 `yc_a` 编跑 harness；C 只留 L0/interp |
-| M7  | 完善 callcc / CPS（ANF→CPS 转换、续延原生实现）与 scheme 前端                                                                      | callcc 四例原生已通；JIT REPL/`--cps` 已接；`cps.yac` + `--dump-cps`；C 级 `--both`/un-CPS 仍走解释器 |
+| M7  | 完善 callcc / CPS（ANF→CPS 转换、续延原生实现）与 scheme 前端                                                                      | callcc 四例原生已通；JIT REPL/`--cps` 已接；`cps.yac`/`uncps.yac` + `--dump-cps`/`--dump-uncps`/`--uncps`；C `--both` 仍为双解释器 |
 
 
 
@@ -514,7 +514,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 **仍待**：
 1. **M6 L6（已完成）**：`make test` 用原生 `yc_a` 编译 `tests/run.yac`。
-2. **M7（进行中）**：原生 `callcc`/`throw` 已通；`cps.yac` 把 ANF 绑列表转成 CPS（`--dump-cps`）。ANF/CPS 双机 `--both` 与 un-CPS 仍走 C。
+2. **M7（进行中）**：原生 `callcc`/`throw` 已通；`cps.yac` / `uncps.yac`（`--dump-cps` / `--dump-uncps` / `--uncps` 走往返 ANF）。C `--both` 仍是 ANF 机 vs CPS 机。
 3. **GC**：`yac_gc` 已是 `$proc`；x86 读栈图，其它架构保守扫栈。`--emit-asm` / `regalloc.yac`：未做。
 
 **L4 已通（原生 `yc_a`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_a` / `yc_b`。

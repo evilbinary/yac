@@ -6,9 +6,9 @@ let usage(_) =
   let _ = print("  --cps            compile to machine code and run (in-process)") in
   let _ = print("  --dump-anf       print the ANF and exit") in
   let _ = print("  --dump-cps       print ANF->CPS and exit") in
-  let _ = print("  --both           compile and run (native path is one machine)") in
-  let _ = print("  --uncps          compile and run") in
-  let _ = print("  --dump-uncps     print the ANF and exit") in
+  let _ = print("  --both           ANF->CPS->ANF, then compile and run") in
+  let _ = print("  --uncps          ANF->CPS->ANF, then compile and run") in
+  let _ = print("  --dump-uncps     print un-CPS ANF and exit") in
   let _ = print("  --opt            accepted (CPS simplify not yet)") in
   let _ = print("  --ast            dump the parsed AST and exit") in
   let _ = print("  --no-gc          accepted (guest GC still runs in JIT image)") in
@@ -165,12 +165,14 @@ let run_cli(pr) =
           if fl(spec, "ast") then dump_ast(src)
           else if fl(spec, "dump-anf") then dump_anf(src)
           else if fl(spec, "dump-cps") then dump_cps(src)
-          else if fl(spec, "dump-uncps") then dump_anf(src)
+          else if fl(spec, "dump-uncps") then dump_uncps(src)
           else if fl(spec, "dump-rt") then dump_anf(src)
           else
-            let want_run = fl(spec, "cps") or fl(spec, "both") or fl(spec, "uncps") in
+            let want_uncps = fl(spec, "uncps") or fl(spec, "both") in
+            let want_run = fl(spec, "cps") in
             let scheme_run = fl(spec, "scheme") and out_opt == "" in
-            if want_run or scheme_run then jit_eval(src)
+            if want_uncps then compile_uncps(src, mk_jit_target(0), false)
+            else if want_run or scheme_run then jit_eval(src)
             else
               let t = mk_target(an, fn, nth(spec, 2)) in
               let outpath = if out_opt == "" then default_out(inpath) else out_opt in
