@@ -246,9 +246,13 @@ let compiler_all(st, yc) =
   let rhi = run(append(yc, ["--eval-cps", "tests/interp/higher.yac"])) in
   let st13 = check(st12, "eval-cps higher", "7", chomp(nth(rhi, 1))) in
   let rlist = run(append(yc, ["--eval-cps", "tests/interp/list.yac"])) in
-  check(st13, "eval-cps list",
+  let st14 = check(st13, "eval-cps list",
     "3\n20\n[0, 1, 2]\n[1, 2, 3]\n[2, 4, 6]\n[2, 3]\n10\n2\n[1, [2, 3], x]\n[]\n1\n42",
-    chomp(nth(rlist, 1)))
+    chomp(nth(rlist, 1))) in
+  let rclo = run(append(yc, ["--eval-cps", "tests/interp/closure.yac"])) in
+  let st15 = check(st14, "eval-cps closure", "2", chomp(nth(rclo, 1))) in
+  let rband = run(append(yc, ["--eval-cps", "tests/compiler/cases/band.yac"])) in
+  check(st15, "eval-cps band", "3", chomp(nth(rband, 1)))
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
