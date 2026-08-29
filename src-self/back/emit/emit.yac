@@ -83,16 +83,34 @@ let label_has(labels, name) = label_has_at(labels, name, len(labels) - 1)
 
 let label_put(labels, name, pos) = cons([name, pos], labels)
 
-let emit_map_get(m, k) = fmap_get(m, intern(k))
-let emit_map_put(m, k, v) =
-  let _ = fmap_put(m, intern(k), v) in
-  m
-
-/* GC root while fmap_fill(4096) runs. A local cons is DCE'd back to `funs`. */
+/* GC root: funs during fmap_fill, then [funs, ids] for the rest of emit. */
 let emit_ids_hold =
   let b = box_new() in
   let _ = box_set(b, 0) in
   b
+
+let emit_id_scan(funs, name, i, n) =
+  if i >= n then 0
+  else
+    let nm = nth(nth(funs, i), 1) in
+    if is_int(nm) then emit_id_scan(funs, name, i + 1, n)
+    else if intern(nm) == name then i
+    else emit_id_scan(funs, name, i + 1, n)
+
+/* fmap_get miss is 0; fun id 0 is _start. Store i+1 so 0 is only a miss. */
+let emit_map_get(m, k) =
+  let ik = intern(k) in
+  let e = fmap_get(m, ik) in
+  if e != 0 then e - 1
+  else
+    let h = box_get(emit_ids_hold) in
+    if h == 0 then 0
+    else if is_int(h) then 0
+    else emit_id_scan(nth(h, 0), intern(ik), 0, len(nth(h, 0)))
+
+let emit_map_put(m, k, v) =
+  let _ = fmap_put(m, intern(k), v) in
+  m
 
 /* Fun id table: bind procs first, then helpers so reserved names win.
  * Duplicate fun names: last-put-wins (runtime prof_* stubs lose to profile.yac).
@@ -153,8 +171,7 @@ let emit_ids_bind(ids, funs, i, n) =
       else
         let nm = nth(f, 1) in
         if is_int(nm) then 0
-        else if len(nm) != 0 then 0
-        else emit_map_put(ids, intern(nm), i) in
+        else emit_map_put(ids, intern(nm), i + 1) in
     emit_ids_bind(ids, funs, i + 1, n)
 
 let emit_ids_new(funs) =
@@ -162,7 +179,9 @@ let emit_ids_new(funs) =
   let ids = fmap_new(0) in
   let _ = box_set(emit_ids_hold, funs) in
   let _ = fmap_init_n(ids, 4096) in
-  emit_ids_helpers(emit_ids_bind(ids, box_get(emit_ids_hold), 0, nfun), nfun)
+  let ids2 = emit_ids_helpers(emit_ids_bind(ids, box_get(emit_ids_hold), 0, nfun), nfun) in
+  let _ = box_set(emit_ids_hold, [box_get(emit_ids_hold), ids2]) in
+  ids2
 
 /* Patch tags: 1=call to fun id (x86 rel32 / a64 bl / rv jal ra),
  * 2=closure fnptr, 3+=globals, 9=tail jmp to fun id (a64 b26 / rv jal).
