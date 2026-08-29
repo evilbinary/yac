@@ -179,19 +179,39 @@ let unbound_bads(_) = [
   ["asdf call", "asdf()", "unbound variable 'asdf'"],
   ["let y", "let x = 1 in y + 1", "unbound variable 'y'"]]
 
+/* stdin → yc --repl. rc must be 0 (not SIGSEGV) and stdout must contain needle. */
+let repl_feed(yc, src) =
+  let p = str_cat(TMP, "/repl_in.yac") in
+  let _ = write_file(p, src) in
+  run(["sh", "-c", str_cat(nth(yc, 0), str_cat(" --repl <", p))])
+
+let repl_check(st, yc, name, src, needle) =
+  let r = repl_feed(yc, src) in
+  let blob = str_cat(nth(r, 1), nth(r, 2)) in
+  if nth(r, 0) != 0 then check(st, name, "0", int_to_str(nth(r, 0)))
+  else if contains(blob, needle) then check(st, name, "1", "1")
+  else check(st, name, needle, blob)
+
+/* [name, stdin, needle]. () is unit (prints 0 natively); (exit) is grouping / quit. */
+let repl_cases(_) = [
+  ["let a = 1", "let a = 1\n", "a = 1"],
+  ["1+2 then :q", "1+2\n:q\n", "3"],
+  ["float then (exit)", "0.001+0.002\n(exit)\n", "0.003"],
+  ["(exit)", "(exit)\n", "yc>"],
+  ["exit as value", "exit\n:q\n", "<fun>"],
+  ["cons", "cons\n:q\n", "<fun>"],
+  ["unit", "()\n:q\n", "0"],
+  ["cons then unit twice", "cons\n()\n()\n:q\n", "0"]]
+
 let compiler_all(st, yc) =
   let st1 = foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)) in
   let st2 = foldl(fun(s, c) -> compile_syntax_err(s, yc, nth(c, 1),
                   str_cat("syntax ", nth(c, 0))), st1, syntax_bads(0)) in
   let st3 = foldl(fun(s, c) -> compile_msg_err(s, yc, nth(c, 1),
                   str_cat("unbound ", nth(c, 0)), nth(c, 2)), st2, unbound_bads(0)) in
-  let repl_in = str_cat(TMP, "/repl_line.yac") in
-  let _ = write_file(repl_in, "let a = 1\n") in
-  let rr = run(["sh", "-c",
-                str_cat(nth(yc, 0), str_cat(" --repl <", repl_in))]) in
-  let blob = str_cat(nth(rr, 1), nth(rr, 2)) in
-  if contains(blob, "a = 1") then check(st3, "repl let a = 1", "1", "1")
-  else check(st3, "repl let a = 1", "a = 1", blob)
+  foldl(fun(s, c) ->
+    repl_check(s, yc, str_cat("repl ", nth(c, 0)), nth(c, 1), nth(c, 2)),
+    st3, repl_cases(0))
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0

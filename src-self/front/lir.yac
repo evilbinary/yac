@@ -452,6 +452,11 @@ let free_vars(fnbody, params, funs) =
 /* ---- Γ ⊢ atom ---- */
 /* st = [I, Γ, ctr, Σ, uid]. Returns [I, s, Γ, ctr, Σ, uid]. */
 
+let lir_clos_atom(st, fname) =
+  [insn_push(nth(st, 0),
+     ["closure", nth(st, 2), fname, []]),
+   nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
+
 let lir_var(atom, st) =
   let nm = nth(atom, 1) in
   let h = hash_str(nm) in
@@ -461,10 +466,8 @@ let lir_var(atom, st) =
      nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
   else
     let se = sigma_ent_h(nth(st, 3), nm, h) in
-    if se != 0 then
-      [insn_push(nth(st, 0),
-         ["closure", nth(st, 2), nth(se, 0), []]),
-       nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
+    if se != 0 then lir_clos_atom(st, nth(se, 0))
+    else if is_prim_name(nm) then lir_clos_atom(st, "print")
     else
       [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
 

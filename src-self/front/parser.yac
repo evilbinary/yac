@@ -205,8 +205,9 @@ let parse_expr(toks, i, min_prec) =
         else parse_err(j)
       else parse_err(j)
     else if kk(j) == "lparen" then
-      /* ( params ) -> body  OR  ( expr )  OR  fn(expr, ...) */
-      if kk(j + 1) == "ident" and kk(j + 2) == "comma" then
+      /* () is unit. f() / let f() = stay lparen+rparen via parse_app / params. */
+      if kk(j + 1) == "rparen" then [["unit"], j + 2]
+      else if kk(j + 1) == "ident" and kk(j + 2) == "comma" then
         let pr = parse_params(j + 1, []) in
         let after = nth(pr, 1) in
         if is_op(after, "->") then
@@ -223,10 +224,11 @@ let parse_expr(toks, i, min_prec) =
   /* ---- application: head followed by ( args ), chainable: f(a)(b) ---- */
   let parse_app(j, head) =
     if kk(j) == "lparen" then
-      /* fn( a, b, c ) — keep consuming further ( args ) */
-      let r = parse_arglist(j + 1, []) in
-      if not nth(r, 0) then parse_err(j)
-      else parse_app(nth(r, 2), ["call", head, nth(r, 1)])
+      if nth(nth(toks, j), 2) != nth(nth(toks, j - 1), 2) then [head, j]
+      else
+        let r = parse_arglist(j + 1, []) in
+        if not nth(r, 0) then parse_err(j)
+        else parse_app(nth(r, 2), ["call", head, nth(r, 1)])
     else
       let k = kk(j) in
       let juxta(_) =

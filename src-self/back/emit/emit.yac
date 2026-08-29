@@ -146,18 +146,23 @@ let emit_ids_bind(ids, funs, i, n) =
   if i >= n then ids
   else
     let f = nth(funs, i) in
+    let ins = nth(f, 4) in
     let _ =
-      if len(nth(f, 4)) == 0 then 0
-      else emit_map_put(ids, intern(nth(f, 1)), i) in
+      if is_int(ins) then 0
+      else if len(ins) == 0 then 0
+      else
+        let nm = nth(f, 1) in
+        if is_int(nm) then 0
+        else if len(nm) != 0 then 0
+        else emit_map_put(ids, intern(nm), i) in
     emit_ids_bind(ids, funs, i + 1, n)
 
 let emit_ids_new(funs) =
   let nfun = len(funs) in
   let ids = fmap_new(0) in
-  let _ = box_set(emit_ids_hold, [funs, ids]) in
+  let _ = box_set(emit_ids_hold, funs) in
   let _ = fmap_init_n(ids, 4096) in
-  let funs2 = nth(box_get(emit_ids_hold), 0) in
-  emit_ids_helpers(emit_ids_bind(ids, funs2, 0, nfun), nfun)
+  emit_ids_helpers(emit_ids_bind(ids, box_get(emit_ids_hold), 0, nfun), nfun)
 
 /* Patch tags: 1=call to fun id (x86 rel32 / a64 bl / rv jal ra),
  * 2=closure fnptr, 3+=globals, 9=tail jmp to fun id (a64 b26 / rv jal).
