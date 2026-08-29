@@ -160,6 +160,18 @@ let dump_cps(src, do_opt) =
   else
     let _ = print(cps_maybe_opt(cps_all(pass_anf(ast)), do_opt)) in 0
 
+let eval_cps_src(src, do_opt) =
+  let ast = pass_parse(pass_lex(src)) in
+  if prog_has_err(ast, 0) then
+    let _ = print("error: syntax") in 1
+  else if report_unbound(src, ast) != 0 then 1
+  else
+    let r = eval_cps_all(cps_maybe_opt(cps_all(pass_anf(ast)), do_opt)) in
+    if nth(r, 0) == "err" then
+      let _ = print(str_cat("error: ", nth(r, 1))) in 1
+    else
+      let _ = print(nth(r, 1)) in 0
+
 let dump_uncps(src, do_opt) =
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then

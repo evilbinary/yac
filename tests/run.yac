@@ -228,8 +228,21 @@ let compiler_all(st, yc) =
   let ok =
     if nth(rbad, 0) == 0 then false
     else contains(blob, "unsupported Scheme form") in
-  if ok then check(st5, "scheme set!", "1", "1")
-  else check(st5, "scheme set!", "unsupported Scheme form", blob)
+  let st6 =
+    if ok then check(st5, "scheme set!", "1", "1")
+    else check(st5, "scheme set!", "unsupported Scheme form", blob) in
+  let radd = run(append(yc, ["--eval-cps", "tests/compiler/cases/add.yac"])) in
+  let st7 = check(st6, "eval-cps add", "3", chomp(nth(radd, 1))) in
+  let rcc = run(append(yc, ["--eval-cps", "tests/interp/callcc.yac"])) in
+  let st8 = check(st7, "eval-cps callcc", "42", chomp(nth(rcc, 1))) in
+  let rcc2 = run(append(yc, ["--eval-cps", "tests/interp/callcc2.yac"])) in
+  let st9 = check(st8, "eval-cps callcc2", "999", chomp(nth(rcc2, 1))) in
+  let rcc3 = run(append(yc, ["--eval-cps", "tests/interp/callcc3.yac"])) in
+  let st10 = check(st9, "eval-cps callcc3", "42", chomp(nth(rcc3, 1))) in
+  let rcc4 = run(append(yc, ["--eval-cps", "tests/interp/callcc4.yac"])) in
+  let st11 = check(st10, "eval-cps callcc4", "999", chomp(nth(rcc4, 1))) in
+  let rfact = run(append(yc, ["--eval-cps", "tests/interp/fact.yac"])) in
+  check(st11, "eval-cps fact", "3628800", chomp(nth(rfact, 1)))
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
@@ -274,7 +287,7 @@ let cat_bundle(_) =
   cat_files(["src-self/lib/log.yac", "src-self/lib/pass.yac",
              "src-self/lib/map.yac",
              "src-self/front/lexer.yac", "src-self/front/parser.yac", "src-self/front/anf.yac",
-             "src-self/front/cps.yac", "src-self/front/uncps.yac",
+             "src-self/front/cps.yac", "src-self/front/eval_cps.yac", "src-self/front/uncps.yac",
              "src-self/front/lir.yac",
              "src-self/rt/runtime.yac",
              "src-self/back/pack/target.yac", "src-self/back/pack/elf.yac", "src-self/back/pack/pe.yac",

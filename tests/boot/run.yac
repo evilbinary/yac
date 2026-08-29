@@ -121,6 +121,7 @@ let src_self_rel(n) =
   else if n == "parser.yac" then "front/parser.yac"
   else if n == "anf.yac" then "front/anf.yac"
   else if n == "cps.yac" then "front/cps.yac"
+  else if n == "eval_cps.yac" then "front/eval_cps.yac"
   else if n == "uncps.yac" then "front/uncps.yac"
   else if n == "lir.yac" then "front/lir.yac"
   else if n == "runtime.yac" then "rt/runtime.yac"
@@ -332,6 +333,7 @@ let unit_suite(st) =
     ["cps addition", ["map.yac", "anf.yac", "cps.yac"], "let r = anf_expr([\"binop\", \"+\", [\"int\", \"1\"], [\"int\", \"2\"]], 0);\nlet st = box_new();\nlet _ = box_set(st, 0);\nprint cps_expr([nth(r, 0), nth(r, 1)], [\"halt\"], st);\n0;\n", "[call, [prim, +], [[int, 1], [int, 2], [cont, #k0, [let, t0, [var, #k0], [halt, [var, t0]]]]]]\n0"],
     ["uncps addition", ["map.yac", "anf.yac", "cps.yac", "uncps.yac"], "let r = anf_expr([\"binop\", \"+\", [\"int\", \"1\"], [\"int\", \"2\"]], 0);\nlet st = box_new();\nlet _ = box_set(st, 0);\nlet c = cps_expr([nth(r, 0), nth(r, 1)], [\"halt\"], st);\nlet u = box_new();\nlet _ = box_set(u, 0);\nlet st2 = box_new();\nlet _ = box_set(st2, 0);\nprint uncps_item(c, u, st2);\n0;\n", "[[[letbin, #k0, +, [int, 1], [int, 2]], [let, t0, [var, #k0]]], [var, t0]]\n0"],
     ["cps opt add", ["map.yac", "anf.yac", "cps.yac"], "let r = anf_expr([\"binop\", \"+\", [\"int\", \"1\"], [\"int\", \"2\"]], 0);\nlet st = box_new();\nlet _ = box_set(st, 0);\nprint cps_opt_one(cps_expr([nth(r, 0), nth(r, 1)], [\"halt\"], st));\n0;\n", "[call, [cont, #k0, [let, t0, [var, #k0], [halt, [var, t0]]]], [[int, 3]]]\n0"],
+    ["eval cps add", ["map.yac", "anf.yac", "cps.yac", "eval_cps.yac"], "let r = anf_expr([\"binop\", \"+\", [\"int\", \"1\"], [\"int\", \"2\"]], 0);\nlet st = box_new();\nlet _ = box_set(st, 0);\nlet c = cps_expr([nth(r, 0), nth(r, 1)], [\"halt\"], st);\nlet e = eval_cps_all([c]);\nprint nth(e, 1);\n0;\n", "3\n0"],
     ["scheme plus", ["scheme.yac"], "print scheme_to_yac(\"(+ 1 2)\");\n0;\n", "(1 + 2);\n\n0"],
     ["scheme define fun", ["scheme.yac"], "print scheme_to_yac(\"(define (f x) (+ x 1))\");\n0;\n", "let f(x) = ((x + 1));\n\n0"],
     ["scheme cond", ["scheme.yac"], "print scheme_to_yac(\"(cond ((< 1 0) 1) (else 2))\");\n0;\n", "(if (1 < 0) then 1 else 2);\n\n0"],

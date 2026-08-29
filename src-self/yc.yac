@@ -6,6 +6,7 @@ let usage(_) =
   let _ = print("  --cps            compile to machine code and run (in-process)") in
   let _ = print("  --dump-anf       print the ANF and exit") in
   let _ = print("  --dump-cps       print ANF->CPS and exit") in
+  let _ = print("  --eval-cps       evaluate CPS with the native trampoline") in
   let _ = print("  --both           ANF->CPS->ANF, then compile and run") in
   let _ = print("  --uncps          ANF->CPS->ANF, then compile and run") in
   let _ = print("  --dump-uncps     print un-CPS ANF and exit") in
@@ -98,6 +99,7 @@ let parse_args(i, argc, out, pos, spec) =
     else if a == "--cps" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "cps"))
     else if a == "--dump-anf" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "dump-anf"))
     else if a == "--dump-cps" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "dump-cps"))
+    else if a == "--eval-cps" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "eval-cps"))
     else if a == "--both" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "both"))
     else if a == "--uncps" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "uncps"))
     else if a == "--dump-uncps" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "dump-uncps"))
@@ -172,6 +174,7 @@ let run_cli(pr) =
           else if fl(spec, "ast") then dump_ast(src)
           else if fl(spec, "dump-anf") then dump_anf(src)
           else if fl(spec, "dump-cps") then dump_cps(src, fl(spec, "opt"))
+          else if fl(spec, "eval-cps") then eval_cps_src(src, fl(spec, "opt"))
           else if fl(spec, "dump-uncps") then dump_uncps(src, fl(spec, "opt"))
           else if fl(spec, "dump-rt") then dump_anf(src)
           else

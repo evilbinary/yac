@@ -1,0 +1,191 @@
+/* eval_cps.yac — trampoline over CPS lists (name env, mutable frames).
+ * Runtime tags: cfun / ccont / cprim. Continuations write into the captured frame.
+ */
+
+let ce_eb =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let ce_fail(msg) =
+  let _ = if box_get(ce_eb) == 0 then box_set(ce_eb, msg) else 0 in
+  0
+
+let ce_bad(_) = box_get(ce_eb) != 0
+
+let ce_frame(parent) = [fmap_new64(0), parent]
+
+let ce_bind(env, name, v) = fmap_put(nth(env, 0), name, ["v", v])
+
+let ce_find(env, name) =
+  if env == 0 then 0
+  else
+    let e = fmap_get(nth(env, 0), name) in
+    if e == 0 then ce_find(nth(env, 1), name)
+    else e
+
+let ce_bind_params(env, ps, args, i, n) =
+  if i >= n then 0
+  else
+    let _ = ce_bind(env, nth(ps, i), nth(args, i)) in
+    ce_bind_params(env, ps, args, i + 1, n)
+
+let ce_tag(v) =
+  if is_int(v) then "int"
+  else if v == [] then "nil"
+  else if v == true then "bool"
+  else if v == false then "bool"
+  else nth(v, 0)
+
+let ce_apply_cont(k, v) =
+  if ce_bad(0) then [0, 0]
+  else if ce_tag(k) != "ccont" then
+    let _ = ce_fail("expected a continuation") in [0, 0]
+  else
+    let env = nth(k, 3) in
+    let _ = ce_bind(env, nth(k, 1), v) in
+    [nth(k, 2), env]
+
+let ce_prim_bin(op, a, b) =
+  if op == "+" then a + b
+  else if op == "-" then a - b
+  else if op == "*" then a * b
+  else if op == "/" then a / b
+  else if op == "%" then a % b
+  else if op == "==" then a == b
+  else if op == "!=" then a != b
+  else if op == "<" then a < b
+  else if op == ">" then a > b
+  else if op == "<=" then a <= b
+  else if op == ">=" then a >= b
+  else if op == "and" then a and b
+  else if op == "or" then a or b
+  else ce_fail(str_cat("CPS eval: primitive '", str_cat(op, "' not supported")))
+
+let ce_prim_one(op, args) =
+  let a0 = nth(args, 0) in
+  if op == "not" then not a0
+  else if op == "print" then
+    let _ = print(a0) in 0
+  else if op == "len" then len(a0)
+  else if op == "tail" then tail(a0)
+  else if op == "list_rev" then list_rev(a0)
+  else if op == "int_to_str" then int_to_str(a0)
+  else ce_fail(str_cat("CPS eval: primitive '", str_cat(op, "' not supported")))
+
+let ce_prim_two(op, args) =
+  let a0 = nth(args, 0) in
+  let a1 = nth(args, 1) in
+  if op == "cons" then cons(a0, a1)
+  else if op == "nth" then nth(a0, a1)
+  else if op == "drop" then drop(a0, a1)
+  else if op == "append" then append(a0, a1)
+  else if op == "str_cat" then str_cat(a0, a1)
+  else ce_prim_bin(op, a0, a1)
+
+let ce_prim_apply(op, args) =
+  let n = len(args) in
+  if n < 1 then
+    let _ = ce_fail("primitive call without continuation") in [0, 0]
+  else
+    let k = nth(args, n - 1) in
+    let m = n - 1 in
+    let v =
+      if m == 1 then ce_prim_one(op, args)
+      else if m == 2 then ce_prim_two(op, args)
+      else ce_fail(str_cat("CPS eval: primitive '", str_cat(op, "' not supported"))) in
+    ce_apply_cont(k, v)
+
+let ce_atom(a, env) =
+  if ce_bad(0) then 0
+  else
+    let k = nth(a, 0) in
+    if k == "int" then cps_atoi(nth(a, 1))
+    else if k == "bool" then nth(a, 1) == "true"
+    else if k == "str" then nth(a, 1)
+    else if k == "unit" then 0
+    else if k == "nil" then []
+    else if k == "prim" then ["cprim", nth(a, 1)]
+    else if k == "fun" then ["cfun", nth(a, 1), nth(a, 2), env]
+    else if k == "cont" then ["ccont", nth(a, 1), nth(a, 2), env]
+    else if k == "var" then
+      let name = nth(a, 1) in
+      let e = ce_find(env, name) in
+      if e != 0 then nth(e, 1)
+      else ["cprim", name]
+    else ce_fail("CPS eval: bad atom")
+
+let ce_atoms(xs, env, i, n, acc) =
+  if ce_bad(0) then acc
+  else if i >= n then list_rev(acc)
+  else ce_atoms(xs, env, i + 1, n, cons(ce_atom(nth(xs, i), env), acc))
+
+let ce_do_call(C, env) =
+  let hd = ce_atom(nth(C, 1), env) in
+  let args = ce_atoms(nth(C, 2), env, 0, len(nth(C, 2)), []) in
+  if ce_bad(0) then [0, 0]
+  else
+    let tk = ce_tag(hd) in
+    if tk == "cfun" then
+      let ps = nth(hd, 1) in
+      let n = len(ps) in
+      if n != len(args) then
+        let _ = ce_fail("function arity mismatch") in [0, 0]
+      else
+        let nf = ce_frame(nth(hd, 3)) in
+        let _ = ce_bind_params(nf, ps, args, 0, n) in
+        [nth(hd, 2), nf]
+    else if tk == "ccont" then
+      if len(args) != 1 then
+        let _ = ce_fail("continuation applied to the wrong arity") in [0, 0]
+      else ce_apply_cont(hd, nth(args, 0))
+    else if tk == "cprim" then ce_prim_apply(nth(hd, 1), args)
+    else
+      let _ = ce_fail("cannot apply a non-function value") in [0, 0]
+
+let ce_run(code0, env0) =
+  let rec(code, env) =
+    if ce_bad(0) then ["err", box_get(ce_eb)]
+    else
+      let ck = nth(code, 0) in
+      if ck == "halt" then ["ok", ce_atom(nth(code, 1), env)]
+      else if ck == "let" then
+        let v = ce_atom(nth(code, 2), env) in
+        if ce_bad(0) then ["err", box_get(ce_eb)]
+        else
+          let _ = ce_bind(env, nth(code, 1), v) in
+          rec(nth(code, 3), env)
+      else if ck == "if" then
+        let cnd = ce_atom(nth(code, 1), env) in
+        if ce_bad(0) then ["err", box_get(ce_eb)]
+        else if cnd then rec(nth(code, 2), env)
+        else rec(nth(code, 3), env)
+      else if ck == "throw" then
+        let kexp = nth(code, 1) in
+        if nth(kexp, 0) == "halt" then ["ok", ce_atom(nth(code, 2), env)]
+        else
+          let k = ce_atom(kexp, env) in
+          let v = ce_atom(nth(code, 2), env) in
+          if ce_bad(0) then ["err", box_get(ce_eb)]
+          else
+            let j = ce_apply_cont(k, v) in
+            rec(nth(j, 0), nth(j, 1))
+      else if ck == "call" then
+        let j = ce_do_call(code, env) in
+        if ce_bad(0) then ["err", box_get(ce_eb)]
+        else rec(nth(j, 0), nth(j, 1))
+      else ["err", "CPS eval: bad CPS node"] in
+  rec(code0, env0)
+
+let eval_cps_all(xs) =
+  let _ = box_set(ce_eb, 0) in
+  let env = ce_frame(0) in
+  let n = len(xs) in
+  let rec(i, last) =
+    if ce_bad(0) then ["err", box_get(ce_eb)]
+    else if i >= n then ["ok", last]
+    else
+      let r = ce_run(nth(xs, i), env) in
+      if nth(r, 0) == "err" then r
+      else rec(i + 1, nth(r, 1)) in
+  rec(0, 0)
