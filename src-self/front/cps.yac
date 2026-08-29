@@ -87,3 +87,133 @@ let cps_all(anf_list) =
       let _ = list_push(acc, cps_item(nth(anf_list, i), st)) in
       loop(i + 1) in
   loop(0)
+
+/* --opt: eta-reduce fun/cont; fold binary int prims into call cont lit. */
+let cps_in_params(ps, name, i) =
+  if i >= len(ps) then false
+  else if nth(ps, i) == name then true
+  else cps_in_params(ps, name, i + 1)
+
+let cps_args_params(args, ps, i) =
+  if i >= len(ps) then true
+  else
+    let a = nth(args, i) in
+    if nth(a, 0) != "var" then false
+    else if nth(a, 1) != nth(ps, i) then false
+    else cps_args_params(args, ps, i + 1)
+
+let cps_eta_fun(v) =
+  let ps = nth(v, 1) in
+  let body = nth(v, 2) in
+  let np = len(ps) in
+  if np < 1 then 0
+  else if nth(body, 0) != "call" then 0
+  else
+    let hd = nth(body, 1) in
+    let args = nth(body, 2) in
+    if nth(hd, 0) != "var" then 0
+    else if len(args) != np then 0
+    else
+      let f = nth(hd, 1) in
+      if f == nth(ps, np - 1) then 0
+      else if cps_in_params(ps, f, 0) then 0
+      else if cps_args_params(args, ps, 0) then hd
+      else 0
+
+let cps_eta_cont(v) =
+  let p = nth(v, 1) in
+  let body = nth(v, 2) in
+  if nth(body, 0) != "call" then 0
+  else
+    let args = nth(body, 2) in
+    if len(args) != 1 then 0
+    else
+      let hd = nth(body, 1) in
+      let a0 = nth(args, 0) in
+      if nth(hd, 0) != "var" then 0
+      else if nth(a0, 0) != "var" then 0
+      else if nth(a0, 1) != p then 0
+      else if nth(hd, 1) == p then 0
+      else hd
+
+let cps_atoi(s) =
+  let n = str_len(s) in
+  let rec(i, acc, sign) =
+    if i >= n then acc * sign
+    else
+      let c = str_ref(s, i) in
+      if i == 0 then
+        if c == 45 then rec(1, 0, 0 - 1)
+        else rec(i + 1, acc * 10 + (c - 48), sign)
+      else rec(i + 1, acc * 10 + (c - 48), sign) in
+  if n == 0 then 0 else rec(0, 0, 1)
+
+let cps_fold_bin(op, a, b) =
+  if nth(a, 0) != "int" then 0
+  else if nth(b, 0) != "int" then 0
+  else
+    let x = cps_atoi(nth(a, 1)) in
+    let y = cps_atoi(nth(b, 1)) in
+    if op == "+" then ["int", int_to_str(x + y)]
+    else if op == "-" then ["int", int_to_str(x - y)]
+    else if op == "*" then ["int", int_to_str(x * y)]
+    else 0
+
+let cps_opt_cval(v, go) =
+  let k = nth(v, 0) in
+  if k == "fun" then
+    let e = cps_eta_fun(v) in
+    if e != 0 then e
+    else ["fun", nth(v, 1), go("cexp", nth(v, 2))]
+  else if k == "cont" then
+    let e = cps_eta_cont(v) in
+    if e != 0 then e
+    else ["cont", nth(v, 1), go("cexp", nth(v, 2))]
+  else v
+
+let cps_map_cval(xs, i, n, go, acc) =
+  if i >= n then list_rev(acc)
+  else cps_map_cval(xs, i + 1, n, go, cons(cps_opt_cval(nth(xs, i), go), acc))
+
+let cps_opt_call(C, go) =
+  let hd = cps_opt_cval(nth(C, 1), go) in
+  let args = nth(C, 2) in
+  let n = len(args) in
+  let args2 = cps_map_cval(args, 0, n, go, []) in
+  if nth(hd, 0) != "prim" then ["call", hd, args2]
+  else if n != 3 then ["call", hd, args2]
+  else
+    let lit = cps_fold_bin(nth(hd, 1), nth(args2, 0), nth(args2, 1)) in
+    if lit == 0 then ["call", hd, args2]
+    else ["call", nth(args2, 2), [lit]]
+
+let cps_opt_cexp(C, go) =
+  let ck = nth(C, 0) in
+  if ck == "halt" then ["halt", cps_opt_cval(nth(C, 1), go)]
+  else if ck == "let" then
+    ["let", nth(C, 1), cps_opt_cval(nth(C, 2), go), go("cexp", nth(C, 3))]
+  else if ck == "call" then cps_opt_call(C, go)
+  else if ck == "throw" then
+    ["throw", cps_opt_cval(nth(C, 1), go), cps_opt_cval(nth(C, 2), go)]
+  else if ck == "if" then
+    ["if", cps_opt_cval(nth(C, 1), go), go("cexp", nth(C, 2)), go("cexp", nth(C, 3))]
+  else C
+
+let cps_opt_dispatch(op, a) =
+  if op == "cval" then cps_opt_cval(a, cps_opt_dispatch)
+  else cps_opt_cexp(a, cps_opt_dispatch)
+
+let cps_opt_one(C) = cps_opt_dispatch("cexp", C)
+
+let cps_opt_all(cps_list) =
+  let acc = list_new() in
+  let n = len(cps_list) in
+  let loop(i) =
+    if i >= n then acc
+    else
+      let _ = list_push(acc, cps_opt_one(nth(cps_list, i))) in
+      loop(i + 1) in
+  loop(0)
+
+let cps_maybe_opt(cps_list, do_opt) =
+  if do_opt then cps_opt_all(cps_list) else cps_list

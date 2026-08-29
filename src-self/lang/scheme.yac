@@ -308,8 +308,7 @@ let scm_top(e) =
     else
       let h = nth(xs, 0) in
       if nth(h, 0) != "a" then scm_expr(e)
-      else if nth(h, 1) != "define" then scm_expr(e)
-      else
+      else if nth(h, 1) == "define" then
         let xs2 = drop(xs, 1) in
         let head = nth(xs2, 0) in
         if nth(head, 0) == "a" then
@@ -321,6 +320,7 @@ let scm_top(e) =
           let names = scm_map_em(drop(parts, 1), fun(p) -> scm_mangle(nth(p, 1)), 0, []) in
           str_cat("let ", str_cat(fn, str_cat("(", str_cat(scm_join(names, ", ", 0, ""),
             str_cat(") = ", scm_expr(["l", cons(["a", "begin"], drop(xs2, 1))]))))))
+      else scm_expr(e)
 
 let scheme_to_yac(src) =
   let forms = scm_parse_all(scm_lex(src), 0, []) in

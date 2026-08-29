@@ -9,7 +9,7 @@ let usage(_) =
   let _ = print("  --both           ANF->CPS->ANF, then compile and run") in
   let _ = print("  --uncps          ANF->CPS->ANF, then compile and run") in
   let _ = print("  --dump-uncps     print un-CPS ANF and exit") in
-  let _ = print("  --opt            accepted (CPS simplify not yet)") in
+  let _ = print("  --opt            simplify CPS (eta + int fold) before dump/uncps") in
   let _ = print("  --ast            dump the parsed AST and exit") in
   let _ = print("  --no-gc          accepted (guest GC still runs in JIT image)") in
   let _ = print("  --limit-nodes N  accepted (C GC limit; unused natively)") in
@@ -164,14 +164,15 @@ let run_cli(pr) =
           let src = prep_src(raw, spec) in
           if fl(spec, "ast") then dump_ast(src)
           else if fl(spec, "dump-anf") then dump_anf(src)
-          else if fl(spec, "dump-cps") then dump_cps(src)
-          else if fl(spec, "dump-uncps") then dump_uncps(src)
+          else if fl(spec, "dump-cps") then dump_cps(src, fl(spec, "opt"))
+          else if fl(spec, "dump-uncps") then dump_uncps(src, fl(spec, "opt"))
           else if fl(spec, "dump-rt") then dump_anf(src)
           else
             let want_uncps = fl(spec, "uncps") or fl(spec, "both") in
             let want_run = fl(spec, "cps") in
             let scheme_run = fl(spec, "scheme") and out_opt == "" in
-            if want_uncps then compile_uncps(src, mk_jit_target(0), false)
+            if want_uncps or (want_run and fl(spec, "opt")) then
+              compile_uncps(src, mk_jit_target(0), false, fl(spec, "opt"))
             else if want_run or scheme_run then jit_eval(src)
             else
               let t = mk_target(an, fn, nth(spec, 2)) in
