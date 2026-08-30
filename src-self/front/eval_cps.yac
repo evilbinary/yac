@@ -18,6 +18,12 @@ let ce_frame(parent) = [fmap_new64(0), parent]
 
 let ce_bind(env, name, v) = fmap_put(nth(env, 0), name, ["v", v])
 
+/* Shadowing must not mutate a frame that a closure already captured. */
+let ce_let_env(env, name, v) =
+  let nf = ce_frame(env) in
+  let _ = ce_bind(nf, name, v) in
+  nf
+
 let ce_find(env, name) =
   if env == 0 then 0
   else
@@ -232,9 +238,7 @@ let ce_call_value(hd, args) =
           else if ck == "let" then
             let v = ce_atom(nth(code, 2), env) in
             if ce_bad(0) then ["err", box_get(ce_eb)]
-            else
-              let _ = ce_bind(env, nth(code, 1), v) in
-              rec(nth(code, 3), env)
+            else rec(nth(code, 3), ce_let_env(env, nth(code, 1), v))
           else if ck == "if" then
             let cnd = ce_atom(nth(code, 1), env) in
             if ce_bad(0) then ["err", box_get(ce_eb)]
@@ -331,9 +335,7 @@ let ce_run(code0, env0) =
       else if ck == "let" then
         let v = ce_atom(nth(code, 2), env) in
         if ce_bad(0) then ["err", box_get(ce_eb)]
-        else
-          let _ = ce_bind(env, nth(code, 1), v) in
-          rec(nth(code, 3), env)
+        else rec(nth(code, 3), ce_let_env(env, nth(code, 1), v))
       else if ck == "if" then
         let cnd = ce_atom(nth(code, 1), env) in
         if ce_bad(0) then ["err", box_get(ce_eb)]
