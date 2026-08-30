@@ -156,19 +156,20 @@ let a64_cmp_maybe_str(b, op, patches, ids) =
 
 /* C ABI ccall/iccall for arm64 and riscv64. Kept out of emit_*_i_core. */
 
-let emit_a64_c_untag(b) =
+/* Untag C arg in rd (not x9/x10). Int → asr 1; heap ptr → +32. */
+let emit_a64_c_untag(b, rd) =
   let _ = a64_movz(b, 9, 1, 0) in
-  let _ = a64_and_reg(b, 10, 0, 9) in
+  let _ = a64_and_reg(b, 10, rd, 9) in
   let _ = a64_cmp_imm(b, 10, 0) in
   let peq = bytes_len(b) in
   let _ = a64_b_eq(b, 0) in
-  let _ = a64_untag_ptr(b, 0) in
-  let _ = a64_add_imm(b, 0, 0, 32) in
+  let _ = a64_untag_ptr(b, rd) in
+  let _ = a64_add_imm(b, rd, rd, 32) in
   let pjmp = bytes_len(b) in
   let _ = a64_b(b, 0) in
   let intp = bytes_len(b) in
   let _ = a64_patch_bcond(b, peq, intp) in
-  let _ = a64_asr1(b, 0, 0) in
+  let _ = a64_asr1(b, rd, rd) in
   a64_apply_b26(b, pjmp, bytes_len(b))
 
 let emit_a64_c_align(b) =
@@ -179,13 +180,14 @@ let emit_a64_c_align(b) =
 
 let emit_a64_c_unalign(b) = a64_mov_sp(b, 31, 19)
 
+/* ccall: untag in x8, then x0..x5. fcall must not use this (keeps tags). */
 let emit_a64_c_arg(b, args, j, na) =
   if j >= na then 0
   else if j >= 6 then 0
   else
-    let _ = a64_slot(b, nth(args, j), false, 0) in
-    let _ = emit_a64_c_untag(b) in
-    let _ = if j == 0 then 0 else a64_mov_reg(b, j, 0) in
+    let _ = a64_slot(b, nth(args, j), false, 8) in
+    let _ = emit_a64_c_untag(b, 8) in
+    let _ = a64_mov_reg(b, j, 8) in
     emit_a64_c_arg(b, args, j + 1, na)
 
 let emit_a64_fcall(st, insn) =
@@ -222,7 +224,7 @@ let emit_a64_iccall(st, insn) =
   let b = nth(st, 0) in
   let args = nth(insn, 3) in
   let _ = a64_slot(b, nth(insn, 2), false, 0) in
-  let _ = emit_a64_c_untag(b) in
+  let _ = emit_a64_c_untag(b, 0) in
   let _ = a64_mov_reg(b, 16, 0) in
   let _ = emit_a64_c_arg(b, args, 0, len(args)) in
   let _ = emit_a64_c_align(b) in
@@ -231,12 +233,6 @@ let emit_a64_iccall(st, insn) =
   let _ = a64_lsl1(b, 0, 0) in
   let _ = a64_slot(b, nth(insn, 1), true, 0) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
-
-let emit_a64_callish(st, insn) =
-  let k = nth(insn, 0) in
-  if k == "iccall" then emit_a64_iccall(st, insn)
-  else if k == "ccall" then emit_a64_ccall(st, insn)
-  else emit_a64_fcall(st, insn)
 
 let emit_a64_i_core(st, insn, is_entry) =
   let b = nth(st, 0) in
@@ -352,7 +348,9 @@ let emit_a64_i_core(st, insn, is_entry) =
     emit_st4(st, b, cur, labels,
      cons(["b26", pne, nth(insn, 2)],
           cons(["beq", peq, nth(insn, 3)], patches)))
-  else if k == "fcall" or k == "ccall" or k == "iccall" then emit_a64_callish(st, insn)
+  else if k == "fcall" then emit_a64_fcall(st, insn)
+  else if k == "ccall" then emit_a64_ccall(st, insn)
+  else if k == "iccall" then emit_a64_iccall(st, insn)
   else if k == "ret" then
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
     if is_entry then

@@ -154,17 +154,18 @@ let rv_cmp_maybe_str(b, op, patches, ids) =
   let _ = rv_apply_jal(b, jdone, bytes_len(b), 0) in
   emit_patch_rel(ids, patches, scall, "yac_str_eq")
 
-let emit_rv_c_untag(b) =
-  let _ = rv_andi(b, 6, 10, 1) in
+/* Untag C arg in rd (not t1). Int → srai 1; heap ptr → +32. */
+let emit_rv_c_untag(b, rd) =
+  let _ = rv_andi(b, 6, rd, 1) in
   let jz = bytes_len(b) in
   let _ = rv_beq(b, 6, 0, 0) in
-  let _ = rv_untag_ptr(b, 10) in
-  let _ = rv_addi(b, 10, 10, 32) in
+  let _ = rv_untag_ptr(b, rd) in
+  let _ = rv_addi(b, rd, rd, 32) in
   let jd = bytes_len(b) in
   let _ = rv_jal(b, 0, 0) in
   let intp = bytes_len(b) in
   let _ = rv_patch_b(b, jz, intp) in
-  let _ = rv_srai(b, 10, 10, 1) in
+  let _ = rv_srai(b, rd, rd, 1) in
   rv_apply_jal(b, jd, bytes_len(b), 0)
 
 let emit_rv_c_align(b) =
@@ -173,13 +174,14 @@ let emit_rv_c_align(b) =
 
 let emit_rv_c_unalign(b) = rv_addi(b, 2, 9, 0)
 
+/* ccall: untag in t2 (x7); rv_slot uses t0. fcall must not use this. */
 let emit_rv_c_arg(b, args, j, na) =
   if j >= na then 0
   else if j >= 6 then 0
   else
-    let _ = rv_slot(b, nth(args, j), false, 10) in
-    let _ = emit_rv_c_untag(b) in
-    let _ = if j == 0 then 0 else rv_addi(b, 10 + j, 10, 0) in
+    let _ = rv_slot(b, nth(args, j), false, 7) in
+    let _ = emit_rv_c_untag(b, 7) in
+    let _ = rv_addi(b, 10 + j, 7, 0) in
     emit_rv_c_arg(b, args, j + 1, na)
 
 let emit_rv_fcall(st, insn) =
@@ -217,7 +219,7 @@ let emit_rv_iccall(st, insn) =
   let b = nth(st, 0) in
   let args = nth(insn, 3) in
   let _ = rv_slot(b, nth(insn, 2), false, 10) in
-  let _ = emit_rv_c_untag(b) in
+  let _ = emit_rv_c_untag(b, 10) in
   let _ = rv_addi(b, 28, 10, 0) in
   let _ = emit_rv_c_arg(b, args, 0, len(args)) in
   let _ = emit_rv_c_align(b) in
@@ -227,12 +229,6 @@ let emit_rv_iccall(st, insn) =
   let _ = rv_sll(b, 10, 10, 7) in
   let _ = rv_slot(b, nth(insn, 1), true, 10) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
-
-let emit_rv_callish(st, insn) =
-  let k = nth(insn, 0) in
-  if k == "iccall" then emit_rv_iccall(st, insn)
-  else if k == "ccall" then emit_rv_ccall(st, insn)
-  else emit_rv_fcall(st, insn)
 
 let emit_rv_i_core(st, insn, is_entry) =
   let b = nth(st, 0) in
@@ -356,7 +352,9 @@ let emit_rv_i_core(st, insn, is_entry) =
     emit_st4(st, b, cur, labels,
      cons(["jal", pt, nth(insn, 2)],
           cons(["jal", pf, nth(insn, 3)], patches)))
-  else if k == "fcall" or k == "ccall" or k == "iccall" then emit_rv_callish(st, insn)
+  else if k == "fcall" then emit_rv_fcall(st, insn)
+  else if k == "ccall" then emit_rv_ccall(st, insn)
+  else if k == "iccall" then emit_rv_iccall(st, insn)
   else if k == "ret" then
     let _ = rv_slot(b, nth(insn, 1), false, 10) in
     if is_entry then
