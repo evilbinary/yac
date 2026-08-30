@@ -19,6 +19,15 @@ let slot_fits8(k) =
   let off = slot_off(k) in
   off >= (0 - 128) and off <= 127
 
+/* Closure env is at +32+8*i. disp8 is signed; i>=12 is +128 and wraps
+ * to object-128, smashing the previous size/next (first GC SIGSEGV). */
+let emit_obj_store_rdi(b, off) =
+  if off < 128 then mov_rax_disp8_rdi(b, off)
+  else mov_rax_disp32_rdi(b, off)
+let emit_obj_load_rax(b, off) =
+  if off < 128 then mov_rax_rax_disp8(b, off)
+  else mov_rax_rax_disp32(b, off)
+
 let emit_load_rax_slot(b, k) =
   if slot_fits8(k) then mov_r64_mem_rbp(b, 0, band(slot_off(k), 255))
   else mov_r64_mem_rbp32(b, 0, slot_off(k))
@@ -106,6 +115,45 @@ let emit_x86_c_untag(b) =
   let _ = apply_patch(b, je + 2, intp) in
   let _ = sar_rax_1(b) in
   apply_patch(b, jdone, bytes_len(b))
+
+let emit_x86_iccall(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let dst = nth(insn, 1) in
+  let args = nth(insn, 3) in
+  let nargs = len(args) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = emit_x86_c_untag(b) in
+  let _ = mov_r11_rax(b) in
+  let loadarg(j) =
+    if j >= nargs then 0
+    else
+      let _ = emit_load_rax_slot(b, nth(args, j)) in
+      let _ = emit_x86_c_untag(b) in
+      let _ =
+        if j == 0 then mov_rdi_rax(b)
+        else if j == 1 then mov_rsi_rax(b)
+        else if j == 2 then mov_rdx_rax(b)
+        else if j == 3 then mov_rcx_rax(b)
+        else if j == 4 then mov_r8_rax(b)
+        else mov_r9_rax(b) in
+      loadarg(j + 1) in
+  let _ = loadarg(0) in
+  let _ = push_r64(b, 3) in
+  let _ = mov_r64_r64(b, 3, 4) in
+  let _ = e8(b, 72) in
+  let _ = e8(b, 131) in
+  let _ = e8(b, 228) in
+  let _ = e8(b, 240) in
+  let _ = call_r11(b) in
+  let _ = smap_note(bytes_len(b)) in
+  let _ = mov_r64_r64(b, 4, 3) in
+  let _ = pop_r64(b, 3) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, dst) in
+  emit_st4(st, b, cur, labels, patches)
 
 let emit_x86_i_core(st, insn, is_entry, is_raw) =
   let b = nth(st, 0) in
@@ -378,6 +426,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
     let _ = shl_rax_1(b) in
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels, emit_patch_cimport(patches, callstart + 1, fn))
+  else if k == "iccall" then emit_x86_iccall(st, insn)
   else if k == "tcall" then
     /* TCO: load args, tear down frame, jmp (no extra stack). */
     let fn = nth(insn, 2) in
@@ -884,7 +933,7 @@ let emit_x86_i_clos(st, insn, is_entry) =
       if i >= nenv then 0
       else
         let _ = emit_load_rdi_slot(b, nth(caps, i)) in
-        let _ = mov_rax_disp8_rdi(b, 32 + i * 8) in
+        let _ = emit_obj_store_rdi(b, 32 + i * 8) in
         storecap(i + 1) in
     let _ = storecap(0) in
     let _ = or_rax_1(b) in
@@ -909,7 +958,7 @@ let emit_x86_i_clos(st, insn, is_entry) =
             if i < ncap then
               let _ = emit_load_rax_slot(b, clos) in
               let _ = and_rax_1(b) in
-              let _ = mov_rax_rax_disp8(b, 32 + i * 8) in
+              let _ = emit_obj_load_rax(b, 32 + i * 8) in
               push_r64(b, 0)
             else
               let _ = emit_load_rax_slot(b, nth(args, i - ncap)) in
@@ -1423,7 +1472,7 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
       emit_x86_i_clos(st, insn, is_entry)
     else if is_frame_op(k) or k == "mov_imm" or k == "mov" or is_arith(k)
          or k == "cmp" or k == "icmp" or k == "label" or k == "fcall" or k == "ccall"
-         or k == "tcall" or k == "jmp" or k == "cmpjmp" or k == "ret"
+         or k == "iccall" or k == "tcall" or k == "jmp" or k == "cmpjmp" or k == "ret"
          or k == "exit" then
       emit_x86_i_core(st, insn, is_entry, is_raw)
     else if k == "untag" or k == "syscall" then

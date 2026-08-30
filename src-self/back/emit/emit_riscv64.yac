@@ -154,6 +154,86 @@ let rv_cmp_maybe_str(b, op, patches, ids) =
   let _ = rv_apply_jal(b, jdone, bytes_len(b), 0) in
   emit_patch_rel(ids, patches, scall, "yac_str_eq")
 
+let emit_rv_c_untag(b) =
+  let _ = rv_andi(b, 6, 10, 1) in
+  let jz = bytes_len(b) in
+  let _ = rv_beq(b, 6, 0, 0) in
+  let _ = rv_untag_ptr(b, 10) in
+  let _ = rv_addi(b, 10, 10, 32) in
+  let jd = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let intp = bytes_len(b) in
+  let _ = rv_patch_b(b, jz, intp) in
+  let _ = rv_srai(b, 10, 10, 1) in
+  rv_apply_jal(b, jd, bytes_len(b), 0)
+
+let emit_rv_c_align(b) =
+  let _ = rv_addi(b, 9, 2, 0) in
+  rv_andi(b, 2, 2, 0 - 16)
+
+let emit_rv_c_unalign(b) = rv_addi(b, 2, 9, 0)
+
+let emit_rv_c_arg(b, args, j, na) =
+  if j >= na then 0
+  else if j >= 6 then 0
+  else
+    let _ = rv_slot(b, nth(args, j), false, 10) in
+    let _ = emit_rv_c_untag(b) in
+    let _ = if j == 0 then 0 else rv_addi(b, 10 + j, 10, 0) in
+    emit_rv_c_arg(b, args, j + 1, na)
+
+let emit_rv_fcall(st, insn) =
+  let b = nth(st, 0) in
+  let args = nth(insn, 3) in
+  let na = len(args) in
+  let load(j) =
+    if j >= na then 0
+    else if j >= 8 then 0
+    else
+      let _ = rv_slot(b, nth(args, j), false, 10 + j) in
+      load(j + 1) in
+  let _ = load(0) in
+  let pos = bytes_len(b) in
+  let _ = rv_jal(b, 1, 0) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2),
+    emit_patch_rel(nth(st, 4), nth(st, 3), pos, nth(insn, 2)))
+
+let emit_rv_ccall(st, insn) =
+  let b = nth(st, 0) in
+  let args = nth(insn, 3) in
+  let _ = emit_rv_c_arg(b, args, 0, len(args)) in
+  let _ = emit_rv_c_align(b) in
+  let pos = bytes_len(b) in
+  let _ = rv_jal(b, 1, 0) in
+  let _ = emit_rv_c_unalign(b) in
+  let _ = rv_addi(b, 7, 0, 1) in
+  let _ = rv_sll(b, 10, 10, 7) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2),
+    emit_patch_cimport(nth(st, 3), pos, nth(insn, 2)))
+
+let emit_rv_iccall(st, insn) =
+  let b = nth(st, 0) in
+  let args = nth(insn, 3) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = emit_rv_c_untag(b) in
+  let _ = rv_addi(b, 28, 10, 0) in
+  let _ = emit_rv_c_arg(b, args, 0, len(args)) in
+  let _ = emit_rv_c_align(b) in
+  let _ = rv_jalr(b, 1, 28, 0) in
+  let _ = emit_rv_c_unalign(b) in
+  let _ = rv_addi(b, 7, 0, 1) in
+  let _ = rv_sll(b, 10, 10, 7) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
+let emit_rv_callish(st, insn) =
+  let k = nth(insn, 0) in
+  if k == "iccall" then emit_rv_iccall(st, insn)
+  else if k == "ccall" then emit_rv_ccall(st, insn)
+  else emit_rv_fcall(st, insn)
+
 let emit_rv_i_core(st, insn, is_entry) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
@@ -276,20 +356,7 @@ let emit_rv_i_core(st, insn, is_entry) =
     emit_st4(st, b, cur, labels,
      cons(["jal", pt, nth(insn, 2)],
           cons(["jal", pf, nth(insn, 3)], patches)))
-  else if k == "fcall" or k == "ccall" then
-    let args = nth(insn, 3) in
-    let na = len(args) in
-    let load(j) =
-      if j >= na then 0
-      else if j >= 8 then 0
-      else
-        let _ = rv_slot(b, nth(args, j), false, 10 + j) in
-        load(j + 1) in
-    let _ = load(0) in
-    let pos = bytes_len(b) in
-    let _ = rv_jal(b, 1, 0) in
-    let _ = rv_slot(b, nth(insn, 1), true, 10) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, nth(insn, 2)))
+  else if k == "fcall" or k == "ccall" or k == "iccall" then emit_rv_callish(st, insn)
   else if k == "ret" then
     let _ = rv_slot(b, nth(insn, 1), false, 10) in
     if is_entry then
@@ -1140,7 +1207,7 @@ let emit_insn_rv_go(st, insn, is_entry) =
     emit_rv_i_clos(st, insn, is_entry)
   else if is_frame_op(k) or k == "mov_imm" or k == "mov" or is_arith(k)
        or k == "cmp" or k == "icmp" or k == "label" or k == "fcall" or k == "ccall"
-       or k == "tcall" or k == "jmp" or k == "cmpjmp" or k == "ret"
+       or k == "iccall" or k == "tcall" or k == "jmp" or k == "cmpjmp" or k == "ret"
        or k == "exit" then
     emit_rv_i_core(st, insn, is_entry)
   else if k == "untag" or k == "syscall" then
@@ -1213,6 +1280,8 @@ let rv_resolve_patch(st, p) =
     rv_apply_jal(b, nth(p, 1), nth(offs, nth(p, 2)), 0)
   else if tag == 11 then
     rv_li32_at(b, nth(p, 1), 10, nth(st, 5) + nth(p, 2) + 1)
+  else if tag == 15 then
+    rv_apply_jal(b, nth(p, 1), nth(nth(cimport_buf(0), 1), nth(p, 2)), 1)
   else if tag == "cclab" then
     rv_li32_at(b, nth(p, 1), 6, codebase + nth(p, 2))
   else
@@ -1229,6 +1298,8 @@ let rv_resolve_loop(st, ps, i) =
 
 let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = strlit_pool_reset(0) in
+  let _ = cimport_reset(0) in
+  let ckeep = cimport_buf(0) in
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
   let entry = nth(prog, 2) in
@@ -1275,6 +1346,8 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
     if i >= 112 then 0
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
+  let _ = emit_cplt_rv(b) in
+  let _ = ckeep in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
   let extra = list_new() in
   let _ = patches_extend(extra, patches) in

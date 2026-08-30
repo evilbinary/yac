@@ -277,6 +277,77 @@ let emit_cplt(b) =
         stub(i + 1) in
     stub(0)
 
+let emit_cplt_a64(b) =
+  let xs = cimport_names(0) in
+  let n = len(xs) in
+  if n == 0 then 0
+  else
+    let pad8(_) =
+      if band(bytes_len(b), 7) == 0 then 0
+      else let _ = bytes_append(b, 0) in pad8(0) in
+    let _ = pad8(0) in
+    let got = bytes_len(b) in
+    let _ = list_set(cimport_buf(0), 2, got) in
+    let fill(i, lim) =
+      if i >= lim then 0
+      else let _ = bytes_append(b, 0) in fill(i + 1, lim) in
+    let _ = fill(0, (3 + n) * 8) in
+    let plts = nth(cimport_buf(0), 1) in
+    let stub(i) =
+      if i >= n then 0
+      else
+        let _ = list_push(plts, bytes_len(b)) in
+        let slot = got + 24 + i * 8 in
+        let disp = slot - bytes_len(b) in
+        let _ = a64_adr(b, 16, disp) in
+        let _ = a64_ldr(b, 16, 16, 0) in
+        let _ = a64_br(b, 16) in
+        stub(i + 1) in
+    stub(0)
+
+let emit_cplt_rv(b) =
+  let xs = cimport_names(0) in
+  let n = len(xs) in
+  if n == 0 then 0
+  else
+    let pad8(_) =
+      if band(bytes_len(b), 7) == 0 then 0
+      else let _ = bytes_append(b, 0) in pad8(0) in
+    let _ = pad8(0) in
+    let got = bytes_len(b) in
+    let _ = list_set(cimport_buf(0), 2, got) in
+    let fill(i, lim) =
+      if i >= lim then 0
+      else let _ = bytes_append(b, 0) in fill(i + 1, lim) in
+    let _ = fill(0, (3 + n) * 8) in
+    let plts = nth(cimport_buf(0), 1) in
+    let stub(i) =
+      if i >= n then 0
+      else
+        let _ = list_push(plts, bytes_len(b)) in
+        let slot = got + 24 + i * 8 in
+        let delta = slot - bytes_len(b) in
+        let hi = bshr(delta + 2048, 12) in
+        let lo = delta - bshl(hi, 12) in
+        let _ = rv_auipc(b, 28, hi) in
+        let _ = rv_ld(b, 28, 28, lo) in
+        let _ = rv_jalr(b, 0, 28, 0) in
+        stub(i + 1) in
+    stub(0)
+
+/* JIT: no ld.so. Fill GOT via dlsym(RTLD_DEFAULT). */
+let cimport_jit_fill(i, n, xs, b, got) =
+  if i >= n then 0
+  else
+    let p = bshr(ccall("dlsym", 0, nth(xs, i)), 1) in
+    let _ = apply_u64(b, got + 24 + i * 8, p) in
+    cimport_jit_fill(i + 1, n, xs, b, got)
+
+let cimport_jit_bind(code) =
+  let n = cimport_n(0) in
+  if n == 0 then 0
+  else cimport_jit_fill(0, n, cimport_names(0), code, cimport_got(0))
+
 /* Call-site stack maps: [ret_off, nslots]. nslots is the caller's frame. */
 let smap_box =
   let b = box_new() in

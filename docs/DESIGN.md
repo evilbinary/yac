@@ -135,7 +135,8 @@ insn      ::= ["local",    nslots, nparams]
             | ["jmp",      L]
             | ["label",    L]
             | ["fcall",    s, name, [s*]]      ; yac proc / yac_* runtime
-            | ["ccall",    s, name, [s*]]      ; C ABI（libc；x86_64 ELF 走 PLT）
+            | ["ccall",    s, name, [s*]]      ; C ABI PLT（字面量符号名）
+            | ["iccall",   s, s, [s*]]         ; C ABI 间接（dlsym 指针）
             | ["icall",    s, s, [s*]]         ; 闭包在槽里
             | ["apply",    s, s, ncap, [s*]]   ; emit：已知 ncap>0
             | ["tcall",    s, name, [s*]]
@@ -232,6 +233,7 @@ callι(self, x, ["var", g], s, _, ss) =
   | ["fcall",  s, ĝ, ss]     if  g ∈ Σ ∧ n = 0
   | ["fcall",  s, rt(g), ss] if  g 是 runtime 名   ; 在 Σ / env 之后，避免遮蔽 let len
   | ["ccall",  s, name, ss]  if  g = ccall 且首参是字符串字面量
+  | ["iccall", s, s_f, ss]   if  g = ccall 且首参不是字符串字面量
   | ["apply",  s, Γ(g), n, ss] if  Γ(g) 有已知 ncap = n > 0
   | ["icall",  s, Γ(g), ss]  otherwise        ; 槽里是闭包，nenv 运行时读
   where ĝ = Σ 中 g 的码名（重名加 #uid）
@@ -328,7 +330,7 @@ encoded   ::= x86-64 | arm64 | riscv64 字节
 - 槽 `s` → 帧上 8 字节格；临时值走返回寄存器（x86 `rax`，arm `x0`，riscv `a0`）
 - `mov_imm`：按立即数原样写入，不再 `<<1`
 - `fcall`：按名 rel32/`bl`/`jal` 到本镜像符号表（yac proc / yac_*）；参数 ≤6
-- `ccall`：C ABI；x86_64 ELF 经 PLT/`DT_NEEDED libc.so.6`；参数 ≤6，整数去 tag、堆对象传 payload 指针
+- `ccall`：C ABI PLT（字面量名）；`iccall`：C ABI 间接调用。x86_64/arm64/riscv64 ELF 经 PLT + `DT_NEEDED libc.so.6`。`cload`/`csym` 是 `rt/ffi.yac` 普通函数（`dlopen`/`dlsym`）。JIT 在 `jit_run` 前 `dlsym` 填 GOT。参数 ≤6，整数去 tag、堆对象传 payload 指针
 - `syscall`：x86 `syscall`，arm `svc #0`，riscv `ecall`；`nr` 进 syscall 号寄存器（60 = 退出，见上）
 - `cmpjmp`：测 tagged 条件槽（非 0 为真；`true` 的 tag 为 2）
 - `_start`：`local` 后跑顶层绑定，最后 `untag` + `syscall 60`

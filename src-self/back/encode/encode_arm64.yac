@@ -167,6 +167,11 @@ let a64_b_ne(b, imm19) =
 /* BL  0x94000000 */
 let a64_bl(b, imm26) = a64_u32(b, 2483027968 + band(imm26, 67108863))
 
+/* ADR Xd, #imm21 (PC-relative byte offset). 0x10000000 */
+let a64_adr(b, rd, imm21) =
+  let i = band(imm21, 2097151) in
+  a64_u32(b, bshl(band(i, 3), 29) + 268435456 + bshl(bshr(i, 2), 5) + rd)
+
 /* BLR Xn  0xD63F0000 | (Rn<<5) */
 let a64_blr(b, rn) = a64_u32(b, 3594452992 + bshl(rn, 5))
 

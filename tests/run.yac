@@ -137,6 +137,7 @@ let compiler_cases(_) = [
   ["print_nl", "out", "ab"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
   ["ccall_putchar", "out", "A"],
+  ["ccall_cload", "rc", "20"],
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
   ["io_rw", "rc", "2"], ["system", "rc", "0"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"],
   ["tco_cap", "rc", "42"], ["callcc", "rc", "42"], ["callcc2", "rc", "99"],
@@ -204,6 +205,14 @@ let repl_cases(_) = [
   ["cons then unit twice", "cons\n()\n()\n:q\n", "0"]]
 
 let compiler_all(st, yc) =
+  let _ = write_file(str_cat(TMP, "/tadd.c"),
+    "int tadd(int a, int b) { return a + b; }\n") in
+  let _ = write_file(str_cat(TMP, "/tmul.c"),
+    "int tmul(int a, int b) { return a * b; }\n") in
+  let _ = run(["gcc", "-shared", "-fPIC", "-o",
+    str_cat(TMP, "/libtadd.so"), str_cat(TMP, "/tadd.c")]) in
+  let _ = run(["gcc", "-shared", "-fPIC", "-o",
+    str_cat(TMP, "/libtmul.so"), str_cat(TMP, "/tmul.c")]) in
   let st1 = foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)) in
   let st2 = foldl(fun(s, c) -> compile_syntax_err(s, yc, nth(c, 1),
                   str_cat("syntax ", nth(c, 0))), st1, syntax_bads(0)) in
@@ -260,7 +269,11 @@ let compiler_all(st, yc) =
   let rclo = run(append(yc, ["--eval-cps", "tests/interp/closure.yac"])) in
   let st15 = check(st14, "eval-cps closure", "2", chomp(nth(rclo, 1))) in
   let rband = run(append(yc, ["--eval-cps", "tests/compiler/cases/band.yac"])) in
-  check(st15, "eval-cps band", "3", chomp(nth(rband, 1)))
+  let st16 = check(st15, "eval-cps band", "3", chomp(nth(rband, 1))) in
+  let jput = run(append(yc, [case_src("ccall_putchar")])) in
+  let st17 = check(st16, "jit ccall_putchar", "A", chomp(nth(jput, 1))) in
+  let jcl = run(append(yc, [case_src("ccall_cload")])) in
+  check(st17, "jit ccall_cload", "20", int_to_str(nth(jcl, 0)))
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
@@ -279,6 +292,7 @@ let qemu_cmd(arch) =
 let qemu_one(st, yc, qemu, arch, c) =
   let name = nth(c, 0) in
   if name == "ccall_putchar" then st
+  else if name == "ccall_cload" then st
   else
   let kind = nth(c, 1) in
   let want = nth(c, 2) in

@@ -157,10 +157,21 @@ let dyn_pair(b, tag, val) =
   let _ = app64(b, tag) in
   app64(b, val)
 
+let elf_interp(machine) =
+  if machine == 62 then "/lib64/ld-linux-x86-64.so.2"
+  else if machine == 183 then "/lib/ld-linux-aarch64.so.1"
+  else "/lib/ld-linux-riscv64-lp64d.so.1"
+
+let elf_jump_reloc(machine) =
+  if machine == 62 then 7
+  else if machine == 183 then 1026
+  else 5
+
 let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
   let n = len(names) in
   let out = pack_elf_exec(code, machine, vaddr, text_off) in
-  let interp = "/lib64/ld-linux-x86-64.so.2" in
+  let interp = elf_interp(machine) in
+  let rtype = elf_jump_reloc(machine) in
   let interp_off = bytes_len(out) in
   let _ = app_str(out, interp, 0, str_len(interp)) in
   let _ = pad8b(out) in
@@ -212,7 +223,7 @@ let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
     if i >= n then 0
     else
       let roff = vaddr + text_off + got_off + 24 + i * 8 in
-      let info = bshl(i + 1, 32) + R_JUMP_SLOT in
+      let info = bshl(i + 1, 32) + rtype in
       let _ = app64(out, roff) in
       let _ = app64(out, info) in
       let _ = app64(out, 0) in

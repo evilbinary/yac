@@ -144,7 +144,7 @@ src-self/
 
 ISA 以 `docs/DESIGN.md` §2.1 为准。构造器与 emit 同一套标签（`local`/`add`/`cmpjmp`/`fcall`/`mref`/…）。手写 boot LIR 可带 `exit` 糖。
 
-槽机：值为栈槽，临时值走返回寄存器。没有独立寄存器分配。`nth`/`cons`/`len`/`str_cat` 不是 LIR 指令，走 `fcall yac_*`。`ccall("name", …)` 走 C ABI。
+槽机：值为栈槽，临时值走返回寄存器。没有独立寄存器分配。`nth`/`cons`/`len`/`str_cat` 不是 LIR 指令，走 `fcall yac_*`。`ccall("name", …)` 走 C ABI PLT；`ccall(ptr, …)` 走间接调用。`cload`/`csym` 在 `rt/ffi.yac`。
 
 ### 6.2 后端流程
 

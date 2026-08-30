@@ -11,3 +11,6 @@ yc_D
 yc_A
 yc_A
 yc_c
+tests/compiler/cases/add
+tests/compiler/cases/ccall_putchar
+tests/compiler/cases/ccall_cload

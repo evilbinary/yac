@@ -318,6 +318,8 @@ let intern_seed(_) =
   let _ = intern("drop") in
   let _ = intern("head") in
   let _ = intern("ccall") in
+  let _ = intern("cload") in
+  let _ = intern("csym") in
   0
 
 /* After lex: intern ident/kw/op/punct/num/str text so later == is pointer-eq
@@ -345,27 +347,9 @@ let token_kind(t) = nth(t, 0)
 let token_text(t) = nth(t, 1)
 let token_line(t) = nth(t, 2)
 
-/* First whole-identifier match of name in src → [line, col] (1-based). */
-let src_ident_loc(src, name) =
-  let n = str_len(src) in
-  let m = str_len(name) in
-  let rec(i, line, col) =
-    if i >= n then [1, 1]
-    else if str_ref(src, i) == 10 then rec(i + 1, line + 1, 1)
-    else
-      let before =
-        if i == 0 then true
-        else if is_alnum(str_ref(src, i - 1)) then false
-        else true in
-      let after =
-        if i + m > n then false
-        else if i + m == n then true
-        else if is_alnum(str_ref(src, i + m)) then false
-        else true in
-      if before then
-        if after then
-          if str_slice(src, i, m) == name then [line, col]
-          else rec(i + 1, line, col + 1)
-        else rec(i + 1, line, col + 1)
-      else rec(i + 1, line, col + 1) in
-  rec(0, 1, 1)
+/* Line of first token whose text is name. Token walk (TCO), not a byte
+ * rec() — that was apply + 0x180 frames and SIGSEGV on a megabyte bundle. */
+let tok_ident_line(toks, name, i, n) =
+  if i >= n then 1
+  else if token_text(nth(toks, i)) == name then token_line(nth(toks, i))
+  else tok_ident_line(toks, name, i + 1, n)

@@ -6,9 +6,16 @@ let backend_pack(t, code) =
   if target_format(t) != "elf" then pack_image(t, code)
   else if target_shared(t) then pack_image(t, code)
   else if cimport_n(0) == 0 then pack_image(t, code)
-  else if target_emachine(t) != 62 then pack_image(t, code)
-  else pack_elf_libc(code, target_emachine(t), target_vaddr(t),
-                    target_text_off(t), cimport_names(0), cimport_got(0))
+  else if target_emachine(t) == 62 then
+    pack_elf_libc(code, target_emachine(t), target_vaddr(t),
+                  target_text_off(t), cimport_names(0), cimport_got(0))
+  else if target_emachine(t) == 183 then
+    pack_elf_libc(code, target_emachine(t), target_vaddr(t),
+                  target_text_off(t), cimport_names(0), cimport_got(0))
+  else if target_emachine(t) == 243 then
+    pack_elf_libc(code, target_emachine(t), target_vaddr(t),
+                  target_text_off(t), cimport_names(0), cimport_got(0))
+  else pack_image(t, code)
 
 let backend_compile(prog) = pack_elf(nth(lower_program(prog), 0))
 
@@ -64,7 +71,9 @@ let rt_num_cache =
 let rt_image(_) =
   let c = box_get(rt_num_cache) in
   if c == 0 then
-    let v = append(runtime_funs(0), lir_funs_of_src(stdlib_src("num.yac"))) in
+    let v = append(runtime_funs(0),
+              append(lir_funs_of_src(stdlib_src("num.yac")),
+                     lir_funs_of_src(stdlib_src("ffi.yac")))) in
     let _ = box_set(rt_num_cache, v) in
     v
   else c
@@ -103,13 +112,12 @@ let report_unbound(src, ast) =
   let nm = ub_prog(ast, 0, []) in
   if nm == "" then 0
   else
-    let loc = src_ident_loc(src, nm) in
+    let toks = tokenize(src) in
+    let line = tok_ident_line(toks, nm, 0, len(toks)) in
     let _ = print(str_cat("error: ",
-      str_cat(int_to_str(nth(loc, 0)),
-        str_cat(":",
-          str_cat(int_to_str(nth(loc, 1)),
-            str_cat(": unbound variable '",
-              str_cat(nm, "'"))))))) in
+      str_cat(int_to_str(line),
+        str_cat(":1: unbound variable '",
+          str_cat(nm, "'"))))) in
     1
 
 let repl_last_let(ast) =
@@ -129,6 +137,7 @@ let compile_jit(src, t, named) =
     let _ = log_set_hush(true) in
     let r = lower_expr(pass_lir_eval(pass_anf(ast), bn), t) in
     let _ = log_set_hush(false) in
+    let _ = cimport_jit_bind(nth(r, 0)) in
     let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval")) in 0
 
 let make_pipeline(t) =
@@ -188,6 +197,7 @@ let compile_jit_anf(anf, t, bn) =
   let _ = log_set_hush(true) in
   let r = lower_expr(pass_lir_eval(anf, bn), t) in
   let _ = log_set_hush(false) in
+  let _ = cimport_jit_bind(nth(r, 0)) in
   let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval")) in 0
 
 let compile_uncps(src, t, named, do_opt) =

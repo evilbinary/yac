@@ -1207,6 +1207,48 @@ static Value prim_drop(Value *args, int nargs, PrimCtx *ctx) {
     return v_list(out);
 }
 
+/* cdr: drop first element. Native yac_tail; needed so C yac can ANF eval_cps.yac. */
+static Value prim_tail(Value *args, int nargs, PrimCtx *ctx) {
+    Value d[2];
+    d[0] = args[0];
+    d[1] = v_int(1);
+    return prim_drop(d, 2, ctx);
+}
+
+static Value prim_gc_collect(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    if (ctx->gc) gc_collect(ctx->gc);
+    return v_unit();
+}
+
+/* L4 only needs the name in scope; compile-to-ELF does not call it. */
+static Value prim_ccall(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    ctx->errored = true;
+    snprintf(ctx->errmsg, sizeof(ctx->errmsg), "ccall: C interpreter");
+    return VALUE_NULL;
+}
+
+static Value prim_str_chr(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_INT) {
+        ctx->errored = true;
+        snprintf(ctx->errmsg, sizeof(ctx->errmsg), "str_chr: need int");
+        return VALUE_NULL;
+    }
+    char buf[2];
+    buf[0] = (char)(args[0].u.i & 255);
+    buf[1] = 0;
+    if (!ctx->a) {
+        ctx->errored = true;
+        snprintf(ctx->errmsg, sizeof(ctx->errmsg), "str_chr: no arena");
+        return VALUE_NULL;
+    }
+    return v_str(ctx->a, buf);
+}
+
 static Value prim_map(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
     if (args[1].tag != V_LIST) {
@@ -1391,6 +1433,10 @@ static const Prim PRIMS[] = {
     {"len", 1, true, false, prim_len},
     {"nth", 2, true, false, prim_nth},
     {"drop", 2, true, true, prim_drop},
+    {"tail", 1, true, true, prim_tail},
+    {"gc_collect", 1, false, false, prim_gc_collect},
+    {"ccall", -1, false, true, prim_ccall},
+    {"str_chr", 1, true, true, prim_str_chr},
     {"map", 2, true, true, prim_map},
     {"filter", 2, true, true, prim_filter},
     {"foldl", 3, true, true, prim_foldl},

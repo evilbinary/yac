@@ -743,6 +743,11 @@ let call_r11(b) =
   let _ = e8(b, 65) in
   let _ = e8(b, 255) in
   e8(b, 211)
+/* mov r11, rax (49 89 c3) */
+let mov_r11_rax(b) =
+  let _ = e8(b, 73) in
+  let _ = e8(b, 137) in
+  e8(b, 195)
 /* lea rdi, [rbx+rdi]  (48 8d 3c 3b) — rdi = rbx + rdi */
 let lea_rdi_rbx_rdi(b) =
   let _ = e8(b, 72) in
@@ -846,6 +851,18 @@ let mov_rax_disp8_rdi(b, disp8) =
   let _ = e8(b, 137) in
   let _ = e8(b, 120) in
   e8(b, band(disp8, 255))
+/* mov [rax+disp32], rdi  (48 89 B8 id32) — cap i>=12 is +128, not disp8 */
+let mov_rax_disp32_rdi(b, disp32) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  let _ = e8(b, 184) in
+  e32(b, disp32)
+/* mov rax, [rax+disp32]  (48 8B 80 id32) */
+let mov_rax_rax_disp32(b, disp32) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 128) in
+  e32(b, disp32)
 /* or rax, 1  (48 83 c8 01) — tag pointer */
 let or_rax_1(b) =
   let _ = e8(b, 72) in

@@ -1,0 +1,3 @@
+let _ = cload("build/test_tmp/libtadd.so") in
+let _ = cload("build/test_tmp/libtmul.so") in
+ccall(csym("tmul"), ccall(csym("tadd"), 2, 3), 4)

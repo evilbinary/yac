@@ -148,6 +148,16 @@ let rv_jal(b, rd, imm21) =
 let rv_jalr(b, rd, rs1, imm) =
   rv_u32(b, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + bshl(rd, 7) + 103)
 
+let rv_auipc(b, rd, imm20) =
+  rv_u32(b, bshl(band(imm20, 1048575), 12) + bshl(rd, 7) + 23)
+
+let rv_andi(b, rd, rs1, imm) =
+  rv_u32(b, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + 28672 + bshl(rd, 7) + 19)
+
+let rv_srai(b, rd, rs1, sh) =
+  rv_u32(b, 1073741824 + bshl(band(sh, 63), 20) + bshl(rs1, 15) + 20480 +
+           bshl(rd, 7) + 19)
+
 let rv_ecall(b) = rv_u32(b, 115)
 
 let rv_unimp(b) = rv_u32(b, 0)
