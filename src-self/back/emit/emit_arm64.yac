@@ -31,6 +31,29 @@ let a64_slot(b, slot, store, rt) =
   let _ = a64_sub_imm(b, 9, 29, off) in
   if store then a64_stur(b, rt, 9, 0) else a64_ldur(b, rt, 9, 0)
 
+let a64_sp_push(b, rt) =
+  let _ = a64_sub_imm(b, 31, 31, 8) in
+  a64_stur(b, rt, 31, 0)
+
+/* Extra apply args: x0–x7 then stack (AAPCS). Clos stays in x17. */
+let a64_apply_push(b, ncap, args, i) =
+  if i < 8 then 0
+  else
+    let _ =
+      if i < ncap then a64_ldur(b, 1, 17, 32 + bshl(i, 3))
+      else a64_slot(b, nth(args, i - ncap), false, 1) in
+    let _ = a64_sp_push(b, 1) in
+    a64_apply_push(b, ncap, args, i - 1)
+
+let a64_apply_load(b, ncap, args, i, nreg) =
+  if i >= nreg then 0
+  else if i < ncap then
+    let _ = a64_ldur(b, i, 17, 32 + bshl(i, 3)) in
+    a64_apply_load(b, ncap, args, i + 1, nreg)
+  else
+    let _ = a64_slot(b, nth(args, i - ncap), false, i) in
+    a64_apply_load(b, ncap, args, i + 1, nreg)
+
 let a64_apply_bl(b, pos, target) =
   let rel = bshr(target - pos, 2) in
   let w = 2483027968 + band(rel, 67108863) in
@@ -272,9 +295,12 @@ let emit_a64_i_core(st, insn, is_entry) =
     let _ = a64_sub_imm(b, 31, 31, nbytes) in
     let storep(j) =
       if j >= nparams then 0
-      else if j >= 8 then 0
-      else
+      else if j < 8 then
         let _ = a64_slot(b, j + 1, true, j) in
+        storep(j + 1)
+      else
+        let _ = a64_ldur(b, 0, 29, 16 + bshl(j - 8, 3)) in
+        let _ = a64_slot(b, j + 1, true, 0) in
         storep(j + 1) in
     let _ = storep(0) in
     emit_st4(st, b, cur, labels, patches3)
@@ -871,22 +897,20 @@ let emit_a64_i_clos(st, insn, is_entry) =
         emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, nm))
       else
         let _ = a64_brk(b) in emit_st4(st, b, cur, labels, patches)
-    else if ntot > 8 then
-      let _ = a64_brk(b) in emit_st4(st, b, cur, labels, patches)
     else
+      let nstack = if ntot > 8 then ntot - 8 else 0 in
+      let nreg = if ntot < 8 then ntot else 8 in
+      let pad = if nstack == 0 then 0 else if band(nstack, 1) == 0 then 0 else 8 in
       let _ = a64_slot(b, clos, false, 17) in
       let _ = a64_untag_ptr(b, 17) in
+      let _ = if pad == 0 then 0 else a64_sub_imm(b, 31, 31, 8) in
+      let _ = if nstack == 0 then 0 else a64_apply_push(b, ncap, args, ntot - 1) in
       let _ = a64_ldur(b, 16, 17, 16) in
-      let load(i) =
-        if i >= ntot then 0
-        else if i < ncap then
-          let _ = a64_ldur(b, i, 17, 32 + bshl(i, 3)) in
-          load(i + 1)
-        else
-          let _ = a64_slot(b, nth(args, i - ncap), false, i) in
-          load(i + 1) in
-      let _ = load(0) in
+      let _ = a64_apply_load(b, ncap, args, 0, nreg) in
       let _ = a64_blr(b, 16) in
+      let _ =
+        if nstack == 0 then 0
+        else a64_add_imm(b, 31, 31, bshl(nstack, 3) + pad) in
       let _ = a64_slot(b, dst, true, 0) in
       emit_st4(st, b, cur, labels, patches)
   else if k == "tailapply" or k == "ticall" then
