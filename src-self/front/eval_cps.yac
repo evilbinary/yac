@@ -18,11 +18,16 @@ let ce_frame(parent) = [fmap_new64(0), parent]
 
 let ce_bind(env, name, v) = fmap_put(nth(env, 0), name, ["v", v])
 
-/* Shadowing must not mutate a frame that a closure already captured. */
+/* New name: bind in this frame (letrec: closures see later bindings).
+ * Shadowing: new frame so captured envs keep the old value. */
 let ce_let_env(env, name, v) =
-  let nf = ce_frame(env) in
-  let _ = ce_bind(nf, name, v) in
-  nf
+  let e = fmap_get(nth(env, 0), name) in
+  if e == 0 then
+    let _ = ce_bind(env, name, v) in env
+  else
+    let nf = ce_frame(env) in
+    let _ = ce_bind(nf, name, v) in
+    nf
 
 let ce_find(env, name) =
   if env == 0 then 0

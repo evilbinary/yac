@@ -339,7 +339,7 @@ let emit_cplt_rv(b) =
 let cimport_jit_fill(i, n, xs, b, got) =
   if i >= n then 0
   else
-    let p = bshr(ccall("dlsym", 0, nth(xs, i)), 1) in
+    let p = ccall("dlsym", 0, nth(xs, i)) in
     let _ = apply_u64(b, got + 24 + i * 8, p) in
     cimport_jit_fill(i + 1, n, xs, b, got)
 

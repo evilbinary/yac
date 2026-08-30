@@ -357,6 +357,8 @@ let unit_suite(st) =
     ["encode mov_r64_r64", ["encode_x64.yac"], "let b = bytes_new();\nlet _ = mov_r64_r64(b, 0, 1);\nlet dump(n) = if n >= bytes_len(b) then 0 else\n  let _ = print bytes_ref(b, n) in\n  dump(n + 1);\nlet _ = dump(0);\n0;\n", "72\n137\n200\n0"]])
 
 let main =
+  let _ = print("") in
+  let _ = print("=== boot  yc_a ===") in
   let _ = run(["mkdir", "-p", TMP]) in
   let _ = cat_files(["src-self/lib/map.yac", "src-self/front/lexer.yac", "src-self/drivers/driver_lex.yac"], str_cat(TMP, "/lex_run.yac")) in
   let _ = cat_files(["src-self/lib/map.yac", "src-self/front/lexer.yac", "src-self/front/parser.yac", "src-self/drivers/driver_parse.yac"], str_cat(TMP, "/parse_run.yac")) in

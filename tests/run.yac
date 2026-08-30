@@ -50,6 +50,10 @@ let chomp(s) =
   else if str_ref(t, k - 1) == 10 then str_slice(t, 0, k - 1)
   else t
 
+let banner(dir, tool) =
+  let _ = print("") in
+  print(str_cat("=== ", str_cat(dir, str_cat("  ", str_cat(tool, " ===")))))
+
 let check(st, name, want, got) =
   let pass = nth(st, 0) in
   let fail = nth(st, 1) in
@@ -206,6 +210,7 @@ let repl_cases(_) = [
   ["cons then unit twice", "cons\n()\n()\n:q\n", "0"]]
 
 let compiler_all(st, yc) =
+  let _ = banner("compiler/cases", nth(yc, 0)) in
   let _ = write_file(str_cat(TMP, "/tadd.c"),
     "int tadd(int a, int b) { return a + b; }\n") in
   let _ = write_file(str_cat(TMP, "/tmul.c"),
@@ -272,9 +277,9 @@ let compiler_all(st, yc) =
   let rband = run(append(yc, ["--eval-cps", "tests/compiler/cases/band.yac"])) in
   let st16 = check(st15, "eval-cps band", "3", chomp(nth(rband, 1))) in
   let jput = run(append(yc, ["--cps", case_src("ccall_putchar")])) in
-  let st17 = check(st16, "jit ccall_putchar", "A", chomp(nth(jput, 1))) in
+  let st17 = check(st16, "jit ccall_putchar", "A0", chomp(nth(jput, 1))) in
   let jcl = run(append(yc, ["--cps", case_src("ccall_cload")])) in
-  check(st17, "jit ccall_cload", "20", int_to_str(nth(jcl, 0)))
+  check(st17, "jit ccall_cload", "20", chomp(nth(jcl, 1)))
 
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
@@ -324,11 +329,24 @@ let qemu_one(st, yc, qemu, arch, c) =
     if kind == "rc" then check(st, tag, want, int_to_str(nth(r, 0)))
     else check(st, tag, want, chomp(nth(r, 1)))
 
+let qemu_has_loader(arch) =
+  if qemu_root(arch) != "" then true
+  else if arch == "arm64" then
+    nth(run(["test", "-e", "/lib/ld-linux-aarch64.so.1"]), 0) == 0
+  else if arch == "riscv64" then
+    nth(run(["test", "-e", "/lib/ld-linux-riscv64-lp64d.so.1"]), 0) == 0
+  else false
+
 let qemu_arch(st, yc, arch) =
   let q = qemu_cmd(arch) in
+  let _ = banner("compiler/cases",
+                 str_cat(nth(yc, 0), str_cat(" --arch ", arch))) in
   if q == "" then
     let _ = print(str_cat("SKIP: qemu ", arch)) in st
-    else foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st, compiler_cases(0))
+  else if qemu_has_loader(arch) then
+    foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st, compiler_cases(0))
+  else
+    let _ = print(str_cat("SKIP: qemu ", str_cat(arch, " (no sysroot)"))) in st
 
 let exists_rc(p) = nth(run(["test", "-f", p]), 0)
 
@@ -359,6 +377,7 @@ let interp_step(st, row) =
   else interp_err(st, nth(row, 1), nth(row, 2), nth(row, 3), nth(row, 4))
 
 let interp_suite(st) =
+  let _ = banner("interp", "./yac") in
   foldl(interp_step, st, [
     ["eq", "factorial", [], ip("fact.yac"), "3628800"],
     ["eq", "fibonacci", [], ip("fib.yac"), "832040"],
@@ -404,6 +423,7 @@ let iso_one(st, ya, yb, name) =
   check(st, str_cat("boot iso ", name), "0", int_to_str(nth(run(["cmp", "-s", a, b]), 0)))
 
 let boot_suite(st, ya) =
+  let _ = banner("boot yc_b / iso", ya) in
   let yb = str_cat(TMP, "/yc_b") in
   let _ = run(["rm", "-f", yb, str_cat(yb, ".bin")]) in
   let st1 = check(st, "boot yc_a exists", "0", int_to_str(exists_rc(ya))) in
@@ -422,6 +442,7 @@ let boot_suite(st, ya) =
   let st6 = check(st5, "boot default not p42.bin", "1", int_to_str(exists_rc(str_cat(pbin, ".bin")))) in
   let _ = run(["chmod", "+x", pbin]) in
   let st7 = check(st6, "boot default p42 rc", "42", int_to_str(nth(run([pbin]), 0))) in
+  let _ = banner("compiler/cases iso", str_cat(ya, " vs yc_b")) in
   foldl(fun(s, c) -> iso_one(s, ya, yb, nth(c, 0)), st7, compiler_cases(0))
 
 let main =
@@ -436,6 +457,7 @@ let main =
   let _ = run([ya, "tests/boot/run.yac", "-o", boot_bin]) in
   let _ = run(["chmod", "+x", boot_bin]) in
   let st0 = interp_suite([0, 0]) in
+  let _ = banner("boot", ya) in
   let br = run([boot_bin]) in
   let _ = print(chomp(nth(br, 1))) in
   let st1 = check(st0, "boot frontend", "0", int_to_str(nth(br, 0))) in
