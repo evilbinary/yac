@@ -7,60 +7,33 @@
  *
  * Slot k -> [rbp - 8*(k+1)]. Never [rbp+0] (saved rbp / _start argc).
  * Entry (_start) sets rbp, no push/pop.
+ * Memory ops use disp32 (signed 32), not disp8 — signed imm8 is -128..127
+ * and band(_,255) wraps (stack k>=16, closure cap i>=12, sub rsp >127).
  *
  * Program: ["prog", [fun...], entryName]; fun from l_fun in lir.yac.
  * Returns [codeBytes, funOffsets].
  */
 
-/* slot k at [rbp - 8*(k+1)]; signed byte offset when |off| <= 128.
- * k=0 must not use [rbp+0]: that is saved rbp (or _start argc). */
+/* slot k at [rbp - 8*(k+1)]. Always disp32. */
 let slot_off(k) = 0 - bshl(k + 1, 3)
-let slot_fits8(k) =
-  let off = slot_off(k) in
-  off >= (0 - 128) and off <= 127
 
-/* Closure env is at +32+8*i. disp8 is signed; i>=12 is +128 and wraps
- * to object-128, smashing the previous size/next (first GC SIGSEGV). */
-let emit_obj_store_rdi(b, off) =
-  if off < 128 then mov_rax_disp8_rdi(b, off)
-  else mov_rax_disp32_rdi(b, off)
-let emit_obj_load_rax(b, off) =
-  if off < 128 then mov_rax_rax_disp8(b, off)
-  else mov_rax_rax_disp32(b, off)
+let emit_obj_store_rdi(b, off) = mov_rax_disp32_rdi(b, off)
+let emit_obj_load_rax(b, off) = mov_rax_rax_disp32(b, off)
+let emit_obj_load_argreg(b, reg, off) = mov_argreg_rax_disp32(b, reg, off)
 
-let emit_load_rax_slot(b, k) =
-  if slot_fits8(k) then mov_r64_mem_rbp(b, 0, band(slot_off(k), 255))
-  else mov_r64_mem_rbp32(b, 0, slot_off(k))
-let emit_load_rdi_slot(b, k) =
-  if slot_fits8(k) then mov_rdi_mem_rbp(b, band(slot_off(k), 255))
-  else mov_r64_mem_rbp32(b, 7, slot_off(k))
-let emit_store_rax_slot(b, k) =
-  if slot_fits8(k) then mov_mem_rbp_r64(b, band(slot_off(k), 255), 0)
-  else mov_mem_rbp32_r64(b, slot_off(k), 0)
-let emit_load_rbx_slot(b, k) =
-  if slot_fits8(k) then mov_rbx_mem_rbp(b, band(slot_off(k), 255))
-  else mov_r64_mem_rbp32(b, 3, slot_off(k))
-let emit_lea_rax_slot(b, k) =
-  if slot_fits8(k) then lea_rax_rbp_disp8(b, band(slot_off(k), 255))
-  else lea_rax_rbp32(b, slot_off(k))
+let emit_load_rax_slot(b, k) = mov_r64_mem_rbp32(b, 0, slot_off(k))
+let emit_load_rdi_slot(b, k) = mov_r64_mem_rbp32(b, 7, slot_off(k))
+let emit_store_rax_slot(b, k) = mov_mem_rbp32_r64(b, slot_off(k), 0)
+let emit_load_rbx_slot(b, k) = mov_r64_mem_rbp32(b, 3, slot_off(k))
+let emit_lea_rax_slot(b, k) = lea_rax_rbp32(b, slot_off(k))
 let emit_store_param(b, j, k) =
-  /* store argreg j into slot k */
   let off = slot_off(k) in
-  if slot_fits8(k) then
-    let d = band(off, 255) in
-    if j == 0 then mov_mem_rbp_rdi(b, d)
-    else if j == 1 then mov_mem_rbp_rsi(b, d)
-    else if j == 2 then mov_mem_rbp_rdx(b, d)
-    else if j == 3 then mov_mem_rbp_rcx(b, d)
-    else if j == 4 then mov_mem_rbp_r8(b, d)
-    else mov_mem_rbp_r9(b, d)
-  else
-    if j == 0 then mov_mem_rbp32_r64(b, off, 7)
-    else if j == 1 then mov_mem_rbp32_r64(b, off, 6)
-    else if j == 2 then mov_mem_rbp32_r64(b, off, 2)
-    else if j == 3 then mov_mem_rbp32_r64(b, off, 1)
-    else if j == 4 then mov_mem_rbp32_r64(b, off, 8)
-    else mov_mem_rbp32_r64(b, off, 9)
+  if j == 0 then mov_mem_rbp32_r64(b, off, 7)
+  else if j == 1 then mov_mem_rbp32_r64(b, off, 6)
+  else if j == 2 then mov_mem_rbp32_r64(b, off, 2)
+  else if j == 3 then mov_mem_rbp32_r64(b, off, 1)
+  else if j == 4 then mov_mem_rbp32_r64(b, off, 8)
+  else mov_mem_rbp32_r64(b, off, 9)
 
 /* yac_alloc / yac_gc are $proc in runtime.yac. */
 
@@ -73,11 +46,7 @@ let emit_newline(b) =
   let _ = mov_rdi_imm(b, 1) in
   let _ = mov_r64_imm(b, 0, 1) in
   let _ = syscall(b) in
-  let _ = e8(b, 72) in        /* add rsp, 8 (48 83 c4 08) */
-  let _ = e8(b, 131) in
-  let _ = e8(b, 196) in
-  let _ = e8(b, 8) in
-  0
+  add_rsp_imm32(b, 8)
 
 let cc_of(op) =
   if op == "<" then 12 else if op == "<=" then 14
@@ -170,7 +139,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       else false in
     let _ =
       if noscan then smap_set_nslots(0) else smap_set_nslots(nlocals) in
-    /* imm8 for sub/add rsp is signed (-128..127); frames >= 128 need imm32 */
+    /* imm8 for sub rsp is signed; always imm32. */
     if is_entry then
       /* Linux _start: [rsp]=argc, [rsp+8]=argv (not rdi/rsi). */
       let _ = mov_rdi_mem_rsp(b) in
@@ -186,9 +155,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let sh_save = bytes_len(b) - 8 in
       let _ = mov_mem_rax_rbp(b) in
       let nbytes = bshl(nlocals + 1, 3) in
-      let _ =
-        if nbytes > 127 then sub_rsp_imm32(b, nbytes)
-        else sub_rsp_imm8(b, band(nbytes, 255)) in
+      let _ = sub_rsp_imm32(b, nbytes) in
       emit_st4(st, b, cur, labels,
        cons([6, sh_save],
             cons([5, av_save],
@@ -197,9 +164,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let _ = push_rbp(b) in
       let _ = mov_rbp_rsp(b) in
       let nbytes = bshl(nlocals + 1, 3) in
-      let _ =
-        if nbytes > 127 then sub_rsp_imm32(b, nbytes)
-        else sub_rsp_imm8(b, band(nbytes, 255)) in
+      let _ = sub_rsp_imm32(b, nbytes) in
       let storeparams(j) =
         if j >= nparams then 0
         else if j < 6 then
@@ -288,13 +253,13 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let jz2 = bytes_len(b) - 4 in
       let _ = mov_rax_mem_rsp8(b) in
       let _ = and_rax_1(b) in
-      let _ = mov_rax_rax_disp8(b, 16) in
+      let _ = mov_rax_rax_disp32(b, 16) in
       let _ = cmp_rax_imm8(b, 3) in
       let _ = jcc_rel32(b, 5, 0) in
       let jne1 = bytes_len(b) - 4 in
       let _ = mov_rax_mem_rsp(b) in
       let _ = and_rax_1(b) in
-      let _ = mov_rax_rax_disp8(b, 16) in
+      let _ = mov_rax_rax_disp32(b, 16) in
       let _ = cmp_rax_imm8(b, 3) in
       let _ = jcc_rel32(b, 5, 0) in
       let jne2 = bytes_len(b) - 4 in
@@ -304,7 +269,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let _ = mov_rsi_rax(b) in
       let scall = bytes_len(b) in
       let _ = call_user(b) in
-      let _ = add_rsp_imm8(b, 16) in
+      let _ = add_rsp_imm32(b, 16) in
       let _ =
         if op == "!=" then
           let _ = sar_rax_1(b) in
@@ -316,7 +281,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let jdone = bytes_len(b) - 4 in
       let ptreq = bytes_len(b) in
       let _ = apply_patch(b, jptr, ptreq) in
-      let _ = add_rsp_imm8(b, 16) in
+      let _ = add_rsp_imm32(b, 16) in
       let _ =
         if op == "==" then mov_r64_imm(b, 0, 2)
         else xor_rax_rax(b) in
@@ -337,7 +302,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let _ = setcc_r8(b, cc_of(op)) in
       let _ = movzx_eax_al(b) in
       let _ = shl_rax_1(b) in
-      let _ = add_rsp_imm8(b, 16) in
+      let _ = add_rsp_imm32(b, 16) in
       let done = bytes_len(b) in
       let _ = apply_patch(b, jdone, done) in
       let _ = apply_patch(b, jptrdone, done) in
@@ -597,21 +562,21 @@ let emit_x86_i_raw(st, insn) =
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     let _ = and_rax_1(b) in
     let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
-    let _ = mov_rax_disp8_rdi(b, nth(insn, 2)) in
+    let _ = mov_rax_disp32_rdi(b, nth(insn, 2)) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "$st8" then
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = mov_rax_disp8_imm8(b, nth(insn, 2), nth(insn, 3)) in
+    let _ = mov_rax_disp32_imm8(b, nth(insn, 2), nth(insn, 3)) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "$ld64" then
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let _ = and_rax_1(b) in
-    let _ = mov_rax_rax_disp8(b, nth(insn, 3)) in
+    let _ = mov_rax_rax_disp32(b, nth(insn, 3)) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "$ld8" then
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = movzx_eax_rax_disp8(b, nth(insn, 3)) in
+    let _ = movzx_eax_rax_disp32(b, nth(insn, 3)) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "$sp" then
@@ -722,7 +687,7 @@ let emit_x86_i_heap(st, insn) =
     let dst = nth(insn, 1) in
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let _ = and_rax_1(b) in
-    let _ = mov_rax_rax_disp8(b, 16) in
+    let _ = mov_rax_rax_disp32(b, 16) in
     let _ = shl_rax_1(b) in
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels, patches)
@@ -730,14 +695,14 @@ let emit_x86_i_heap(st, insn) =
     let dst = nth(insn, 1) in
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let _ = and_rax_1(b) in
-    let _ = mov_rax_rax_disp8(b, nth(insn, 3)) in
+    let _ = mov_rax_rax_disp32(b, nth(insn, 3)) in
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "mset" then
     let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     let _ = and_rax_1(b) in
-    let _ = mov_rax_disp8_rdi(b, nth(insn, 2)) in
+    let _ = mov_rax_disp32_rdi(b, nth(insn, 2)) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "tag" then
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
@@ -762,8 +727,8 @@ let emit_x86_i_heap(st, insn) =
   else if k == "obj_sti" then
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     let _ = and_rax_1(b) in
-    let _ = mov_rax_disp8_imm32(b, nth(insn, 2), nth(insn, 3)) in
-    let _ = mov_rax_disp8_imm32(b, nth(insn, 2) + 4, 0) in
+    let _ = mov_rax_disp32_imm32(b, nth(insn, 2), nth(insn, 3)) in
+    let _ = mov_rax_disp32_imm32(b, nth(insn, 2) + 4, 0) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "obj_st_int" then
     let _ = emit_load_rax_slot(b, nth(insn, 3)) in
@@ -771,7 +736,7 @@ let emit_x86_i_heap(st, insn) =
     let _ = mov_rdi_rax(b) in
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     let _ = and_rax_1(b) in
-    let _ = mov_rax_disp8_rdi(b, nth(insn, 2)) in
+    let _ = mov_rax_disp32_rdi(b, nth(insn, 2)) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "alloc_s" then
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
@@ -831,17 +796,17 @@ let emit_x86_i_heap(st, insn) =
   else if k == "write1" then
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     let _ = sar_rax_1(b) in
-    let _ = sub_rsp_imm8(b, 8) in
+    let _ = sub_rsp_imm32(b, 8) in
     let _ = mov_mem_rsp_al(b) in
     let _ = mov_rsi_rsp(b) in
     let _ = mov_rdx_imm(b, 1) in
     let _ = mov_rdi_imm(b, 1) in
     let _ = mov_r64_imm(b, 0, 1) in
     let _ = syscall(b) in
-    let _ = add_rsp_imm8(b, 8) in
+    let _ = add_rsp_imm32(b, 8) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "clock" then
-    let _ = sub_rsp_imm8(b, 16) in
+    let _ = sub_rsp_imm32(b, 16) in
     let _ = mov_rdi_imm(b, nth(insn, 3)) in
     let _ = lea_rsi_rsp(b) in
     let _ = mov_r64_imm(b, 0, 228) in
@@ -852,7 +817,7 @@ let emit_x86_i_heap(st, insn) =
     let _ = mov_rax_mem_rsp8(b) in
     let _ = shl_rax_1(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 2)) in
-    let _ = add_rsp_imm8(b, 16) in
+    let _ = add_rsp_imm32(b, 16) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "glob" then
     let which = nth(insn, 2) in
@@ -923,12 +888,12 @@ let emit_x86_i_clos(st, insn, is_entry) =
     let acall = bytes_len(b) in
     let _ = call_user(b) in
     let _ = and_rax_1(b) in    /* alloc returns raw ptr; ensure untagged */
-    let _ = mov_rax_disp8_imm32(b, 8, 0) in   /* mark = 0 */
-    let _ = mov_rax_disp8_imm32(b, 16, 0) in  /* fnptr placeholder */
+    let _ = mov_rax_disp32_imm32(b, 8, 0) in   /* mark = 0 */
+    let _ = mov_rax_disp32_imm32(b, 16, 0) in  /* fnptr placeholder */
     let fnpos = bytes_len(b) - 4 in
-    let _ = mov_rax_disp8_imm32(b, 20, 0) in  /* high 32 of fnptr (must be 0) */
-    let _ = mov_rax_disp8_imm32(b, 24, nenv) in
-    let _ = mov_rax_disp8_imm32(b, 28, 0) in  /* clear high dword of nenv qword */
+    let _ = mov_rax_disp32_imm32(b, 20, 0) in  /* high 32 of fnptr (must be 0) */
+    let _ = mov_rax_disp32_imm32(b, 24, nenv) in
+    let _ = mov_rax_disp32_imm32(b, 28, 0) in  /* clear high dword of nenv qword */
     let storecap(i) =
       if i >= nenv then 0
       else
@@ -967,7 +932,7 @@ let emit_x86_i_clos(st, insn, is_entry) =
       let _ = push_flat(ntot - 1) in
       let _ = emit_load_rax_slot(b, clos) in
       let _ = and_rax_1(b) in
-      let _ = mov_rbx_rax_disp8(b, 16) in
+      let _ = mov_rbx_rax_disp32(b, 16) in
       let _ = push_r64(b, 3) in
       let nreg = if ntot < 6 then ntot else 6 in
       let load_reg(i) =
@@ -975,7 +940,7 @@ let emit_x86_i_clos(st, insn, is_entry) =
         else if i < ncap then
           let _ = emit_load_rax_slot(b, clos) in
           let _ = and_rax_1(b) in
-          let _ = mov_argreg_rax_disp8(b, i, 32 + i * 8) in
+          let _ = emit_obj_load_argreg(b, i, 32 + i * 8) in
           load_reg(i + 1)
         else
           let _ = emit_load_rax_slot(b, nth(args, i - ncap)) in
@@ -986,8 +951,7 @@ let emit_x86_i_clos(st, insn, is_entry) =
       let _ = call_rbx_user(b) in
       let _ =
         if nstack == 0 then 0
-        else if bshl(nstack, 3) > 127 then add_rsp_imm32(b, bshl(nstack, 3))
-        else add_rsp_imm8(b, bshl(nstack, 3)) in
+        else add_rsp_imm32(b, bshl(nstack, 3)) in
       let _ = emit_store_rax_slot(b, dst) in
       emit_st4(st, b, cur, labels, patches)
     else
@@ -1002,8 +966,8 @@ let emit_x86_i_clos(st, insn, is_entry) =
       let _ = pushargs(nargs - 1) in
       let _ = emit_load_rax_slot(b, clos) in
       let _ = and_rax_1(b) in
-      let _ = mov_rbx_rax_disp8(b, 16) in
-      let _ = mov_r11d_rax_disp8(b, 24) in
+      let _ = mov_rbx_rax_disp32(b, 16) in
+      let _ = mov_r11d_rax_disp32(b, 24) in
       let loadcap(i) =
         if i >= 6 then 0
         else
@@ -1012,7 +976,7 @@ let emit_x86_i_clos(st, insn, is_entry) =
           let offpos = bytes_len(b) in
           let _ = e8(b, 0) in
           let m0 = bytes_len(b) in
-          let _ = mov_argreg_rax_disp8(b, i, 32 + i * 8) in
+          let _ = emit_obj_load_argreg(b, i, 32 + i * 8) in
           let m1 = bytes_len(b) in
           let _ = bytes_put(b, offpos, m1 - m0) in
           loadcap(i + 1) in
@@ -1093,13 +1057,13 @@ let emit_x86_i_clos(st, insn, is_entry) =
     let nreg = if ntot < 6 then ntot else 6 in
     let _ = emit_load_rax_slot(b, clos) in
     let _ = and_rax_1(b) in
-    let _ = mov_rbx_rax_disp8(b, 16) in
+    let _ = mov_rbx_rax_disp32(b, 16) in
     let load_reg(i) =
       if i >= nreg then 0
       else if i < ncap then
         let _ = emit_load_rax_slot(b, clos) in
         let _ = and_rax_1(b) in
-        let _ = mov_argreg_rax_disp8(b, i, 32 + i * 8) in
+        let _ = emit_obj_load_argreg(b, i, 32 + i * 8) in
         load_reg(i + 1)
       else
         let _ = emit_load_rax_slot(b, nth(args, i - ncap)) in
@@ -1132,13 +1096,13 @@ let emit_x86_i_prim(st, insn) =
     let acall = bytes_len(b) in
     let _ = call_user(b) in
     let _ = and_rax_1(b) in
-    let _ = mov_rax_disp8_imm32(b, 8, 0) in    /* mark */
-    let _ = mov_rax_disp8_imm32(b, 16, 2) in   /* kind = LIST */
-    let _ = mov_rax_disp8_imm32(b, 20, 0) in
+    let _ = mov_rax_disp32_imm32(b, 8, 0) in    /* mark */
+    let _ = mov_rax_disp32_imm32(b, 16, 2) in   /* kind = LIST */
+    let _ = mov_rax_disp32_imm32(b, 20, 0) in
     let _ = emit_load_rdi_slot(b, hd) in
-    let _ = mov_rax_disp8_rdi(b, 24) in
+    let _ = mov_rax_disp32_rdi(b, 24) in
     let _ = emit_load_rdi_slot(b, tl) in
-    let _ = mov_rax_disp8_rdi(b, 32) in
+    let _ = mov_rax_disp32_rdi(b, 32) in
     let _ = or_rax_1(b) in
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_alloc"))
@@ -1220,7 +1184,7 @@ let emit_x86_i_prim(st, insn) =
     let _ = jcc_rel32(b, 4, 0) in
     let jnil = bytes_len(b) - 4 in
     let _ = and_rax_1(b) in
-    let _ = mov_rax_rax_disp8(b, 24) in
+    let _ = mov_rax_rax_disp32(b, 24) in
     let _ = shl_rax_1(b) in
     let _ = jmp_rel32(b, 0) in
     let jdone = bytes_len(b) - 4 in
@@ -1254,7 +1218,7 @@ let emit_x86_i_prim(st, insn) =
     let dst = nth(insn, 1) in
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let _ = and_rax_1(b) in
-    let _ = mov_rax_rax_disp8(b, 24) in
+    let _ = mov_rax_rax_disp32(b, 24) in
     let _ = shl_rax_1(b) in
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels, patches)
@@ -1428,18 +1392,18 @@ let emit_x86_i_cc(st, insn) =
     let acall = bytes_len(b) in
     let _ = call_user(b) in
     let _ = and_rax_1(b) in
-    let _ = mov_rax_disp8_imm32(b, 8, 0) in
-    let _ = mov_rax_disp8_imm32(b, 12, 0) in
-    let _ = mov_rax_disp8_imm32(b, 16, 6) in
-    let _ = mov_rax_disp8_imm32(b, 20, 0) in
+    let _ = mov_rax_disp32_imm32(b, 8, 0) in
+    let _ = mov_rax_disp32_imm32(b, 12, 0) in
+    let _ = mov_rax_disp32_imm32(b, 16, 6) in
+    let _ = mov_rax_disp32_imm32(b, 20, 0) in
     let _ = mov_rbx_rax(b) in
     let _ = mov_rax_rbp(b) in
-    let _ = mov_mem_rbx_disp8_rax(b, 24) in
+    let _ = mov_mem_rbx_disp32_rax(b, 24) in
     let _ = mov_rax_rsp(b) in
-    let _ = mov_mem_rbx_disp8_rax(b, 32) in
+    let _ = mov_mem_rbx_disp32_rax(b, 32) in
     let _ = lea_rax_rip(b) in
     let lpos = bytes_len(b) - 4 in
-    let _ = mov_mem_rbx_disp8_rax(b, 40) in
+    let _ = mov_mem_rbx_disp32_rax(b, 40) in
     let _ = mov_rax_rbx(b) in
     let _ = or_rax_1(b) in
     let _ = emit_store_rax_slot(b, dst) in
@@ -1450,9 +1414,9 @@ let emit_x86_i_cc(st, insn) =
     let _ = and_rax_1(b) in
     let _ = mov_rbx_rax(b) in
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = mov_rbp_rbx_disp8(b, 24) in
-    let _ = mov_rsp_rbx_disp8(b, 32) in
-    let _ = jmp_mem_rbx_disp8(b, 40) in
+    let _ = mov_rbp_rbx_disp32(b, 24) in
+    let _ = mov_rsp_rbx_disp32(b, 32) in
+    let _ = jmp_mem_rbx_disp32(b, 40) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "cc_recv" then
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in

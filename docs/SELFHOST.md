@@ -481,6 +481,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 **捕获环境已实现并验证**：
 - 函数参数布局 = `[捕获参数..., 用户参数...]`：捕获（自由变量）在 slot 1..ncap，用户参数在 ncap+1..。
 - `closure` LIR：分配对象 `[next][mark][fnptr][nenv][env...]`，写捕获值（先 load 到 rdi 再 store，修复了旧版直接 `mov_rax_disp8_rdi` 未先装 rdi 的 bug）。
+- x86 内存寻址一律 **disp32**（栈槽、对象字段、`sub`/`add rsp`）。signed imm8 是 -128..127，大偏移会绕回；`ncap12_disp8` 锁闭包 `i>=12`。
 - `apply` LIR：untag 闭包指针，读对象 env 作为**前缀参数**进 rdi..，用户参数接后，间接 call。
 - lower 用 `free_vars` 计算捕获集；普通命名函数（ncap=0）走直接 `call`（递归按名解析），捕获闭包走 `apply`。
 - **修复**：`collect_anf_vars` 的 `atom_vars` 原来闭包捕获的是**初始** `shadow` 而非线程化的 `shdw`，导致 letbin 链的临时变量被误判为自由变量——改为把 `shdw` 作参数传入。

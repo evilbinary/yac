@@ -3,7 +3,7 @@
  * Emits instruction bytes into a growable bytes buffer. Register numbers
  * (x86-64):
  *   rax=0 rcx=1 rdx=2 rbx=3 rsp=4 rbp=5 rsi=6 rdi=7 r8=8 ... r15=15
- * Stack frame: rbp = frame base; locals/params at [rbp+disp8].
+ * Stack frame: rbp = frame base; slots at [rbp+disp32] (signed 32).
  *
  * Every emit_* function appends to the buffer and returns 0 (or the new
  * buffer for chaining). All literals are decimal (no hex in yac).
@@ -474,7 +474,26 @@ let mov_argreg_rax_disp8(b, reg, disp8) =
   else
     let _ = e8(b, 76) in let _ = e8(b, 139) in let _ = e8(b, 72) in
     e8(b, band(disp8, 255))
-/* mov <argreg idx>, rax  (dispatch to existing mov_*_rax) */
+/* Same loads with disp32 (ModRM mod=2). Cap i>=12 is +128. */
+let mov_argreg_rax_disp32(b, reg, disp32) =
+  if reg == 0 then
+    let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 184) in
+    e32(b, disp32)
+  else if reg == 1 then
+    let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 176) in
+    e32(b, disp32)
+  else if reg == 2 then
+    let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 144) in
+    e32(b, disp32)
+  else if reg == 3 then
+    let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 136) in
+    e32(b, disp32)
+  else if reg == 4 then
+    let _ = e8(b, 76) in let _ = e8(b, 139) in let _ = e8(b, 128) in
+    e32(b, disp32)
+  else
+    let _ = e8(b, 76) in let _ = e8(b, 139) in let _ = e8(b, 136) in
+    e32(b, disp32)
 let mov_rax_to_argreg(b, idx) =
   if idx == 0 then mov_rdi_rax(b)
   else if idx == 1 then mov_rsi_rax(b)
@@ -851,7 +870,7 @@ let mov_rax_disp8_rdi(b, disp8) =
   let _ = e8(b, 137) in
   let _ = e8(b, 120) in
   e8(b, band(disp8, 255))
-/* mov [rax+disp32], rdi  (48 89 B8 id32) — cap i>=12 is +128, not disp8 */
+/* mov [rax+disp32], rdi  (48 89 B8 id32) */
 let mov_rax_disp32_rdi(b, disp32) =
   let _ = e8(b, 72) in
   let _ = e8(b, 137) in
@@ -863,6 +882,59 @@ let mov_rax_rax_disp32(b, disp32) =
   let _ = e8(b, 139) in
   let _ = e8(b, 128) in
   e32(b, disp32)
+/* mov dword [rax+disp32], imm32  (c7 80 id32 id32) */
+let mov_rax_disp32_imm32(b, disp32, imm) =
+  let _ = e8(b, 199) in
+  let _ = e8(b, 128) in
+  let _ = e32(b, disp32) in
+  e32(b, imm)
+/* mov byte [rax+disp32], imm8  (c6 80 id32 ib) */
+let mov_rax_disp32_imm8(b, disp32, imm8) =
+  let _ = e8(b, 198) in
+  let _ = e8(b, 128) in
+  let _ = e32(b, disp32) in
+  e8(b, band(imm8, 255))
+/* movzx eax, byte [rax+disp32]  (0f b6 80 id32) */
+let movzx_eax_rax_disp32(b, disp32) =
+  let _ = e8(b, 15) in
+  let _ = e8(b, 182) in
+  let _ = e8(b, 128) in
+  e32(b, disp32)
+/* mov rbx, [rax+disp32]  (48 8b 98 id32) */
+let mov_rbx_rax_disp32(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 152) in
+  e32(b, d)
+/* mov r11d, [rax+disp32]  (44 8b 98 id32) */
+let mov_r11d_rax_disp32(b, d) =
+  let _ = e8(b, 68) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 152) in
+  e32(b, d)
+/* mov [rbx+disp32], rax  (48 89 83 id32) */
+let mov_mem_rbx_disp32_rax(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 137) in
+  let _ = e8(b, 131) in
+  e32(b, d)
+/* jmp qword [rbx+disp32]  (ff a3 id32) */
+let jmp_mem_rbx_disp32(b, d) =
+  let _ = e8(b, 255) in
+  let _ = e8(b, 163) in
+  e32(b, d)
+/* mov rbp, [rbx+disp32]  (48 8b ab id32) */
+let mov_rbp_rbx_disp32(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 171) in
+  e32(b, d)
+/* mov rsp, [rbx+disp32]  (48 8b a3 id32) */
+let mov_rsp_rbx_disp32(b, d) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 139) in
+  let _ = e8(b, 163) in
+  e32(b, d)
 /* or rax, 1  (48 83 c8 01) — tag pointer */
 let or_rax_1(b) =
   let _ = e8(b, 72) in
