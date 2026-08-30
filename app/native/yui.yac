@@ -22,12 +22,15 @@ let yui_game_get(id, which) = ccall(csym("yui_yac_game_get"), id, which)
 
 let yui_game_pos(id, x, y) = ccall(csym("yui_yac_game_pos"), id, x, y)
 
-let yui_game_drop(tag, x, rgb) = ccall(csym("yui_yac_game_drop"), tag, x, rgb)
+let yui_game_spawn(id, tag, x, y, rgb) =
+  ccall(csym("yui_yac_game_spawn"), id, tag, x, y, rgb)
 
-let yui_game_eat(pid, tag) = ccall(csym("yui_yac_game_eat"), pid, tag)
+let yui_game_box(id, w, h) = ccall(csym("yui_yac_game_box"), id, w, h)
 
-let yui_game_fall(ymax) = ccall(csym("yui_yac_game_fall"), ymax)
+let yui_game_hit(id, tag) = ccall(csym("yui_yac_game_hit"), id, tag)
 
-let yui_burst(x, y, rgb) = ccall(csym("yui_yac_game_burst"), x, y, rgb)
+let yui_game_cull(tag, ymax) = ccall(csym("yui_yac_game_cull"), tag, ymax)
+
+let yui_game_burst(x, y, rgb) = ccall(csym("yui_yac_game_burst"), x, y, rgb)
 
 let yui_rand(n) = ccall(csym("yui_yac_rand"), n)

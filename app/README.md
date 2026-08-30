@@ -14,7 +14,7 @@ and `libsocket.a`.
 
 | path | role |
 | --- | --- |
-| `native/yui.yac` | Yac bindings (`yui_open`, `yui_init`, `yui_tick`, …) |
+| `native/yui.yac` | Yac bindings. Game: `spawn`/`box`/`vel`/`pos`/`get`/`hit`/`cull`/`burst` |
 | `native/yui_yac.c` | C glue: init, tick, set_text, click_is |
 | `native/libyui_yac.so` | shared lib (built by make) |
 | `counter/` | increment / decrement / reset |

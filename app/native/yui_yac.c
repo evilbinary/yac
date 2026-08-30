@@ -105,33 +105,51 @@ int yui_yac_game_pos(const char* id, int x, int y) {
     return 0;
 }
 
-int yui_yac_game_drop(const char* tag, int x, int rgb) {
+int yui_yac_game_spawn(const char* id, const char* tag, int x, int y, int rgb) {
     static int seq;
-    char id[GAME_ID_LEN];
+    char auto_id[GAME_ID_LEN];
+    const char* use = id;
     GameEntity* e;
     Color c;
-    if (!tag) {
+    if (!tag || tag[0] == '\0') {
         return -1;
     }
-    snprintf(id, sizeof(id), "%s_%d", tag, seq++);
-    e = game_spawn(id);
+    if (!use || use[0] == '\0') {
+        snprintf(auto_id, sizeof(auto_id), "%s_%d", tag, seq++);
+        use = auto_id;
+    }
+    e = game_spawn(use);
     if (!e) {
         return -1;
     }
     strncpy(e->tag, tag, GAME_ID_LEN - 1);
+    e->tag[GAME_ID_LEN - 1] = '\0';
     e->x = (float)x;
-    e->y = -18.0f;
+    e->y = (float)y;
     e->z = 5.0f;
-    e->w = 14.0f;
-    e->h = 14.0f;
-    e->vy = (float)(55 + rand() % 50);
+    e->w = 16.0f;
+    e->h = 16.0f;
+    e->cw = 16.0f;
+    e->ch = 16.0f;
     yui_yac_rgb(rgb, &c);
     e->color = c;
     return 0;
 }
 
-int yui_yac_game_eat(const char* player_id, const char* tag) {
-    GameEntity* p = game_find(player_id);
+int yui_yac_game_box(const char* id, int w, int h) {
+    GameEntity* e = game_find(id);
+    if (!e) {
+        return -1;
+    }
+    e->w = w > 0 ? (float)w : e->w;
+    e->h = h > 0 ? (float)h : e->h;
+    e->cw = e->w;
+    e->ch = e->h;
+    return 0;
+}
+
+int yui_yac_game_hit(const char* id, const char* tag) {
+    GameEntity* p = game_find(id);
     GameEntity* hits[32];
     int n;
     int i;
@@ -148,26 +166,22 @@ int yui_yac_game_eat(const char* player_id, const char* tag) {
     return 0;
 }
 
-int yui_yac_game_fall(int y_max) {
-    int n = 0;
-    GameEntity** all = game_entities(&n);
+int yui_yac_game_cull(const char* tag, int y_max) {
+    GameEntity* hits[64];
+    int n;
     int i;
+    int gone = 0;
+    if (!tag || tag[0] == '\0') {
+        return 0;
+    }
+    n = game_find_all_by_tag(tag, hits, 64);
     for (i = 0; i < n; i++) {
-        GameEntity* e = all[i];
-        if (!e || !e->alive) {
-            continue;
-        }
-        if (strcmp(e->id, "moth") == 0 || strcmp(e->id, "sky") == 0) {
-            continue;
-        }
-        if (strcmp(e->tag, "lantern") == 0 || strcmp(e->tag, "bg") == 0) {
-            continue;
-        }
-        if ((int)e->y > y_max) {
-            game_destroy(e);
+        if (hits[i] && hits[i]->alive && (int)hits[i]->y > y_max) {
+            game_destroy(hits[i]);
+            gone++;
         }
     }
-    return 0;
+    return gone;
 }
 
 int yui_yac_game_burst(int x, int y, int rgb) {
