@@ -9,7 +9,45 @@
 /* vreg s 的 home。现在 = 自己（emit 映 [rbp-8*(s+1)] / FP 帧）。 */
 let alloc_home(s) = s
 
-let alloc_prog(prog) = prog
+let insn_uses_fn(ins, name) =
+  let k = nth(ins, 0) in
+  if k == "fcall" then nth(ins, 2) == name
+  else if k == "tcall" then nth(ins, 2) == name
+  else if k == "closure" then nth(ins, 2) == name
+  else false
+
+let funs_use_name(funs, name) =
+  let rec(fi, ii) =
+    if fi >= len(funs) then false
+    else
+      let insns = nth(nth(funs, fi), 4) in
+      if ii >= len(insns) then rec(fi + 1, 0)
+      else if insn_uses_fn(nth(insns, ii), name) then true
+      else rec(fi, ii + 1) in
+  rec(0, 0)
+
+/* ffi.yac is always in rt_image. Drop unused cload/csym so guests without
+ * ccall stay ET_EXEC (no PT_INTERP) and qemu-user can run them without a
+ * cross sysroot. */
+let drop_unused_ffi(funs) =
+  let want_cload = funs_use_name(funs, "cload") in
+  let want_csym = funs_use_name(funs, "csym") in
+  let out = list_new() in
+  let rec(i) =
+    if i >= len(funs) then out
+    else
+      let f = nth(funs, i) in
+      let n = nth(f, 1) in
+      let keep =
+        if n == "cload" then want_cload
+        else if n == "csym" then want_csym
+        else true in
+      let _ = if keep then list_push(out, f) else 0 in
+      rec(i + 1) in
+  rec(0)
+
+let alloc_prog(prog) =
+  ["prog", drop_unused_ffi(nth(prog, 1)), nth(prog, 2)]
 
 let emit_by_target(ast, t) =
   let a = target_arch(t) in

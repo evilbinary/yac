@@ -311,31 +311,29 @@ let qemu_exec(qemu, arch, bin) =
   if root == "" then run(["timeout", "-s", "KILL", "8", qemu, bin])
   else run(["timeout", "-s", "KILL", "8", qemu, "-L", root, bin])
 
+let qemu_skip(st, tag, why) =
+  let _ = print(str_cat("SKIP: ", str_cat(tag, str_cat(" (", str_cat(why, ")"))))) in
+  st
+
 let qemu_one(st, yc, qemu, arch, c) =
   let name = nth(c, 0) in
-  if name == "ccall_putchar" then st
-  else if name == "ccall_cload" then st
-  else
-  let kind = nth(c, 1) in
-  let want = nth(c, 2) in
   let tag = str_cat(arch, str_cat(" ", name)) in
-  let bin = str_cat(TMP, str_cat("/q_", str_cat(arch, str_cat("_", name)))) in
-  let cr = run(append(yc, [case_src(name), "-o", bin, "--arch", arch])) in
-  if nth(run(["test", "-f", bin]), 0) != 0 then
-    check(st, tag, "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
+  if name == "ccall_cload" then
+    qemu_skip(st, tag, "host .so")
   else
-    let _ = run(["chmod", "+x", bin]) in
-    let r = qemu_exec(qemu, arch, bin) in
-    if kind == "rc" then check(st, tag, want, int_to_str(nth(r, 0)))
-    else check(st, tag, want, chomp(nth(r, 1)))
-
-let qemu_has_loader(arch) =
-  if qemu_root(arch) != "" then true
-  else if arch == "arm64" then
-    nth(run(["test", "-e", "/lib/ld-linux-aarch64.so.1"]), 0) == 0
-  else if arch == "riscv64" then
-    nth(run(["test", "-e", "/lib/ld-linux-riscv64-lp64d.so.1"]), 0) == 0
-  else false
+    let kind = nth(c, 1) in
+    let want = nth(c, 2) in
+    let bin = str_cat(TMP, str_cat("/q_", str_cat(arch, str_cat("_", name)))) in
+    let cr = run(append(yc, [case_src(name), "-o", bin, "--arch", arch])) in
+    if nth(run(["test", "-f", bin]), 0) != 0 then
+      check(st, tag, "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
+    else
+      let _ = run(["chmod", "+x", bin]) in
+      let r = qemu_exec(qemu, arch, bin) in
+      let blob = str_cat(nth(r, 1), nth(r, 2)) in
+      if contains(blob, "ld-linux") then qemu_skip(st, tag, "no sysroot")
+      else if kind == "rc" then check(st, tag, want, int_to_str(nth(r, 0)))
+      else check(st, tag, want, chomp(nth(r, 1)))
 
 let qemu_arch(st, yc, arch) =
   let q = qemu_cmd(arch) in
@@ -343,10 +341,7 @@ let qemu_arch(st, yc, arch) =
                  str_cat(nth(yc, 0), str_cat(" --arch ", arch))) in
   if q == "" then
     let _ = print(str_cat("SKIP: qemu ", arch)) in st
-  else if qemu_has_loader(arch) then
-    foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st, compiler_cases(0))
-  else
-    let _ = print(str_cat("SKIP: qemu ", str_cat(arch, " (no sysroot)"))) in st
+  else foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st, compiler_cases(0))
 
 let exists_rc(p) = nth(run(["test", "-f", p]), 0)
 
