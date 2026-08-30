@@ -203,15 +203,34 @@ let emit_a64_c_align(b) =
 
 let emit_a64_c_unalign(b) = a64_mov_sp(b, 31, 19)
 
-/* ccall: untag in x8, then x0..x5. fcall must not use this (keeps tags). */
+/* ccall: untag in x8; AAPCS x0–x7 then 16-aligned stack. */
 let emit_a64_c_arg(b, args, j, na) =
   if j >= na then 0
-  else if j >= 6 then 0
+  else if j >= 8 then 0
   else
     let _ = a64_slot(b, nth(args, j), false, 8) in
     let _ = emit_a64_c_untag(b, 8) in
     let _ = a64_mov_reg(b, j, 8) in
     emit_a64_c_arg(b, args, j + 1, na)
+
+let emit_a64_c_stkarg(b, args, j, na) =
+  if j >= na then 0
+  else
+    let _ = a64_slot(b, nth(args, j), false, 8) in
+    let _ = emit_a64_c_untag(b, 8) in
+    let _ = a64_str(b, 8, 31, bshl(j - 8, 3)) in
+    emit_a64_c_stkarg(b, args, j + 1, na)
+
+let emit_a64_c_marshal(b, args) =
+  let na = len(args) in
+  let nstack = if na > 8 then na - 8 else 0 in
+  let asz = bshl(bshr(bshl(nstack, 3) + 15, 4), 4) in
+  let _ = emit_a64_c_arg(b, args, 0, na) in
+  let _ = emit_a64_c_align(b) in
+  if nstack == 0 then 0
+  else
+    let _ = a64_sub_imm(b, 31, 31, asz) in
+    emit_a64_c_stkarg(b, args, 8, na)
 
 let emit_a64_fcall(st, insn) =
   let b = nth(st, 0) in
@@ -233,8 +252,7 @@ let emit_a64_fcall(st, insn) =
 let emit_a64_ccall(st, insn) =
   let b = nth(st, 0) in
   let args = nth(insn, 3) in
-  let _ = emit_a64_c_arg(b, args, 0, len(args)) in
-  let _ = emit_a64_c_align(b) in
+  let _ = emit_a64_c_marshal(b, args) in
   let pos = bytes_len(b) in
   let _ = a64_bl(b, 0) in
   let _ = emit_a64_c_unalign(b) in
@@ -249,8 +267,7 @@ let emit_a64_iccall(st, insn) =
   let _ = a64_slot(b, nth(insn, 2), false, 0) in
   let _ = emit_a64_c_untag(b, 0) in
   let _ = a64_mov_reg(b, 16, 0) in
-  let _ = emit_a64_c_arg(b, args, 0, len(args)) in
-  let _ = emit_a64_c_align(b) in
+  let _ = emit_a64_c_marshal(b, args) in
   let _ = a64_blr(b, 16) in
   let _ = emit_a64_c_unalign(b) in
   let _ = a64_lsl1(b, 0, 0) in

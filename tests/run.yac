@@ -143,6 +143,7 @@ let compiler_cases(_) = [
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
   ["ccall_putchar", "out", "A"],
   ["ccall_cload", "rc", "20"],
+  ["ccall_many", "rc", "64"],
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
   ["io_rw", "rc", "2"], ["system", "rc", "0"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"],
   ["tco_cap", "rc", "42"], ["callcc", "rc", "42"], ["callcc2", "rc", "99"],
@@ -219,6 +220,10 @@ let compiler_all(st, yc) =
     str_cat(TMP, "/libtadd.so"), str_cat(TMP, "/tadd.c")]) in
   let _ = run(["gcc", "-shared", "-fPIC", "-o",
     str_cat(TMP, "/libtmul.so"), str_cat(TMP, "/tmul.c")]) in
+  let _ = write_file(str_cat(TMP, "/tsum.c"),
+    "int tsum7(int a,int b,int c,int d,int e,int f,int g){return a+b+c+d+e+f+g;}\nint tsum8(int a,int b,int c,int d,int e,int f,int g,int h){return a+b+c+d+e+f+g+h;}\n") in
+  let _ = run(["gcc", "-shared", "-fPIC", "-o",
+    str_cat(TMP, "/libtsum.so"), str_cat(TMP, "/tsum.c")]) in
   let st1 = foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)) in
   let st2 = foldl(fun(s, c) -> compile_syntax_err(s, yc, nth(c, 1),
                   str_cat("syntax ", nth(c, 0))), st1, syntax_bads(0)) in
@@ -318,7 +323,7 @@ let qemu_skip(st, tag, why) =
 let qemu_one(st, yc, qemu, arch, c) =
   let name = nth(c, 0) in
   let tag = str_cat(arch, str_cat(" ", name)) in
-  if name == "ccall_cload" then
+  if name == "ccall_cload" or name == "ccall_many" then
     qemu_skip(st, tag, "host .so")
   else
     let kind = nth(c, 1) in

@@ -197,15 +197,34 @@ let emit_rv_c_align(b) =
 
 let emit_rv_c_unalign(b) = rv_addi(b, 2, 9, 0)
 
-/* ccall: untag in t2 (x7); rv_slot uses t0. fcall must not use this. */
+/* ccall: untag in t2 (x7); a0–a7 then 16-aligned stack. rv_slot uses t0. */
 let emit_rv_c_arg(b, args, j, na) =
   if j >= na then 0
-  else if j >= 6 then 0
+  else if j >= 8 then 0
   else
     let _ = rv_slot(b, nth(args, j), false, 7) in
     let _ = emit_rv_c_untag(b, 7) in
     let _ = rv_addi(b, 10 + j, 7, 0) in
     emit_rv_c_arg(b, args, j + 1, na)
+
+let emit_rv_c_stkarg(b, args, j, na) =
+  if j >= na then 0
+  else
+    let _ = rv_slot(b, nth(args, j), false, 7) in
+    let _ = emit_rv_c_untag(b, 7) in
+    let _ = rv_sd(b, 7, 2, bshl(j - 8, 3)) in
+    emit_rv_c_stkarg(b, args, j + 1, na)
+
+let emit_rv_c_marshal(b, args) =
+  let na = len(args) in
+  let nstack = if na > 8 then na - 8 else 0 in
+  let asz = bshl(bshr(bshl(nstack, 3) + 15, 4), 4) in
+  let _ = emit_rv_c_arg(b, args, 0, na) in
+  let _ = emit_rv_c_align(b) in
+  if nstack == 0 then 0
+  else
+    let _ = rv_addi(b, 2, 2, 0 - asz) in
+    emit_rv_c_stkarg(b, args, 8, na)
 
 let emit_rv_fcall(st, insn) =
   let b = nth(st, 0) in
@@ -227,8 +246,7 @@ let emit_rv_fcall(st, insn) =
 let emit_rv_ccall(st, insn) =
   let b = nth(st, 0) in
   let args = nth(insn, 3) in
-  let _ = emit_rv_c_arg(b, args, 0, len(args)) in
-  let _ = emit_rv_c_align(b) in
+  let _ = emit_rv_c_marshal(b, args) in
   let pos = bytes_len(b) in
   let _ = rv_jal(b, 1, 0) in
   let _ = emit_rv_c_unalign(b) in
@@ -244,8 +262,7 @@ let emit_rv_iccall(st, insn) =
   let _ = rv_slot(b, nth(insn, 2), false, 10) in
   let _ = emit_rv_c_untag(b, 10) in
   let _ = rv_addi(b, 28, 10, 0) in
-  let _ = emit_rv_c_arg(b, args, 0, len(args)) in
-  let _ = emit_rv_c_align(b) in
+  let _ = emit_rv_c_marshal(b, args) in
   let _ = rv_jalr(b, 1, 28, 0) in
   let _ = emit_rv_c_unalign(b) in
   let _ = rv_addi(b, 7, 0, 1) in

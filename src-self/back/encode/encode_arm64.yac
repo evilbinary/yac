@@ -85,6 +85,10 @@ let a64_mov_sp(b, rd, rn) = a64_add_imm(b, rd, rn, 0)
 let a64_ldr(b, rt, rn, off) =
   a64_u32(b, 4181721088 + bshl(band(bshr(off, 3), 4095), 10) + bshl(rn, 5) + rt)
 
+/* STR Xt,[Xn,#imm12*8]  0xF9000000 */
+let a64_str(b, rt, rn, off) =
+  a64_u32(b, 4177526784 + bshl(band(bshr(off, 3), 4095), 10) + bshl(rn, 5) + rt)
+
 let a64_lsl1(b, rd, rn) = a64_add_reg(b, rd, rn, rn)
 
 /* LSLV Xd,Xn,Xm  0x9AC02000 */
