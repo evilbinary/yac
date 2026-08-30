@@ -14,3 +14,4 @@ yc_c
 tests/compiler/cases/add
 tests/compiler/cases/ccall_putchar
 tests/compiler/cases/ccall_cload
+tests/compiler/cases/ncap12_disp8

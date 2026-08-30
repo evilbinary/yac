@@ -120,6 +120,7 @@ let compiler_cases(_) = [
   ["if_true", "rc", "7"], ["if_false", "rc", "9"], ["func_call", "rc", "10"],
   ["recursion", "rc", "120"], ["args2", "rc", "9"], ["args3", "rc", "6"], ["args6", "rc", "21"],
   ["capture", "rc", "15"], ["multi_capture", "rc", "13"], ["capture_2args", "rc", "103"],
+  ["ncap12_disp8", "rc", "16"],
   ["higher", "rc", "7"], ["curry", "rc", "7"], ["return_clo", "rc", "15"],
   ["list_len", "rc", "3"], ["list_nth", "rc", "20"], ["list_set", "rc", "20"], ["list_cons", "rc", "3"],
   ["foldl", "rc", "10"], ["map_len", "rc", "3"], ["map_nth", "rc", "4"], ["filter", "rc", "2"],

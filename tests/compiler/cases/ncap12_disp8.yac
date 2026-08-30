@@ -1,0 +1,24 @@
+/* Closure env is [obj+32+8*i]. x86 disp8 is signed, so i>=12 is +128
+ * and used to wrap to -128, smashing the previous object's size/next.
+ * The next GC then SIGSEGV'd (next=2). Need ncap>=13 and a collect. */
+let a0 = 1 in
+let a1 = 1 in
+let a2 = 1 in
+let a3 = 1 in
+let a4 = 1 in
+let a5 = 1 in
+let a6 = 1 in
+let a7 = 1 in
+let a8 = 1 in
+let a9 = 1 in
+let a10 = 1 in
+let a11 = 1 in
+let a12 = 1 in
+let a13 = 1 in
+let a14 = 1 in
+let a15 = 1 in
+let f(_) =
+  a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 +
+  a8 + a9 + a10 + a11 + a12 + a13 + a14 + a15 in
+let _ = gc_collect() in
+f(0)
