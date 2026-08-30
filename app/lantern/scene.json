@@ -1,0 +1,46 @@
+{
+  "id": "lantern_scene",
+  "camera": { "x": 0, "y": 0 },
+  "entities": [
+    {
+      "id": "sky",
+      "tag": "bg",
+      "color": "#070b18",
+      "transform": { "x": 0, "y": 0, "z": -100 },
+      "sprite": { "w": 640, "h": 420, "color": "#070b18" }
+    },
+    {
+      "id": "lamp_l",
+      "tag": "lantern",
+      "color": "#3d2a12",
+      "transform": { "x": 28, "y": 300, "z": 1 },
+      "sprite": { "w": 18, "h": 52, "color": "#c47b2a" }
+    },
+    {
+      "id": "lamp_r",
+      "tag": "lantern",
+      "color": "#3d2a12",
+      "transform": { "x": 594, "y": 300, "z": 1 },
+      "sprite": { "w": 18, "h": 52, "color": "#c47b2a" }
+    },
+    {
+      "id": "glow_l",
+      "tag": "lantern",
+      "transform": { "x": 22, "y": 278, "z": 2 },
+      "sprite": { "w": 30, "h": 18, "color": "#ffcc66" }
+    },
+    {
+      "id": "glow_r",
+      "tag": "lantern",
+      "transform": { "x": 588, "y": 278, "z": 2 },
+      "sprite": { "w": 30, "h": 18, "color": "#ffcc66" }
+    },
+    {
+      "id": "moth",
+      "tag": "player",
+      "transform": { "x": 310, "y": 240, "z": 10 },
+      "sprite": { "w": 22, "h": 16, "color": "#fff4c2" },
+      "collider": { "w": 22, "h": 16 }
+    }
+  ]
+}

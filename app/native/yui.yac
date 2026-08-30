@@ -11,3 +11,23 @@ let yui_set_text(id, text) = ccall(csym("yui_yac_set_text"), id, text)
 let yui_click_is(id) = ccall(csym("yui_yac_click_is"), id)
 
 let yui_shutdown(_) = ccall(csym("yui_yac_shutdown"))
+
+let yui_game_boot(path) = ccall(csym("yui_yac_game_boot"), path)
+
+let yui_key(name) = ccall(csym("yui_yac_game_key"), name)
+
+let yui_game_vel(id, vx, vy) = ccall(csym("yui_yac_game_vel"), id, vx, vy)
+
+let yui_game_get(id, which) = ccall(csym("yui_yac_game_get"), id, which)
+
+let yui_game_pos(id, x, y) = ccall(csym("yui_yac_game_pos"), id, x, y)
+
+let yui_game_drop(tag, x, rgb) = ccall(csym("yui_yac_game_drop"), tag, x, rgb)
+
+let yui_game_eat(pid, tag) = ccall(csym("yui_yac_game_eat"), pid, tag)
+
+let yui_game_fall(ymax) = ccall(csym("yui_yac_game_fall"), ymax)
+
+let yui_burst(x, y, rgb) = ccall(csym("yui_yac_game_burst"), x, y, rgb)
+
+let yui_rand(n) = ccall(csym("yui_yac_rand"), n)

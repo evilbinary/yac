@@ -28,7 +28,7 @@ YUI_LIBS = \
 	$(YUI_LIBDIR)/libsocket.a \
 	$(SDL_LIBS) -lm -ldl -lpthread
 
-.PHONY: all so apps counter hello clean
+.PHONY: all so apps counter hello lantern clean
 
 all: so apps
 
@@ -38,7 +38,7 @@ $(SO): native/yui_yac.c $(BOOT_C) $(YUI_LIBDIR)/libyui.a
 	mkdir -p native
 	$(CC) $(CFLAGS) -shared -o $@ native/yui_yac.c $(BOOT_C) $(YUI_LIBS)
 
-apps: counter hello
+apps: counter hello lantern
 
 counter: $(SO)
 	mkdir -p $(YAC_ROOT)/build/app
@@ -52,6 +52,12 @@ hello: $(SO)
 	cd $(YAC_ROOT) && $(YC) build/app/hello.yac -o app/hello/hello
 	chmod +x hello/hello
 
+lantern: $(SO)
+	mkdir -p $(YAC_ROOT)/build/app
+	cat native/yui.yac lantern/main.yac > $(YAC_ROOT)/build/app/lantern.yac
+	cd $(YAC_ROOT) && $(YC) build/app/lantern.yac -o app/lantern/lantern
+	chmod +x lantern/lantern
+
 clean:
-	rm -f $(SO) native/yui_host counter/counter hello/hello
+	rm -f $(SO) native/yui_host counter/counter hello/hello lantern/lantern
 	rm -rf $(YAC_ROOT)/build/app

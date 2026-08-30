@@ -1,0 +1,61 @@
+{
+  "id": "lantern_root",
+  "type": "View",
+  "text": "Lantern Moth",
+  "size": [640, 420],
+  "font": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+  "fontSize": "16",
+  "style": {
+    "bgColor": "transparent",
+    "color": "#ffe9a8"
+  },
+  "layout": {
+    "type": "vertical",
+    "spacing": 6,
+    "padding": [10, 10, 10, 10]
+  },
+  "children": [
+    {
+      "id": "hud",
+      "type": "View",
+      "size": [620, 36],
+      "layout": {
+        "type": "horizontal",
+        "spacing": 12,
+        "align": "center"
+      },
+      "style": { "bgColor": "#12182ccc", "borderRadius": 6 },
+      "children": [
+        {
+          "id": "title",
+          "type": "Label",
+          "text": "Lantern Moth",
+          "size": [160, 28],
+          "style": { "color": "#ffe9a8", "bgColor": "transparent", "textAlign": "left" }
+        },
+        {
+          "id": "score",
+          "type": "Label",
+          "text": "Embers 0",
+          "size": [120, 28],
+          "style": { "color": "#ffb347", "bgColor": "transparent", "textAlign": "left" }
+        },
+        {
+          "id": "hint",
+          "type": "Label",
+          "text": "WASD / arrows  ·  gold=catch  ·  ash=dodge",
+          "size": [250, 28],
+          "style": { "color": "#8aa0c8", "bgColor": "transparent", "textAlign": "left" }
+        },
+        {
+          "id": "quit",
+          "type": "Button",
+          "text": "Quit",
+          "size": [64, 28],
+          "style": { "bgColor": "#2a3148", "color": "#ffffff", "borderRadius": 6 },
+          "events": { "onClick": "yac_click" }
+        }
+      ]
+    }
+  ]
+}

@@ -18,7 +18,7 @@ and `libsocket.a`.
 | `native/yui_yac.c` | C glue: init, tick, set_text, click_is |
 | `native/libyui_yac.so` | shared lib (built by make) |
 | `counter/` | increment / decrement / reset |
-| `hello/` | cycle greeting text |
+| `lantern/` | WASD moth: catch gold embers, dodge ash |
 
 ## Build
 
@@ -36,7 +36,10 @@ export LD_PRELOAD=$(gcc -print-file-name=libasan.so)
 cd /path/to/yac
 ./app/counter/counter
 ./app/hello/hello
+./app/lantern/lantern
 ```
+
+**Lantern Moth** uses YUI’s game entities (color rects, particles, input). Gold bits fall — catch them; gray ash subtracts a point. YUI draws the game **under** the UI tree, so HUD roots/labels must use `bgColor: "transparent"` (same as `yui/app/game/demo.json`); an opaque stage View will hide the scene. JSON-only edits do not need a rebuild.
 
 JSON path and `.so` path are optional argv:
 
