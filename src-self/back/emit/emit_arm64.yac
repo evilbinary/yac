@@ -1379,4 +1379,5 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let _ = patches_extend(extra, patches) in
   let _ = a64_resolve_loop([b, offs, load_vaddr + text_off, GLOBALS_BASE, labels,
                             load_vaddr + text_off + pool_start], extra, 0) in
+  let _ = funsym_set(fo0) in
   [b, fo0]

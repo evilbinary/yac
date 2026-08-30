@@ -2,7 +2,9 @@
 
 let pack_elf_target(t, code) =
   let sh = if target_shared(t) then 1 else 0 in
-  pack_elf_ex(code, target_emachine(t), target_vaddr(t), target_text_off(t), sh)
+  let img = pack_elf_ex(code, target_emachine(t), target_vaddr(t),
+                        target_text_off(t), sh) in
+  elf_maybe_debug(img, target_vaddr(t), target_text_off(t), bytes_len(code))
 
 let pack_image(t, code) =
   let fmt = target_format(t) in

@@ -2,6 +2,8 @@ YAC_ROOT ?= $(abspath ..)
 YUI_ROOT ?= /media/evil/d/dev/yui
 YUI_LIBDIR ?= $(YUI_ROOT)/build/pc/None/None
 YC ?= $(YAC_ROOT)/yc_a
+# e.g. make lantern YC_FLAGS=-g  for nm/gdb function names
+YC_FLAGS ?=
 
 CC ?= gcc
 SDL_CFLAGS := $(shell pkg-config --cflags sdl2 SDL2_ttf SDL2_image)
@@ -43,19 +45,19 @@ apps: counter hello lantern
 counter: $(SO)
 	mkdir -p $(YAC_ROOT)/build/app
 	cat native/yui.yac counter/main.yac > $(YAC_ROOT)/build/app/counter.yac
-	cd $(YAC_ROOT) && $(YC) build/app/counter.yac -o app/counter/counter
+	cd $(YAC_ROOT) && $(YC) $(YC_FLAGS) build/app/counter.yac -o app/counter/counter
 	chmod +x counter/counter
 
 hello: $(SO)
 	mkdir -p $(YAC_ROOT)/build/app
 	cat native/yui.yac hello/main.yac > $(YAC_ROOT)/build/app/hello.yac
-	cd $(YAC_ROOT) && $(YC) build/app/hello.yac -o app/hello/hello
+	cd $(YAC_ROOT) && $(YC) $(YC_FLAGS) build/app/hello.yac -o app/hello/hello
 	chmod +x hello/hello
 
 lantern: $(SO)
 	mkdir -p $(YAC_ROOT)/build/app
 	cat native/yui.yac lantern/main.yac > $(YAC_ROOT)/build/app/lantern.yac
-	cd $(YAC_ROOT) && $(YC) build/app/lantern.yac -o app/lantern/lantern
+	cd $(YAC_ROOT) && $(YC) $(YC_FLAGS) build/app/lantern.yac -o app/lantern/lantern
 	chmod +x lantern/lantern
 
 clean:

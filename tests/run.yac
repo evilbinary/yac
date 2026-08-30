@@ -225,8 +225,19 @@ let compiler_all(st, yc) =
   let _ = run(["gcc", "-shared", "-fPIC", "-o",
     str_cat(TMP, "/libtsum.so"), str_cat(TMP, "/tsum.c")]) in
   let st1 = foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)) in
+  let st1s =
+    if nth(run(["sh", "-c", "command -v nm >/dev/null 2>&1"]), 0) != 0 then st1
+    else
+      let bin_g = str_cat(TMP, "/c_l4_42_g") in
+      let _ = run(append(yc, [case_src("l4_42"), "-g", "-o", bin_g])) in
+      let with_g = nth(run(["nm", bin_g]), 1) in
+      let stg = check(st1, "elf -g symtab _start", "1",
+                      if contains(with_g, "_start") then "1" else with_g) in
+      let no_g = nth(run(["nm", str_cat(TMP, "/c_l4_42")]), 2) in
+      check(stg, "elf default no symtab", "1",
+            if contains(no_g, "无符号") or contains(no_g, "no symbols") then "1" else no_g) in
   let st2 = foldl(fun(s, c) -> compile_syntax_err(s, yc, nth(c, 1),
-                  str_cat("syntax ", nth(c, 0))), st1, syntax_bads(0)) in
+                  str_cat("syntax ", nth(c, 0))), st1s, syntax_bads(0)) in
   let st3 = foldl(fun(s, c) -> compile_msg_err(s, yc, nth(c, 1),
                   str_cat("unbound ", nth(c, 0)), nth(c, 2)), st2, unbound_bads(0)) in
   let st4 = foldl(fun(s, c) ->

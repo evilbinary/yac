@@ -127,6 +127,29 @@ let DF_BIND_NOW = 8
 let DT_RELA = 7
 let R_JUMP_SLOT = 7
 
+/* Filled by emit_program_*; pack reads it for .symtab. */
+let funsym_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+let funsym_set(fo) = box_set(funsym_box, fo)
+
+let funsym_get(_) =
+  let v = box_get(funsym_box) in
+  if v == 0 then [] else v
+
+let syms_flag_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let syms_enable(on) = box_set(syms_flag_box, on)
+
+let elf_want_syms(_) =
+  let v = box_get(syms_flag_box) in
+  if v == 0 then false else true
+
 let app8(b, v) = bytes_append(b, band(v, 255))
 
 let app16(b, v) =
@@ -152,6 +175,109 @@ let pad8b(b) =
   else
     let _ = bytes_append(b, 0) in
     pad8b(b)
+
+let elf_shdr_nt(b, off, name, typ) =
+  let _ = le32(b, name, off) in
+  le32(b, typ, off + 4)
+
+let elf_shdr_fa(b, off, flags, addr) =
+  let _ = le64(b, flags, off + 8) in
+  le64(b, addr, off + 16)
+
+let elf_shdr_os(b, off, shoff, size) =
+  let _ = le64(b, shoff, off + 24) in
+  le64(b, size, off + 32)
+
+let elf_shdr_li(b, off, link, info) =
+  let _ = le32(b, link, off + 40) in
+  le32(b, info, off + 44)
+
+let elf_shdr_ae(b, off, align, entsz) =
+  let _ = le64(b, align, off + 48) in
+  le64(b, entsz, off + 56)
+
+let elf_z24(b, i) =
+  if i >= 24 then 0
+  else
+    let _ = bytes_append(b, 0) in
+    elf_z24(b, i + 1)
+
+let elf_append_debug(out, vaddr, text_off, code_len, funs) =
+  let xs = list_rev(funs) in
+  let n = len(xs) in
+  let _ = pad8b(out) in
+  let str_off = bytes_len(out) in
+  let _ = bytes_append(out, 0) in
+  let names = list_new() in
+  let addn(i) =
+    if i >= n then 0
+    else
+      let s = nth(nth(xs, i), 0) in
+      let _ = list_push(names, bytes_len(out) - str_off) in
+      let _ = app_str(out, s, 0, str_len(s)) in
+      addn(i + 1) in
+  let _ = addn(0) in
+  let str_sz = bytes_len(out) - str_off in
+  let _ = pad8b(out) in
+  let sym_off = bytes_len(out) in
+  let _ = elf_z24(out, 0) in
+  let rec(i) =
+    if i >= n then 0
+    else
+      let e = nth(xs, i) in
+      let off = nth(e, 1) in
+      let nxt = if i + 1 >= n then code_len else nth(nth(xs, i + 1), 1) in
+      let sz = nxt - off in
+      let sz2 = if sz < 0 then 0 else sz in
+      let _ = app32(out, nth(names, i)) in
+      let _ = bytes_append(out, 18) in
+      let _ = bytes_append(out, 0) in
+      let _ = app16(out, 1) in
+      let _ = app64(out, (vaddr + text_off) + off) in
+      let _ = app64(out, sz2) in
+      rec(i + 1) in
+  let _ = rec(0) in
+  let sym_sz = bytes_len(out) - sym_off in
+  let shstr_off = bytes_len(out) in
+  let _ = bytes_append(out, 0) in
+  let _ = app_str(out, ".text", 0, 5) in
+  let _ = app_str(out, ".symtab", 0, 7) in
+  let _ = app_str(out, ".strtab", 0, 7) in
+  let _ = app_str(out, ".shstrtab", 0, 9) in
+  let shstr_sz = bytes_len(out) - shstr_off in
+  let shoff = bytes_len(out) in
+  let _ = bytes_put(out, shoff + 320 - 1, 0) in
+  let text_va = vaddr + text_off in
+  let _ = elf_shdr_nt(out, shoff + 64, 1, 1) in
+  let _ = elf_shdr_fa(out, shoff + 64, 7, text_va) in
+  let _ = elf_shdr_os(out, shoff + 64, text_off, code_len) in
+  let _ = elf_shdr_li(out, shoff + 64, 0, 0) in
+  let _ = elf_shdr_ae(out, shoff + 64, 16, 0) in
+  let _ = elf_shdr_nt(out, shoff + 128, 7, 2) in
+  let _ = elf_shdr_fa(out, shoff + 128, 0, 0) in
+  let _ = elf_shdr_os(out, shoff + 128, sym_off, sym_sz) in
+  let _ = elf_shdr_li(out, shoff + 128, 3, 1) in
+  let _ = elf_shdr_ae(out, shoff + 128, 8, 24) in
+  let _ = elf_shdr_nt(out, shoff + 192, 15, 3) in
+  let _ = elf_shdr_fa(out, shoff + 192, 0, 0) in
+  let _ = elf_shdr_os(out, shoff + 192, str_off, str_sz) in
+  let _ = elf_shdr_li(out, shoff + 192, 0, 0) in
+  let _ = elf_shdr_ae(out, shoff + 192, 1, 0) in
+  let _ = elf_shdr_nt(out, shoff + 256, 23, 3) in
+  let _ = elf_shdr_fa(out, shoff + 256, 0, 0) in
+  let _ = elf_shdr_os(out, shoff + 256, shstr_off, shstr_sz) in
+  let _ = elf_shdr_li(out, shoff + 256, 0, 0) in
+  let _ = elf_shdr_ae(out, shoff + 256, 1, 0) in
+  let _ = le64(out, shoff, 40) in
+  let _ = le16(out, 64, 58) in
+  let _ = le16(out, 5, 60) in
+  let _ = le16(out, 4, 62) in
+  out
+
+let elf_maybe_debug(out, vaddr, text_off, code_len) =
+  if elf_want_syms(0) then
+    elf_append_debug(out, vaddr, text_off, code_len, funsym_get(0))
+  else out
 
 let dyn_pair(b, tag, val) =
   let _ = app64(b, tag) in
@@ -256,5 +382,5 @@ let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
   let _ = le64(out, ph_off, 32) in
   let _ = le16(out, 3, 56) in
   let _ = le64(out, va(dyn_off), text_off + got_off) in
-  out
+  elf_maybe_debug(out, vaddr, text_off, bytes_len(code))
 

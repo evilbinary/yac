@@ -144,7 +144,7 @@ src-self/
 
 ISA 以 `docs/DESIGN.md` §2.1 为准。构造器与 emit 同一套标签（`local`/`add`/`cmpjmp`/`fcall`/`mref`/…）。手写 boot LIR 可带 `exit` 糖。
 
-槽机：值为栈槽，临时值走返回寄存器。没有独立寄存器分配。`nth`/`cons`/`len`/`str_cat` 不是 LIR 指令，走 `fcall yac_*`。`ccall("name", …)` 走 C ABI PLT；`ccall(ptr, …)` 走间接调用。C 参数按 arch ABI：x86_64 6 个寄存器 + 栈，arm64/riscv64 8 个寄存器 + 栈。`cload`/`csym` 在 `rt/ffi.yac`。
+槽机：值为栈槽，临时值走返回寄存器。没有独立寄存器分配。`nth`/`cons`/`len`/`str_cat` 不是 LIR 指令，走 `fcall yac_*`。`ccall("name", …)` 走 C ABI PLT；`ccall(ptr, …)` 走间接调用。C 参数按 arch ABI：x86_64 6 个寄存器 + 栈，arm64/riscv64 8 个寄存器 + 栈。`-g`/`--syms` 时 ELF 带 `.symtab`。`cload`/`csym` 在 `rt/ffi.yac`。
 
 ### 6.2 后端流程
 
@@ -518,7 +518,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 2. **M7（进行中）**：原生 `callcc`/`throw` 已通；`cps.yac` / `uncps.yac` / `--opt`；`--eval-cps` 蹦床求值（含 `map`/`filter`/`foldl`/`foldr` 回调，嵌套 trampoline）。`--scheme`：`cond`/`map`/`apply`、拒绝 `set!`/`letrec` 与零元函数。C `--both` 仍是 ANF 机 vs CPS 机。
 3. **GC**：`yac_gc` 已是 `$proc`；x86 读栈图，其它架构保守扫栈。`--emit-asm` / `regalloc.yac`：未做。
 
-**L4 已通（原生 `yc_a`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。引导产物命名 `yc` / `yc_a` / `yc_b`。
+**L4 已通（原生 `yc_a`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output] [-g|--syms]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。`-g`/`--syms` 写 ELF 函数符号。引导产物命名 `yc` / `yc_a` / `yc_b`。
 
 **L5 已通**：`make yc` 为 L4（C `yac` 编 bundle → `build/yc_tmp/yc_a`，并复制为 `yc`）。`make bootstrap` 再让 `yc_a` 编 bundle → `yc_b`（数秒）。`make yc-iso` 检查二者对同一输入 ELF 逐字节相同。`yc_a` 与 `yc_b` 自身不必相同。
 **L6 已通**：`make test` 依赖 `yc_a`，原生编译并执行 `tests/run.yac`。

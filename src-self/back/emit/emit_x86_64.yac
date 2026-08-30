@@ -1559,6 +1559,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
                              LOAD_VADDR + TEXT_OFF + pool_start, smap_start], extra, 0, len(extra)) in
   let _ = log_i("emit", "code_len", bytes_len(b)) in
   let _ = log("emit", "done") in
+  let _ = funsym_set(funOffsRev) in
   [b, funOffsRev]
 
 let emit_program(prog) = emit_program_x86_64(prog, 4194304, 120)

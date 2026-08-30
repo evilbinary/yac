@@ -20,6 +20,7 @@ let usage(_) =
   let _ = print("                   empty line ignored; :q / :quit exits") in
   let _ = print("  --scheme         translate a Scheme subset, then run or compile") in
   let _ = print("  -o out           write an executable instead of running") in
+  let _ = print("  -g, --syms       write ELF function symbols (nm/gdb)") in
   let _ = print("  --arch x86_64|arm64|riscv64") in
   let _ = print("  --format elf|pe|macho   --shared   --prof-out file") in
   0
@@ -107,6 +108,8 @@ let parse_args(i, argc, out, pos, spec) =
     else if a == "--ast" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "ast"))
     else if a == "--no-gc" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "no-gc"))
     else if a == "--repl" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "repl"))
+    else if a == "-g" or a == "--syms" then
+      parse_args(i + 1, argc, out, pos, spec_flag(spec, "syms"))
     else if a == "--scheme" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "scheme"))
     else if str_len(a) > 0 and str_ref(a, 0) == 45 then
       [out, pos, 2, spec]
@@ -187,6 +190,7 @@ let run_cli(pr) =
             else
               let t = mk_target(an, fn, nth(spec, 2)) in
               let outpath = if out_opt == "" then default_out(inpath) else out_opt in
+              let _ = if fl(spec, "syms") then syms_enable(1) else syms_enable(0) in
               compile_src(src, outpath, t, nth(spec, 3))
 
 let main =
