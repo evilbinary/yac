@@ -15,3 +15,6 @@ tests/compiler/cases/add
 tests/compiler/cases/ccall_putchar
 tests/compiler/cases/ccall_cload
 tests/compiler/cases/ncap12_disp8
+app/counter/counter
+app/hello/hello
+app/native/libyui_yac.so

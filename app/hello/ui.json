@@ -1,0 +1,45 @@
+{
+  "id": "hello_root",
+  "type": "View",
+  "text": "Yac Hello",
+  "size": [400, 260],
+  "font": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+  "fontSize": "18",
+  "style": {
+    "bgColor": "#ffffff",
+    "color": "#000000"
+  },
+  "layout": {
+    "type": "vertical",
+    "spacing": 20,
+    "padding": [28, 28, 28, 28],
+    "align": "center"
+  },
+  "children": [
+    {
+      "id": "msg",
+      "type": "Label",
+      "text": "Hello from Yac",
+      "size": [344, 48],
+      "font": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+      "fontSize": 22,
+      "style": { "color": "#000000", "textAlign": "center" }
+    },
+    {
+      "id": "greet",
+      "type": "Button",
+      "text": "Next greeting",
+      "size": [200, 44],
+      "style": { "bgColor": "#e07a5f", "color": "#ffffff", "borderRadius": 10 },
+      "events": { "onClick": "yac_click" }
+    },
+    {
+      "id": "quit",
+      "type": "Button",
+      "text": "Quit",
+      "size": [120, 36],
+      "style": { "bgColor": "#e0e0e0", "color": "#000000", "borderRadius": 8 },
+      "events": { "onClick": "yac_click" }
+    }
+  ]
+}

@@ -44,9 +44,12 @@ let stdlib_src(name) =
   if a != 0 then a
   else
     let d = path_dirname(argv(0)) in
-    let b = file_or_0(str_cat(d, str_cat("/../../", rel))) in
-    if b != 0 then b
-    else file_or_0(str_cat(d, str_cat("/../", rel)))
+    let here = file_or_0(str_cat(d, str_cat("/", rel))) in
+    if here != 0 then here
+    else
+      let b = file_or_0(str_cat(d, str_cat("/../../", rel))) in
+      if b != 0 then b
+      else file_or_0(str_cat(d, str_cat("/../", rel)))
 
 /* num.yac lets only. Do not call runtime_funs() here: that rebuilds every
  * kernel insn list (cons thunks) and was doubling the compiler heap so the

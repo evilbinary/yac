@@ -1,0 +1,90 @@
+/* Yac ↔ YUI glue. Register click handler before yui_init; poll clicks as ints. */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "yui_boot.h"
+#include "event.h"
+#include "layer.h"
+#include "backend.h"
+
+static char g_click[YUI_LAYER_ID_MAX];
+static int g_have_click;
+static int g_auto_left = -1;
+
+static void* yac_on_click(void* data) {
+    Layer* layer = (Layer*)data;
+    if (!layer || layer->id[0] == '\0') {
+        return NULL;
+    }
+    strncpy(g_click, layer->id, sizeof(g_click) - 1);
+    g_click[sizeof(g_click) - 1] = '\0';
+    g_have_click = 1;
+    if (strcmp(layer->id, "quit") == 0) {
+        backend_request_quit(0);
+    }
+    return NULL;
+}
+
+int yui_yac_init(const char* json_path, const char* assets_dir) {
+    const char* assets = assets_dir;
+    const char* af;
+    g_have_click = 0;
+    g_click[0] = '\0';
+    if (getenv("YUI_HEADLESS") != NULL) {
+        backend_set_headless(1);
+    }
+    af = getenv("YUI_AUTO_FRAMES");
+    g_auto_left = (af && af[0]) ? atoi(af) : -1;
+    register_event_handler("yac_click", yac_on_click);
+    if (assets && assets[0] == '\0') {
+        assets = NULL;
+    }
+    return yui_init(json_path, assets);
+}
+
+int yui_yac_tick(void) {
+    yui_tick();
+    if (g_auto_left >= 0) {
+        if (g_auto_left == 0) {
+            backend_request_quit(0);
+        } else {
+            g_auto_left--;
+        }
+    }
+    backend_delay(16);
+    return backend_should_quit();
+}
+
+int yui_yac_set_text(const char* id, const char* text) {
+    Layer* root = yui_get_root();
+    Layer* layer;
+    if (!root || !id) {
+        return -1;
+    }
+    layer = find_layer_by_id(root, id);
+    if (!layer) {
+        return -1;
+    }
+    layer_set_text(layer, text ? text : "");
+    return 0;
+}
+
+int yui_yac_click_is(const char* id) {
+    if (!id || !g_have_click) {
+        return 0;
+    }
+    if (strcmp(g_click, id) != 0) {
+        return 0;
+    }
+    g_have_click = 0;
+    g_click[0] = '\0';
+    return 1;
+}
+
+void yui_yac_shutdown(void) {
+    yui_shutdown();
+    g_have_click = 0;
+    g_click[0] = '\0';
+}

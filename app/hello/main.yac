@@ -1,0 +1,41 @@
+let so =
+  if argc() > 2 then argv(2)
+  else "app/native/libyui_yac.so"
+
+let json =
+  if argc() > 1 then argv(1)
+  else "app/hello/ui.json"
+
+let h = yui_open(so)
+
+let greet(i) =
+  if i == 0 then "Hello from Yac"
+  else if i == 1 then "YUI is on the other side of ccall"
+  else if i == 2 then "Click again"
+  else "That's the loop"
+
+let rc =
+  if h == 0 then
+    let _ = print("yui: cload failed") in 1
+  else
+    let ir = yui_init(json, "") in
+    if ir != 0 then
+      let _ = print("yui: init failed") in 1
+    else
+      let rec(i) =
+        let q = yui_tick(0) in
+        if q != 0 then 0
+        else
+          let i1 =
+            if yui_click_is("greet") != 0 then
+              if i == 3 then 0 else i + 1
+            else i in
+          let _ =
+            if i1 != i then yui_set_text("msg", greet(i1))
+            else 0 in
+          rec(i1) in
+      let _ = rec(0) in
+      let _ = yui_shutdown(0) in
+      0
+
+rc

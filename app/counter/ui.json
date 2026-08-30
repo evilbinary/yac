@@ -1,0 +1,79 @@
+{
+  "id": "counter_root",
+  "type": "View",
+  "text": "Yac Counter",
+  "size": [360, 320],
+  "font": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+  "fontSize": "18",
+  "style": {
+    "bgColor": "#ffffff",
+    "color": "#000000"
+  },
+  "layout": {
+    "type": "vertical",
+    "spacing": 16,
+    "padding": [24, 24, 24, 24],
+    "align": "center"
+  },
+  "children": [
+    {
+      "id": "title",
+      "type": "Label",
+      "text": "Yac + YUI",
+      "size": [312, 28],
+      "style": { "color": "#000000", "fontSize": 16, "textAlign": "center" }
+    },
+    {
+      "id": "count",
+      "type": "Label",
+      "text": "0",
+      "size": [312, 64],
+      "style": { "color": "#000000", "fontSize": 48, "textAlign": "center" }
+    },
+    {
+      "id": "row",
+      "type": "View",
+      "size": [312, 48],
+      "layout": {
+        "type": "horizontal",
+        "spacing": 12,
+        "justify": "center",
+        "align": "center"
+      },
+      "children": [
+        {
+          "id": "minus",
+          "type": "Button",
+          "text": "−",
+          "size": [88, 40],
+          "style": { "bgColor": "#16213e", "color": "#ffffff", "borderRadius": 8 },
+          "events": { "onClick": "yac_click" }
+        },
+        {
+          "id": "plus",
+          "type": "Button",
+          "text": "+",
+          "size": [88, 40],
+          "style": { "bgColor": "#0f3460", "color": "#ffffff", "borderRadius": 8 },
+          "events": { "onClick": "yac_click" }
+        },
+        {
+          "id": "reset",
+          "type": "Button",
+          "text": "0",
+          "size": [88, 40],
+          "style": { "bgColor": "#533483", "color": "#ffffff", "borderRadius": 8 },
+          "events": { "onClick": "yac_click" }
+        }
+      ]
+    },
+    {
+      "id": "quit",
+      "type": "Button",
+      "text": "Quit",
+      "size": [120, 36],
+      "style": { "bgColor": "#e0e0e0", "color": "#000000", "borderRadius": 8 },
+      "events": { "onClick": "yac_click" }
+    }
+  ]
+}
