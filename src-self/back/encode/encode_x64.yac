@@ -33,11 +33,12 @@ let modrm(mod_, reg, rm) = bor(bor(bshl(mod_, 6), bshl(reg, 3)), rm)
 
 /* ---- register moves ---- */
 
-/* mov r64, imm32 sign-extended (48 c7 /0 id32). Works for any register. */
+/* mov r64, imm32 sign-extended (REX.W[+B] c7 /0 id32). */
 let mov_r64_imm(b, rd, imm) =
-  let _ = e8(b, 72) in       /* REX.W */
-  let _ = e8(b, 199) in      /* c7 */
-  let _ = e8(b, modrm(3, 0, rd)) in  /* /0, rm=rd */
+  let rex = if rd >= 8 then 73 else 72 in
+  let _ = e8(b, rex) in
+  let _ = e8(b, 199) in
+  let _ = e8(b, modrm(3, 0, band(rd, 7))) in
   e32(b, imm)
 
 /* mov r64, imm64 (REX.W b8+rd id64). Needed for tagged LIR immediates. */
@@ -1226,3 +1227,26 @@ let mov_rax_r8(b) =
   let _ = e8(b, 76) in let _ = e8(b, 137) in e8(b, 192)
 let add_rbx_imm32(b, v) =
   let _ = e8(b, 72) in let _ = e8(b, 129) in let _ = e8(b, 195) in e32(b, v)
+let mov_rbx_rdx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 211)
+let mov_rbx_rcx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 203)
+let mov_mem_rsi_r8_rax(b) =
+  let _ = e8(b, 74) in let _ = e8(b, 137) in let _ = e8(b, 4) in e8(b, 198)
+let mov_mem_rsp_disp8_rax(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 68) in let _ = e8(b, 36) in
+  e8(b, band(d, 255))
+let mov_eax_mem_rsp_disp8(b, d) =
+  let _ = e8(b, 139) in let _ = e8(b, 68) in let _ = e8(b, 36) in e8(b, band(d, 255))
+let mov_mem_rsp_disp8_al(b, d) =
+  let _ = e8(b, 136) in let _ = e8(b, 68) in let _ = e8(b, 36) in e8(b, band(d, 255))
+let lea_rdx_rsp_disp8(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 84) in let _ = e8(b, 36) in
+  e8(b, band(d, 255))
+let lea_r9_rsp_disp8(b, d) =
+  let _ = e8(b, 76) in let _ = e8(b, 141) in let _ = e8(b, 76) in let _ = e8(b, 36) in
+  e8(b, band(d, 255))
+let lea_rcx_rbx_disp8(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 75) in e8(b, band(d, 255))
+let lea_rdx_rbx_disp32(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 147) in e32(b, d)

@@ -1,0 +1,353 @@
+/* win_x86_64.yac — x86-64 Windows host: Win64 ccall, PE _start, kernel32.
+ */
+
+let win_cc_regarg(b, args, j, nargs) =
+  if j >= nargs then 0
+  else if j >= 4 then 0
+  else
+    let _ = emit_load_rax_slot(b, nth(args, j)) in
+    let _ = emit_x86_c_untag(b) in
+    let _ =
+      if j == 0 then mov_rcx_rax(b)
+      else if j == 1 then mov_rdx_rax(b)
+      else if j == 2 then mov_r8_rax(b)
+      else mov_r9_rax(b) in
+    win_cc_regarg(b, args, j + 1, nargs)
+
+let win_cc_marshal(b, args) =
+  let nargs = len(args) in
+  let nstk = if nargs > 4 then nargs - 4 else 0 in
+  let _ = win_cc_regarg(b, args, 0, nargs) in
+  let _ = emit_x86_c_align(b) in
+  let _ = sub_rsp_imm32(b, 32 + nstk * 8) in
+  if nstk == 0 then 0
+  else
+    let put(j) =
+      if j >= nargs then 0
+      else
+        let _ = emit_load_rax_slot(b, nth(args, j)) in
+        let _ = emit_x86_c_untag(b) in
+        let _ = push_r64(b, 0) in
+        put(j - 1) in
+    put(nargs - 1)
+
+let win_k32_call(b, patches, name) =
+  let _ = sub_rsp_imm32(b, 40) in
+  let pos = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = add_rsp_imm32(b, 40) in
+  emit_patch_cimport(patches, pos + 1, name)
+
+let win_nil_on_fail(b) =
+  let _ = test_rax_rax(b) in
+  let j = bytes_len(b) in
+  let _ = jcc_rel32(b, 5, 0) in
+  let _ = mov_r64_imm(b, 0, 0 - 1) in
+  apply_patch(b, j + 2, bytes_len(b))
+
+let win_stk3(b, a, c, e) =
+  let _ = sub_rsp_imm32(b, 56) in
+  let _ = mov_r64_imm(b, 0, a) in
+  let _ = mov_mem_rsp_disp8_rax(b, 32) in
+  let _ = mov_r64_imm(b, 0, c) in
+  let _ = mov_mem_rsp_disp8_rax(b, 40) in
+  let _ = mov_r64_imm(b, 0, e) in
+  mov_mem_rsp_disp8_rax(b, 48)
+
+let win_need(_) =
+  let xs = ["VirtualAlloc", "VirtualFree", "GetStdHandle", "WriteFile",
+            "ReadFile", "CreateFileA", "CloseHandle", "SetFilePointer",
+            "ExitProcess", "GetCommandLineA", "GetEnvironmentVariableA",
+            "GetComputerNameA", "GetModuleHandleA", "GetProcAddress"] in
+  let rec(i) =
+    if i >= len(xs) then 0
+    else let _ = cimport_id(nth(xs, i)) in rec(i + 1) in
+  rec(0)
+
+let win_argv(b) =
+  let skip = bytes_len(b) in
+  let _ = movzx_ecx_mem_rbx(b) in
+  let _ = test_ecx_ecx(b) in
+  let je1 = bytes_len(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let _ = cmp_ecx_imm8(b, 32) in
+  let jne1 = bytes_len(b) in
+  let _ = jcc_rel32(b, 5, 0) in
+  let _ = inc_rbx(b) in
+  let _ = jmp_rel32(b, 0) in
+  let jmp_skip = bytes_len(b) - 4 in
+  let arg = bytes_len(b) in
+  let _ = apply_patch(b, jne1 + 2, arg) in
+  let _ = mov_mem_rsi_r8_rdi(b) in
+  let _ = inc_r8(b) in
+  let copy = bytes_len(b) in
+  let _ = movzx_ecx_mem_rbx(b) in
+  let _ = test_ecx_ecx(b) in
+  let je2 = bytes_len(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let _ = cmp_ecx_imm8(b, 32) in
+  let je3 = bytes_len(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let _ = mov_mem_rdi_cl(b) in
+  let _ = inc_rdi(b) in
+  let _ = inc_rbx(b) in
+  let jp = bytes_len(b) in
+  let _ = jmp_rel32(b, 0) in
+  let _ = apply_patch(b, jp + 1, copy) in
+  let endarg = bytes_len(b) in
+  let _ = apply_patch(b, je2 + 2, endarg) in
+  let _ = apply_patch(b, je3 + 2, endarg) in
+  let _ = stosb0(b) in
+  let _ = inc_rdi(b) in
+  let _ = test_ecx_ecx(b) in
+  let je4 = bytes_len(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let _ = inc_rbx(b) in
+  let j2 = bytes_len(b) in
+  let _ = jmp_rel32(b, 0) in
+  let _ = apply_patch(b, j2 + 1, skip) in
+  let _ = apply_patch(b, jmp_skip, skip) in
+  let done = bytes_len(b) in
+  let _ = apply_patch(b, je1 + 2, done) in
+  apply_patch(b, je4 + 2, done)
+
+let win_done(st, dst, ps) =
+  let _ = emit_store_rax_slot(nth(st, 0), dst) in
+  emit_st4(st, nth(st, 0), nth(st, 1), nth(st, 2), ps)
+
+let win_syscall(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let name = nth(insn, 2) in
+  let args = nth(insn, 3) in
+  let dst = nth(insn, 1) in
+  if name == "mmap" then
+    let _ = mov_r64_imm(b, 1, 0) in
+    let _ = emit_load_rax_slot(b, nth(args, 1)) in
+    let _ = mov_rdx_rax(b) in
+    let _ = mov_r64_imm(b, 8, 12288) in
+    let _ = mov_r64_imm(b, 9, 64) in
+    let ps = win_k32_call(b, patches, "VirtualAlloc") in
+    let _ = win_nil_on_fail(b) in
+    win_done(st, dst, ps)
+  else if name == "munmap" then
+    let _ = emit_load_rax_slot(b, nth(args, 0)) in
+    let _ = mov_rcx_rax(b) in
+    let _ = mov_r64_imm(b, 2, 0) in
+    let _ = mov_r64_imm(b, 8, 32768) in
+    win_done(st, dst, win_k32_call(b, patches, "VirtualFree"))
+  else if name == "exit" then
+    let _ = emit_load_rax_slot(b, nth(args, 0)) in
+    let _ = mov_rcx_rax(b) in
+    emit_st4(st, b, nth(st, 1), nth(st, 2), win_k32_call(b, patches, "ExitProcess"))
+  else if name == "close" then
+    let _ = emit_load_rax_slot(b, nth(args, 0)) in
+    let _ = mov_rcx_rax(b) in
+    win_done(st, dst, win_k32_call(b, patches, "CloseHandle"))
+  else if name == "open" then
+    let _ = emit_load_rax_slot(b, nth(args, 0)) in
+    let _ = mov_rcx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(args, 1)) in
+    let _ = test_rax_rax(b) in
+    let jrd = bytes_len(b) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let _ = mov_r64_imm64(b, 2, 1073741824) in
+    let _ = mov_r64_imm(b, 8, 0) in
+    let _ = mov_r64_imm(b, 9, 0) in
+    let _ = win_stk3(b, 2, 128, 0) in
+    let ow = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = add_rsp_imm32(b, 56) in
+    let jend = bytes_len(b) in
+    let _ = jmp_rel32(b, 0) in
+    let rd = bytes_len(b) in
+    let _ = apply_patch(b, jrd + 2, rd) in
+    let _ = mov_r64_imm64(b, 2, 2147483648) in
+    let _ = mov_r64_imm(b, 8, 1) in
+    let _ = mov_r64_imm(b, 9, 0) in
+    let _ = win_stk3(b, 3, 128, 0) in
+    let or_ = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = add_rsp_imm32(b, 56) in
+    let _ = apply_patch(b, jend + 1, bytes_len(b)) in
+    win_done(st, dst,
+      emit_patch_cimport(emit_patch_cimport(patches, ow + 1, "CreateFileA"),
+                         or_ + 1, "CreateFileA"))
+  else if name == "read" or name == "write" then
+    let _ = emit_load_rax_slot(b, nth(args, 0)) in
+    let _ = mov_rcx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(args, 1)) in
+    let _ = mov_rdx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(args, 2)) in
+    let _ = mov_r8_rax(b) in
+    let _ = sub_rsp_imm32(b, 48) in
+    let _ = mov_r64_imm(b, 0, 0) in
+    let _ = mov_mem_rsp_disp8_rax(b, 32) in
+    let _ = mov_mem_rsp_disp8_rax(b, 40) in
+    let _ = lea_r9_rsp_disp8(b, 40) in
+    let nm = if name == "read" then "ReadFile" else "WriteFile" in
+    let pos = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = mov_eax_mem_rsp_disp8(b, 40) in
+    let _ = add_rsp_imm32(b, 48) in
+    win_done(st, dst, emit_patch_cimport(patches, pos + 1, nm))
+  else if name == "lseek" then
+    let _ = emit_load_rax_slot(b, nth(args, 0)) in
+    let _ = mov_rcx_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(args, 1)) in
+    let _ = mov_rdx_rax(b) in
+    let _ = mov_r64_imm(b, 8, 0) in
+    let _ = emit_load_rax_slot(b, nth(args, 2)) in
+    let _ = mov_r9_rax(b) in
+    win_done(st, dst, win_k32_call(b, patches, "SetFilePointer"))
+  else
+    let _ = mov_r64_imm(b, 0, 0 - 1) in
+    win_done(st, dst, patches)
+
+let win_put_str(b, s, i) =
+  if i >= str_len(s) then bytes_append(b, 0)
+  else
+    let _ = bytes_append(b, str_ref(s, i)) in
+    win_put_str(b, s, i + 1)
+
+let win_uname_stub(b, extra) =
+  let _ = box_set(pe_uname_off_box, bytes_len(b)) in
+  let _ = push_r64(b, 3) in
+  let _ = sub_rsp_imm32(b, 40) in
+  let _ = mov_rbx_rcx(b) in
+  let l1 = bytes_len(b) in
+  let _ = lea_rcx_rip(b, 0) in
+  let _ = mov_rdx_rbx(b) in
+  let _ = mov_r64_imm(b, 8, 65) in
+  let c1 = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = lea_rcx_rbx_disp8(b, 65) in
+  let _ = mov_r64_imm(b, 0, 64) in
+  let _ = mov_mem_rsp_disp8_rax(b, 32) in
+  let _ = lea_rdx_rsp_disp8(b, 32) in
+  let c2 = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let l2 = bytes_len(b) in
+  let _ = lea_rcx_rip(b, 0) in
+  let _ = lea_rdx_rbx_disp32(b, 260) in
+  let _ = mov_r64_imm(b, 8, 65) in
+  let c3 = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = mov_r64_imm(b, 0, 0) in
+  let _ = add_rsp_imm32(b, 40) in
+  let _ = pop_r64(b, 3) in
+  let _ = ret(b) in
+  let s_os = bytes_len(b) in
+  let _ = win_put_str(b, "OS", 0) in
+  let s_arch = bytes_len(b) in
+  let _ = win_put_str(b, "PROCESSOR_ARCHITECTURE", 0) in
+  let _ = apply_patch(b, l1 + 3, s_os) in
+  let _ = apply_patch(b, l2 + 3, s_arch) in
+  let _ = list_push(extra, [15, c1 + 1, cimport_id("GetEnvironmentVariableA")]) in
+  let _ = list_push(extra, [15, c2 + 1, cimport_id("GetComputerNameA")]) in
+  let _ = list_push(extra, [15, c3 + 1, cimport_id("GetEnvironmentVariableA")]) in
+  extra
+
+let win_dlsym_stub(b, extra) =
+  let _ = box_set(pe_dlsym_off_box, bytes_len(b)) in
+  let _ = push_r64(b, 3) in
+  let _ = sub_rsp_imm32(b, 40) in
+  let _ = mov_rbx_rdx(b) in
+  let _ = test_rcx_rcx(b) in
+  let jnz = bytes_len(b) in
+  let _ = jcc_rel32(b, 5, 0) in
+  let l0 = bytes_len(b) in
+  let _ = lea_rcx_rip(b, 0) in
+  let c0 = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = mov_rcx_rax(b) in
+  let have = bytes_len(b) in
+  let _ = apply_patch(b, jnz + 2, have) in
+  let _ = mov_rdx_rbx(b) in
+  let c1 = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = add_rsp_imm32(b, 40) in
+  let _ = pop_r64(b, 3) in
+  let _ = ret(b) in
+  let s = bytes_len(b) in
+  let _ = win_put_str(b, "KERNEL32.dll", 0) in
+  let _ = apply_patch(b, l0 + 3, s) in
+  let _ = list_push(extra, [15, c0 + 1, cimport_id("GetModuleHandleA")]) in
+  let _ = list_push(extra, [15, c1 + 1, cimport_id("GetProcAddress")]) in
+  extra
+
+let win_entry(b, patches) =
+  let _ = sub_rsp_imm32(b, 40) in
+  let p1 = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = mov_rbx_rax(b) in
+  let _ = mov_r64_imm(b, 1, 0) in
+  let _ = mov_r64_imm(b, 2, 8192) in
+  let _ = mov_r64_imm(b, 8, 12288) in
+  let _ = mov_r64_imm(b, 9, 4) in
+  let p2 = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = mov_rsi_rax(b) in
+  let _ = mov_rdi_rax(b) in
+  let _ = add_rdi_imm32(b, 512) in
+  let _ = xor_r8_r8(b) in
+  let _ = win_argv(b) in
+  let _ = mov_r64_imm(b, 0, 0) in
+  let _ = mov_mem_rsi_r8_rax(b) in
+  let _ = add_rsp_imm32(b, 40) in
+  let _ = mov_rax_r8(b) in
+  let _ = mov_rdi_rax(b) in
+  emit_patch_cimport(
+    emit_patch_cimport(patches, p1 + 1, "GetCommandLineA"),
+    p2 + 1, "VirtualAlloc")
+
+let win_exit(st, patches) =
+  let b = nth(st, 0) in
+  let _ = mov_rcx_rax(b) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), win_k32_call(b, patches, "ExitProcess"))
+
+let win_num_syscall(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let _ = emit_load_rax_slot(b, nth(nth(insn, 3), 0)) in
+  let _ = mov_rcx_rax(b) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), win_k32_call(b, patches, "ExitProcess"))
+
+let win_write1(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = sar_rax_1(b) in
+  let _ = sub_rsp_imm32(b, 64) in
+  let _ = mov_mem_rsp_disp8_al(b, 56) in
+  let _ = mov_r64_imm(b, 1, 0 - 11) in
+  let g1 = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = mov_rcx_rax(b) in
+  let _ = lea_rdx_rsp_disp8(b, 56) in
+  let _ = mov_r64_imm(b, 8, 1) in
+  let _ = lea_r9_rsp_disp8(b, 48) in
+  let _ = mov_r64_imm(b, 0, 0) in
+  let _ = mov_mem_rsp_disp8_rax(b, 32) in
+  let g2 = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = add_rsp_imm32(b, 64) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2),
+    emit_patch_cimport(emit_patch_cimport(patches, g1 + 1, "GetStdHandle"),
+                       g2 + 1, "WriteFile"))
+
+let win_clock(st, insn) =
+  let b = nth(st, 0) in
+  let _ = mov_r64_imm(b, 0, 0) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  let _ = emit_store_rax_slot(b, nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
+let win_ccall_patch(ps, pos, fn) =
+  if fn == "uname" then emit_patch_pe_uname(ps, pos)
+  else if fn == "dlsym" then emit_patch_pe_dlsym(ps, pos)
+  else emit_patch_cimport(ps, pos, fn)
+
+let win_begin(_) = win_need(0)
+
+let win_finish(b, extra) = win_dlsym_stub(b, win_uname_stub(b, extra))

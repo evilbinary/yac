@@ -1,6 +1,7 @@
 /* emit_x86_64.yac — x86-64 emit of LIR.
  *
  * Shared maps/patches: emit.yac. Encoding: encode_x64.yac.
+ * Host (ccall / _start / $syscall): linux_x86_64.yac, win_x86_64.yac.
  *
  * Single-pass emission with deferred patch-up. Lengths come from
  * bytes_len before/after, never hand-counted.
@@ -14,124 +15,9 @@
  * Returns [codeBytes, funOffsets].
  */
 
-/* slot k at [rbp - 8*(k+1)]. Always disp32. */
-let slot_off(k) = 0 - bshl(k + 1, 3)
-
-let emit_obj_store_rdi(b, off) = mov_rax_disp32_rdi(b, off)
-let emit_obj_load_rax(b, off) = mov_rax_rax_disp32(b, off)
-let emit_obj_load_argreg(b, reg, off) = mov_argreg_rax_disp32(b, reg, off)
-
-let emit_load_rax_slot(b, k) = mov_r64_mem_rbp32(b, 0, slot_off(k))
-let emit_load_rdi_slot(b, k) = mov_r64_mem_rbp32(b, 7, slot_off(k))
-let emit_store_rax_slot(b, k) = mov_mem_rbp32_r64(b, slot_off(k), 0)
-let emit_load_rbx_slot(b, k) = mov_r64_mem_rbp32(b, 3, slot_off(k))
-let emit_lea_rax_slot(b, k) = lea_rax_rbp32(b, slot_off(k))
-let emit_store_param(b, j, k) =
-  let off = slot_off(k) in
-  if j == 0 then mov_mem_rbp32_r64(b, off, 7)
-  else if j == 1 then mov_mem_rbp32_r64(b, off, 6)
-  else if j == 2 then mov_mem_rbp32_r64(b, off, 2)
-  else if j == 3 then mov_mem_rbp32_r64(b, off, 1)
-  else if j == 4 then mov_mem_rbp32_r64(b, off, 8)
-  else mov_mem_rbp32_r64(b, off, 9)
-
-/* yac_alloc / yac_gc are $proc in runtime.yac. */
-
-/* write a single newline via syscall: push '\n'; rsi=rsp; write(1,"\n",1) */
-let emit_newline(b) =
-  let _ = e8(b, 106) in       /* push imm8 */
-  let _ = e8(b, 10) in        /* '\n' */
-  let _ = mov_rsi_rsp(b) in
-  let _ = mov_rdx_imm(b, 1) in
-  let _ = mov_rdi_imm(b, 1) in
-  let _ = mov_r64_imm(b, 0, 1) in
-  let _ = syscall(b) in
-  add_rsp_imm32(b, 8)
-
-let cc_of(op) =
-  if op == "<" then 12 else if op == "<=" then 14
-  else if op == ">" then 15 else if op == ">=" then 13
-  else if op == "==" then 4 else 5
-
-/* yac_argv is rt_argv_ins ($proc / $local). */
-/* yac_system is rt_system_ins ($proc / $local). */
-
-/* yac_read_file is rt_read_file_ins in runtime.yac ($ops). */
-/* yac_write_file is rt_write_file_ins ($proc / $local). */
-
-
-/* yac_apply1 / yac_apply2 are rt_apply*_ins ($proc / $local). */
-
-
-let call_user(b) =
-  let _ = call_rel32(b, 0) in
-  smap_note(bytes_len(b))
-
-let call_rbx_user(b) =
-  let _ = call_rbx(b) in
-  smap_note(bytes_len(b))
-
-/* Int (tag 0) → untagged; heap ptr → payload after 4 qwords (C char*). */
-let emit_x86_c_untag(b) =
-  let _ = test_rax_1(b) in
-  let je = bytes_len(b) in
-  let _ = jcc_rel32(b, 4, 0) in
-  let _ = and_rax_1(b) in
-  let _ = add_rax_imm8(b, 32) in
-  let _ = jmp_rel32(b, 0) in
-  let jdone = bytes_len(b) - 4 in
-  let intp = bytes_len(b) in
-  let _ = apply_patch(b, je + 2, intp) in
-  let _ = sar_rax_1(b) in
-  apply_patch(b, jdone, bytes_len(b))
-
-/* SysV: rdi rsi rdx rcx r8 r9, then stack (right-to-left). Keep SP 16-aligned. */
-let emit_x86_c_regarg(b, args, j, nargs) =
-  if j >= nargs then 0
-  else if j >= 6 then 0
-  else
-    let _ = emit_load_rax_slot(b, nth(args, j)) in
-    let _ = emit_x86_c_untag(b) in
-    let _ =
-      if j == 0 then mov_rdi_rax(b)
-      else if j == 1 then mov_rsi_rax(b)
-      else if j == 2 then mov_rdx_rax(b)
-      else if j == 3 then mov_rcx_rax(b)
-      else if j == 4 then mov_r8_rax(b)
-      else mov_r9_rax(b) in
-    emit_x86_c_regarg(b, args, j + 1, nargs)
-
-let emit_x86_c_stkarg(b, args, j) =
-  if j < 6 then 0
-  else
-    let _ = emit_load_rax_slot(b, nth(args, j)) in
-    let _ = emit_x86_c_untag(b) in
-    let _ = push_r64(b, 0) in
-    emit_x86_c_stkarg(b, args, j - 1)
-
-let emit_x86_c_align(b) =
-  let _ = push_r64(b, 3) in
-  let _ = mov_r64_r64(b, 3, 4) in
-  let _ = e8(b, 72) in
-  let _ = e8(b, 131) in
-  let _ = e8(b, 228) in
-  e8(b, 240)
-
-let emit_x86_c_unalign(b) =
-  let _ = mov_r64_r64(b, 4, 3) in
-  pop_r64(b, 3)
-
 let emit_x86_c_marshal(b, args) =
-  let nargs = len(args) in
-  let nstack = if nargs > 6 then nargs - 6 else 0 in
-  let _ = emit_x86_c_regarg(b, args, 0, nargs) in
-  let _ = emit_x86_c_align(b) in
-  if nstack == 0 then 0
-  else
-    let _ =
-      if band(nstack, 1) != 0 then sub_rsp_imm8(b, 8)
-      else 0 in
-    emit_x86_c_stkarg(b, args, nargs - 1)
+  if emit_host_win(0) then win_cc_marshal(b, args)
+  else linux_cc_marshal(b, args)
 
 let emit_x86_iccall(st, insn) =
   let b = nth(st, 0) in
@@ -168,12 +54,12 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       if noscan then smap_set_nslots(0) else smap_set_nslots(nlocals) in
     /* imm8 for sub rsp is signed; always imm32. */
     if is_entry then
-      /* Linux _start: [rsp]=argc, [rsp+8]=argv (not rdi/rsi). */
-      let _ = mov_rdi_mem_rsp(b) in
+      let pe_ps =
+        if emit_host_win(0) then win_entry(b, patches)
+        else linux_entry(b, patches) in
       let _ = mov_rax_imm64(b, 0) in
       let ac_save = bytes_len(b) - 8 in
       let _ = mov_mem_rax_rdi(b) in
-      let _ = lea_rsi_rsp8(b) in
       let _ = mov_rax_imm64(b, 0) in
       let av_save = bytes_len(b) - 8 in
       let _ = mov_mem_rax_rsi(b) in
@@ -186,7 +72,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       emit_st4(st, b, cur, labels,
        cons([6, sh_save],
             cons([5, av_save],
-                 cons([4, ac_save], patches))))
+                 cons([4, ac_save], pe_ps))))
     else
       let _ = push_rbp(b) in
       let _ = mov_rbp_rsp(b) in
@@ -396,7 +282,10 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
     let _ = emit_x86_c_unalign(b) in
     let _ = shl_rax_1(b) in
     let _ = emit_store_rax_slot(b, dst) in
-    emit_st4(st, b, cur, labels, emit_patch_cimport(patches, callstart + 1, fn))
+    let ps =
+      if emit_host_win(0) then win_ccall_patch(patches, callstart + 1, fn)
+      else linux_ccall_patch(patches, callstart + 1, fn) in
+    emit_st4(st, b, cur, labels, ps)
   else if k == "iccall" then emit_x86_iccall(st, insn)
   else if k == "tcall" then
     /* TCO: load args, tear down frame, jmp (no extra stack). */
@@ -448,25 +337,10 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       emit_st4(st, b, cur, labels, patches)
   else if k == "exit" then
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = sar_rax_1(b) in   /* untag */
-    let _ = mov_rdi_rax(b) in
-    let _ = mov_r64_imm(b, 0, 60) in
-    let _ = syscall(b) in
-    emit_st4(st, b, cur, labels, patches)
+    let _ = sar_rax_1(b) in
+    if emit_host_win(0) then win_exit(st, patches)
+    else linux_exit(st, patches)
   else st
-
-let emit_x86_sysarg(b, args, j) =
-  if j >= len(args) then 0
-  else
-    let _ = emit_load_rax_slot(b, nth(args, j)) in
-    let _ =
-      if j == 0 then mov_rdi_rax(b)
-      else if j == 1 then mov_rsi_rax(b)
-      else if j == 2 then mov_rdx_rax(b)
-      else if j == 3 then mov_r10_rax(b)
-      else if j == 4 then mov_r8_rax(b)
-      else mov_r9_rax(b) in
-    emit_x86_sysarg(b, args, j + 1)
 
 let emit_x86_i_sys(st, insn) =
   let b = nth(st, 0) in
@@ -478,27 +352,8 @@ let emit_x86_i_sys(st, insn) =
     let _ = sar_rax_1(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
-  else
-    let _ = emit_x86_sysarg(b, nth(insn, 3), 0) in
-    let _ = mov_r64_imm(b, 0, nth(insn, 2)) in
-    let _ = syscall(b) in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-
-let emit_x86_raw_nr(name) =
-  if name == "open" then 2
-  else if name == "lseek" then 8
-  else if name == "read" then 0
-  else if name == "write" then 1
-  else if name == "fork" then 57
-  else if name == "wait4" then 61
-  else if name == "execve" then 59
-  else if name == "exit" then 60
-  else if name == "brk" then 12
-  else if name == "mmap" then 9
-  else if name == "munmap" then 11
-  else 3
+  else if emit_host_win(0) then win_num_syscall(st, insn)
+  else linux_num_syscall(st, insn)
 
 let emit_x86_i_raw(st, insn) =
   let b = nth(st, 0) in
@@ -676,12 +531,8 @@ let emit_x86_i_raw(st, insn) =
     let _ = call_rbx_user(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
-  else
-    let _ = emit_x86_sysarg(b, nth(insn, 3), 0) in
-    let _ = mov_r64_imm(b, 0, emit_x86_raw_nr(nth(insn, 2))) in
-    let _ = syscall(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
+  else if emit_host_win(0) then win_syscall(st, insn)
+  else linux_syscall(st, insn)
 
 let emit_x86_i_heap(st, insn) =
   let b = nth(st, 0) in
@@ -800,31 +651,11 @@ let emit_x86_i_heap(st, insn) =
     let _ = mov_mem_rbx_rdx_rax(b) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "write1" then
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = sar_rax_1(b) in
-    let _ = sub_rsp_imm32(b, 8) in
-    let _ = mov_mem_rsp_al(b) in
-    let _ = mov_rsi_rsp(b) in
-    let _ = mov_rdx_imm(b, 1) in
-    let _ = mov_rdi_imm(b, 1) in
-    let _ = mov_r64_imm(b, 0, 1) in
-    let _ = syscall(b) in
-    let _ = add_rsp_imm32(b, 8) in
-    emit_st4(st, b, cur, labels, patches)
+    if emit_host_win(0) then win_write1(st, insn)
+    else linux_write1(st, insn)
   else if k == "clock" then
-    let _ = sub_rsp_imm32(b, 16) in
-    let _ = mov_rdi_imm(b, nth(insn, 3)) in
-    let _ = lea_rsi_rsp(b) in
-    let _ = mov_r64_imm(b, 0, 228) in
-    let _ = syscall(b) in
-    let _ = mov_rax_mem_rsp(b) in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    let _ = mov_rax_mem_rsp8(b) in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 2)) in
-    let _ = add_rsp_imm32(b, 16) in
-    emit_st4(st, b, cur, labels, patches)
+    if emit_host_win(0) then win_clock(st, insn)
+    else linux_clock(st, insn)
   else if k == "glob" then
     let which = nth(insn, 2) in
     let _ = mov_rax_imm64(b, 0) in
@@ -1481,10 +1312,14 @@ let resolve_local_labels(b, labels, patches) =
       step(i + 1) in
   step(0)
 
-let emit_program_x86_64(prog, load_vaddr, text_off) =
+let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
+  let _ = emit_fmt_set(fmt) in
   let _ = strlit_pool_reset(0) in
   let _ = smap_reset(0) in
   let _ = cimport_reset(0) in
+  let _ = box_set(pe_uname_off_box, 0) in
+  let _ = box_set(pe_dlsym_off_box, 0) in
+  let _ = if emit_host_win(0) then win_begin(0) else linux_begin(0) in
   let ckeep = cimport_buf(0) in
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
@@ -1551,6 +1386,9 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
     else let _ = bytes_append(b, 0) in fill_data(i + 1) in
   let _ = fill_data(0) in
   let _ = emit_cplt(b) in
+  let _ =
+    if emit_host_win(0) then win_finish(b, extra)
+    else linux_finish(b, extra) in
   let _ = ckeep in
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
   let _ = patches_extend(extra, patches) in
@@ -1562,4 +1400,4 @@ let emit_program_x86_64(prog, load_vaddr, text_off) =
   let _ = funsym_set(funOffsRev) in
   [b, funOffsRev]
 
-let emit_program(prog) = emit_program_x86_64(prog, 4194304, 120)
+let emit_program(prog) = emit_program_x86_64(prog, 4194304, 120, "elf")

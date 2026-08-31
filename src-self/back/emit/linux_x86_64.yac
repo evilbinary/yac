@@ -1,0 +1,214 @@
+/* linux_x86_64.yac — x86-64 Linux host: SysV ccall, stack _start, syscall.
+ * Frame helpers (slot_*) are x86-wide; they live here so yac binds them
+ * before win_x86_64.yac and emit_x86_64.yac.
+ */
+
+let slot_off(k) = 0 - bshl(k + 1, 3)
+
+let emit_obj_store_rdi(b, off) = mov_rax_disp32_rdi(b, off)
+let emit_obj_load_rax(b, off) = mov_rax_rax_disp32(b, off)
+let emit_obj_load_argreg(b, reg, off) = mov_argreg_rax_disp32(b, reg, off)
+
+let emit_load_rax_slot(b, k) = mov_r64_mem_rbp32(b, 0, slot_off(k))
+let emit_load_rdi_slot(b, k) = mov_r64_mem_rbp32(b, 7, slot_off(k))
+let emit_store_rax_slot(b, k) = mov_mem_rbp32_r64(b, slot_off(k), 0)
+let emit_load_rbx_slot(b, k) = mov_r64_mem_rbp32(b, 3, slot_off(k))
+let emit_lea_rax_slot(b, k) = lea_rax_rbp32(b, slot_off(k))
+let emit_store_param(b, j, k) =
+  let off = slot_off(k) in
+  if j == 0 then mov_mem_rbp32_r64(b, off, 7)
+  else if j == 1 then mov_mem_rbp32_r64(b, off, 6)
+  else if j == 2 then mov_mem_rbp32_r64(b, off, 2)
+  else if j == 3 then mov_mem_rbp32_r64(b, off, 1)
+  else if j == 4 then mov_mem_rbp32_r64(b, off, 8)
+  else mov_mem_rbp32_r64(b, off, 9)
+
+/* yac_alloc / yac_gc are $proc in runtime.yac. */
+
+/* write a single newline via syscall: push '\n'; rsi=rsp; write(1,"\n",1) */
+let emit_newline(b) =
+  let _ = e8(b, 106) in       /* push imm8 */
+  let _ = e8(b, 10) in        /* '\n' */
+  let _ = mov_rsi_rsp(b) in
+  let _ = mov_rdx_imm(b, 1) in
+  let _ = mov_rdi_imm(b, 1) in
+  let _ = mov_r64_imm(b, 0, 1) in
+  let _ = syscall(b) in
+  add_rsp_imm32(b, 8)
+
+let cc_of(op) =
+  if op == "<" then 12 else if op == "<=" then 14
+  else if op == ">" then 15 else if op == ">=" then 13
+  else if op == "==" then 4 else 5
+
+/* yac_argv is rt_argv_ins ($proc / $local). */
+/* yac_system is rt_system_ins ($proc / $local). */
+
+/* yac_read_file is rt_read_file_ins in runtime.yac ($ops). */
+/* yac_write_file is rt_write_file_ins ($proc / $local). */
+
+
+/* yac_apply1 / yac_apply2 are rt_apply*_ins ($proc / $local). */
+
+
+let call_user(b) =
+  let _ = call_rel32(b, 0) in
+  smap_note(bytes_len(b))
+
+let call_rbx_user(b) =
+  let _ = call_rbx(b) in
+  smap_note(bytes_len(b))
+
+/* Int (tag 0) → untagged; heap ptr → payload after 4 qwords (C char*). */
+let emit_x86_c_untag(b) =
+  let _ = test_rax_1(b) in
+  let je = bytes_len(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let _ = and_rax_1(b) in
+  let _ = add_rax_imm8(b, 32) in
+  let _ = jmp_rel32(b, 0) in
+  let jdone = bytes_len(b) - 4 in
+  let intp = bytes_len(b) in
+  let _ = apply_patch(b, je + 2, intp) in
+  let _ = sar_rax_1(b) in
+  apply_patch(b, jdone, bytes_len(b))
+
+/* SysV: rdi rsi rdx rcx r8 r9, then stack (right-to-left). Keep SP 16-aligned. */
+let emit_x86_c_regarg(b, args, j, nargs) =
+  if j >= nargs then 0
+  else if j >= 6 then 0
+  else
+    let _ = emit_load_rax_slot(b, nth(args, j)) in
+    let _ = emit_x86_c_untag(b) in
+    let _ =
+      if j == 0 then mov_rdi_rax(b)
+      else if j == 1 then mov_rsi_rax(b)
+      else if j == 2 then mov_rdx_rax(b)
+      else if j == 3 then mov_rcx_rax(b)
+      else if j == 4 then mov_r8_rax(b)
+      else mov_r9_rax(b) in
+    emit_x86_c_regarg(b, args, j + 1, nargs)
+
+let emit_x86_c_stkarg(b, args, j) =
+  if j < 6 then 0
+  else
+    let _ = emit_load_rax_slot(b, nth(args, j)) in
+    let _ = emit_x86_c_untag(b) in
+    let _ = push_r64(b, 0) in
+    emit_x86_c_stkarg(b, args, j - 1)
+
+let emit_x86_c_align(b) =
+  let _ = push_r64(b, 3) in
+  let _ = mov_r64_r64(b, 3, 4) in
+  let _ = e8(b, 72) in
+  let _ = e8(b, 131) in
+  let _ = e8(b, 228) in
+  e8(b, 240)
+
+let emit_x86_c_unalign(b) =
+  let _ = mov_r64_r64(b, 4, 3) in
+  pop_r64(b, 3)
+
+let linux_cc_marshal(b, args) =
+  let nargs = len(args) in
+  let nstack = if nargs > 6 then nargs - 6 else 0 in
+  let _ = emit_x86_c_regarg(b, args, 0, nargs) in
+  let _ = emit_x86_c_align(b) in
+  if nstack == 0 then 0
+  else
+    let _ =
+      if band(nstack, 1) != 0 then sub_rsp_imm8(b, 8)
+      else 0 in
+    emit_x86_c_stkarg(b, args, nargs - 1)
+
+let linux_entry(b, patches) =
+  let _ = mov_rdi_mem_rsp(b) in
+  let _ = lea_rsi_rsp8(b) in
+  patches
+
+let linux_sysarg(b, args, j) =
+  if j >= len(args) then 0
+  else
+    let _ = emit_load_rax_slot(b, nth(args, j)) in
+    let _ =
+      if j == 0 then mov_rdi_rax(b)
+      else if j == 1 then mov_rsi_rax(b)
+      else if j == 2 then mov_rdx_rax(b)
+      else if j == 3 then mov_r10_rax(b)
+      else if j == 4 then mov_r8_rax(b)
+      else mov_r9_rax(b) in
+    linux_sysarg(b, args, j + 1)
+
+let linux_raw_nr(name) =
+  if name == "open" then 2
+  else if name == "lseek" then 8
+  else if name == "read" then 0
+  else if name == "write" then 1
+  else if name == "fork" then 57
+  else if name == "wait4" then 61
+  else if name == "execve" then 59
+  else if name == "exit" then 60
+  else if name == "brk" then 12
+  else if name == "mmap" then 9
+  else if name == "munmap" then 11
+  else 3
+
+let linux_syscall(st, insn) =
+  let b = nth(st, 0) in
+  let _ = linux_sysarg(b, nth(insn, 3), 0) in
+  let _ = mov_r64_imm(b, 0, linux_raw_nr(nth(insn, 2))) in
+  let _ = syscall(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
+let linux_num_syscall(st, insn) =
+  let b = nth(st, 0) in
+  let _ = linux_sysarg(b, nth(insn, 3), 0) in
+  let _ = mov_r64_imm(b, 0, nth(insn, 2)) in
+  let _ = syscall(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
+let linux_exit(st, patches) =
+  let b = nth(st, 0) in
+  let _ = mov_rdi_rax(b) in
+  let _ = mov_r64_imm(b, 0, 60) in
+  let _ = syscall(b) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), patches)
+
+let linux_write1(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = sar_rax_1(b) in
+  let _ = sub_rsp_imm32(b, 8) in
+  let _ = mov_mem_rsp_al(b) in
+  let _ = mov_rsi_rsp(b) in
+  let _ = mov_rdx_imm(b, 1) in
+  let _ = mov_rdi_imm(b, 1) in
+  let _ = mov_r64_imm(b, 0, 1) in
+  let _ = syscall(b) in
+  let _ = add_rsp_imm32(b, 8) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
+let linux_clock(st, insn) =
+  let b = nth(st, 0) in
+  let _ = sub_rsp_imm32(b, 16) in
+  let _ = mov_rdi_imm(b, nth(insn, 3)) in
+  let _ = lea_rsi_rsp(b) in
+  let _ = mov_r64_imm(b, 0, 228) in
+  let _ = syscall(b) in
+  let _ = mov_rax_mem_rsp(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  let _ = mov_rax_mem_rsp8(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 2)) in
+  let _ = add_rsp_imm32(b, 16) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
+let linux_ccall_patch(ps, pos, fn) = emit_patch_cimport(ps, pos, fn)
+
+let linux_begin(_) = 0
+
+let linux_finish(b, extra) = extra
