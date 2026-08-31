@@ -43,13 +43,16 @@ $(BUILD)/%.o: src/%.c $(wildcard src/*.h) | $(BUILD)
 $(YC_BUNDLE): $(YC_SRCS) | $(YC_BUILD)
 	cat $(YC_SRCS) > $@
 
-# L4: C interpreter compiles the bundle to native yc_a.
-# This is NOT native yc; C GC on the interpreter heap often takes 1–3 min.
-# Native compile (yc_a compiling a .yac) is a separate step and should be seconds.
+# First yc_a: L4 via C ./yac (slow GC). Later: native yc_a rebuilds itself (seconds).
+# Tests depend on yc_a, so src-self changes used to re-run L4; do not do that.
 $(YC_A): $(BIN) $(YC_BUNDLE)
-	@echo "L4: ./yac compiling bundle with C GC (slow; not the native <3s path)"
-	./$(BIN) --pkg src-self $(YC_BUNDLE) $(YC_BUNDLE) -o $@
-	chmod +x $@
+	@if [ -x $@ ]; then \
+		echo "native rebuild: $@ compiling bundle"; \
+		$@ --pkg src-self $(YC_BUNDLE) -o $@.new && chmod +x $@.new && mv -f $@.new $@; \
+	else \
+		echo "L4: ./yac compiling bundle with C GC (slow; not the native <3s path)"; \
+		./$(BIN) --pkg src-self $(YC_BUNDLE) $(YC_BUNDLE) -o $@ && chmod +x $@; \
+	fi
 
 # L5: native yc_a compiles the same bundle. yc_a and yc_b need not match.
 $(YC_B): $(YC_A) $(YC_BUNDLE)
