@@ -17,9 +17,95 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
+
+#ifndef PROCESSOR_ARCHITECTURE_ARM64
+#define PROCESSOR_ARCHITECTURE_ARM64 12
+#endif
+
+static void yac_uts_copy(char *dst, size_t cap, const char *src) {
+    size_t n;
+    if (!dst || cap == 0) return;
+    n = src ? strlen(src) : 0;
+    if (n >= cap) n = cap - 1;
+    if (n) memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+int yac_uname(yac_utsname *u) {
+    if (!u) return -1;
+    memset(u, 0, sizeof(*u));
+#ifdef _WIN32
+    {
+        DWORD nlen;
+        OSVERSIONINFOA vi;
+        SYSTEM_INFO si;
+        const char *mach;
+
+        yac_uts_copy(u->sysname, sizeof(u->sysname), "Windows_NT");
+        nlen = (DWORD)sizeof(u->nodename);
+        if (!GetComputerNameA(u->nodename, &nlen))
+            u->nodename[0] = '\0';
+        memset(&vi, 0, sizeof(vi));
+        vi.dwOSVersionInfoSize = sizeof(vi);
+        if (GetVersionExA(&vi)) {
+            snprintf(u->release, sizeof(u->release), "%lu.%lu.%lu",
+                     (unsigned long)vi.dwMajorVersion,
+                     (unsigned long)vi.dwMinorVersion,
+                     (unsigned long)vi.dwBuildNumber);
+            yac_uts_copy(u->version, sizeof(u->version), vi.szCSDVersion);
+        }
+        GetNativeSystemInfo(&si);
+        if (si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64)
+            mach = "x86_64";
+        else if (si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64)
+            mach = "aarch64";
+        else if (si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_INTEL)
+            mach = "i686";
+        else
+            mach = "unknown";
+        yac_uts_copy(u->machine, sizeof(u->machine), mach);
+        return 0;
+    }
+#else
+    {
+        struct utsname n;
+        if (uname(&n) != 0) return -1;
+        yac_uts_copy(u->sysname, sizeof(u->sysname), n.sysname);
+        yac_uts_copy(u->nodename, sizeof(u->nodename), n.nodename);
+        yac_uts_copy(u->release, sizeof(u->release), n.release);
+        yac_uts_copy(u->version, sizeof(u->version), n.version);
+        yac_uts_copy(u->machine, sizeof(u->machine), n.machine);
+        return 0;
+    }
+#endif
+}
+
+int yac_uname_into(void *buf, size_t n) {
+    if (!buf) return -1;
+#ifdef _WIN32
+    {
+        yac_utsname u;
+        char *p = (char *)buf;
+        if (n < (size_t)YAC_UTSNAME_LEN * 5) return -1;
+        if (yac_uname(&u) != 0) return -1;
+        memset(p, 0, n);
+        memcpy(p + 0 * YAC_UTSNAME_LEN, u.sysname, YAC_UTSNAME_LEN);
+        memcpy(p + 1 * YAC_UTSNAME_LEN, u.nodename, YAC_UTSNAME_LEN);
+        memcpy(p + 2 * YAC_UTSNAME_LEN, u.release, YAC_UTSNAME_LEN);
+        memcpy(p + 3 * YAC_UTSNAME_LEN, u.version, YAC_UTSNAME_LEN);
+        memcpy(p + 4 * YAC_UTSNAME_LEN, u.machine, YAC_UTSNAME_LEN);
+        return 0;
+    }
+#else
+    if (n < sizeof(struct utsname)) return -1;
+    memset(buf, 0, n);
+    return uname((struct utsname *)buf);
+#endif
+}
 
 int yac_clock_gettime(int clk, struct timespec *ts) {
 #ifdef _WIN32

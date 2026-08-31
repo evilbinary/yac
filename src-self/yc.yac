@@ -22,7 +22,7 @@ let usage(_) =
   let _ = print("  -o out           write an executable instead of running") in
   let _ = print("  -g, --syms       write ELF function symbols (nm/gdb)") in
   let _ = print("  --arch x86_64|arm64|riscv64") in
-  let _ = print("  --format elf|pe|macho   --shared   --prof-out file") in
+  let _ = print("  --format elf|pe|macho   (default: host)   --shared   --prof-out file") in
   0
 
 let ends_with_yac(s) =
@@ -36,6 +36,14 @@ let ends_with_yac(s) =
 let default_out(inpath) =
   if ends_with_yac(inpath) then str_slice(inpath, 0, str_len(inpath) - 4)
   else inpath
+
+let ends_with_exe(s) =
+  let n = str_len(s) in
+  if n < 4 then false
+  else str_slice(s, n - 4, 4) == ".exe"
+
+let pe_out(path) =
+  if ends_with_exe(path) then path else str_cat(path, ".exe")
 
 let has_flag(fs, name, i) =
   if i >= len(fs) then false
@@ -189,7 +197,8 @@ let run_cli(pr) =
             else if want_run or scheme_run then jit_eval(src)
             else
               let t = mk_target(an, fn, nth(spec, 2)) in
-              let outpath = if out_opt == "" then default_out(inpath) else out_opt in
+              let out0 = if out_opt == "" then default_out(inpath) else out_opt in
+              let outpath = if fn == "pe" then pe_out(out0) else out0 in
               let _ = if fl(spec, "syms") then syms_enable(1) else syms_enable(0) in
               compile_src(src, outpath, t, nth(spec, 3))
 
@@ -199,7 +208,7 @@ let main =
     let _ = usage(0) in 2
   else
     let pr = parse_args(1, argc_n, "", [],
-               ["x86_64", "elf", "exec", "", [], "", ""]) in
+               [host_arch(), host_format(), "exec", "", [], "", ""]) in
     let err = nth(pr, 2) in
     if err == 1 then 0
     else if err != 0 then

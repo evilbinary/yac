@@ -1,6 +1,5 @@
 /* tests/boot/run.yac — self-hosted frontend + unit tests (yac, not sh). */
 let TMP = "build/test_tmp"
-let YC = "build/test_tmp/yc_a"
 let LOG_STUB = "let log(mod, msg) = 0\nlet log_i(mod, key, n) = 0\n"
 let EMIT_STUB = "let emit_program_arm64(p, v, o) = emit_program_x86_64(p, v, o)\nlet emit_program_riscv64(p, v, o) = emit_program_x86_64(p, v, o)\n"
 
@@ -27,6 +26,15 @@ let run(argv) =
   let e2 = if err == 0 then "" else err in
   [rc, o2, e2]
 
+let native(p) =
+  let n = str_len(p) in
+  let already =
+    if n < 4 then false
+    else str_slice(p, n - 4, 4) == ".exe" in
+  if already then p
+  else if nth(run(["test", "-f", "build/test_tmp/yc_a.exe"]), 0) == 0 then str_cat(p, ".exe")
+  else p
+
 let chomp(s) =
   let n = str_len(s) in
   if n == 0 then s
@@ -42,13 +50,15 @@ let drop_print0(s) =
   else chomp(str_slice(t, 0, n - 2))
 
 let native_build(src, bin) =
-  let cr = run([YC, src, "-o", bin]) in
-  let _ = run(["chmod", "+x", bin]) in
+  let yc = native("build/test_tmp/yc_a") in
+  let out = native(bin) in
+  let cr = run([yc, src, "-o", out]) in
+  let _ = run(["chmod", "+x", out]) in
   cr
 
-let interp_out(runner) = drop_print0(nth(run(["./yac", runner]), 1))
+let interp_out(runner) = drop_print0(nth(run([native("./yac"), runner]), 1))
 
-let native_out(bin) = chomp(nth(run([bin]), 1))
+let native_out(bin) = chomp(nth(run([native(bin)]), 1))
 
 let rchomp(s) =
   let n = str_len(s) in

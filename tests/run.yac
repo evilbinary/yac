@@ -37,6 +37,15 @@ let run(argv) =
   let e2 = if err == 0 then "" else err in
   [rc, o2, e2]
 
+let native(p) =
+  let n = str_len(p) in
+  let already =
+    if n < 4 then false
+    else str_slice(p, n - 4, 4) == ".exe" in
+  if already then p
+  else if nth(run(["test", "-f", "build/yc_tmp/yc_a.exe"]), 0) == 0 then str_cat(p, ".exe")
+  else p
+
 let chomp(s) =
   let n = str_len(s) in
   let rec(i) =
@@ -78,17 +87,17 @@ let contains(s, sub) =
   else rec(0)
 
 let interp_eq(st, name, flags, path, want) =
-  let argv = append(["./yac"], append(flags, [path])) in
+  let argv = append([native("./yac")], append(flags, [path])) in
   let r = run(argv) in
   check(st, name, want, chomp(nth(r, 1)))
 
 let interp_par(st, name, flags, path) =
-  let a = run(["./yac", path]) in
-  let b = run(append(["./yac"], append(flags, [path]))) in
+  let a = run([native("./yac"), path]) in
+  let b = run(append([native("./yac")], append(flags, [path]))) in
   check(st, name, chomp(nth(a, 1)), chomp(nth(b, 1)))
 
 let interp_err(st, name, flags, path, needle) =
-  let argv = append(["./yac"], append(flags, [path])) in
+  let argv = append([native("./yac")], append(flags, [path])) in
   let r = run(argv) in
   let blob = str_cat(nth(r, 1), nth(r, 2)) in
   let ok =
@@ -107,7 +116,7 @@ let compiler_one(st, yc, c) =
   let name = nth(c, 0) in
   let kind = nth(c, 1) in
   let want = nth(c, 2) in
-  let bin = str_cat(TMP, str_cat("/c_", name)) in
+  let bin = native(str_cat(TMP, str_cat("/c_", name))) in
   let cr = run(append(yc, [case_src(name), "-o", bin])) in
   if nth(run(["test", "-f", bin]), 0) != 0 then
     check(st, str_cat("compiler ", name), "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
@@ -367,7 +376,7 @@ let cat_bundle(_) =
              "src-self/front/lexer.yac", "src-self/front/parser.yac", "src-self/front/anf.yac",
              "src-self/front/cps.yac", "src-self/front/eval_cps.yac", "src-self/front/uncps.yac",
              "src-self/front/lir.yac",
-             "src-self/rt/runtime.yac",
+             "src-self/rt/runtime.yac", "src-self/rt/os.yac",
              "src-self/back/pack/target.yac", "src-self/back/pack/elf.yac", "src-self/back/pack/pe.yac",
              "src-self/back/pack/macho.yac", "src-self/back/pack/pack.yac",
              "src-self/back/encode/encode_x64.yac", "src-self/back/encode/encode_arm64.yac",
@@ -427,15 +436,15 @@ let interp_suite(st) =
     ["eq", "callcc inside function", ["--cps"], ip("callcc4.yac"), "999"]])
 
 let iso_one(st, ya, yb, name) =
-  let a = str_cat(TMP, str_cat("/isoA_", name)) in
-  let b = str_cat(TMP, str_cat("/isoB_", name)) in
+  let a = native(str_cat(TMP, str_cat("/isoA_", name))) in
+  let b = native(str_cat(TMP, str_cat("/isoB_", name))) in
   let _ = run([ya, case_src(name), "-o", a]) in
   let _ = run([yb, case_src(name), "-o", b]) in
   check(st, str_cat("boot iso ", name), "0", int_to_str(nth(run(["cmp", "-s", a, b]), 0)))
 
 let boot_suite(st, ya) =
   let _ = banner("boot yc_b / iso", ya) in
-  let yb = str_cat(TMP, "/yc_b") in
+  let yb = native(str_cat(TMP, "/yc_b")) in
   let _ = run(["rm", "-f", yb, str_cat(yb, ".bin")]) in
   let st1 = check(st, "boot yc_a exists", "0", int_to_str(exists_rc(ya))) in
   let st2 = check(st1, "boot yc_a not .bin", "1", int_to_str(exists_rc(str_cat(ya, ".bin")))) in
@@ -445,7 +454,7 @@ let boot_suite(st, ya) =
   let _ = run(["chmod", "+x", yb]) in
   let stB = compiler_all(st4, [yb]) in
   let psrc = str_cat(TMP, "/p42.yac") in
-  let pbin = str_cat(TMP, "/p42") in
+  let pbin = native(str_cat(TMP, "/p42")) in
   let _ = write_file(psrc, "42\n") in
   let _ = run(["rm", "-f", pbin, str_cat(pbin, ".bin")]) in
   let _ = run([ya, psrc]) in
@@ -459,11 +468,11 @@ let boot_suite(st, ya) =
 let main =
   let _ = system(str_cat("mkdir -p ", TMP)) in
   let _ = cat_bundle(0) in
-  let ya = str_cat(TMP, "/yc_a") in
+  let ya = native(str_cat(TMP, "/yc_a")) in
   let _ = run(["rm", "-f", ya, str_cat(ya, ".bin")]) in
-  let _ = run(["cp", "-f", "build/yc_tmp/yc_a", ya]) in
+  let _ = run(["cp", "-f", native("build/yc_tmp/yc_a"), ya]) in
   let _ = run(["chmod", "+x", ya]) in
-  let boot_bin = str_cat(TMP, "/boot_run") in
+  let boot_bin = native(str_cat(TMP, "/boot_run")) in
   let _ = run(["rm", "-f", boot_bin]) in
   let _ = run([ya, "tests/boot/run.yac", "-o", boot_bin]) in
   let _ = run(["chmod", "+x", boot_bin]) in

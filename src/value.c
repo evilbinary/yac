@@ -827,6 +827,23 @@ static Value prim_popen(Value *args, int nargs, PrimCtx *ctx) {
     return v_list_arena(ctx->a, items, 3);
 }
 
+/* uname() -> [sysname, nodename, release, version, machine].
+ * C uname(2); parser passes unit like argc(). */
+static Value prim_uname(Value *args, int nargs, PrimCtx *ctx) {
+    yac_utsname u;
+    Value items[5];
+    (void)args;
+    (void)nargs;
+    memset(&u, 0, sizeof(u));
+    (void)yac_uname(&u);
+    items[0] = v_str_buf(ctx->a, u.sysname, strlen(u.sysname));
+    items[1] = v_str_buf(ctx->a, u.nodename, strlen(u.nodename));
+    items[2] = v_str_buf(ctx->a, u.release, strlen(u.release));
+    items[3] = v_str_buf(ctx->a, u.version, strlen(u.version));
+    items[4] = v_str_buf(ctx->a, u.machine, strlen(u.machine));
+    return v_list_arena(ctx->a, items, 5);
+}
+
 /* bit ops on int64 */
 static Value prim_bshl(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
@@ -1065,12 +1082,27 @@ static Value prim_gc_collect(Value *args, int nargs, PrimCtx *ctx) {
     return v_unit();
 }
 
-/* L4 only needs the name in scope; compile-to-ELF does not call it. */
+/* Named libc calls used by os.yac (uname) while L4 still interprets. */
 static Value prim_ccall(Value *args, int nargs, PrimCtx *ctx) {
-    (void)args;
-    (void)nargs;
+    const char *name;
+    if (nargs < 1 || args[0].tag != V_STR) {
+        ctx->errored = true;
+        strcpy(ctx->errmsg, "ccall: expected a C function name");
+        return VALUE_NULL;
+    }
+    name = args[0].u.s->data;
+    if (strcmp(name, "uname") == 0) {
+        Str *buf;
+        if (nargs < 2 || args[1].tag != V_STR) {
+            ctx->errored = true;
+            strcpy(ctx->errmsg, "ccall: uname expects a string buffer");
+            return VALUE_NULL;
+        }
+        buf = args[1].u.s;
+        return v_int(yac_uname_into(buf->data, (size_t)buf->len));
+    }
     ctx->errored = true;
-    snprintf(ctx->errmsg, sizeof(ctx->errmsg), "ccall: C interpreter");
+    snprintf(ctx->errmsg, sizeof(ctx->errmsg), "ccall: C interpreter: %s", name);
     return VALUE_NULL;
 }
 
@@ -1257,6 +1289,7 @@ static const Prim PRIMS[] = {
     {"read_line", -1, false, true, prim_read_line},
     {"jit_run", 2, false, true, prim_jit_run},
     {"popen", 2, false, true, prim_popen},
+    {"uname", 1, true, true, prim_uname}, /* called as uname(); parser passes unit */
     {"bshl", 2, true, false, prim_bshl},
     {"bshr", 2, true, false, prim_bshr},
     {"band", 2, true, false, prim_band},
