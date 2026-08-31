@@ -662,33 +662,50 @@ static char *try_read(const char *path) {
     return path && path[0] ? read_whole_file(path) : NULL;
 }
 
+#define YAC_PKG_ROOT_MAX 32
+static char *pkg_roots[YAC_PKG_ROOT_MAX];
+static int pkg_nroots;
+static int pkg_set_done;
+
+int yac_pkg_set(const char *csv) {
+    const char *p;
+    if (pkg_set_done) return -1;
+    if (!csv || !csv[0]) return -1;
+    p = csv;
+    while (*p) {
+        const char *comma = strchr(p, ',');
+        size_t n = comma ? (size_t)(comma - p) : strlen(p);
+        char *s;
+        if (n == 0) return -1;
+        if (pkg_nroots >= YAC_PKG_ROOT_MAX) return -1;
+        s = (char *)malloc(n + 1);
+        if (!s) return -1;
+        memcpy(s, p, n);
+        s[n] = '\0';
+        pkg_roots[pkg_nroots++] = s;
+        if (!comma) break;
+        p = comma + 1;
+        if (!*p) return -1;
+    }
+    pkg_set_done = 1;
+    return 0;
+}
+
 static char *read_pkg_source(const char *pkg) {
     char file[256], path[1024], exe[512];
     char *s;
-    const char *lib;
+    int i;
     if (!pkg_to_file(pkg, file, sizeof(file))) return NULL;
-    lib = getenv("YAC_STDLIB");
-    if (lib && lib[0]) {
-        snprintf(path, sizeof(path), "%s/%s", lib, file);
+    for (i = 0; i < pkg_nroots; i++) {
+        snprintf(path, sizeof(path), "%s/%s", pkg_roots[i], file);
         s = try_read(path);
         if (s) return s;
     }
-    snprintf(path, sizeof(path), "src-self/%s", file);
+    snprintf(path, sizeof(path), "pkg/%s", file);
     s = try_read(path);
-    if (s) return s;
-    s = try_read(file);
     if (s) return s;
     if (yac_exe_dir(exe, sizeof(exe)) != 0) return NULL;
     snprintf(path, sizeof(path), "%s/%s", exe, file);
-    s = try_read(path);
-    if (s) return s;
-    snprintf(path, sizeof(path), "%s/src-self/%s", exe, file);
-    s = try_read(path);
-    if (s) return s;
-    snprintf(path, sizeof(path), "%s/../../src-self/%s", exe, file);
-    s = try_read(path);
-    if (s) return s;
-    snprintf(path, sizeof(path), "%s/../src-self/%s", exe, file);
     return try_read(path);
 }
 
@@ -710,7 +727,7 @@ static int import_splice(Parser *errp, ImportCtx *ictx, const char *pkg,
     if (import_seen(ictx, pkg)) return 1;
     char *src = read_pkg_source(pkg);
     if (!src) {
-        p_err(errp, "cannot find package '%s' (need rt/*.yac next to yc or src-self/)", pkg);
+        p_err(errp, "cannot find package '%s' (--pkg, ./pkg, or next to yac)", pkg);
         return 0;
     }
     if (!import_mark(ictx, pkg)) {

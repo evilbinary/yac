@@ -12,4 +12,7 @@ typedef struct ParseResult {
 
 ParseResult parse_program(const Token *toks, int n, Arena *a);
 
+/* --pkg DIR[,DIR...]. 0 on success; -1 if already set or empty segment. */
+int yac_pkg_set(const char *csv);
+
 #endif

@@ -1,0 +1,8 @@
+/* Runtime dlopen/dlsym via ccall. User .so symbols: csym + ccall(ptr, …). */
+
+package rt.ffi
+export cload, csym
+
+let cload(path) = ccall("dlopen", path, 256 + 2)
+
+let csym(name) = ccall("dlsym", 0, name)

@@ -223,7 +223,8 @@ static void usage(const char *prog) {
             "  --checkpoint-at N  dump the machine state at step N and pause\n"
             "  --resume FILE    load a checkpoint and continue execution\n"
             "  --prof-out FILE  write per-function counts and times (ANF interp)\n"
-            "                   (or set YAC_PROF_OUT)\n",
+            "                   (or set YAC_PROF_OUT)\n"
+            "  --pkg DIR[,DIR]  package roots (before ./pkg and this yac)\n",
             prog);
 }
 
@@ -301,6 +302,16 @@ int main(int argc, char **argv) {
             }
             yac_prof_enable(argv[++i]);
         }
+        else if (strcmp(argv[i], "--pkg") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "--pkg requires DIR[,DIR...]\n");
+                return 2;
+            }
+            if (yac_pkg_set(argv[++i]) != 0) {
+                fprintf(stderr, "error: bad --pkg (once; no empty segment)\n");
+                return 2;
+            }
+        }
         else if (argv[i][0] == '-') {
             /* Unrecognized flags (e.g. yc -o out.bin) are forwarded via argc()/argv(). */
         } else if (!file) file = argv[i];
@@ -314,7 +325,8 @@ int main(int argc, char **argv) {
         if (fwd) {
             fwd[nfwd++] = argv[0];
             for (i = 1; i < argc; i++) {
-                if (strcmp(argv[i], "--prof-out") == 0) {
+                if (strcmp(argv[i], "--prof-out") == 0 ||
+                    strcmp(argv[i], "--pkg") == 0) {
                     if (i + 1 < argc) i++;
                     continue;
                 }

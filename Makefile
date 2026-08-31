@@ -48,14 +48,12 @@ $(YC_BUNDLE): $(YC_SRCS) | $(YC_BUILD)
 # Native compile (yc_a compiling a .yac) is a separate step and should be seconds.
 $(YC_A): $(BIN) $(YC_BUNDLE)
 	@echo "L4: ./yac compiling bundle with C GC (slow; not the native <3s path)"
-	./$(BIN) $(YC_BUNDLE) $(YC_BUNDLE) -o $@
+	./$(BIN) --pkg src-self $(YC_BUNDLE) $(YC_BUNDLE) -o $@
 	chmod +x $@
-	mkdir -p $(YC_BUILD)/rt
-	cp -f src-self/rt/os.yac src-self/rt/ffi.yac src-self/rt/num.yac $(YC_BUILD)/rt/
 
 # L5: native yc_a compiles the same bundle. yc_a and yc_b need not match.
 $(YC_B): $(YC_A) $(YC_BUNDLE)
-	$(YC_A) $(YC_BUNDLE) -o $@
+	$(YC_A) --pkg src-self $(YC_BUNDLE) -o $@
 	chmod +x $@
 
 # Convenience name used by scripts; same bits as yc_a.
@@ -70,8 +68,8 @@ bootstrap: $(YC_A) $(YC_B) $(YC_BIN)
 
 # yc_a and yc_b must emit the same ELF for a given program (L5 iso).
 yc-iso: bootstrap
-	$(YC_A) tests/compiler/cases/l4_42.yac -o $(YC_BUILD)/isoA_l4_42$(EXEEXT)
-	$(YC_B) tests/compiler/cases/l4_42.yac -o $(YC_BUILD)/isoB_l4_42$(EXEEXT)
+	$(YC_A) --pkg src-self tests/compiler/cases/l4_42.yac -o $(YC_BUILD)/isoA_l4_42$(EXEEXT)
+	$(YC_B) --pkg src-self tests/compiler/cases/l4_42.yac -o $(YC_BUILD)/isoB_l4_42$(EXEEXT)
 	cmp -s $(YC_BUILD)/isoA_l4_42$(EXEEXT) $(YC_BUILD)/isoB_l4_42$(EXEEXT)
 
 # L6: native yc_a compiles and runs the harness. C yac is only a subprocess
@@ -80,19 +78,19 @@ test: $(YC_A)
 	mkdir -p build/test_tmp
 	cp -f $(YC_A) build/test_tmp/yc_a$(EXEEXT)
 	chmod +x build/test_tmp/yc_a$(EXEEXT)
-	$(YC_A) tests/run.yac -o build/test_tmp/run_tests$(EXEEXT)
+	$(YC_A) --pkg src-self tests/run.yac -o build/test_tmp/run_tests$(EXEEXT)
 	chmod +x build/test_tmp/run_tests$(EXEEXT)
 	./build/test_tmp/run_tests$(EXEEXT)
 
 test-boot: $(YC_A)
 	mkdir -p build/test_tmp
 	cp -f $(YC_A) build/test_tmp/yc_a$(EXEEXT)
-	$(YC_A) tests/boot/run.yac -o build/test_tmp/boot_run$(EXEEXT)
+	$(YC_A) --pkg src-self tests/boot/run.yac -o build/test_tmp/boot_run$(EXEEXT)
 	chmod +x build/test_tmp/boot_run$(EXEEXT)
 	./build/test_tmp/boot_run$(EXEEXT)
 
 prop: $(BIN)
-	./$(BIN) tests/prop.yac
+	./$(BIN) --pkg src-self tests/prop.yac
 
 $(BUILD)/genyac: tools/genyac.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<

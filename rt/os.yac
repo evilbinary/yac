@@ -1,0 +1,67 @@
+/* os.yac — host OS/arch via libc uname(2) (ccall).
+ * uname() -> [sysname, nodename, release, version, machine] */
+
+package rt.os
+export uname, host_os, host_arch, host_format
+
+let os_has(s, p) =
+  let n = str_len(p) in
+  if str_len(s) < n then false
+  else str_slice(s, 0, n) == p
+
+let os_zstr(n) =
+  let b = bytes_new() in
+  let rec(i) =
+    if i >= n then bytes_to_str(b)
+    else
+      let _ = bytes_append(b, 0) in
+      rec(i + 1) in
+  rec(0)
+
+let os_cstr_at(s, off) =
+  let n = str_len(s) in
+  if off >= n then ""
+  else
+    let rec(i) =
+      if off + i >= n then str_slice(s, off, n)
+      else if str_ref(s, off + i) == 0 then str_slice(s, off, off + i)
+      else rec(i + 1) in
+    rec(0)
+
+let uname(_) =
+  let buf = os_zstr(1536) in
+  let rc = ccall("uname", buf) in
+  if rc != 0 then ["", "", "", "", ""]
+  else
+    let sys = os_cstr_at(buf, 0) in
+    let w = if os_has(sys, "Darwin") then 256 else 65 in
+    [sys,
+     os_cstr_at(buf, w),
+     os_cstr_at(buf, w * 2),
+     os_cstr_at(buf, w * 3),
+     os_cstr_at(buf, w * 4)]
+
+let host_os(_) =
+  let u = nth(uname(), 0) in
+  if os_has(u, "Darwin") then "darwin"
+  else if os_has(u, "Linux") then "linux"
+  else if os_has(u, "MINGW") then "windows"
+  else if os_has(u, "MSYS") then "windows"
+  else if os_has(u, "CYGWIN") then "windows"
+  else if os_has(u, "Windows") then "windows"
+  else if u == "" then "windows"
+  else "linux"
+
+let host_arch(_) =
+  let m = nth(uname(), 4) in
+  if os_has(m, "aarch64") then "arm64"
+  else if os_has(m, "arm64") then "arm64"
+  else if os_has(m, "ARM64") then "arm64"
+  else if os_has(m, "riscv64") then "riscv64"
+  else "x86_64"
+
+let host_format(_) =
+  let o = host_os(0) in
+  if o == "darwin" then "macho"
+  else if o == "windows" then "pe"
+  else "elf"

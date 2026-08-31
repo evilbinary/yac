@@ -43,11 +43,14 @@ let path_dirname(s) =
 
 let file_or_0(p) =
   let r = read_file(p) in
-  if r == 0 then 0 else r
+  if r == 0 then 0
+  else if r == () then 0
+  else if str_len(r) == 0 then 0
+  else r
 
 let join_path(a, b) = str_cat(a, str_cat("/", b))
 
-/* rt.os → rt/os.yac (stdlib file; not a project-relative src-self path). */
+/* import a.b.c → a/b/c.yac under a package root. */
 let pkg_file(pkg) =
   let n = str_len(pkg) in
   let rec(i, acc) =
@@ -58,28 +61,53 @@ let pkg_file(pkg) =
       else rec(i + 1, str_cat(acc, str_chr(c))) in
   str_cat(rec(0, ""), ".yac")
 
+/* 0 = --pkg not given; else list of roots. */
+let pkg_extra_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+/* Comma-separated roots. Empty segments (a,,b or trailing comma) → 0. */
+let pkg_split(s) =
+  let n = str_len(s) in
+  let rec(i, start, acc) =
+    if i >= n then
+      if i == start then 0
+      else reverse(cons(str_slice(s, start, i - start), acc))
+    else if str_ref(s, i) != 44 then rec(i + 1, start, acc)
+    else if i == start then 0
+    else rec(i + 1, i + 1, cons(str_slice(s, start, i - start), acc)) in
+  if n == 0 then 0 else rec(0, 0, [])
+
+/* Once. Returns 1, or 0 if already set / bad list. */
+let pkg_set(csv) =
+  if box_get(pkg_extra_box) != 0 then 0
+  else
+    let xs = pkg_split(csv) in
+    if xs == 0 then 0
+    else
+      let _ = box_set(pkg_extra_box, xs) in
+      1
+
+let pkg_try(roots, f, i) =
+  if i >= len(roots) then 0
+  else
+    let r = file_or_0(join_path(nth(roots, i), f)) in
+    if r != 0 then r else pkg_try(roots, f, i + 1)
+
 let pkg_src(pkg) =
   let f = pkg_file(pkg) in
-  let d = path_dirname(argv(0)) in
-  let a = file_or_0(str_cat("src-self/", f)) in
+  let extra = box_get(pkg_extra_box) in
+  let a = if extra == 0 then 0 else pkg_try(extra, f, 0) in
   if a != 0 then a
   else
-    let b = file_or_0(f) in
-    if b != 0 then b
-    else
-      let e1 = file_or_0(join_path(d, f)) in
-      if e1 != 0 then e1
-      else
-        let e2 = file_or_0(join_path(d, str_cat("src-self/", f))) in
-        if e2 != 0 then e2
-        else
-          let e3 = file_or_0(join_path(d, str_cat("../../src-self/", f))) in
-          if e3 != 0 then e3
-          else file_or_0(join_path(d, str_cat("../src-self/", f)))
+    let p = file_or_0(join_path("pkg", f)) in
+    if p != 0 then p
+    else file_or_0(join_path(path_dirname(argv(0)), f))
 
 /* Compile one rt/*.yac against already-lowered procs so later stdlib
  * files can call earlier ones. Guest always gets rt.num; other packages
- * are rt/os.yac style files next to yc or under src-self/. Do not call
+ * come from --pkg, ./pkg, then the directory of yc. Do not call
  * runtime_funs() inside a loop. */
 let lir_extend(src, acc) =
   if src == 0 then acc
