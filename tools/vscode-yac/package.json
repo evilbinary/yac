@@ -2,7 +2,7 @@
   "name": "yac",
   "displayName": "Yac",
   "description": "Syntax highlighting for the Yac functional language",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "yac-lang",
   "engines": {
     "vscode": "^1.74.0"

@@ -1,21 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
-  <defs>
-    <linearGradient id="y" x1="8" y1="3" x2="24" y2="29">
-      <stop offset="0%" stop-color="#3D6B4F"/>
-      <stop offset="50%" stop-color="#1F4D3A"/>
-      <stop offset="100%" stop-color="#0D2E24"/>
-    </linearGradient>
-  </defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <path
-    fill="url(#y)"
-    d="M5.6 3.2
-       H12.15
-       L16 11.9
-       L19.85 3.2
-       H26.4
-       L18.55 17.6
-       V28.8
-       H13.45
-       V17.6
-       Z"/>
+    fill="#2F6B4A"
+    d="M5.6 3.2 H12.15 L16 11.9 L19.85 3.2 H26.4 L18.55 17.6 V28.8 H13.45 V17.6 Z"/>
 </svg>

@@ -14,7 +14,7 @@ case "$TARGET" in
 esac
 
 mkdir -p "$EXT_DIR"
-LINK="$EXT_DIR/yac-lang.yac-0.1.0"
+LINK="$EXT_DIR/yac-lang.yac-0.1.1"
 ln -sfn "$ROOT" "$LINK"
 echo "Linked $LINK -> $ROOT"
 echo "Reload the window: Developer: Reload Window"
