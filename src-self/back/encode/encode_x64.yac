@@ -1295,3 +1295,21 @@ let lea_rax_rsp_disp32(b, d) =
   let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 132) in let _ = e8(b, 36) in e32(b, d)
 let movzx_eax_mem_rsi(b) =
   let _ = e8(b, 15) in let _ = e8(b, 182) in e8(b, 6)
+let lea_rbx_rip(b, disp) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 29) in e32(b, disp)
+let lea_rsi_rip(b, disp) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 53) in e32(b, disp)
+let mov_rax_mem_rbx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 139) in e8(b, 3)
+let mov_mem_rbx_rax(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 3)
+let mov_rcx_mem_rsi(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 139) in e8(b, 14)
+let add_rbx_imm8(b, v) =
+  let _ = e8(b, 72) in let _ = e8(b, 131) in let _ = e8(b, 195) in e8(b, band(v, 255))
+let add_rsi_imm8(b, v) =
+  let _ = e8(b, 72) in let _ = e8(b, 131) in let _ = e8(b, 198) in e8(b, band(v, 255))
+let dec_rcx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 255) in e8(b, 201)
+let dec_rdi(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 255) in e8(b, 207)

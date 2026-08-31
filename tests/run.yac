@@ -123,6 +123,9 @@ let cat_files(xs, dest) =
     else rec(i + 1, str_cat(acc, read_file(nth(xs, i)))) in
   rec(0, "")
 
+let on_win(_) =
+  nth(run(["sh", "-c", "test \"${OS:-}\" = Windows_NT"]), 0) == 0
+
 let compiler_one(st, yc, c) =
   let name = nth(c, 0) in
   let kind = nth(c, 1) in

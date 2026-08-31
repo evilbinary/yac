@@ -35,6 +35,9 @@ let native(p) =
   else if nth(run(["test", "-f", "build/test_tmp/yc_a.exe"]), 0) == 0 then str_cat(p, ".exe")
   else p
 
+let on_win(_) =
+  nth(run(["sh", "-c", "test \"${OS:-}\" = Windows_NT"]), 0) == 0
+
 let chomp(s) =
   let n = str_len(s) in
   if n == 0 then s
@@ -277,8 +280,12 @@ let elf_suite(st) =
         if str_ref(elf, 1) == 69 then "ok" else "bad"
       else "bad" in
     let st1 = check(st, "ELF magic", "ok", mag) in
-    let _ = run(["chmod", "+x", str_cat(TMP, "/elf.bin")]) in
-    let st2 = check(st1, "ELF runs and exits 42", "42", int_to_str(nth(run([str_cat(TMP, "/elf.bin")]), 0))) in
+    let st2 =
+      if on_win(0) then
+        let _ = print("SKIP: ELF runs and exits 42") in st1
+      else
+        let _ = run(["chmod", "+x", str_cat(TMP, "/elf.bin")]) in
+        check(st1, "ELF runs and exits 42", "42", int_to_str(nth(run([str_cat(TMP, "/elf.bin")]), 0))) in
     check(st2, "ELF size 136", "136", int_to_str(str_len(elf)))
 
 let emit_suite(st) =
@@ -295,6 +302,10 @@ let emit_suite(st) =
     let elf = read_file(str_cat(TMP, "/emit.bin")) in
     let mag =
       if str_len(elf) < 5 then "short"
+      else if on_win(0) then
+        if str_ref(elf, 0) == 77 then
+          if str_ref(elf, 1) == 90 then "ok" else "bad mz"
+        else "bad mz"
       else if str_ref(elf, 0) == 127 then
         if str_ref(elf, 1) == 69 then
           if str_ref(elf, 2) == 76 then
@@ -384,6 +395,8 @@ let main =
                      "src-self/back/encode/encode_arm64.yac",
                      "src-self/back/encode/encode_riscv64.yac",
                      "src-self/back/pack/elf.yac",
+                     "src-self/back/pack/pe.yac",
+                     "src-self/rt/os.yac",
                      "src-self/front/lir.yac",
                      "src-self/back/emit/emit.yac",
                      "src-self/back/emit/linux_x86_64.yac", "src-self/back/emit/win_x86_64.yac",
@@ -401,6 +414,8 @@ let main =
                      "src-self/back/encode/encode_arm64.yac",
                      "src-self/back/encode/encode_riscv64.yac",
                      "src-self/back/pack/elf.yac",
+                     "src-self/back/pack/pe.yac",
+                     "src-self/rt/os.yac",
                      "src-self/front/lir.yac", "src-self/rt/runtime.yac",
                      "src-self/back/emit/emit.yac",
                      "src-self/back/emit/linux_x86_64.yac", "src-self/back/emit/win_x86_64.yac",

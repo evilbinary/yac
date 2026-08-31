@@ -111,61 +111,144 @@ let pe_put_cstr(b, s, i) =
     let _ = bytes_append(b, str_ref(s, i)) in
     pe_put_cstr(b, s, i + 1)
 
+/* Named imports that live in KERNEL32; everything else is msvcrt (putchar…). */
+let pe_is_k32(n) =
+  if n == "VirtualAlloc" then true
+  else if n == "VirtualFree" then true
+  else if n == "GetStdHandle" then true
+  else if n == "WriteFile" then true
+  else if n == "ReadFile" then true
+  else if n == "CreateFileA" then true
+  else if n == "CloseHandle" then true
+  else if n == "SetFilePointer" then true
+  else if n == "ExitProcess" then true
+  else if n == "GetCommandLineA" then true
+  else if n == "GetEnvironmentVariableA" then true
+  else if n == "GetComputerNameA" then true
+  else if n == "GetModuleHandleA" then true
+  else if n == "GetProcAddress" then true
+  else if n == "CreateProcessA" then true
+  else if n == "WaitForSingleObject" then true
+  else if n == "GetExitCodeProcess" then true
+  else if n == "LoadLibraryA" then true
+  else false
+
+let pe_group_ids(names, want_k32) =
+  let out = list_new() in
+  let rec(i) =
+    if i >= len(names) then out
+    else
+      let _ =
+        if pe_is_k32(nth(names, i)) == want_k32 then list_push(out, i) else 0 in
+      rec(i + 1) in
+  rec(0)
+
+let pe_iat_off(got, names, i) =
+  let k32 = pe_group_ids(names, true) in
+  let crt = pe_group_ids(names, false) in
+  let idx_in(xs, j) =
+    if j >= len(xs) then 0 - 1
+    else if nth(xs, j) == i then j
+    else idx_in(xs, j + 1) in
+  let ki = idx_in(k32, 0) in
+  if ki >= 0 then got + 24 + ki * 8
+  else
+    let ci = idx_in(crt, 0) in
+    if len(k32) == 0 then got + 24 + ci * 8
+    else got + 24 + (len(k32) + 1 + ci) * 8
+
+let pe_iat_qwords(names) =
+  let nk = len(pe_group_ids(names, true)) in
+  let nc = len(pe_group_ids(names, false)) in
+  if nk == 0 then nc + 1
+  else if nc == 0 then nk + 1
+  else nk + 1 + nc + 1
+
+let pe_write_ilt(out, hn, ids) =
+  let rva = bytes_len(out) in
+  let rec(j) =
+    if j >= len(ids) then
+      pe_le64(out, 0, bytes_len(out))
+    else
+      let _ = pe_le64(out, nth(hn, nth(ids, j)), bytes_len(out)) in
+      rec(j + 1) in
+  let _ = rec(0) in
+  rva
+
+let pe_fill_iat(out, hn, ids, iat_rva) =
+  let rec(j) =
+    if j >= len(ids) then
+      pe_le64(out, 0, iat_rva + len(ids) * 8)
+    else
+      let _ = pe_le64(out, nth(hn, nth(ids, j)), iat_rva + j * 8) in
+      rec(j + 1) in
+  rec(0)
+
+let pe_put_desc(out, at, ilt, dll, iat) =
+  let _ = pe_le32(out, ilt, at + 0) in
+  let _ = pe_le32(out, 0, at + 4) in
+  let _ = pe_le32(out, 0, at + 8) in
+  let _ = pe_le32(out, dll, at + 12) in
+  pe_le32(out, iat, at + 16)
+
 let pe_finish_imports(out, t, names, got) =
   let n = len(names) in
   if n == 0 then 0
   else
     let text_off = target_text_off(t) in
+    let k32 = pe_group_ids(names, true) in
+    let crt = pe_group_ids(names, false) in
     let _ = pe_pad2(out) in
-    let hn_rva(acc, i) =
-      if i >= n then acc
+    let hn = list_new() in
+    let rec_hn(i) =
+      if i >= n then 0
       else
         let _ = pe_pad2(out) in
         let r = bytes_len(out) in
         let _ = pe_le16(out, 0, r) in
         let _ = pe_put_cstr(out, nth(names, i), 0) in
-        hn_rva(cons(r, acc), i + 1) in
-    let hn_rev = hn_rva([], 0) in
+        let _ = list_push(hn, r) in
+        rec_hn(i + 1) in
+    let _ = rec_hn(0) in
     let _ = pe_pad2(out) in
-    let dll_rva = bytes_len(out) in
-    let _ = pe_put_cstr(out, "KERNEL32.dll", 0) in
+    let k32_dll = bytes_len(out) in
+    let _ = if len(k32) == 0 then 0 else pe_put_cstr(out, "KERNEL32.dll", 0) in
     let _ = pe_pad2(out) in
-    let ilt_rva = bytes_len(out) in
-    let put_ilt(i) =
-      if i >= n then
-        let _ = pe_le64(out, 0, bytes_len(out)) in
-        0
-      else
-        let r = nth(hn_rev, n - 1 - i) in
-        let at = bytes_len(out) in
-        let _ = pe_le64(out, r, at) in
-        put_ilt(i + 1) in
-    let _ = put_ilt(0) in
+    let crt_dll = bytes_len(out) in
+    let _ = if len(crt) == 0 then 0 else pe_put_cstr(out, "msvcrt.dll", 0) in
+    let _ = pe_pad2(out) in
+    let k32_ilt = if len(k32) == 0 then 0 else pe_write_ilt(out, hn, k32) in
+    let crt_ilt = if len(crt) == 0 then 0 else pe_write_ilt(out, hn, crt) in
+    let iat0 = text_off + got + 24 in
+    let k32_iat = iat0 in
+    let crt_iat =
+      if len(k32) == 0 then iat0
+      else iat0 + (len(k32) + 1) * 8 in
+    let _ = if len(k32) == 0 then 0 else pe_fill_iat(out, hn, k32, k32_iat) in
+    let _ = if len(crt) == 0 then 0 else pe_fill_iat(out, hn, crt, crt_iat) in
+    let ndll = if len(k32) == 0 then 1 else if len(crt) == 0 then 1 else 2 in
     let desc = bytes_len(out) in
-    let iat_rva = text_off + got + 24 in
-    let _ = pe_le32(out, ilt_rva, desc + 0) in
-    let _ = pe_le32(out, 0, desc + 4) in
-    let _ = pe_le32(out, 0, desc + 8) in
-    let _ = pe_le32(out, dll_rva, desc + 12) in
-    let _ = pe_le32(out, iat_rva, desc + 16) in
-    let _ = pe_le32(out, 0, desc + 20) in
-    let _ = pe_le32(out, 0, desc + 24) in
-    let _ = pe_le32(out, 0, desc + 28) in
-    let _ = pe_le32(out, 0, desc + 32) in
-    let _ = pe_le32(out, 0, desc + 36) in
-    let put_iat(i) =
-      if i >= n then pe_le64(out, 0, iat_rva + n * 8)
+    let _ =
+      if len(k32) == 0 then
+        pe_put_desc(out, desc, crt_ilt, crt_dll, crt_iat)
       else
-        let r = nth(hn_rev, n - 1 - i) in
-        let _ = pe_le64(out, r, iat_rva + i * 8) in
-        put_iat(i + 1) in
-    let _ = put_iat(0) in
+        pe_put_desc(out, desc, k32_ilt, k32_dll, k32_iat) in
+    let _ =
+      if ndll == 2 then
+        pe_put_desc(out, desc + 20, crt_ilt, crt_dll, crt_iat)
+      else 0 in
+    let z = desc + ndll * 20 in
+    let _ = pe_le32(out, 0, z + 0) in
+    let _ = pe_le32(out, 0, z + 4) in
+    let _ = pe_le32(out, 0, z + 8) in
+    let _ = pe_le32(out, 0, z + 12) in
+    let _ = pe_le32(out, 0, z + 16) in
     let pad = pe_align(bytes_len(out), 512) in
     let _ = bytes_put(out, pad - 1, 0) in
     let _ = pe_le32(out, pad, 208) in
     let _ = pe_le32(out, pad - text_off, 400) in
     let _ = pe_le32(out, pad - text_off, 408) in
     let _ = pe_le32(out, desc, 272) in
-    let _ = pe_le32(out, 40, 276) in
-    let _ = pe_le32(out, iat_rva, 360) in
-    pe_le32(out, (n + 1) * 8, 364)
+    let _ = pe_le32(out, (ndll + 1) * 20, 276) in
+    let _ = pe_le32(out, iat0, 360) in
+    pe_le32(out, pe_iat_qwords(names) * 8, 364)

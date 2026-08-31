@@ -202,10 +202,11 @@ let emit_patch_strlit(ps, pos, off) = cons([11, pos, off], ps)
 /* tag 12: abs64 = codebase + file_off (stack-map retaddrs / table ptr). */
 let emit_patch_codeva(ps, pos, off) = cons([12, pos, off], ps)
 
-/* tag 16/17/18: rel32 to PE uname / dlsym / system stubs. */
+/* tag 16/17/18/19: rel32 to PE uname / dlsym / system / dlopen stubs. */
 let emit_patch_pe_uname(ps, pos) = cons([16, pos], ps)
 let emit_patch_pe_dlsym(ps, pos) = cons([17, pos], ps)
 let emit_patch_pe_system(ps, pos) = cons([18, pos], ps)
+let emit_patch_pe_dlopen(ps, pos) = cons([19, pos], ps)
 
 let emit_fmt_box =
   let b = box_new() in
@@ -218,8 +219,17 @@ let emit_fmt(_) = box_get(emit_fmt_box)
 
 let emit_is_pe(_) = emit_fmt(0) == "pe"
 
-/* Host OS follows object format until emit_os is a separate axis. */
-let emit_host_win(_) = emit_fmt(0) == "pe"
+/* Win64 ccall/_start: PE guests, or in-process JIT on a Windows host. */
+let emit_abi_win_box =
+  let b = box_new() in
+  let _ = box_set(b, false) in
+  b
+
+let emit_abi_win_set(v) = box_set(emit_abi_win_box, v)
+
+let emit_abi_win(_) = box_get(emit_abi_win_box)
+
+let emit_host_win(_) = emit_abi_win(0)
 
 let pe_uname_off_box =
   let b = box_new() in
@@ -232,6 +242,16 @@ let pe_dlsym_off_box =
   b
 
 let pe_system_off_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let pe_dlopen_off_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let pe_mods_off_box =
   let b = box_new() in
   let _ = box_set(b, 0) in
   b
@@ -301,14 +321,18 @@ let emit_cplt(b) =
     let fill(i, lim) =
       if i >= lim then 0
       else let _ = bytes_append(b, 0) in fill(i + 1, lim) in
-    let nq = if emit_is_pe(0) then 4 + n else 3 + n in
+    let nq =
+      if emit_is_pe(0) then 3 + pe_iat_qwords(xs)
+      else 3 + n in
     let _ = fill(0, nq * 8) in
     let plts = nth(cimport_buf(0), 1) in
     let stub(i) =
       if i >= n then 0
       else
         let _ = list_push(plts, bytes_len(b)) in
-        let slot = got + 24 + i * 8 in
+        let slot =
+          if emit_is_pe(0) then pe_iat_off(got, xs, i)
+          else got + 24 + i * 8 in
         let _ = jmp_mem_rip(b, slot - (bytes_len(b) + 6)) in
         stub(i + 1) in
     stub(0)
@@ -559,6 +583,8 @@ let emit_resolve_patch(st, p) =
     apply_patch(b, nth(p, 1), box_get(pe_dlsym_off_box))
   else if tag == 18 then
     apply_patch(b, nth(p, 1), box_get(pe_system_off_box))
+  else if tag == 19 then
+    apply_patch(b, nth(p, 1), box_get(pe_dlopen_off_box))
   else
     0
 

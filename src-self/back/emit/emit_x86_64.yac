@@ -1341,7 +1341,14 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let _ = box_set(pe_uname_off_box, 0) in
   let _ = box_set(pe_dlsym_off_box, 0) in
   let _ = box_set(pe_system_off_box, 0) in
-  let _ = if emit_host_win(0) then win_begin(0) else linux_begin(0) in
+  let _ = box_set(pe_dlopen_off_box, 0) in
+  let _ = box_set(pe_mods_off_box, 0) in
+  let _ =
+    emit_abi_win_set(
+      if fmt == "pe" then true
+      else if load_vaddr == JIT_VADDR then host_os(0) == "windows"
+      else false) in
+  let _ = if emit_abi_win(0) then win_begin(0) else linux_begin(0) in
   let ckeep = cimport_buf(0) in
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
