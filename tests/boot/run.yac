@@ -32,11 +32,10 @@ let native(p) =
     if n < 4 then false
     else str_slice(p, n - 4, 4) == ".exe" in
   if already then p
-  else if nth(run(["test", "-f", "build/test_tmp/yc_a.exe"]), 0) == 0 then str_cat(p, ".exe")
+  else if host_os(0) == "windows" then str_cat(p, ".exe")
   else p
 
-let on_win(_) =
-  nth(run(["sh", "-c", "test \"${OS:-}\" = Windows_NT"]), 0) == 0
+let on_win(_) = host_os(0) == "windows"
 
 let chomp(s) =
   let n = str_len(s) in
@@ -193,6 +192,7 @@ let lex_suite(st) =
     ["scientific", "num 2.5e-3\nnum 1e10\nnum 1E5\nnum 1e2\nop -\nnum 3\nnum 2e-0\nnum 1.5e+3"],
     ["exp_ident", "ident e\nnum 5\nident e\nnum 1\nident e\nop +\nnum 1\nident e"],
     ["comments", "kw let\nident a\nop =\nnum 1\nkw let\nident b\nop =\nnum 2"],
+    ["nested", "kw let\nident x\nop =\nnum 1\nkw let\nident y\nop =\nnum 2"],
     ["lambda", "kw let\nident g\nop =\nkw fun\nlparen (\nident a\ncomma ,\nident b\nrparen )\nop ->\nident a\nop >=\nnum 3.14\nkw and\nkw not\nlparen (\nident a\nop <\nident b\nrparen )"],
     ["starstar", "kw let\nident x\nop =\nnum 1"]])
 

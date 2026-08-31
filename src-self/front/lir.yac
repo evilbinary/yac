@@ -152,6 +152,7 @@ let sigma_new(nrt) =
   let m = fmap_new(0) in
   let _ = fmap_init_n(m, 2048) in
   [[], m, nrt]
+
 let sigma_list(fs) = nth(fs, 0)
 let sigma_map(fs) = nth(fs, 1)
 let fun_src(f) = if len(f) > 5 then nth(f, 5) else nth(f, 1)
@@ -163,6 +164,14 @@ let sigma_cons(fs, f) =
     else len(sigma_list(fs)) in
   let _ = fmap_put(m, intern(fun_src(f)), [nth(f, 1), nth(f, 3), idx]) in
   [cons(f, sigma_list(fs)), m, nth(fs, 2)]
+
+/* Load rt_image procs into Σ so guest calls (cload, host_os, …) resolve
+ * as globals. Adding a file to rt_image is enough; no prim-table entry. */
+let sigma_of_rt(rt) =
+  let rec(i, fs) =
+    if i >= len(rt) then fs
+    else rec(i + 1, sigma_cons(fs, nth(rt, i))) in
+  rec(0, sigma_new(len(rt)))
 
 let sigma_ent_h(fs, name, h) =
   if len(fs) < 2 then 0
@@ -322,8 +331,6 @@ let is_prim_name(w) =
   else if w == "idiv" then true
   else if w == "irem" then true
   else if w == "ccall" then true
-  else if w == "cload" then true
-  else if w == "csym" then true
   else false
 
 /* AST scope check (C ANF in_scope). "" = ok, else the unbound name. */

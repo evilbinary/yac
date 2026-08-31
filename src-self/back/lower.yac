@@ -9,45 +9,75 @@
 /* vreg s 的 home。现在 = 自己（emit 映 [rbp-8*(s+1)] / FP 帧）。 */
 let alloc_home(s) = s
 
-let insn_uses_fn(ins, name) =
+let insn_callee(ins) =
   let k = nth(ins, 0) in
-  if k == "fcall" then nth(ins, 2) == name
-  else if k == "tcall" then nth(ins, 2) == name
-  else if k == "closure" then nth(ins, 2) == name
-  else false
+  if k == "fcall" then intern(nth(ins, 2))
+  else if k == "tcall" then intern(nth(ins, 2))
+  else if k == "closure" then intern(nth(ins, 2))
+  else 0
 
-let funs_use_name(funs, name) =
-  let rec(fi, ii) =
-    if fi >= len(funs) then false
+/* Kernel runtime_funs stay; emit patches yac_* from opcodes that are not
+ * fcall. Stdlib from rt/*.yac is kept only if reachable from _start/_eval. */
+let is_kernel_name(n) =
+  if str_len(n) >= 4 then
+    if str_slice(n, 0, 4) == "yac_" then true
+    else if n == "print" then true
+    else if n == "print_int" then true
+    else if n == "print_val" then true
+    else if n == "gc_collect" then true
+    else if n == "time_ms" then true
+    else if n == "time_ns" then true
+    else n == "time_str"
+  else
+    if n == "print" then true
+    else false
+let drop_unreachable(funs) =
+  let seen = fmap_new(0) in
+  let _ = fmap_init_n(seen, 4096) in
+  let tab = fmap_new(0) in
+  let _ = fmap_init_n(tab, 4096) in
+  let rec_index(i) =
+    if i >= len(funs) then 0
     else
-      let insns = nth(nth(funs, fi), 4) in
-      if ii >= len(insns) then rec(fi + 1, 0)
-      else if insn_uses_fn(nth(insns, ii), name) then true
-      else rec(fi, ii + 1) in
-  rec(0, 0)
-
-/* ffi.yac is always in rt_image. Drop unused cload/csym so guests without
- * ccall stay ET_EXEC (no PT_INTERP) and qemu-user can run them without a
- * cross sysroot. */
-let drop_unused_ffi(funs) =
-  let want_cload = funs_use_name(funs, "cload") in
-  let want_csym = funs_use_name(funs, "csym") in
+      let f = nth(funs, i) in
+      let _ = fmap_put(tab, intern(nth(f, 1)), f) in
+      rec_index(i + 1) in
+  let _ = rec_index(0) in
+  let q = list_new() in
+  let mark(nm) =
+    if nm == 0 then 0
+    else if fmap_get(seen, nm) != 0 then 0
+    else
+      let _ = fmap_put(seen, nm, 1) in
+      list_push(q, nm) in
+  let scan(insns, i) =
+    if i >= len(insns) then 0
+    else
+      let _ = mark(insn_callee(nth(insns, i))) in
+      scan(insns, i + 1) in
+  let _ = mark(intern("_start")) in
+  let _ = mark(intern("_eval")) in
+  let rec_wl(i) =
+    if i >= len(q) then 0
+    else
+      let f = fmap_get(tab, nth(q, i)) in
+      let _ = if f == 0 then 0 else scan(nth(f, 4), 0) in
+      rec_wl(i + 1) in
+  let _ = rec_wl(0) in
   let out = list_new() in
-  let rec(i) =
+  let rec_keep(i) =
     if i >= len(funs) then out
     else
       let f = nth(funs, i) in
-      let n = nth(f, 1) in
-      let keep =
-        if n == "cload" then want_cload
-        else if n == "csym" then want_csym
-        else true in
-      let _ = if keep then list_push(out, f) else 0 in
-      rec(i + 1) in
-  rec(0)
+      let _ =
+        if fmap_get(seen, intern(nth(f, 1))) != 0 then list_push(out, f)
+        else if is_kernel_name(nth(f, 1)) then list_push(out, f)
+        else 0 in
+      rec_keep(i + 1) in
+  rec_keep(0)
 
 let alloc_prog(prog) =
-  ["prog", drop_unused_ffi(nth(prog, 1)), nth(prog, 2)]
+  ["prog", drop_unreachable(nth(prog, 1)), nth(prog, 2)]
 
 let emit_by_target(ast, t) =
   let a = target_arch(t) in

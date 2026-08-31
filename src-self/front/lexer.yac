@@ -51,15 +51,25 @@ let skip_sp(s, i, line, n) =
 let skip_line_cm(s, i) =
   if at_end(s, i) or sat(s, i) == 10 then i else skip_line_cm(s, i + 1)
 
-/* skip nested slash-star comments; returns pos (0 on unterminated) */
-let skip_block_cm(s, i, line) =
+/* Nested slash-star comments. d is remaining opens (1 after the outer
+ * slash-star). slash-star-dot is a path glob, not another opener. */
+let skip_block_cm(s, i, line, d) =
   if at_end(s, i) then 0
+  else if sat(s, i) == 47 then
+    if at_end(s, i + 1) then 0
+    else if sat(s, i + 1) == 42 then
+      if at_end(s, i + 2) then 0
+      else if sat(s, i + 2) == 46 then skip_block_cm(s, i + 1, line, d)
+      else skip_block_cm(s, i + 2, line, d + 1)
+    else skip_block_cm(s, i + 1, line, d)
   else if sat(s, i) == 42 then
     if at_end(s, i + 1) then 0
-    else if sat(s, i + 1) == 47 then i + 2
-    else skip_block_cm(s, i + 1, line)
-  else if sat(s, i) == 10 then skip_block_cm(s, i + 1, line + 1)
-  else skip_block_cm(s, i + 1, line)
+    else if sat(s, i + 1) == 47 then
+      if d <= 1 then i + 2
+      else skip_block_cm(s, i + 2, line, d - 1)
+    else skip_block_cm(s, i + 1, line, d)
+  else if sat(s, i) == 10 then skip_block_cm(s, i + 1, line + 1, d)
+  else skip_block_cm(s, i + 1, line, d)
 
 /* skip double-star comments (slash-star-star ... star-star-slash); pos 0 if open */
 let skip_starstar_cm(s, i, line) =
@@ -217,7 +227,7 @@ let lex(s, i, line, acc, n) =
       else sat(s, i + 3) != 47 in
     let e =
       if starstar then skip_starstar_cm(s, i + 3, line)
-      else skip_block_cm(s, i + 2, line) in
+      else skip_block_cm(s, i + 2, line, 1) in
     if e == 0 then
       let _ = list_push(acc, mk_tok("eof", "unterminated-comment", line)) in acc
     else lex(s, e, line, acc, n)

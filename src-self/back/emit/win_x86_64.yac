@@ -126,7 +126,8 @@ let win_syscall(st, insn) =
   let args = nth(insn, 3) in
   let dst = nth(insn, 1) in
   if name == "mmap" then
-    let _ = mov_r64_imm(b, 1, 0) in
+    let _ = emit_load_rax_slot(b, nth(args, 0)) in
+    let _ = mov_rcx_rax(b) in
     let _ = emit_load_rax_slot(b, nth(args, 1)) in
     let _ = mov_rdx_rax(b) in
     let _ = mov_r64_imm(b, 8, 12288) in

@@ -55,18 +55,19 @@ let stdlib_src(name) =
       if b != 0 then b
       else file_or_0(str_cat(d, str_cat("/../", rel)))
 
-/* num.yac lets only. Do not call runtime_funs() here: that rebuilds every
- * kernel insn list (cons thunks) and was doubling the compiler heap so the
- * first guest compile hit yac_gc during lir. sigma nrt is unused. */
-let lir_funs_of_src(src) =
-  if src == 0 then []
+/* Compile one rt/*.yac against already-lowered procs so later stdlib
+ * files can call earlier ones. New stdlib: add stdlib_src("foo.yac")
+ * in rt_image (after files it uses). Do not call runtime_funs() inside
+ * a loop: that rebuilds every kernel insn list. */
+let lir_extend(src, acc) =
+  if src == 0 then acc
   else
     let ast = pass_parse(pass_lex(src)) in
-    if prog_has_err(ast, 0) then []
+    if prog_has_err(ast, 0) then acc
     else
       let anf = pass_anf(ast) in
       let st = lir_all(0, anf,
-        [env_new(0), 1, sigma_new(0), 0, list_new(), 0],
+        [env_new(0), 1, sigma_of_rt(acc), 0, list_new(), 0],
         len(anf)) in
       reverse(sigma_list(nth(st, 2)))
 
@@ -78,28 +79,33 @@ let rt_num_cache =
 let rt_image(_) =
   let c = box_get(rt_num_cache) in
   if c == 0 then
-    let v = append(runtime_funs(0),
-              append(lir_funs_of_src(stdlib_src("num.yac")),
-                     lir_funs_of_src(stdlib_src("ffi.yac")))) in
+    let v = lir_extend(stdlib_src("os.yac"),
+              lir_extend(stdlib_src("ffi.yac"),
+                lir_extend(stdlib_src("num.yac"),
+                  runtime_funs(0)))) in
     let _ = box_set(rt_num_cache, v) in
     v
   else c
 
+let rt_fun_names(funs) =
+  let rec(i, acc) =
+    if i >= len(funs) then acc
+    else rec(i + 1, cons(intern(nth(nth(funs, i), 1)), acc)) in
+  rec(0, [])
+
 let pass_lir(anf_list) =
   let rt0 = rt_image(0) in
   let st = lir_all(0, anf_list,
-             [env_new(0), 1, sigma_new(len(rt0)), 0, list_new(), 0],
+             [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
              len(anf_list)) in
-  let funs = sigma_list(nth(st, 2)) in
   let entry = start_proc(nth(st, 1), nth(st, 5), nth(st, 4)) in
-  tco_prog(["prog", cons(entry, append(rt0, reverse(funs))), "_start"])
+  tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
 
 let pass_lir_eval(anf_list, bind_name) =
   let rt0 = rt_image(0) in
   let st = lir_all(0, anf_list,
-             [env_new(0), 1, sigma_new(len(rt0)), 0, list_new(), 0],
+             [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
              len(anf_list)) in
-  let funs = sigma_list(nth(st, 2)) in
   let pslot =
     if bind_name == "" then nth(st, 5)
     else
@@ -108,7 +114,7 @@ let pass_lir_eval(anf_list, bind_name) =
   let entry = start_proc_eval(nth(st, 1), pslot, nth(st, 4), bind_name) in
   /* prog[2] is the Linux process entry (is_entry in emit). JIT jumps to
    * _eval by name; it must not be prog[2] or it would get _start's ABI. */
-  tco_prog(["prog", cons(entry, append(rt0, reverse(funs))), "_start"])
+  tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
 
 let fun_off(fo, name) =
   if fo == [] then 0
@@ -116,7 +122,7 @@ let fun_off(fo, name) =
   else fun_off(drop(fo, 1), name)
 
 let report_unbound(src, ast) =
-  let nm = ub_prog(ast, 0, []) in
+  let nm = ub_prog(ast, 0, rt_fun_names(rt_image(0))) in
   if nm == "" then 0
   else
     let toks = tokenize(src) in

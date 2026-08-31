@@ -1,0 +1,4 @@
+/* a /* b */ c */
+let x = 1
+/* glob rt/*.yac */
+let y = 2

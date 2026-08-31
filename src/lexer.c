@@ -123,8 +123,12 @@ LexResult lex_program(const char *src, Arena *a) {
                     lx.pos += 2; lx.col += 2;
                     int depth = 1;
                     while (src[lx.pos] && depth > 0) {
-                        if (src[lx.pos] == '/' && src[lx.pos + 1] == '*') { depth++; lx.pos += 2; lx.col += 2; }
-                        else if (src[lx.pos] == '*' && src[lx.pos + 1] == '/') { depth--; lx.pos += 2; lx.col += 2; }
+                        /* slash-star-dot is a path glob (rt then slash-star-dot yac), not a nest. */
+                        if (src[lx.pos] == '/' && src[lx.pos + 1] == '*' && src[lx.pos + 2] == '.') {
+                            lx.pos++; lx.col++;
+                        } else if (src[lx.pos] == '/' && src[lx.pos + 1] == '*') {
+                            depth++; lx.pos += 2; lx.col += 2;
+                        } else if (src[lx.pos] == '*' && src[lx.pos + 1] == '/') { depth--; lx.pos += 2; lx.col += 2; }
                         else if (src[lx.pos] == '\n') { lx.pos++; lx.line++; lx.col = 1; }
                         else { lx.pos++; lx.col++; }
                     }

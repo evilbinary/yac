@@ -43,7 +43,7 @@ let native(p) =
     if n < 4 then false
     else str_slice(p, n - 4, 4) == ".exe" in
   if already then p
-  else if nth(run(["test", "-f", "build/yc_tmp/yc_a.exe"]), 0) == 0 then str_cat(p, ".exe")
+  else if host_os(0) == "windows" then str_cat(p, ".exe")
   else p
 
 let strip_cr(s) =
@@ -123,8 +123,7 @@ let cat_files(xs, dest) =
     else rec(i + 1, str_cat(acc, read_file(nth(xs, i)))) in
   rec(0, "")
 
-let on_win(_) =
-  nth(run(["sh", "-c", "test \"${OS:-}\" = Windows_NT"]), 0) == 0
+let on_win(_) = host_os(0) == "windows"
 
 let compiler_one(st, yc, c) =
   let name = nth(c, 0) in
@@ -164,6 +163,7 @@ let compiler_cases(_) = [
   ["print_list", "out", "[1, [2, 3], x]\n[]"],
   ["print_nl", "out", "ab"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
+  ["nested_comment", "rc", "42"],
   ["ccall_putchar", "out", "A"],
   ["ccall_cload", "rc", "20"],
   ["ccall_many", "rc", "64"],
@@ -324,7 +324,7 @@ let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
 
 let qemu_cmd(arch) =
-  if nth(run(["sh", "-c", "test \"${OS:-}\" = Windows_NT"]), 0) == 0 then ""
+  if on_win(0) then ""
   else if arch == "arm64" then
     if has_cmd("qemu-aarch64") then "qemu-aarch64"
     else if has_cmd("qemu-aarch64-static") then "qemu-aarch64-static"

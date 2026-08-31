@@ -37,7 +37,15 @@
       "begin": "/\\*",
       "end": "\\*/",
       "patterns": [
-        { "include": "#block-comment" }
+        { "include": "#block-comment-nested" }
+      ]
+    },
+    "block-comment-nested": {
+      "name": "comment.block.yac",
+      "begin": "(?<=\\s)/\\*",
+      "end": "\\*/",
+      "patterns": [
+        { "include": "#block-comment-nested" }
       ]
     },
     "strings": {

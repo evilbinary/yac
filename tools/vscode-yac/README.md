@@ -6,7 +6,7 @@ VS Code / Cursor 扩展：为 `.yac` 提供语法高亮、括号配对与注释�
 
 - 关键字：`let` `in` `fun` `if` `then` `else` `callcc` `throw` `and` `or` `not` `print`
 - 字面量：整数 / 浮点 / `true` `false` / 字符串 / `()`
-- 注释：`--` 行注释、嵌套 `/* */` 块注释
+- 注释：`--` 行注释、`/* */` 块注释（空白后的 `/*` 可嵌套，因此 `rt/*.yac` 不会误开一层）、`/** **/`
 - 运算符：`+ - * / % == != < <= > >= = -> =>`
 - 内建：`cons` `map` `foldl` `str_len` `bytes_new` 等原语
 - 标识符：ASCII 与 UTF-8（含中文名）
