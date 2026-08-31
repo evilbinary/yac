@@ -17,7 +17,7 @@ YC_A = $(YC_BUILD)/yc_a$(EXEEXT)
 YC_B = $(YC_BUILD)/yc_b$(EXEEXT)
 YC_SRCS = src-self/lib/log.yac src-self/lib/pass.yac src-self/lib/map.yac \
 	src-self/front/lexer.yac src-self/front/parser.yac src-self/front/anf.yac src-self/front/cps.yac src-self/front/eval_cps.yac src-self/front/uncps.yac src-self/front/lir.yac \
-	src-self/rt/runtime.yac src-self/rt/os.yac \
+	src-self/rt/runtime.yac \
 	src-self/back/pack/target.yac src-self/back/pack/elf.yac src-self/back/pack/pe.yac src-self/back/pack/macho.yac src-self/back/pack/pack.yac \
 	src-self/back/encode/encode_x64.yac src-self/back/encode/encode_arm64.yac src-self/back/encode/encode_riscv64.yac \
 	src-self/back/emit/emit.yac \

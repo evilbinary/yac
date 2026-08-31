@@ -591,109 +591,230 @@ static int skip_idlist(Parser *p) {
     return 1;
 }
 
+#define YAC_IMPORT_MAX 16
+
+typedef struct {
+    char pkgs[YAC_IMPORT_MAX][64];
+    int n;
+} ImportCtx;
+
+static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, int *cap);
+
+static int parse_dotted_name(Parser *p, char *buf, size_t bufsz) {
+    if (!at(p, TK_IDENT)) {
+        p_err(p, "expected identifier");
+        return 0;
+    }
+    const Token *t = advance(p);
+    snprintf(buf, bufsz, "%s", t->text ? t->text : "");
+    while (at(p, TK_DOT)) {
+        advance(p);
+        if (!at(p, TK_IDENT)) {
+            p_err(p, "expected identifier after '.'");
+            return 0;
+        }
+        t = advance(p);
+        size_t n = strlen(buf);
+        if (n + 2 + (t->text ? strlen(t->text) : 0) >= bufsz) {
+            p_err(p, "package name too long");
+            return 0;
+        }
+        snprintf(buf + n, bufsz - n, ".%s", t->text ? t->text : "");
+    }
+    return 1;
+}
+
+/* import a.b.c → src-self/a/b/c.yac (idents only; '.' → '/'). */
+static int pkg_to_rel(const char *pkg, char *out, size_t n) {
+    const char *pfx = "src-self/";
+    size_t o = 0;
+    size_t plen = strlen(pfx);
+    if (!pkg || !pkg[0] || n < plen + 6) return 0;
+    memcpy(out, pfx, plen);
+    o = plen;
+    for (size_t i = 0; pkg[i]; i++) {
+        char c = pkg[i];
+        if (o + 5 >= n) return 0;
+        if (c == '.') out[o++] = '/';
+        else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                 (c >= '0' && c <= '9') || c == '_')
+            out[o++] = c;
+        else return 0;
+    }
+    memcpy(out + o, ".yac", 5);
+    return 1;
+}
+
+static char *read_whole_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+    long n = ftell(f);
+    if (n < 0) { fclose(f); return NULL; }
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
+    char *buf = (char *)malloc((size_t)n + 1);
+    if (!buf) { fclose(f); return NULL; }
+    size_t got = fread(buf, 1, (size_t)n, f);
+    fclose(f);
+    buf[got] = '\0';
+    return buf;
+}
+
+static int import_seen(const ImportCtx *c, const char *pkg) {
+    for (int i = 0; i < c->n; i++)
+        if (strcmp(c->pkgs[i], pkg) == 0) return 1;
+    return 0;
+}
+
+static int import_mark(ImportCtx *c, const char *pkg) {
+    if (c->n >= YAC_IMPORT_MAX) return 0;
+    snprintf(c->pkgs[c->n], sizeof(c->pkgs[0]), "%s", pkg);
+    c->n++;
+    return 1;
+}
+
+static int import_splice(Parser *errp, ImportCtx *ictx, const char *pkg,
+                         Item **items, int *nitems, int *cap) {
+    if (import_seen(ictx, pkg)) return 1;
+    char rel[256];
+    if (!pkg_to_rel(pkg, rel, sizeof(rel))) {
+        p_err(errp, "bad import '%s'", pkg);
+        return 0;
+    }
+    char *src = read_whole_file(rel);
+    if (!src) {
+        p_err(errp, "cannot read '%s' for import %s", rel, pkg);
+        return 0;
+    }
+    if (!import_mark(ictx, pkg)) {
+        free(src);
+        p_err(errp, "too many imports");
+        return 0;
+    }
+    LexResult lx = lex_program(src, errp->a);
+    if (lx.error) {
+        errp->error = lx.error;
+        free(src);
+        free(lx.toks);
+        return 0;
+    }
+    Parser ip = {lx.toks, lx.n, 0, errp->a, NULL};
+    int ok = parse_items(&ip, ictx, items, nitems, cap);
+    if (!ok && ip.error) errp->error = ip.error;
+    free(lx.toks);
+    free(src);
+    return ok;
+}
+
+static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, int *cap) {
+    while (!at(p, TK_EOF)) {
+        if (at(p, TK_KW_PACKAGE)) {
+            advance(p);
+            if (!skip_dotted(p)) return 0;
+            eat(p, TK_SEMI);
+            continue;
+        }
+        if (at(p, TK_KW_EXPORT)) {
+            advance(p);
+            if (!skip_idlist(p)) return 0;
+            eat(p, TK_SEMI);
+            continue;
+        }
+        if (at(p, TK_KW_IMPORT)) {
+            advance(p);
+            char pkg[128];
+            if (!parse_dotted_name(p, pkg, sizeof(pkg))) return 0;
+            if (at(p, TK_LBRACE)) {
+                advance(p);
+                if (!skip_idlist(p)) return 0;
+                if (!eat(p, TK_RBRACE)) {
+                    p_err(p, "expected '}' after import list");
+                    return 0;
+                }
+            } else if (at(p, TK_IDENT) && peek(p)->text &&
+                       strcmp(peek(p)->text, "as") == 0) {
+                advance(p);
+                if (!at(p, TK_IDENT)) {
+                    p_err(p, "expected identifier after 'as'");
+                    return 0;
+                }
+                advance(p);
+            }
+            eat(p, TK_SEMI);
+            if (!import_splice(p, ictx, pkg, items, nitems, cap)) return 0;
+            continue;
+        }
+        if (at(p, TK_KW_LET)) {
+            const Token *lt = advance(p);
+            if (!at(p, TK_IDENT)) {
+                p_err(p, "expected identifier after 'let'");
+                return 0;
+            }
+            const Token *nt = advance(p);
+            char **params;
+            int nparams;
+            if (!parse_param_list(p, &params, &nparams)) return 0;
+            if (!eat(p, TK_EQ)) {
+                p_err(p, "expected '='");
+                return 0;
+            }
+            Ast *bound = parse_expr(p);
+            if (!bound) return 0;
+
+            if (at(p, TK_KW_IN)) {
+                advance(p);
+                Ast *body = parse_expr(p);
+                if (!body) return 0;
+                Ast *b = bound;
+                if (nparams > 0) {
+                    char **parr = params_to_arena(p, params, nparams);
+                    b = mk_fun(p, parr, nparams, bound, lt->line, lt->col);
+                }
+                free(params);
+                Ast *le = mk_let(p, nt->text, b, body, lt->line, lt->col);
+                if (*nitems == *cap) {
+                    *cap = *cap ? *cap * 2 : 8;
+                    *items = (Item *)realloc(*items, (size_t)*cap * sizeof(Item));
+                }
+                (*items)[(*nitems)++] = (Item){false, NULL, NULL, 0, le};
+            } else {
+                if (*nitems == *cap) {
+                    *cap = *cap ? *cap * 2 : 8;
+                    *items = (Item *)realloc(*items, (size_t)*cap * sizeof(Item));
+                }
+                (*items)[(*nitems)++] = (Item){true, nt->text, params, nparams, bound};
+            }
+        } else {
+            Ast *e = parse_expr(p);
+            if (!e) return 0;
+            if (*nitems == *cap) {
+                *cap = *cap ? *cap * 2 : 8;
+                *items = (Item *)realloc(*items, (size_t)*cap * sizeof(Item));
+            }
+            (*items)[(*nitems)++] = (Item){false, NULL, NULL, 0, e};
+        }
+        eat(p, TK_SEMI);
+    }
+    return 1;
+}
+
 ParseResult parse_program(const Token *toks, int n, Arena *a) {
     ParseResult res = {0};
     Parser p = {toks, n, 0, a, NULL};
+    ImportCtx ictx;
+    memset(&ictx, 0, sizeof(ictx));
 
     Item *items = NULL;
     int nitems = 0, cap = 0;
     int discard_cnt = 0;
 
-    while (!at(&p, TK_EOF)) {
-        if (at(&p, TK_KW_PACKAGE)) {
-            advance(&p);
-            if (!skip_dotted(&p)) goto err;
-            eat(&p, TK_SEMI);
-            continue;
-        }
-        if (at(&p, TK_KW_EXPORT)) {
-            advance(&p);
-            if (!skip_idlist(&p)) goto err;
-            eat(&p, TK_SEMI);
-            continue;
-        }
-        if (at(&p, TK_KW_IMPORT)) {
-            advance(&p);
-            if (!skip_dotted(&p)) goto err;
-            if (at(&p, TK_LBRACE)) {
-                advance(&p);
-                if (!skip_idlist(&p)) goto err;
-                if (!eat(&p, TK_RBRACE)) {
-                    p_err(&p, "expected '}' after import list");
-                    goto err;
-                }
-            } else if (at(&p, TK_IDENT) && peek(&p)->text &&
-                       strcmp(peek(&p)->text, "as") == 0) {
-                advance(&p);
-                if (!at(&p, TK_IDENT)) {
-                    p_err(&p, "expected identifier after 'as'");
-                    goto err;
-                }
-                advance(&p);
-            }
-            eat(&p, TK_SEMI);
-            continue;
-        }
-        if (at(&p, TK_KW_LET)) {
-            const Token *lt = advance(&p);
-            if (!at(&p, TK_IDENT)) {
-                p_err(&p, "expected identifier after 'let'");
-                goto err;
-            }
-            const Token *nt = advance(&p);
-            char **params;
-            int nparams;
-            if (!parse_param_list(&p, &params, &nparams)) goto err;
-            if (!eat(&p, TK_EQ)) {
-                p_err(&p, "expected '='");
-                goto err;
-            }
-            Ast *bound = parse_expr(&p);
-            if (!bound) goto err;
-
-            if (at(&p, TK_KW_IN)) {
-                /* this is actually a let-expression */
-                advance(&p);
-                Ast *body = parse_expr(&p);
-                if (!body) goto err;
-                Ast *b = bound;
-                if (nparams > 0) {
-                    char **parr = params_to_arena(&p, params, nparams);
-                    b = mk_fun(&p, parr, nparams, bound, lt->line, lt->col);
-                }
-                free(params);
-                Ast *le = mk_let(&p, nt->text, b, body, lt->line, lt->col);
-                if (nitems == cap) {
-                    cap = cap ? cap * 2 : 8;
-                    items = (Item *)realloc(items, (size_t)cap * sizeof(Item));
-                }
-                items[nitems++] = (Item){false, NULL, NULL, 0, le};
-            } else {
-                /* top-level binding */
-                if (nitems == cap) {
-                    cap = cap ? cap * 2 : 8;
-                    items = (Item *)realloc(items, (size_t)cap * sizeof(Item));
-                }
-                items[nitems++] = (Item){true, nt->text, params, nparams, bound};
-            }
-        } else {
-            Ast *e = parse_expr(&p);
-            if (!e) goto err;
-            if (nitems == cap) {
-                cap = cap ? cap * 2 : 8;
-                items = (Item *)realloc(items, (size_t)cap * sizeof(Item));
-            }
-            items[nitems++] = (Item){false, NULL, NULL, 0, e};
-        }
-        eat(&p, TK_SEMI);
-    }
+    if (!parse_items(&p, &ictx, &items, &nitems, &cap)) goto err;
 
     if (nitems == 0) {
         p_err(&p, "empty program");
         goto err;
     }
 
-    /* fold items from the last one backwards into a single AST */
     Ast *prog = NULL;
     for (int i = nitems - 1; i >= 0; i--) {
         Item *it = &items[i];
@@ -707,7 +828,7 @@ ParseResult parse_program(const Token *toks, int n, Arena *a) {
             Ast *le = mk_let(&p, it->name, b, body, 0, 0);
             prog = le;
         } else if (prog == NULL) {
-            prog = it->expr; /* last expression is the program result */
+            prog = it->expr;
         } else {
             char dname[64];
             snprintf(dname, sizeof(dname), "#discard%d", discard_cnt++);

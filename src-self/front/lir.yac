@@ -373,25 +373,9 @@ let ub_expr(e, sc) =
   else if k == "list" then xs(nth(e, 1), 0)
   else ""
 
-/* Keep in sync with export lists in rt/os.yac, ffi.yac, num.yac. */
-let pkg_exports(pkg) =
-  if pkg == "rt.os" then
-    [intern("uname"), intern("host_os"), intern("host_arch"), intern("host_format")]
-  else if pkg == "rt.ffi" then [intern("cload"), intern("csym")]
-  else if pkg == "rt.num" then [intern("yac_num_slow")]
-  else []
-
-let import_sel(sel, all, i, acc) =
-  if i >= len(sel) then acc
-  else
-    let n = nth(sel, i) in
-    if in_list(n, all) then import_sel(sel, all, i + 1, cons(n, acc))
-    else import_sel(sel, all, i + 1, acc)
-
 let import_names(e) =
-  let all = pkg_exports(nth(e, 1)) in
-  if len(e) < 3 then all
-  else import_sel(nth(e, 2), all, 0, [])
+  if len(e) < 3 then []
+  else nth(e, 2)
 
 let ub_prog(p, i, sc) =
   if i >= len(p) then ""

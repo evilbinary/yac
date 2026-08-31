@@ -113,7 +113,7 @@ let anf = ["tailcall", ["var","fact"], [["int",5]]]
 src-self/
   lib/           log / pass / map
   front/         lexer → parser → anf → lir
-  rt/            runtime.yac + os.yac（进 bundle，供 C 引导求值 host_os）；ffi/num.yac（客 stdlib，不 cat）
+  rt/            runtime.yac（进 bundle，内核）；os/ffi/num.yac（客 stdlib，C import 展开 / 原生 rt_image_link）
   back/
     pack/        target + elf / pe / macho
     encode/      单条目标指令 → 字节
@@ -130,12 +130,11 @@ src-self/
 
 ### 5.3 编译单元（无语法；不是 `package`）
 
-**单元**只存在于编译器/构建：链接、版本、重建边界（CRP + CCP）。没有 `unit` 关键字。客镜像由 `rt_image_link` 按 import 组装；编译器 `cat $(YC_SRCS)` 仍含 `os.yac`，因为 L4 用 C 解释器跑编译器源，必须能求值 `host_os`（C 会跳过 `import`）。
+**单元**只存在于编译器/构建：链接、版本、重建边界（CRP + CCP）。没有 `unit` 关键字。客镜像按 import 组装：`import a.b.c` → 文件 `src-self/a/b/c.yac`（与 C 解释器相同约定）。编译器 `cat $(YC_SRCS)` 不含 `os.yac`/`ffi.yac`。C 在 parse 时按该路径读入并拼进 AST（同一包只加载一次）。导出名单读源里的 `export`，不写死。
 
 约束：
 
-- 客默认链接：`kernel`（`runtime_funs`）+ `rt.num`（`yac_num_slow` 给内核浮点）。
-- `import rt.os` → 再链 `os.yac`；`import rt.ffi` → 再链 `ffi.yac`。二者不进同一默认单元（CRP）。
+- 客默认链接：`kernel`（`runtime_funs`）+ `rt.num`。其它包有 `import` 才链对应 `.yac`。`rt.os` 与 `rt.ffi` 不进默认集（CRP）。
 - `os_has` 留在语言包 `rt.os` 且不导出（CCP + 隐藏）。
 - 编译器 `cat` 仍是一个单元；把 pe 与 lexer 拆开是后续工作。
 

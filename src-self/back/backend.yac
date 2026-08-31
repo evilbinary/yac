@@ -42,8 +42,7 @@ let file_or_0(p) =
   let r = read_file(p) in
   if r == 0 then 0 else r
 
-let stdlib_src(name) =
-  let rel = str_cat("src-self/rt/", name) in
+let src_rel_file(rel) =
   let a = file_or_0(rel) in
   if a != 0 then a
   else
@@ -55,9 +54,21 @@ let stdlib_src(name) =
       if b != 0 then b
       else file_or_0(str_cat(d, str_cat("/../", rel)))
 
+let pkg_rel(pkg) =
+  let n = str_len(pkg) in
+  let rec(i, acc) =
+    if i >= n then acc
+    else
+      let c = str_ref(pkg, i) in
+      if c == 46 then rec(i + 1, str_cat(acc, "/"))
+      else rec(i + 1, str_cat(acc, str_chr(c))) in
+  str_cat("src-self/", str_cat(rec(0, ""), ".yac"))
+
+let pkg_src(pkg) = src_rel_file(pkg_rel(pkg))
+
 /* Compile one rt/*.yac against already-lowered procs so later stdlib
- * files can call earlier ones. Unit table (no keyword): rt.num always;
- * rt.os / rt.ffi only if the guest imported them. Do not call
+ * files can call earlier ones. Guest always gets rt.num; other packages
+ * are src-self/<dots-to-slashes>.yac from import. Do not call
  * runtime_funs() inside a loop. */
 let lir_extend(src, acc) =
   if src == 0 then acc
@@ -71,38 +82,59 @@ let lir_extend(src, acc) =
         len(anf)) in
       reverse(sigma_list(nth(st, 2)))
 
-let ast_has_import(ast, pkg, i) =
-  if i >= len(ast) then false
+let ast_imports(ast, i, acc) =
+  if i >= len(ast) then acc
   else
     let e = nth(ast, i) in
     if nth(e, 0) == "import" then
-      if nth(e, 1) == pkg then true
-      else ast_has_import(ast, pkg, i + 1)
-    else ast_has_import(ast, pkg, i + 1)
+      let p = nth(e, 1) in
+      if in_list(p, acc) then ast_imports(ast, i + 1, acc)
+      else ast_imports(ast, i + 1, cons(p, acc))
+    else ast_imports(ast, i + 1, acc)
+
+let intern_names(xs, i, acc) =
+  if i >= len(xs) then acc
+  else intern_names(xs, i + 1, cons(intern(nth(xs, i)), acc))
+
+let ast_export_list(ast, i) =
+  if i >= len(ast) then []
+  else if nth(nth(ast, i), 0) == "export" then intern_names(nth(nth(ast, i), 1), 0, [])
+  else ast_export_list(ast, i + 1)
+
+let pkg_export_names(pkg) =
+  let src = pkg_src(pkg) in
+  if src == 0 then []
+  else ast_export_list(pass_parse(pass_lex(src)), 0)
+
+let import_sel(sel, all, i, acc) =
+  if i >= len(sel) then acc
+  else
+    let n = nth(sel, i) in
+    if in_list(n, all) then import_sel(sel, all, i + 1, cons(n, acc))
+    else import_sel(sel, all, i + 1, acc)
+
+let fill_import(e) =
+  let all = pkg_export_names(nth(e, 1)) in
+  if len(e) < 3 then ["import", nth(e, 1), all]
+  else ["import", nth(e, 1), import_sel(nth(e, 2), all, 0, [])]
+
+let rewrite_imports(ast, i, acc) =
+  if i >= len(ast) then reverse(acc)
+  else
+    let e = nth(ast, i) in
+    let e2 = if nth(e, 0) == "import" then fill_import(e) else e in
+    rewrite_imports(ast, i + 1, cons(e2, acc))
 
 let link_need_box =
   let b = box_new() in
-  let _ = box_set(b, [false, false]) in
+  let _ = box_set(b, []) in
   b
 
 let link_from_ast(ast) =
-  let _ = box_set(link_need_box,
-    [ast_has_import(ast, "rt.os", 0), ast_has_import(ast, "rt.ffi", 0)]) in
+  let _ = box_set(link_need_box, ast_imports(ast, 0, [])) in
   0
 
 let rt_cache_num =
-  let b = box_new() in
-  let _ = box_set(b, 0) in
-  b
-let rt_cache_os =
-  let b = box_new() in
-  let _ = box_set(b, 0) in
-  b
-let rt_cache_ffi =
-  let b = box_new() in
-  let _ = box_set(b, 0) in
-  b
-let rt_cache_os_ffi =
   let b = box_new() in
   let _ = box_set(b, 0) in
   b
@@ -110,40 +142,20 @@ let rt_cache_os_ffi =
 let rt_base(_) =
   let c = box_get(rt_cache_num) in
   if c == 0 then
-    let v = lir_extend(stdlib_src("num.yac"), runtime_funs(0)) in
+    let v = lir_extend(pkg_src("rt.num"), runtime_funs(0)) in
     let _ = box_set(rt_cache_num, v) in
     v
   else c
 
-let rt_image_link(want_os, want_ffi) =
-  if want_os then
-    if want_ffi then
-      let c = box_get(rt_cache_os_ffi) in
-      if c == 0 then
-        let v = lir_extend(stdlib_src("os.yac"),
-                  lir_extend(stdlib_src("ffi.yac"), rt_base(0))) in
-        let _ = box_set(rt_cache_os_ffi, v) in
-        v
-      else c
-    else
-      let c = box_get(rt_cache_os) in
-      if c == 0 then
-        let v = lir_extend(stdlib_src("os.yac"), rt_base(0)) in
-        let _ = box_set(rt_cache_os, v) in
-        v
-      else c
-  else if want_ffi then
-    let c = box_get(rt_cache_ffi) in
-    if c == 0 then
-      let v = lir_extend(stdlib_src("ffi.yac"), rt_base(0)) in
-      let _ = box_set(rt_cache_ffi, v) in
-      v
-    else c
-  else rt_base(0)
-
 let rt_for_link(_) =
-  let w = box_get(link_need_box) in
-  rt_image_link(nth(w, 0), nth(w, 1))
+  let pkgs = box_get(link_need_box) in
+  let rec(i, acc) =
+    if i >= len(pkgs) then acc
+    else
+      let p = nth(pkgs, i) in
+      if p == "rt.num" then rec(i + 1, acc)
+      else rec(i + 1, lir_extend(pkg_src(p), acc)) in
+  rec(0, rt_base(0))
 
 let rt_fun_names(funs) =
   let rec(i, acc) =
@@ -193,7 +205,7 @@ let kernel_fun_names(_) =
   else c
 
 let report_unbound(src, ast) =
-  let nm = ub_prog(ast, 0, kernel_fun_names(0)) in
+  let nm = ub_prog(rewrite_imports(ast, 0, []), 0, kernel_fun_names(0)) in
   if nm == "" then 0
   else
     let toks = tokenize(src) in
