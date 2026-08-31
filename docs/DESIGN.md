@@ -345,7 +345,8 @@ encoded   ::= x86-64 | arm64 | riscv64 字节
 
 ```
 program   ::= top*
-top       ::= let name = expr          -- 全局绑定（可为递归）
+top       ::= package | import | export
+            |  let name = expr          -- 全局绑定（可为递归）
             |  expr                    -- 表达式，最后一个表达式的值即程序结果
 
 expr      ::= integer | float | true | false | string | ()
@@ -372,9 +373,34 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 - `callcc f`：`f` 是一元函数，收到一个**当前续延**（一个一等值）；调用 `throw k v` 即以 `v` 作为整个 `callcc` 表达式的结果跳回。
 - 顶层最后一个表达式的结果就是程序退出值（ANF 的 `halt`、CPS 的 `halt`）。
 
+### 3.3 包（语言层：`package` / `import` / `export`）
+
+包是**命名空间与信息隐藏**，不是链接或版本边界。物理切分（CRP/CCP、是否进镜像）见 `docs/SELFHOST.md` 的「编译单元」；语言里没有 `unit` 关键字。不要把 `import` 和 PE/ELF 的 `cimport` 混为一谈。
+
+规则：
+
+- 一个目录对应一个包名；一个包一个作用域（包内可前向引用同包绑定）。
+- 未 `export` 的名字只在包内可见。LIR 符号日后为 `rt.os/os_has` 这种键；当前阶段客程序仍用裸名调用已链接的 stdlib 过程，隐藏只在绑定检查里执行。
+- `import` 只引入该包的导出集。没有默认 `import *`。
+- 原语名（`cons`、`ccall`、`str_cat` 等）走 `is_prim_name`，不是包。
+- 没有 `package` 的文件属于匿名主包（与改前行为相同）。
+
+语法（`program` 的顶层还可出现下列形式；`as` 不是关键字）：
+
+```
+package   ::= package ident ("." ident)*
+import    ::= import ident ("." ident)*
+            | import ident ("." ident)* "{" ident ("," ident)* "}"
+            | import ident ("." ident)* as ident
+export    ::= export ident ("," ident)*
+```
+
+`import P as a` 现阶段与 `import P` 相同（尚无 `a.x` 限定名）。`import P { x, y }` 只引入列出且确为导出的名字。
+
+客程序默认链接内核（`runtime_funs`）与 `rt.num`；`import rt.os` / `import rt.ffi` 才把对应导出放进作用域。`os_has` 留在包 `rt.os` 且不导出。
 
 
-### 3.3 示例
+### 3.4 示例
 
 ```
 -- 阶乘：普通程序，ANF/CPS 都能跑

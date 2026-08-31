@@ -26,6 +26,12 @@ docs/
   DESIGN.md       语言与 IR 的完整设计
 ```
 
+## 包与编译单元
+
+- **语言**：`package` / `import` / `export`（命名空间与隐藏）。见 `docs/DESIGN.md` §3.3。
+- **构建**：单元无关键字；`rt_image` 与 `cat $(YC_SRCS)` 是当前链接/重建边界。见 `docs/SELFHOST.md` §5.3。
+- PE/ELF 的 `cimport` 是宿主动态库导入，不是语言 `import`。
+
 ## 管线
 
 ```
