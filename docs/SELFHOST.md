@@ -246,7 +246,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 
 **已落地文件**：`src-self/{lib,front,rt,back,lang}/`，CLI `yc.yac`，驱动 `drivers/`。
-全量：`make test`（原生 `yc_a` 编译 `tests/run.yac` 再执行）。只跑 `pkg/` 库：`make test-pkg`（同一 harness，argv `pkg`）。C 仅作为子进程跑 interp_suite（cps/callcc/float/bignum）。`yc_a` 复用 Makefile L4 产物（拷贝，不再在 harness 里用 C 编一遍）。compiler/qemu/boot/`yc_b`/iso 走原生。
+全量：`make test`（原生 `yc_a` 编译 `tests/run.yac` 再执行）。分套件：`make test-interp` / `test-compiler` / `test-pkg` / `test-boot` / `test-qemu`（或 `test-qemu-arm64` / `test-qemu-riscv64`）/ `test-iso`（`yc_b` + iso）。同一 harness，argv 为套件名。C 仅作为子进程跑 interp_suite。`yc_a` 复用 Makefile L4 产物。
 **CLI（原生 yc）**：默认仍 `yc file.yac` 写出可执行文件（引导测试依赖）。`--cps`/`--both`/`--uncps`/`--scheme`（无 `-o`）以及 `--repl` 在同一进程里编译到 `0x200000000`、mmap RWX 后 `call` `_eval`。`--eval-cps` 用 yac 蹦床求值 CPS（callcc 走续延，不 JIT）。`--ast`/`--dump-anf` 打印列表。`--dump-cps` 打印 CPS；`--opt` 做 eta 与整型常量折叠。scheme 子集在 `scheme.yac`。
 
 **LIR 运行时（M6 的 yac 化，已尽量推进）**

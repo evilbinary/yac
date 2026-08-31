@@ -325,8 +325,10 @@ int main(int argc, char **argv) {
         if (fwd) {
             fwd[nfwd++] = argv[0];
             for (i = 1; i < argc; i++) {
-                if (strcmp(argv[i], "--prof-out") == 0 ||
-                    strcmp(argv[i], "--pkg") == 0) {
+                /* --pkg must reach the guest: L4 is ./yac --pkg DIR bundle
+                 * bundle -o yc_a, so the interpreted compiler can pkg_set
+                 * and resolve import rt.os (host_os). --prof-out is C-only. */
+                if (strcmp(argv[i], "--prof-out") == 0) {
                     if (i + 1 < argc) i++;
                     continue;
                 }

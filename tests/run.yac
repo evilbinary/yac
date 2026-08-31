@@ -3,8 +3,9 @@ import rt.os
 /* tests/run.yac — yac tests yac (L6: compiled and run by native yc).
  * Layout: tests/interp, tests/compiler/cases, tests/pkg (pkg/ libs), tests/boot
  *
- *   make test              → yc_a --pkg src-self compiles this file, then the binary runs it
- *   make test-pkg          → same binary with argv "pkg": only tests/pkg
+ *   make test                 → compile this file, run every suite
+ *   make test-SUITE           → same binary, argv SUITE (one suite)
+ *     interp | compiler | pkg | boot | qemu | qemu-arm64 | qemu-riscv64 | iso
  *   ./yac --pkg src-self tests/run.yac  (C interp of this harness)
  *
  * C interpreter is only a subprocess for interp_suite (cps/callcc/float/bignum).
@@ -534,9 +535,25 @@ let suite_done(st) =
                    str_cat(int_to_str(nth(st, 1)), " failed")))) in
   if nth(st, 1) == 0 then 0 else exit(1)
 
-let pkg_only(_) =
-  if argc() < 2 then false
-  else argv(1) == "pkg"
+let suite_name(_) =
+  if argc() < 2 then "all" else argv(1)
+
+let boot_front(st, ya) =
+  let boot_bin = native(str_cat(TMP, "/boot_run")) in
+  let _ = run(["rm", "-f", boot_bin]) in
+  let _ = run(append(yc_pkg(ya), ["tests/boot/run.yac", "-o", boot_bin])) in
+  let _ = run(["chmod", "+x", boot_bin]) in
+  let _ = banner("boot", ya) in
+  let br = run([boot_bin]) in
+  let _ = print(chomp(nth(br, 1))) in
+  check(st, "boot frontend", "0", int_to_str(nth(br, 0)))
+
+let qemu_both(st, yc) =
+  qemu_arch(qemu_arch(st, yc, "arm64"), yc, "riscv64")
+
+let suite_usage(_) =
+  let _ = print("usage: run_tests [interp|compiler|pkg|boot|qemu|qemu-arm64|qemu-riscv64|iso]") in
+  exit(2)
 
 let main =
   let _ = system(str_cat("mkdir -p ", TMP)) in
@@ -544,20 +561,23 @@ let main =
   let _ = run(["rm", "-f", ya, str_cat(ya, ".bin")]) in
   let _ = run(["cp", "-f", native("build/yc_tmp/yc_a"), ya]) in
   let _ = run(["chmod", "+x", ya]) in
-  if pkg_only(0) then suite_done(pkg_all([0, 0], yc_pkg(ya)))
+  let yc = yc_pkg(ya) in
+  let s = suite_name(0) in
+  if s == "pkg" then suite_done(pkg_all([0, 0], yc))
+  else if s == "interp" then suite_done(interp_suite([0, 0]))
+  else if s == "compiler" then suite_done(compiler_all([0, 0], yc))
+  else if s == "boot" then suite_done(boot_front([0, 0], ya))
+  else if s == "qemu" then suite_done(qemu_both([0, 0], yc))
+  else if s == "qemu-arm64" then suite_done(qemu_arch([0, 0], yc, "arm64"))
+  else if s == "qemu-riscv64" then suite_done(qemu_arch([0, 0], yc, "riscv64"))
+  else if s == "iso" then
+    let _ = cat_bundle(0) in
+    suite_done(boot_suite([0, 0], ya))
+  else if s != "all" then suite_usage(0)
   else
     let _ = cat_bundle(0) in
-    let boot_bin = native(str_cat(TMP, "/boot_run")) in
-    let _ = run(["rm", "-f", boot_bin]) in
-    let _ = run(append(yc_pkg(ya), ["tests/boot/run.yac", "-o", boot_bin])) in
-    let _ = run(["chmod", "+x", boot_bin]) in
     let st0 = interp_suite([0, 0]) in
-    let _ = banner("boot", ya) in
-    let br = run([boot_bin]) in
-    let _ = print(chomp(nth(br, 1))) in
-    let st1 = check(st0, "boot frontend", "0", int_to_str(nth(br, 0))) in
-    let st2 = pkg_all(compiler_all(st1, yc_pkg(ya)), yc_pkg(ya)) in
-    let stQ = qemu_arch(st2, yc_pkg(ya), "arm64") in
-    let stR = qemu_arch(stQ, yc_pkg(ya), "riscv64") in
-    suite_done(boot_suite(stR, ya))
+    let st1 = boot_front(st0, ya) in
+    let st2 = pkg_all(compiler_all(st1, yc), yc) in
+    suite_done(boot_suite(qemu_both(st2, yc), ya))
 in main

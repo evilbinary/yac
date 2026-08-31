@@ -1145,8 +1145,8 @@ let rt_read_file_ins(_) =
    ["$addi", 2, 2, 32],
    ["mov_imm", 5, 0],
    ["$syscall", 3, "open", [2, 5]],
-   ["mov_imm", 6, 0 - 1],
-   ["$jcc", "==", 3, 6, "rf_fail", "rf_ok"],
+   /* fd < 0. Not == (0-1): that imm is tagged (-2) in native yc. */
+   ["$jcc", "<", 3, 5, "rf_fail", "rf_ok"],
    ["label", "rf_fail"],
    ["mov_imm", 8, 0],
    ["ret", 8],

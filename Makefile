@@ -74,29 +74,43 @@ yc-iso: bootstrap
 
 # L6: native yc_a compiles and runs the harness. C yac is only a subprocess
 # for interp_suite. L4 yc_a is reused (copied); harness does not re-run C L4.
-test: $(YC_A)
-	mkdir -p build/test_tmp
-	cp -f $(YC_A) build/test_tmp/yc_a$(EXEEXT)
-	chmod +x build/test_tmp/yc_a$(EXEEXT)
-	$(YC_A) --pkg src-self tests/run.yac -o build/test_tmp/run_tests$(EXEEXT)
-	chmod +x build/test_tmp/run_tests$(EXEEXT)
-	./build/test_tmp/run_tests$(EXEEXT)
+# Split: make test-interp|compiler|pkg|boot|qemu|qemu-arm64|qemu-riscv64|iso
+TEST_TMP = build/test_tmp
+TEST_HARNESS = $(TEST_TMP)/run_tests$(EXEEXT)
 
-test-boot: $(YC_A)
-	mkdir -p build/test_tmp
-	cp -f $(YC_A) build/test_tmp/yc_a$(EXEEXT)
-	$(YC_A) --pkg src-self tests/boot/run.yac -o build/test_tmp/boot_run$(EXEEXT)
-	chmod +x build/test_tmp/boot_run$(EXEEXT)
-	./build/test_tmp/boot_run$(EXEEXT)
+$(TEST_HARNESS): $(YC_A) tests/run.yac
+	mkdir -p $(TEST_TMP)
+	cp -f $(YC_A) $(TEST_TMP)/yc_a$(EXEEXT)
+	chmod +x $(TEST_TMP)/yc_a$(EXEEXT)
+	$(YC_A) --pkg src-self tests/run.yac -o $@
+	chmod +x $@
 
-# Only tests/pkg (pkg/*.yac). Same harness as make test, argv pkg.
-test-pkg: $(YC_A)
-	mkdir -p build/test_tmp
-	cp -f $(YC_A) build/test_tmp/yc_a$(EXEEXT)
-	chmod +x build/test_tmp/yc_a$(EXEEXT)
-	$(YC_A) --pkg src-self tests/run.yac -o build/test_tmp/run_pkg$(EXEEXT)
-	chmod +x build/test_tmp/run_pkg$(EXEEXT)
-	./build/test_tmp/run_pkg$(EXEEXT) pkg
+test: $(TEST_HARNESS)
+	./$(TEST_HARNESS)
+
+test-interp: $(TEST_HARNESS)
+	./$(TEST_HARNESS) interp
+
+test-compiler: $(TEST_HARNESS)
+	./$(TEST_HARNESS) compiler
+
+test-pkg: $(TEST_HARNESS)
+	./$(TEST_HARNESS) pkg
+
+test-boot: $(TEST_HARNESS)
+	./$(TEST_HARNESS) boot
+
+test-qemu: $(TEST_HARNESS)
+	./$(TEST_HARNESS) qemu
+
+test-qemu-arm64: $(TEST_HARNESS)
+	./$(TEST_HARNESS) qemu-arm64
+
+test-qemu-riscv64: $(TEST_HARNESS)
+	./$(TEST_HARNESS) qemu-riscv64
+
+test-iso: $(TEST_HARNESS)
+	./$(TEST_HARNESS) iso
 
 prop: $(BIN)
 	./$(BIN) --pkg src-self tests/prop.yac
@@ -109,4 +123,5 @@ clean:
 	rm -rf $(BUILD)
 	rm -f src/*.o
 
-.PHONY: all clean test test-boot test-pkg prop yc bootstrap yc-iso
+.PHONY: all clean test test-interp test-compiler test-pkg test-boot \
+	test-qemu test-qemu-arm64 test-qemu-riscv64 test-iso prop yc bootstrap yc-iso
