@@ -1250,3 +1250,48 @@ let lea_rcx_rbx_disp8(b, d) =
   let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 75) in e8(b, band(d, 255))
 let lea_rdx_rbx_disp32(b, d) =
   let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 147) in e32(b, d)
+let cmp_rbx_imm32(b, v) =
+  let _ = e8(b, 72) in let _ = e8(b, 129) in let _ = e8(b, 251) in e32(b, v)
+let sub_rbx_imm32(b, v) =
+  let _ = e8(b, 72) in let _ = e8(b, 129) in let _ = e8(b, 235) in e32(b, v)
+let sub_rsp_rbx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 41) in e8(b, 220)
+let lea_rdi_rsp_disp8(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 124) in let _ = e8(b, 36) in
+  e8(b, band(d, 255))
+let lea_rdi_rsp_disp32(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 188) in let _ = e8(b, 36) in e32(b, d)
+let lea_rcx_rsp_disp32(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 140) in let _ = e8(b, 36) in e32(b, d)
+let lea_rdx_rsp_disp32(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 148) in let _ = e8(b, 36) in e32(b, d)
+let mov_mem_rsp_disp8_imm32(b, d, v) =
+  let _ = e8(b, 199) in let _ = e8(b, 68) in let _ = e8(b, 36) in let _ = e8(b, band(d, 255)) in
+  e32(b, v)
+let mov_mem_rsp_disp32_rax(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in let _ = e8(b, 132) in let _ = e8(b, 36) in e32(b, d)
+let mov_rax_mem_rsp_disp32(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 132) in let _ = e8(b, 36) in e32(b, d)
+let mov_rcx_mem_rsp_disp32(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 140) in let _ = e8(b, 36) in e32(b, d)
+let inc_rcx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 255) in e8(b, 193)
+let inc_rsi(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 255) in e8(b, 198)
+let movzx_eax_mem_rbx_rcx(b) =
+  let _ = e8(b, 15) in let _ = e8(b, 182) in let _ = e8(b, 4) in e8(b, 11)
+let mov_mem_rdi_al(b) =
+  let _ = e8(b, 136) in e8(b, 7)
+let mov_mem_rdi_imm8(b, v) =
+  let _ = e8(b, 198) in let _ = e8(b, 7) in e8(b, band(v, 255))
+let test_eax_eax(b) =
+  let _ = e8(b, 133) in e8(b, 192)
+let mov_eax_mem_rsp_disp32(b, d) =
+  let _ = e8(b, 139) in let _ = e8(b, 132) in let _ = e8(b, 36) in e32(b, d)
+let lea_rax_rsp_disp8(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 68) in let _ = e8(b, 36) in
+  e8(b, band(d, 255))
+let lea_rax_rsp_disp32(b, d) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 132) in let _ = e8(b, 36) in e32(b, d)
+let movzx_eax_mem_rsi(b) =
+  let _ = e8(b, 15) in let _ = e8(b, 182) in e8(b, 6)

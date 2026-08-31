@@ -202,9 +202,10 @@ let emit_patch_strlit(ps, pos, off) = cons([11, pos, off], ps)
 /* tag 12: abs64 = codebase + file_off (stack-map retaddrs / table ptr). */
 let emit_patch_codeva(ps, pos, off) = cons([12, pos, off], ps)
 
-/* tag 16/17: rel32 to PE uname / dlsym stubs. */
+/* tag 16/17/18: rel32 to PE uname / dlsym / system stubs. */
 let emit_patch_pe_uname(ps, pos) = cons([16, pos], ps)
 let emit_patch_pe_dlsym(ps, pos) = cons([17, pos], ps)
+let emit_patch_pe_system(ps, pos) = cons([18, pos], ps)
 
 let emit_fmt_box =
   let b = box_new() in
@@ -226,6 +227,11 @@ let pe_uname_off_box =
   b
 
 let pe_dlsym_off_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let pe_system_off_box =
   let b = box_new() in
   let _ = box_set(b, 0) in
   b
@@ -551,6 +557,8 @@ let emit_resolve_patch(st, p) =
     apply_patch(b, nth(p, 1), box_get(pe_uname_off_box))
   else if tag == 17 then
     apply_patch(b, nth(p, 1), box_get(pe_dlsym_off_box))
+  else if tag == 18 then
+    apply_patch(b, nth(p, 1), box_get(pe_system_off_box))
   else
     0
 

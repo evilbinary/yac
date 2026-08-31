@@ -19,6 +19,25 @@ let emit_x86_c_marshal(b, args) =
   if emit_host_win(0) then win_cc_marshal(b, args)
   else linux_cc_marshal(b, args)
 
+/* Windows does not commit stack pages skipped by a single sub rsp. */
+let emit_chkstk(b, nbytes) =
+  if nbytes <= 4096 then sub_rsp_imm32(b, nbytes)
+  else
+    let _ = mov_r64_imm(b, 3, nbytes) in
+    let loop = bytes_len(b) in
+    let _ = cmp_rbx_imm32(b, 4096) in
+    let jle = bytes_len(b) in
+    let _ = jcc_rel32(b, 14, 0) in
+    let _ = sub_rsp_imm32(b, 4096) in
+    let _ = mov_rax_mem_rsp(b) in
+    let _ = sub_rbx_imm32(b, 4096) in
+    let _ = jmp_rel32(b, 0) in
+    let jback = bytes_len(b) - 4 in
+    let _ = apply_patch(b, jback, loop) in
+    let done = bytes_len(b) in
+    let _ = apply_patch(b, jle + 2, done) in
+    sub_rsp_rbx(b)
+
 let emit_x86_iccall(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
@@ -64,11 +83,13 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let av_save = bytes_len(b) - 8 in
       let _ = mov_mem_rax_rsi(b) in
       let _ = mov_rbp_rsp(b) in
+      let _ = xor_rax_rax(b) in
+      let _ = mov_mem_rbp32_r64(b, 0, 0) in
       let _ = mov_rax_imm64(b, 0) in
       let sh_save = bytes_len(b) - 8 in
       let _ = mov_mem_rax_rbp(b) in
       let nbytes = bshl(nlocals + 1, 3) in
-      let _ = sub_rsp_imm32(b, nbytes) in
+      let _ = emit_chkstk(b, nbytes) in
       emit_st4(st, b, cur, labels,
        cons([6, sh_save],
             cons([5, av_save],
@@ -77,7 +98,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let _ = push_rbp(b) in
       let _ = mov_rbp_rsp(b) in
       let nbytes = bshl(nlocals + 1, 3) in
-      let _ = sub_rsp_imm32(b, nbytes) in
+      let _ = emit_chkstk(b, nbytes) in
       let storeparams(j) =
         if j >= nparams then 0
         else if j < 6 then
@@ -1319,6 +1340,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let _ = cimport_reset(0) in
   let _ = box_set(pe_uname_off_box, 0) in
   let _ = box_set(pe_dlsym_off_box, 0) in
+  let _ = box_set(pe_system_off_box, 0) in
   let _ = if emit_host_win(0) then win_begin(0) else linux_begin(0) in
   let ckeep = cimport_buf(0) in
   let funs = nth(prog, 1) in
