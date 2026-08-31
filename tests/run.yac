@@ -1,7 +1,7 @@
 import rt.os
 
 /* tests/run.yac — yac tests yac (L6: compiled and run by native yc).
- * Layout: tests/interp, tests/compiler/cases, tests/boot
+ * Layout: tests/interp, tests/compiler/cases, tests/pkg (pkg/ libs), tests/boot
  *
  *   make test              → yc_a --pkg src-self compiles this file, then the binary runs it
  *   ./yac --pkg src-self tests/run.yac  (C interp of this harness)
@@ -14,10 +14,12 @@ let TMP = "build/test_tmp"
 let BUNDLE = "build/test_tmp/yc_bundle.yac"
 let INTERP = "tests/interp/"
 let CASES = "tests/compiler/cases/"
+let PKGDIR = "tests/pkg/"
 let PKG = ["--pkg", "src-self"]
 
 let ip(f) = str_cat(INTERP, f)
 let case_src(name) = str_cat(CASES, str_cat(name, ".yac"))
+let pkg_case(name) = str_cat(PKGDIR, str_cat(name, ".yac"))
 
 let sh_quote(s) = str_cat("'", str_cat(s, "'"))
 
@@ -144,6 +146,26 @@ let compiler_one(st, yc, c) =
     let r = run([bin]) in
     if kind == "rc" then check(st, str_cat("compiler ", name), want, int_to_str(nth(r, 0)))
     else check(st, str_cat("compiler ", name), want, chomp(nth(r, 1)))
+
+let pkg_one(st, yc, c) =
+  let name = nth(c, 0) in
+  let kind = nth(c, 1) in
+  let want = nth(c, 2) in
+  let bin = native(str_cat(TMP, str_cat("/pkg_", name))) in
+  let cr = run(append(yc, [pkg_case(name), "-o", bin])) in
+  if nth(run(["test", "-f", bin]), 0) != 0 then
+    check(st, str_cat("pkg ", name), "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
+  else
+    let _ = run(["chmod", "+x", bin]) in
+    let r = run([bin]) in
+    if kind == "rc" then check(st, str_cat("pkg ", name), want, int_to_str(nth(r, 0)))
+    else check(st, str_cat("pkg ", name), want, chomp(nth(r, 1)))
+
+let pkg_cases(_) = [["path", "rc", "42"]]
+
+let pkg_all(st, yc) =
+  let _ = banner("pkg", nth(yc, 0)) in
+  foldl(fun(s, c) -> pkg_one(s, yc, c), st, pkg_cases(0))
 
 /* List lives in a small function: a 60-element literal in _start miscompiles. */
 let compiler_cases(_) = [
@@ -486,7 +508,7 @@ let boot_suite(st, ya) =
   let st3 = check(st2, "boot yc_b exists", "0", int_to_str(exists_rc(yb))) in
   let st4 = check(st3, "boot yc_b not .bin", "1", int_to_str(exists_rc(str_cat(yb, ".bin")))) in
   let _ = run(["chmod", "+x", yb]) in
-  let stB = compiler_all(st4, yc_pkg(yb)) in
+  let stB = pkg_all(compiler_all(st4, yc_pkg(yb)), yc_pkg(yb)) in
   let psrc = str_cat(TMP, "/p42.yac") in
   let pbin = native(str_cat(TMP, "/p42")) in
   let _ = write_file(psrc, "42\n") in
@@ -515,7 +537,7 @@ let main =
   let br = run([boot_bin]) in
   let _ = print(chomp(nth(br, 1))) in
   let st1 = check(st0, "boot frontend", "0", int_to_str(nth(br, 0))) in
-  let st2 = compiler_all(st1, yc_pkg(ya)) in
+  let st2 = pkg_all(compiler_all(st1, yc_pkg(ya)), yc_pkg(ya)) in
   let stQ = qemu_arch(st2, yc_pkg(ya), "arm64") in
   let stR = qemu_arch(stQ, yc_pkg(ya), "riscv64") in
   let st3 = boot_suite(stR, ya) in

@@ -379,12 +379,32 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 
 规则：
 
-- 一个目录对应一个包名；一个包一个作用域（包内可前向引用同包绑定）。
+- 一个包对应一个 `.yac` 文件（`.` → `/`）：`import rt.os` → `rt/os.yac`。目录只是包名前缀，不是「一目录多文件同一包」。包内可前向引用同包绑定。
 - 未 `export` 的名字只在包内可见。LIR 符号日后为 `rt.os/os_has` 这种键；当前阶段客程序仍用裸名调用已链接的 stdlib 过程，隐藏只在绑定检查里执行。
 - `import` 只引入该包的导出集。没有默认 `import *`。
-- 源文件按包名找相对路径（`.` → `/`）：`import rt.os` → `rt/os.yac`。根目录顺序：`--pkg DIR[,DIR...]`（从左到右）、当前目录 `pkg/`、再是 `yc` / `yac` 可执行文件所在目录。空段（`a,,b`）为错误；`--pkg` 只能出现一次。本仓库开发用 `--pkg src-self`。独立项目把 `rt/` 放在 `yc` 旁边，或 `--pkg` 指向含 `rt/` 的根。
-- 原语名（`cons`、`ccall`、`str_cat` 等）走 `is_prim_name`，不是包。
+- 查找根（每个根下再拼 `rt/os.yac` 这类相对路径）：`--pkg DIR[,DIR...]`（从左到右）、当前目录 `pkg/`、再是 `yc` / `yac` 可执行文件所在目录。空段（`a,,b`）为错误；`--pkg` 只能出现一次。本仓库开发用 `--pkg src-self`（提供 `rt.*`）；`./pkg` 提供常见库。独立项目把 `rt/` 放在 `yc` 旁边，或 `--pkg` 指向含 `rt/` 的根。
+- 原语名（`cons`、`ccall`、`str_cat` 等）走 `is_prim_name`，不是包。客库不得再导出这些名字。
 - 没有 `package` 的文件属于匿名主包（与改前行为相同）。
+
+三层库（不要混）：
+
+| 层 | 名字 | 位置 | 用法 |
+|---|---|---|---|
+| 内核 | 无包名 | `src-self/rt/runtime.yac` 进镜像 | `print` / `cons` / `read_file` 等原语 |
+| 语言运行时 | `rt.*` | `src-self/rt/{num,os,ffi}.yac` | `import rt.os`；客默认还链 `rt.num` |
+| 常见库 | 短名，不用 `rt` 前缀 | 仓库根 `pkg/*.yac` | `import path`；项目自己的库也放 `./pkg` |
+
+`src-self/lib`（`log` / `map` / `pass`）只给编译器用，不是客库。不要用包名 `os`（与 `rt.os` 冲突）。
+
+`rt.*` 维持现状：`rt.num`（慢路径算术，默认链）、`rt.os`（`uname` / `host_*`）、`rt.ffi`（`cload` / `csym`）。不要再拆 `rt.str` / `rt.list`（已是原语）。
+
+常见库按需增加，不一次写完：
+
+- 先做：`path`（`join` / `dirname` / `basename` / `ext`）、随后 `cli`（逗号列表与 flag）、`io`（在 `read_file` 失败为 `0` 的前提下封装存在性）。
+- 有真实调用再做：`yui`（从 `app/native/yui.yac` 收）、`fmt`（拼字符串）、`json`（真要解析时）。
+- 先不要：`http` / `re` / `crypto` / `thread`。
+
+包查找器（`backend.yac` 的 `pkg_src`）本身不能 `import path` / `import io`，否则加载 `path.yac` 会循环。
 
 语法（`program` 的顶层还可出现下列形式；`as` 不是关键字）：
 

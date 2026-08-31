@@ -1,0 +1,12 @@
+import path
+let d = dirname("a/b.yac") in
+let j = join("a", "b") in
+let e = ext("a/b.yac") in
+let base = basename("a/b.yac") in
+if d == "a" then
+  if j == "a/b" then
+    if e == "yac" then
+      if base == "b.yac" then 42 else 0
+    else 0
+  else 0
+else 0

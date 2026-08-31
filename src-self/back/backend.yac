@@ -27,6 +27,7 @@ let pass_lex(src) = tokenize(src)
 let pass_parse(toks) = parse_program(toks, 0, [])
 let pass_anf(prog) = anf_all(0, prog, list_new(), len(prog))
 
+/* Package lookup must not import path: loading path.yac would recurse. */
 let path_dirname(s) =
   let n = str_len(s) in
   let rec(i) =

@@ -1,0 +1,37 @@
+/* path.yac — join / dirname / basename / ext. / and \ are both separators. */
+
+package path
+export join, dirname, basename, ext
+
+let path_sep(c) = if c == 47 then true else c == 92
+
+let path_last_sep(s) =
+  let n = str_len(s) in
+  let rec(i) =
+    if i < 0 then 0 - 1
+    else if path_sep(str_ref(s, i)) then i
+    else rec(i - 1) in
+  rec(n - 1)
+
+let join(a, b) = str_cat(a, str_cat("/", b))
+
+let dirname(s) =
+  let k = path_last_sep(s) in
+  if k < 0 then "."
+  else if k == 0 then "/"
+  else str_slice(s, 0, k)
+
+let basename(s) =
+  let n = str_len(s) in
+  let k = path_last_sep(s) in
+  if k < 0 then s
+  else str_slice(s, k + 1, n - (k + 1))
+
+let ext(s) =
+  let b = basename(s) in
+  let n = str_len(b) in
+  let rec(i) =
+    if i < 0 then ""
+    else if str_ref(b, i) == 46 then str_slice(b, i + 1, n - (i + 1))
+    else rec(i - 1) in
+  rec(n - 1)

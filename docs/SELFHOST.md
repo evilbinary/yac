@@ -124,13 +124,14 @@ src-self/
   lang/          scheme.yac
   yc.yac         CLI（--arch / --format / --pkg）
   drivers/       各阶段测试驱动（不进 bundle）
+pkg/             客常见库（path 等；lookup 默认 ./pkg，不进 compiler cat）
 ```
 
 没有单独的 `regalloc.yac` / `link.yac`：M3 值为栈槽（`[rbp+off]`），符号/入口在 emit+pack 里完成。
 
 ### 5.3 编译单元（无语法；不是 `package`）
 
-**单元**只存在于编译器/构建：链接、版本、重建边界（CRP + CCP）。没有 `unit` 关键字。客镜像按 import 组装：`import a.b.c` → 文件 `a/b/c.yac`。查找根：`--pkg DIR[,DIR...]`、`./pkg`、可执行文件所在目录（C `yac` 与原生 `yc` 相同）。本仓库 `--pkg src-self`；独立项目把 `rt/` 放在 `yc` 旁边或另给 `--pkg`。导出名单读源里的 `export`。
+**单元**只存在于编译器/构建：链接、版本、重建边界（CRP + CCP）。没有 `unit` 关键字。客镜像按 import 组装：`import a.b.c` → 文件 `a/b/c.yac`。查找根：`--pkg DIR[,DIR...]`、`./pkg`、可执行文件所在目录（C `yac` 与原生 `yc` 相同）。本仓库 `--pkg src-self` 提供 `rt.*`；常见库在 `./pkg`。独立项目把 `rt/` 放在 `yc` 旁边或另给 `--pkg`。导出名单读源里的 `export`。库分层见 `docs/DESIGN.md` §3.3。
 
 约束：
 
