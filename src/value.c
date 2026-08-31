@@ -1,20 +1,13 @@
 #include "config.h"
 #include "value.h"
+#include "oscompat.h"
 
-#include <errno.h>
-#include <fcntl.h>
 #include <limits.h>
-#include <poll.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <time.h>
-#include <unistd.h>
 
 #include "bignum.h"
 #include "gc.h"
@@ -730,12 +723,6 @@ static Value prim_write_file(Value *args, int nargs, PrimCtx *ctx) {
     return v_unit();
 }
 
-static int wait_status_to_rc(int st) {
-    if (WIFEXITED(st)) return WEXITSTATUS(st);
-    if (WIFSIGNALED(st)) return 128 + WTERMSIG(st);
-    return st;
-}
-
 static Value v_str_buf(Arena *a, const char *data, size_t len) {
     if (len > (size_t)INT_MAX) len = (size_t)INT_MAX;
     char *buf = (char *)arena_alloc(a, len + 1);
@@ -747,80 +734,22 @@ static Value v_str_buf(Arena *a, const char *data, size_t len) {
     return wrap_str(st);
 }
 
-typedef struct {
-    char *p;
-    size_t n, cap;
-} CapBuf;
-
-static bool capbuf_append(CapBuf *b, const char *src, size_t n) {
-    if (n == 0) return true;
-    if (b->n + n > b->cap) {
-        size_t cap = b->cap ? b->cap : 4096;
-        while (cap < b->n + n) cap *= 2;
-        char *p = (char *)realloc(b->p, cap);
-        if (!p) return false;
-        b->p = p;
-        b->cap = cap;
-    }
-    memcpy(b->p + b->n, src, n);
-    b->n += n;
-    return true;
-}
-
-/* Drain until EAGAIN or EOF. *eof set on read()==0. */
-static bool drain_fd(int fd, CapBuf *b, bool *eof) {
-    char tmp[4096];
-    for (;;) {
-        ssize_t n = read(fd, tmp, sizeof tmp);
-        if (n > 0) {
-            if (!capbuf_append(b, tmp, (size_t)n)) return false;
-            continue;
-        }
-        if (n == 0) {
-            *eof = true;
-            return true;
-        }
-        if (errno == EINTR) continue;
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return true;
-        return false;
-    }
-}
-
-/* Write until EAGAIN. *done after all bytes sent (caller then closes fd). */
-static bool feed_fd(int fd, const char *src, size_t len, size_t *off, bool *done) {
-    while (*off < len) {
-        ssize_t n = write(fd, src + *off, len - *off);
-        if (n > 0) {
-            *off += (size_t)n;
-            continue;
-        }
-        if (n < 0 && errno == EINTR) continue;
-        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return true;
-        if (n < 0 && errno == EPIPE) {
-            *done = true;
-            return true;
-        }
-        return false;
-    }
-    *done = true;
-    return true;
-}
-
-/* system(cmd) -> exit code. /bin/sh -c, inherit stdio (same as C system(3)). */
+/* system(cmd) -> exit code. Same shell as C system(3). */
 static Value prim_system(Value *args, int nargs, PrimCtx *ctx) {
+    int st;
     (void)nargs;
     if (args[0].tag != V_STR) {
         ctx->errored = true;
         strcpy(ctx->errmsg, "system: expected a command string");
         return VALUE_NULL;
     }
-    int st = system(args[0].u.s->data);
+    st = yac_system(args[0].u.s->data);
     if (st == -1) {
         ctx->errored = true;
         strcpy(ctx->errmsg, "system: failed to invoke shell");
         return VALUE_NULL;
     }
-    return v_int(wait_status_to_rc(st));
+    return v_int(st);
 }
 
 /* Native yc maps these to $proc. C only needs them bound so the self-host
@@ -855,7 +784,7 @@ static Value prim_jit_run(Value *args, int nargs, PrimCtx *ctx) {
 }
 
 /* popen(cmd, stdin) -> [rc, stdout, stderr].
- * Same /bin/sh -c as system, but stdio is three pipes: stdin is the
+ * Same shell as system, but stdio is three pipes: stdin is the
  * given string (or bytes); stdout/stderr are collected. Compose a
  * pipeline in yac by feeding nth(r,1) into the next popen. */
 static Value prim_popen(Value *args, int nargs, PrimCtx *ctx) {
@@ -879,108 +808,22 @@ static Value prim_popen(Value *args, int nargs, PrimCtx *ctx) {
         return VALUE_NULL;
     }
     const char *cmd = args[0].u.s->data;
-    int inp[2] = {-1, -1};
-    int outp[2] = {-1, -1};
-    int errp[2] = {-1, -1};
-    if (pipe(inp) != 0 || pipe(outp) != 0 || pipe(errp) != 0) {
-        if (inp[0] >= 0) { close(inp[0]); close(inp[1]); }
-        if (outp[0] >= 0) { close(outp[0]); close(outp[1]); }
-        if (errp[0] >= 0) { close(errp[0]); close(errp[1]); }
-        ctx->errored = true;
-        strcpy(ctx->errmsg, "popen: pipe failed");
-        return VALUE_NULL;
-    }
-    pid_t pid = fork();
-    if (pid < 0) {
-        close(inp[0]); close(inp[1]);
-        close(outp[0]); close(outp[1]);
-        close(errp[0]); close(errp[1]);
-        ctx->errored = true;
-        strcpy(ctx->errmsg, "popen: fork failed");
-        return VALUE_NULL;
-    }
-    if (pid == 0) {
-        close(inp[1]);
-        close(outp[0]);
-        close(errp[0]);
-        dup2(inp[0], STDIN_FILENO);
-        dup2(outp[1], STDOUT_FILENO);
-        dup2(errp[1], STDERR_FILENO);
-        if (inp[0] != STDIN_FILENO) close(inp[0]);
-        if (outp[1] != STDOUT_FILENO) close(outp[1]);
-        if (errp[1] != STDERR_FILENO) close(errp[1]);
-        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
-        _exit(127);
-    }
-    close(inp[0]);
-    close(outp[1]);
-    close(errp[1]);
-    void (*old_pipe)(int) = signal(SIGPIPE, SIG_IGN);
-    fcntl(outp[0], F_SETFL, O_NONBLOCK);
-    fcntl(errp[0], F_SETFL, O_NONBLOCK);
-    fcntl(inp[1], F_SETFL, O_NONBLOCK);
-
-    CapBuf ob = {0}, eb = {0};
-    bool out_eof = false, err_eof = false, in_done = (in_len == 0);
-    size_t in_off = 0;
-    if (in_done) {
-        close(inp[1]);
-        inp[1] = -1;
-    }
-    bool ok = true;
-    while (ok && (!out_eof || !err_eof)) {
-        struct pollfd pfd[3];
-        pfd[0].fd = out_eof ? -1 : outp[0];
-        pfd[0].events = POLLIN;
-        pfd[1].fd = err_eof ? -1 : errp[0];
-        pfd[1].events = POLLIN;
-        pfd[2].fd = in_done ? -1 : inp[1];
-        pfd[2].events = POLLOUT;
-        int n = poll(pfd, 3, -1);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            ok = false;
-            break;
-        }
-        if (!out_eof && pfd[0].fd >= 0 && (pfd[0].revents & (POLLIN | POLLHUP | POLLERR))) {
-            if (!drain_fd(outp[0], &ob, &out_eof)) ok = false;
-        }
-        if (!err_eof && pfd[1].fd >= 0 && (pfd[1].revents & (POLLIN | POLLHUP | POLLERR))) {
-            if (!drain_fd(errp[0], &eb, &err_eof)) ok = false;
-        }
-        if (!in_done && pfd[2].fd >= 0 && (pfd[2].revents & (POLLOUT | POLLERR | POLLHUP))) {
-            if (!feed_fd(inp[1], in_data, in_len, &in_off, &in_done)) ok = false;
-            if (in_done && inp[1] >= 0) {
-                close(inp[1]);
-                inp[1] = -1;
-            }
-        }
-    }
-    if (inp[1] >= 0) close(inp[1]);
-    close(outp[0]);
-    close(errp[0]);
-    signal(SIGPIPE, old_pipe);
-
-    int st = 0;
-    int wrc;
-    do {
-        wrc = waitpid(pid, &st, 0);
-    } while (wrc < 0 && errno == EINTR);
-
-    if (!ok || wrc < 0) {
-        free(ob.p);
-        free(eb.p);
-        ctx->errored = true;
-        strcpy(ctx->errmsg, "popen: failed to talk to child");
-        return VALUE_NULL;
-    }
-
+    const char *errmsg = NULL;
+    char *ob = NULL, *eb = NULL;
+    size_t on = 0, en = 0;
+    int rc = 0;
     Value items[3];
-    items[0] = v_int(wait_status_to_rc(st));
-    items[1] = v_str_buf(ctx->a, ob.p ? ob.p : "", ob.n);
-    items[2] = v_str_buf(ctx->a, eb.p ? eb.p : "", eb.n);
-    free(ob.p);
-    free(eb.p);
+
+    if (yac_popen_capture(cmd, in_data, in_len, &rc, &ob, &on, &eb, &en, &errmsg) != 0) {
+        ctx->errored = true;
+        strcpy(ctx->errmsg, errmsg ? errmsg : "popen: failed");
+        return VALUE_NULL;
+    }
+    items[0] = v_int(rc);
+    items[1] = v_str_buf(ctx->a, ob ? ob : "", on);
+    items[2] = v_str_buf(ctx->a, eb ? eb : "", en);
+    free(ob);
+    free(eb);
     return v_list_arena(ctx->a, items, 3);
 }
 
@@ -1039,7 +882,7 @@ static Value prim_time_ms(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
     (void)ctx;
     struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return v_int(0);
+    if (yac_clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return v_int(0);
     return v_int((int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000L));
 }
 
@@ -1048,7 +891,7 @@ static Value prim_time_ns(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
     (void)ctx;
     struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return v_int(0);
+    if (yac_clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return v_int(0);
     return v_int((int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec);
 }
 
@@ -1098,11 +941,11 @@ static Value prim_time_str(Value *args, int nargs, PrimCtx *ctx) {
     (void)args;
     (void)nargs;
     struct timespec ts;
-    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+    if (yac_clock_gettime(CLOCK_REALTIME, &ts) != 0) {
         return v_str(ctx->a, "??:??:??.???");
     }
     struct tm tm;
-    if (!localtime_r(&ts.tv_sec, &tm)) {
+    if (!yac_localtime_r(&ts.tv_sec, &tm)) {
         return v_str(ctx->a, "??:??:??.???");
     }
     char buf[32];

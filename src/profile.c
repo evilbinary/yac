@@ -1,4 +1,5 @@
 #include "config.h"
+#include "oscompat.h"
 #include "profile.h"
 
 #include <stdint.h>
@@ -32,7 +33,7 @@ static int nstk, cap_stk;
 
 static uint64_t now_ns(void) {
     struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    if (yac_clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
