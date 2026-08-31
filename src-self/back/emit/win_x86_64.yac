@@ -119,6 +119,52 @@ let win_done(st, dst, ps) =
   let _ = emit_store_rax_slot(nth(st, 0), dst) in
   emit_st4(st, nth(st, 0), nth(st, 1), nth(st, 2), ps)
 
+let win_stdio_rw(st, insn, k32name) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let args = nth(insn, 3) in
+  let dst = nth(insn, 1) in
+  let _ = emit_load_rax_slot(b, nth(args, 0)) in
+  let _ = mov_rcx_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(args, 1)) in
+  let _ = mov_rdx_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(args, 2)) in
+  let _ = mov_r8_rax(b) in
+  let _ = mov_rax_r8(b) in
+  let _ = mov_rsi_rax(b) in
+  let _ = mov_rax_rdx(b) in
+  let _ = mov_rdi_rax(b) in
+  let _ = mov_rax_rcx(b) in
+  let _ = cmp_rax_imm8(b, 3) in
+  let jae = bytes_len(b) in
+  let _ = jcc_rel32(b, 3, 0) in
+  let _ = mov_rbx_rcx(b) in
+  let _ = mov_r64_imm(b, 0, 0 - 10) in
+  let _ = sub_rax_rbx(b) in
+  let _ = mov_rcx_rax(b) in
+  let ps0 = win_k32_call(b, patches, "GetStdHandle") in
+  let _ = mov_rcx_rax(b) in
+  let jrw = bytes_len(b) in
+  let _ = jmp_rel32(b, 0) in
+  let raw = bytes_len(b) in
+  let _ = apply_patch(b, jae + 2, raw) in
+  let rw = bytes_len(b) in
+  let _ = apply_patch(b, jrw + 1, rw) in
+  let _ = mov_rax_rdi(b) in
+  let _ = mov_rdx_rax(b) in
+  let _ = mov_rax_rsi(b) in
+  let _ = mov_r8_rax(b) in
+  let _ = sub_rsp_imm32(b, 48) in
+  let _ = mov_r64_imm(b, 0, 0) in
+  let _ = mov_mem_rsp_disp8_rax(b, 32) in
+  let _ = mov_mem_rsp_disp8_rax(b, 40) in
+  let _ = lea_r9_rsp_disp8(b, 40) in
+  let pos = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = mov_eax_mem_rsp_disp8(b, 40) in
+  let _ = add_rsp_imm32(b, 48) in
+  win_done(st, dst, emit_patch_cimport(ps0, pos + 1, k32name))
+
 let win_syscall(st, insn) =
   let b = nth(st, 0) in
   let patches = nth(st, 3) in
@@ -130,9 +176,25 @@ let win_syscall(st, insn) =
     let _ = mov_rcx_rax(b) in
     let _ = emit_load_rax_slot(b, nth(args, 1)) in
     let _ = mov_rdx_rax(b) in
+    let _ = mov_rax_rcx(b) in
+    let _ = test_rax_rax(b) in
+    let jz = bytes_len(b) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let _ = mov_rbx_rcx(b) in
+    let _ = mov_rax_rdx(b) in
+    let _ = mov_rsi_rax(b) in
+    let _ = mov_r64_imm(b, 2, 0) in
+    let _ = mov_r64_imm(b, 8, 32768) in
+    let psf = win_k32_call(b, patches, "VirtualFree") in
+    let _ = mov_rax_rbx(b) in
+    let _ = mov_rcx_rax(b) in
+    let _ = mov_rax_rsi(b) in
+    let _ = mov_rdx_rax(b) in
+    let al = bytes_len(b) in
+    let _ = apply_patch(b, jz + 2, al) in
     let _ = mov_r64_imm(b, 8, 12288) in
     let _ = mov_r64_imm(b, 9, 64) in
-    let ps = win_k32_call(b, patches, "VirtualAlloc") in
+    let ps = win_k32_call(b, psf, "VirtualAlloc") in
     let _ = win_nil_on_fail(b) in
     win_done(st, dst, ps)
   else if name == "munmap" then
@@ -178,24 +240,8 @@ let win_syscall(st, insn) =
     win_done(st, dst,
       emit_patch_cimport(emit_patch_cimport(patches, ow + 1, "CreateFileA"),
                          or_ + 1, "CreateFileA"))
-  else if name == "read" or name == "write" then
-    let _ = emit_load_rax_slot(b, nth(args, 0)) in
-    let _ = mov_rcx_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(args, 1)) in
-    let _ = mov_rdx_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(args, 2)) in
-    let _ = mov_r8_rax(b) in
-    let _ = sub_rsp_imm32(b, 48) in
-    let _ = mov_r64_imm(b, 0, 0) in
-    let _ = mov_mem_rsp_disp8_rax(b, 32) in
-    let _ = mov_mem_rsp_disp8_rax(b, 40) in
-    let _ = lea_r9_rsp_disp8(b, 40) in
-    let nm = if name == "read" then "ReadFile" else "WriteFile" in
-    let pos = bytes_len(b) in
-    let _ = call_rel32(b, 0) in
-    let _ = mov_eax_mem_rsp_disp8(b, 40) in
-    let _ = add_rsp_imm32(b, 48) in
-    win_done(st, dst, emit_patch_cimport(patches, pos + 1, nm))
+  else if name == "read" then win_stdio_rw(st, insn, "ReadFile")
+  else if name == "write" then win_stdio_rw(st, insn, "WriteFile")
   else if name == "lseek" then
     let _ = emit_load_rax_slot(b, nth(args, 0)) in
     let _ = mov_rcx_rax(b) in

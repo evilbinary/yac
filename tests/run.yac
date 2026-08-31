@@ -251,12 +251,14 @@ let compiler_all(st, yc) =
   let st1s =
     if nth(run(["sh", "-c", "command -v nm >/dev/null 2>&1"]), 0) != 0 then st1
     else
-      let bin_g = str_cat(TMP, "/c_l4_42_g") in
-      let _ = run(append(yc, [case_src("l4_42"), "-g", "-o", bin_g])) in
-      let with_g = nth(run(["nm", bin_g]), 1) in
+      let elf_g = str_cat(TMP, "/c_l4_42_g.elf") in
+      let elf_n = str_cat(TMP, "/c_l4_42.elf") in
+      let _ = run(append(yc, [case_src("l4_42"), "-g", "--format", "elf", "-o", elf_g])) in
+      let with_g = nth(run(["nm", elf_g]), 1) in
       let stg = check(st1, "elf -g symtab _start", "1",
                       if contains(with_g, "_start") then "1" else with_g) in
-      let no_g = nth(run(["nm", str_cat(TMP, "/c_l4_42")]), 2) in
+      let _ = run(append(yc, [case_src("l4_42"), "--format", "elf", "-o", elf_n])) in
+      let no_g = str_cat(nth(run(["nm", elf_n]), 1), nth(run(["nm", elf_n]), 2)) in
       check(stg, "elf default no symtab", "1",
             if contains(no_g, "无符号") or contains(no_g, "no symbols") then "1" else no_g) in
   let st2 = foldl(fun(s, c) -> compile_syntax_err(s, yc, nth(c, 1),
@@ -267,7 +269,7 @@ let compiler_all(st, yc) =
     repl_check(s, yc, str_cat("repl ", nth(c, 0)), nth(c, 1), nth(c, 2)),
     st3, repl_cases(0)) in
   let pscm = str_cat(TMP, "/t.scm") in
-  let bscm = str_cat(TMP, "/t_scm") in
+  let bscm = native(str_cat(TMP, "/t_scm")) in
   let _ = write_file(pscm, "(display (+ 1 2))\n") in
   let crscm = run(append(yc, ["--scheme", pscm, "-o", bscm])) in
   let st5 =
@@ -457,7 +459,13 @@ let iso_one(st, ya, yb, name) =
   let b = native(str_cat(TMP, str_cat("/isoB_", name))) in
   let _ = run([ya, case_src(name), "-o", a]) in
   let _ = run([yb, case_src(name), "-o", b]) in
-  check(st, str_cat("boot iso ", name), "0", int_to_str(nth(run(["cmp", "-s", a, b]), 0)))
+  let xa = read_file(a) in
+  let xb = read_file(b) in
+  let same =
+    if xa == 0 then false
+    else if xb == 0 then false
+    else xa == xb in
+  check(st, str_cat("boot iso ", name), "1", if same then "1" else "0")
 
 let boot_suite(st, ya) =
   let _ = banner("boot yc_b / iso", ya) in

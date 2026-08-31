@@ -1772,6 +1772,7 @@ let rt_jit_run_ins(_) =
    ["mov_imm", 7, 7],
    ["mov_imm", 10, 50],
    ["mov_imm", 12, 0 - 1],
+   ["mov_imm", 8, 0],
    ["$syscall", 13, "mmap", [9, 6, 7, 10, 12, 8]],
    ["$icmp", "<", 11, 13, 8],
    ["cmpjmp", 11, "jr_fail", "jr_copy"],
