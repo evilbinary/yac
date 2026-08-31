@@ -50,6 +50,8 @@ $(YC_A): $(BIN) $(YC_BUNDLE)
 	@echo "L4: ./yac compiling bundle with C GC (slow; not the native <3s path)"
 	./$(BIN) $(YC_BUNDLE) $(YC_BUNDLE) -o $@
 	chmod +x $@
+	mkdir -p $(YC_BUILD)/rt
+	cp -f src-self/rt/os.yac src-self/rt/ffi.yac src-self/rt/num.yac $(YC_BUILD)/rt/
 
 # L5: native yc_a compiles the same bundle. yc_a and yc_b need not match.
 $(YC_B): $(YC_A) $(YC_BUNDLE)

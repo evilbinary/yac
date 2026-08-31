@@ -38,4 +38,7 @@ int yac_popen_capture(const char *cmd, const char *in, size_t in_len,
                       int *rc, char **out, size_t *out_n, char **err, size_t *err_n,
                       const char **errmsg);
 
+/* Directory containing this process's executable. 0 on success. */
+int yac_exe_dir(char *buf, size_t n);
+
 #endif

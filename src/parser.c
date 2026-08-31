@@ -1,5 +1,7 @@
 #include "parser.h"
 
+#include "oscompat.h"
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -624,14 +626,10 @@ static int parse_dotted_name(Parser *p, char *buf, size_t bufsz) {
     return 1;
 }
 
-/* import a.b.c → src-self/a/b/c.yac (idents only; '.' → '/'). */
-static int pkg_to_rel(const char *pkg, char *out, size_t n) {
-    const char *pfx = "src-self/";
+/* import a.b.c → rt/os.yac style relative file (no src-self prefix). */
+static int pkg_to_file(const char *pkg, char *out, size_t n) {
     size_t o = 0;
-    size_t plen = strlen(pfx);
-    if (!pkg || !pkg[0] || n < plen + 6) return 0;
-    memcpy(out, pfx, plen);
-    o = plen;
+    if (!pkg || !pkg[0] || n < 6) return 0;
     for (size_t i = 0; pkg[i]; i++) {
         char c = pkg[i];
         if (o + 5 >= n) return 0;
@@ -660,6 +658,40 @@ static char *read_whole_file(const char *path) {
     return buf;
 }
 
+static char *try_read(const char *path) {
+    return path && path[0] ? read_whole_file(path) : NULL;
+}
+
+static char *read_pkg_source(const char *pkg) {
+    char file[256], path[1024], exe[512];
+    char *s;
+    const char *lib;
+    if (!pkg_to_file(pkg, file, sizeof(file))) return NULL;
+    lib = getenv("YAC_STDLIB");
+    if (lib && lib[0]) {
+        snprintf(path, sizeof(path), "%s/%s", lib, file);
+        s = try_read(path);
+        if (s) return s;
+    }
+    snprintf(path, sizeof(path), "src-self/%s", file);
+    s = try_read(path);
+    if (s) return s;
+    s = try_read(file);
+    if (s) return s;
+    if (yac_exe_dir(exe, sizeof(exe)) != 0) return NULL;
+    snprintf(path, sizeof(path), "%s/%s", exe, file);
+    s = try_read(path);
+    if (s) return s;
+    snprintf(path, sizeof(path), "%s/src-self/%s", exe, file);
+    s = try_read(path);
+    if (s) return s;
+    snprintf(path, sizeof(path), "%s/../../src-self/%s", exe, file);
+    s = try_read(path);
+    if (s) return s;
+    snprintf(path, sizeof(path), "%s/../src-self/%s", exe, file);
+    return try_read(path);
+}
+
 static int import_seen(const ImportCtx *c, const char *pkg) {
     for (int i = 0; i < c->n; i++)
         if (strcmp(c->pkgs[i], pkg) == 0) return 1;
@@ -676,14 +708,9 @@ static int import_mark(ImportCtx *c, const char *pkg) {
 static int import_splice(Parser *errp, ImportCtx *ictx, const char *pkg,
                          Item **items, int *nitems, int *cap) {
     if (import_seen(ictx, pkg)) return 1;
-    char rel[256];
-    if (!pkg_to_rel(pkg, rel, sizeof(rel))) {
-        p_err(errp, "bad import '%s'", pkg);
-        return 0;
-    }
-    char *src = read_whole_file(rel);
+    char *src = read_pkg_source(pkg);
     if (!src) {
-        p_err(errp, "cannot read '%s' for import %s", rel, pkg);
+        p_err(errp, "cannot find package '%s' (need rt/*.yac next to yc or src-self/)", pkg);
         return 0;
     }
     if (!import_mark(ictx, pkg)) {

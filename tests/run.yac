@@ -501,6 +501,9 @@ let main =
   let ya = native(str_cat(TMP, "/yc_a")) in
   let _ = run(["rm", "-f", ya, str_cat(ya, ".bin")]) in
   let _ = run(["cp", "-f", native("build/yc_tmp/yc_a"), ya]) in
+  let _ = system(str_cat("mkdir -p ", str_cat(TMP, "/rt"))) in
+  let _ = run(["cp", "-f", "src-self/rt/os.yac", "src-self/rt/ffi.yac",
+               "src-self/rt/num.yac", str_cat(TMP, "/rt/")]) in
   let _ = run(["chmod", "+x", ya]) in
   let boot_bin = native(str_cat(TMP, "/boot_run")) in
   let _ = run(["rm", "-f", boot_bin]) in

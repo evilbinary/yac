@@ -130,7 +130,7 @@ src-self/
 
 ### 5.3 编译单元（无语法；不是 `package`）
 
-**单元**只存在于编译器/构建：链接、版本、重建边界（CRP + CCP）。没有 `unit` 关键字。客镜像按 import 组装：`import a.b.c` → 文件 `src-self/a/b/c.yac`（与 C 解释器相同约定）。编译器 `cat $(YC_SRCS)` 不含 `os.yac`/`ffi.yac`。C 在 parse 时按该路径读入并拼进 AST（同一包只加载一次）。导出名单读源里的 `export`，不写死。
+**单元**只存在于编译器/构建：链接、版本、重建边界（CRP + CCP）。没有 `unit` 关键字。客镜像按 import 组装：`import a.b.c` → 文件 `a/b/c.yac`。独立项目把 `rt/`（`os.yac`/`ffi.yac`/`num.yac`）放在 `yc` 旁边，或设 `YAC_STDLIB`，或在仓库里保留 `src-self/rt/`。C 与原生查找同一套根目录。导出名单读源里的 `export`。
 
 约束：
 

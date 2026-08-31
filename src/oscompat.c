@@ -517,3 +517,31 @@ int yac_popen_capture(const char *cmd, const char *in, size_t in_len,
 }
 
 #endif
+
+int yac_exe_dir(char *buf, size_t n) {
+    if (!buf || n < 2) return -1;
+#ifdef _WIN32
+    {
+        DWORD k = GetModuleFileNameA(NULL, buf, (DWORD)n);
+        char *slash, *alt;
+        if (k == 0 || k >= n) return -1;
+        slash = strrchr(buf, '\\');
+        alt = strrchr(buf, '/');
+        if (alt && (!slash || alt > slash)) slash = alt;
+        if (!slash) return -1;
+        *slash = '\0';
+        return 0;
+    }
+#else
+    {
+        ssize_t k = readlink("/proc/self/exe", buf, n - 1);
+        char *slash;
+        if (k < 0) return -1;
+        buf[k] = '\0';
+        slash = strrchr(buf, '/');
+        if (!slash) return -1;
+        *slash = '\0';
+        return 0;
+    }
+#endif
+}
