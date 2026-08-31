@@ -1,54 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
-  <!-- parchment plate -->
-  <rect width="32" height="32" rx="7" fill="#F2E9DC"/>
-  <rect x="0.6" y="0.6" width="30.8" height="30.8" rx="6.4" stroke="#C9B8A0" stroke-width="1.2"/>
-
-  <!-- soft ink wash -->
-  <ellipse cx="17.5" cy="20" rx="7" ry="5.5" fill="#1A3A42" opacity="0.08"/>
-
-  <!-- calligraphic Y: left arm -->
+  <defs>
+    <linearGradient id="y" x1="8" y1="3" x2="24" y2="29">
+      <stop offset="0%" stop-color="#3D6B4F"/>
+      <stop offset="50%" stop-color="#1F4D3A"/>
+      <stop offset="100%" stop-color="#0D2E24"/>
+    </linearGradient>
+  </defs>
   <path
-    d="M8.2 7.8
-       C10.4 8.2, 12.2 10.6, 13.6 13.8
-       C14.4 15.7, 15.0 17.6, 15.4 19.2"
-    stroke="#16353D"
-    stroke-width="2.35"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    fill="none"/>
-
-  <!-- calligraphic Y: right arm -->
-  <path
-    d="M23.8 8.1
-       C21.2 9.0, 18.8 11.8, 17.0 15.2
-       C16.2 16.7, 15.7 18.1, 15.4 19.2"
-    stroke="#16353D"
-    stroke-width="2.2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    fill="none"/>
-
-  <!-- stem with slight curve -->
-  <path
-    d="M15.4 19.2
-       C15.1 22.0, 14.6 24.2, 14.8 26.4"
-    stroke="#16353D"
-    stroke-width="2.45"
-    stroke-linecap="round"
-    fill="none"/>
-
-  <!-- thin highlight stroke for depth -->
-  <path
-    d="M9.0 8.6
-       C11.0 9.2, 12.6 11.4, 13.8 14.2
-       C14.5 15.8, 15.0 17.4, 15.3 18.8"
-    stroke="#2F5A64"
-    stroke-width="0.7"
-    stroke-linecap="round"
-    opacity="0.55"
-    fill="none"/>
-
-  <!-- ink fleck -->
-  <circle cx="20.8" cy="22.6" r="0.85" fill="#16353D" opacity="0.55"/>
-  <circle cx="22.2" cy="21.4" r="0.45" fill="#16353D" opacity="0.35"/>
+    fill="url(#y)"
+    d="M5.6 3.2
+       H12.15
+       L16 11.9
+       L19.85 3.2
+       H26.4
+       L18.55 17.6
+       V28.8
+       H13.45
+       V17.6
+       Z"/>
 </svg>
