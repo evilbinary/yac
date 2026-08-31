@@ -57,6 +57,32 @@ let prog_has_err(p, i) =
 /* Top-level helper so parse_expr stays ncap=0 (no self-closure alloc). */
 let parse_err(j) = [["error", "parse"], j]
 
+let tok_k(toks, i) =
+  if i >= len(toks) then "eof" else nth(nth(toks, i), 0)
+let tok_t(toks, i) =
+  if i >= len(toks) then "" else nth(nth(toks, i), 1)
+let tok_is_kw(toks, i, w) =
+  if tok_k(toks, i) == "kw" then tok_t(toks, i) == w else false
+
+let parse_dotted(toks, i, acc) =
+  if tok_k(toks, i) != "ident" then ["", i]
+  else
+    let part = tok_t(toks, i) in
+    let acc2 = if acc == "" then part else str_cat(acc, str_cat(".", part)) in
+    if tok_k(toks, i + 1) == "dot" then
+      if tok_k(toks, i + 2) == "ident" then parse_dotted(toks, i + 2, acc2)
+      else [acc2, i + 1]
+    else [acc2, i + 1]
+
+let parse_idlist(toks, i, acc) =
+  if tok_k(toks, i) != "ident" then [reverse(acc), i]
+  else if tok_k(toks, i + 1) == "comma" then
+    parse_idlist(toks, i + 2, cons(tok_t(toks, i), acc))
+  else [reverse(cons(tok_t(toks, i), acc)), i + 1]
+
+let hdr_semi(toks, j) =
+  if tok_k(toks, j) == "semi" then j + 1 else j
+
 let parse_expr(toks, i, min_prec) =
   /* ---- token access ---- */
   let ntoks = len(toks) in
@@ -322,16 +348,45 @@ let parse_expr(toks, i, min_prec) =
       if is_err(nth(appr, 0)) then parse_err(i)
       else parse_binloop(nth(appr, 1), nth(appr, 0), min_prec)
 
-/* ---- program: sequence of top-level items ---- */
+/* ---- program: headers then a sequence of top-level exprs ---- */
 let parse_program(toks, i, acc) =
   if i >= len(toks) then reverse(acc)
-  else if nth(nth(toks, i), 0) == "eof" then reverse(acc)
+  else if tok_k(toks, i) == "eof" then reverse(acc)
+  else if tok_is_kw(toks, i, "package") then
+    let d = parse_dotted(toks, i + 1, "") in
+    if nth(d, 0) == "" then cons(["error", "syntax"], acc)
+    else parse_program(toks, hdr_semi(toks, nth(d, 1)),
+           cons(["package", nth(d, 0)], acc))
+  else if tok_is_kw(toks, i, "export") then
+    let ids = parse_idlist(toks, i + 1, []) in
+    if nth(ids, 0) == [] then cons(["error", "syntax"], acc)
+    else parse_program(toks, hdr_semi(toks, nth(ids, 1)),
+           cons(["export", nth(ids, 0)], acc))
+  else if tok_is_kw(toks, i, "import") then
+    let d = parse_dotted(toks, i + 1, "") in
+    if nth(d, 0) == "" then cons(["error", "syntax"], acc)
+    else
+      let j = nth(d, 1) in
+      if tok_k(toks, j) == "lbrace" then
+        let ids = parse_idlist(toks, j + 1, []) in
+        if tok_k(toks, nth(ids, 1)) != "rbrace" then cons(["error", "syntax"], acc)
+        else parse_program(toks, hdr_semi(toks, nth(ids, 1) + 1),
+               cons(["import", nth(d, 0), nth(ids, 0)], acc))
+      else if tok_k(toks, j) == "ident" then
+        if tok_t(toks, j) == "as" then
+          if tok_k(toks, j + 1) != "ident" then cons(["error", "syntax"], acc)
+          else parse_program(toks, hdr_semi(toks, j + 2),
+                 cons(["import", nth(d, 0)], acc))
+        else parse_program(toks, hdr_semi(toks, j),
+               cons(["import", nth(d, 0)], acc))
+      else parse_program(toks, hdr_semi(toks, j),
+             cons(["import", nth(d, 0)], acc))
   else
     let r = parse_expr(toks, i, 0) in
     if is_err(nth(r, 0)) then cons(["error", "syntax"], acc)
     else
       let rawj = nth(r, 1) in
       let j2 = if rawj < len(toks) then
-                 if nth(nth(toks, rawj), 0) == "semi" then rawj + 1 else rawj
+                 if tok_k(toks, rawj) == "semi" then rawj + 1 else rawj
                else rawj in
       parse_program(toks, j2, cons(nth(r, 0), acc))

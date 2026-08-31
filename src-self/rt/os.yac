@@ -1,6 +1,9 @@
 /* os.yac — host OS/arch via libc uname(2) (ccall).
  * uname() -> [sysname, nodename, release, version, machine] */
 
+package rt.os
+export uname, host_os, host_arch, host_format
+
 let os_has(s, p) =
   let n = str_len(p) in
   if str_len(s) < n then false

@@ -1,3 +1,5 @@
+import rt.os
+
 /* tests/run.yac — yac tests yac (L6: compiled and run by native yc).
  * Layout: tests/interp, tests/compiler/cases, tests/boot
  *
@@ -167,6 +169,7 @@ let compiler_cases(_) = [
   ["ccall_putchar", "out", "A"],
   ["ccall_cload", "rc", "20"],
   ["ccall_many", "rc", "64"],
+  ["pkg_os", "rc", "1"],
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
   ["io_rw", "rc", "2"], ["system", "rc", "0"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"],
   ["tco_cap", "rc", "42"], ["callcc", "rc", "42"], ["callcc2", "rc", "99"],
@@ -207,7 +210,9 @@ let syntax_bads(_) = [
 let unbound_bads(_) = [
   ["asdf", "asdf", "error: 1:1: unbound variable 'asdf'"],
   ["asdf call", "asdf()", "unbound variable 'asdf'"],
-  ["let y", "let x = 1 in y + 1", "unbound variable 'y'"]]
+  ["let y", "let x = 1 in y + 1", "unbound variable 'y'"],
+  ["os_has hidden", "os_has(\"a\", \"a\")", "unbound variable 'os_has'"],
+  ["host_os no import", "host_os(0)", "unbound variable 'host_os'"]]
 
 /* stdin → yc --repl. rc must be 0 (not SIGSEGV) and stdout must contain needle. */
 let repl_feed(yc, src) =

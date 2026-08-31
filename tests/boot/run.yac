@@ -1,3 +1,5 @@
+import rt.os
+
 /* tests/boot/run.yac — self-hosted frontend + unit tests (yac, not sh). */
 let TMP = "build/test_tmp"
 let LOG_STUB = "let log(mod, msg) = 0\nlet log_i(mod, key, n) = 0\n"

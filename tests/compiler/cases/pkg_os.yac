@@ -1,0 +1,2 @@
+import rt.os
+if str_len(host_os(0)) > 0 then 1 else 0

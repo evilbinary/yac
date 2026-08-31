@@ -34,6 +34,9 @@ let is_kw(w) =
   else if w == "false" then true
   else if w == "callcc" then true
   else if w == "throw" then true
+  else if w == "package" then true
+  else if w == "import" then true
+  else if w == "export" then true
   else false
 
 let slen(s) = str_len(s)
@@ -205,10 +208,11 @@ let punct_kind(c) =
   else if c == 125 then "rbrace"
   else if c == 44 then "comma"
   else if c == 59 then "semi"
+  else if c == 46 then "dot"
   else "punct"
 
 let is_punct(c) = c == 40 or c == 41 or c == 91 or c == 93 or c == 123 or
-                  c == 125 or c == 44 or c == 59
+                  c == 125 or c == 44 or c == 59 or c == 46
 
 /* main lex loop */
 let lex(s, i, line, acc, n) =
@@ -292,6 +296,10 @@ let intern_seed(_) =
   let _ = intern("false") in
   let _ = intern("callcc") in
   let _ = intern("throw") in
+  let _ = intern("package") in
+  let _ = intern("import") in
+  let _ = intern("export") in
+  let _ = intern("dot") in
   let _ = intern("->") in
   let _ = intern("=") in
   let _ = intern("==") in

@@ -164,6 +164,13 @@ let anf_expr(ast, counter) =
       [append(bbindings2, nth(bodyr, 0)), nth(bodyr, 1), nth(bodyr, 2)]
   else [["error", "anf"], ["unit"], counter]
 
+let ast_is_hdr(e) =
+  let k = nth(e, 0) in
+  if k == "package" then true
+  else if k == "import" then true
+  else if k == "export" then true
+  else false
+
 let anf_top(item) =
   let r = anf_expr(item, 0) in
   [nth(r, 0), nth(r, 1)]
@@ -171,5 +178,6 @@ let anf_top(item) =
 let anf_all(i, prog, acc, n) =
   if i >= n then acc
   else
-    let _ = list_push(acc, anf_top(nth(prog, i))) in
+    let e = nth(prog, i) in
+    let _ = if ast_is_hdr(e) then 0 else list_push(acc, anf_top(e)) in
     anf_all(i + 1, prog, acc, n)

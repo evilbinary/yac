@@ -2,6 +2,9 @@
  * Integer ops use iadd/isub/imul/idiv so this file does not recurse through
  * yac_num_add. Backend lowers this file and runtime_add's the procs. */
 
+package rt.num
+export yac_num_slow
+
 let yac_num_p10(n, acc) =
   if n == 0 then acc else yac_num_p10(isub(n, 1), imul(acc, 10))
 

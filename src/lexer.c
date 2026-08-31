@@ -25,10 +25,16 @@ const char *tok_kind_name(TokKind k) {
     case TK_KW_THROW: return "'throw'";
     case TK_KW_AND: return "'and'";
     case TK_KW_OR: return "'or'";
+    case TK_KW_PACKAGE: return "'package'";
+    case TK_KW_IMPORT: return "'import'";
+    case TK_KW_EXPORT: return "'export'";
     case TK_LPAREN: return "'('";
     case TK_RPAREN: return "')'";
     case TK_LBRACKET: return "'['";
     case TK_RBRACKET: return "']'";
+    case TK_LBRACE: return "'{'";
+    case TK_RBRACE: return "'}'";
+    case TK_DOT: return "'.'";
     case TK_COMMA: return "','";
     case TK_SEMI: return "';'";
     case TK_EQ: return "'='";
@@ -59,6 +65,7 @@ static const struct {
     {"if", TK_KW_IF}, {"then", TK_KW_THEN}, {"else", TK_KW_ELSE},
     {"not", TK_KW_NOT}, {"print", TK_KW_PRINT}, {"callcc", TK_KW_CALLCC},
     {"throw", TK_KW_THROW}, {"and", TK_KW_AND}, {"or", TK_KW_OR},
+    {"package", TK_KW_PACKAGE}, {"import", TK_KW_IMPORT}, {"export", TK_KW_EXPORT},
     {"true", TK_TRUE}, {"false", TK_FALSE},
 };
 
@@ -257,6 +264,9 @@ LexResult lex_program(const char *src, Arena *a) {
         else if (c == ')') { lx.pos++; lx.col++; t.kind = TK_RPAREN; tok_push(&toks, &n, &cap, t); }
         else if (c == '[') { lx.pos++; lx.col++; t.kind = TK_LBRACKET; tok_push(&toks, &n, &cap, t); }
         else if (c == ']') { lx.pos++; lx.col++; t.kind = TK_RBRACKET; tok_push(&toks, &n, &cap, t); }
+        else if (c == '{') { lx.pos++; lx.col++; t.kind = TK_LBRACE; tok_push(&toks, &n, &cap, t); }
+        else if (c == '}') { lx.pos++; lx.col++; t.kind = TK_RBRACE; tok_push(&toks, &n, &cap, t); }
+        else if (c == '.') { lx.pos++; lx.col++; t.kind = TK_DOT; tok_push(&toks, &n, &cap, t); }
         else if (c == ',') { lx.pos++; lx.col++; t.kind = TK_COMMA; tok_push(&toks, &n, &cap, t); }
         else if (c == ';') { lx.pos++; lx.col++; t.kind = TK_SEMI; tok_push(&toks, &n, &cap, t); }
         else if (c == '=' && src[lx.pos + 1] == '=') { lx.pos += 2; lx.col += 2; t.kind = TK_EQEQ; tok_push(&toks, &n, &cap, t); }

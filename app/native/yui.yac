@@ -1,5 +1,7 @@
 /* YUI bindings. Pair with yui_yac.c / libyui_yac.so. JSON onClick: "yac_click". */
 
+import rt.ffi
+
 let yui_open(path) = cload(path)
 
 let yui_init(json, assets) = ccall(csym("yui_yac_init"), json, assets)

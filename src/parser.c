@@ -558,6 +558,39 @@ typedef struct {
     Ast *expr;        /* bound expr (bindings) or plain expr */
 } Item;
 
+static int skip_dotted(Parser *p) {
+    if (!at(p, TK_IDENT)) {
+        p_err(p, "expected identifier");
+        return 0;
+    }
+    advance(p);
+    while (at(p, TK_DOT)) {
+        advance(p);
+        if (!at(p, TK_IDENT)) {
+            p_err(p, "expected identifier after '.'");
+            return 0;
+        }
+        advance(p);
+    }
+    return 1;
+}
+
+static int skip_idlist(Parser *p) {
+    if (!at(p, TK_IDENT)) {
+        p_err(p, "expected identifier");
+        return 0;
+    }
+    advance(p);
+    while (eat(p, TK_COMMA)) {
+        if (!at(p, TK_IDENT)) {
+            p_err(p, "expected identifier");
+            return 0;
+        }
+        advance(p);
+    }
+    return 1;
+}
+
 ParseResult parse_program(const Token *toks, int n, Arena *a) {
     ParseResult res = {0};
     Parser p = {toks, n, 0, a, NULL};
@@ -567,6 +600,40 @@ ParseResult parse_program(const Token *toks, int n, Arena *a) {
     int discard_cnt = 0;
 
     while (!at(&p, TK_EOF)) {
+        if (at(&p, TK_KW_PACKAGE)) {
+            advance(&p);
+            if (!skip_dotted(&p)) goto err;
+            eat(&p, TK_SEMI);
+            continue;
+        }
+        if (at(&p, TK_KW_EXPORT)) {
+            advance(&p);
+            if (!skip_idlist(&p)) goto err;
+            eat(&p, TK_SEMI);
+            continue;
+        }
+        if (at(&p, TK_KW_IMPORT)) {
+            advance(&p);
+            if (!skip_dotted(&p)) goto err;
+            if (at(&p, TK_LBRACE)) {
+                advance(&p);
+                if (!skip_idlist(&p)) goto err;
+                if (!eat(&p, TK_RBRACE)) {
+                    p_err(&p, "expected '}' after import list");
+                    goto err;
+                }
+            } else if (at(&p, TK_IDENT) && peek(&p)->text &&
+                       strcmp(peek(&p)->text, "as") == 0) {
+                advance(&p);
+                if (!at(&p, TK_IDENT)) {
+                    p_err(&p, "expected identifier after 'as'");
+                    goto err;
+                }
+                advance(&p);
+            }
+            eat(&p, TK_SEMI);
+            continue;
+        }
         if (at(&p, TK_KW_LET)) {
             const Token *lt = advance(&p);
             if (!at(&p, TK_IDENT)) {

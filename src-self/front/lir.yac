@@ -165,8 +165,8 @@ let sigma_cons(fs, f) =
   let _ = fmap_put(m, intern(fun_src(f)), [nth(f, 1), nth(f, 3), idx]) in
   [cons(f, sigma_list(fs)), m, nth(fs, 2)]
 
-/* Load rt_image procs into Σ so guest calls (cload, host_os, …) resolve
- * as globals. Adding a file to rt_image is enough; no prim-table entry. */
+/* Load rt_image procs into Σ. Guest names come from kernel + import
+ * exports; unexported stdlib lets (os_has) are not in ub_prog scope. */
 let sigma_of_rt(rt) =
   let rec(i, fs) =
     if i >= len(rt) then fs
@@ -373,14 +373,39 @@ let ub_expr(e, sc) =
   else if k == "list" then xs(nth(e, 1), 0)
   else ""
 
+/* Keep in sync with export lists in rt/os.yac, ffi.yac, num.yac. */
+let pkg_exports(pkg) =
+  if pkg == "rt.os" then
+    [intern("uname"), intern("host_os"), intern("host_arch"), intern("host_format")]
+  else if pkg == "rt.ffi" then [intern("cload"), intern("csym")]
+  else if pkg == "rt.num" then [intern("yac_num_slow")]
+  else []
+
+let import_sel(sel, all, i, acc) =
+  if i >= len(sel) then acc
+  else
+    let n = nth(sel, i) in
+    if in_list(n, all) then import_sel(sel, all, i + 1, cons(n, acc))
+    else import_sel(sel, all, i + 1, acc)
+
+let import_names(e) =
+  let all = pkg_exports(nth(e, 1)) in
+  if len(e) < 3 then all
+  else import_sel(nth(e, 2), all, 0, [])
+
 let ub_prog(p, i, sc) =
   if i >= len(p) then ""
   else
     let e = nth(p, i) in
-    let u = ub_expr(e, sc) in
-    if u != "" then u
-    else if nth(e, 0) == "let" then ub_prog(p, i + 1, cons(nth(e, 1), sc))
-    else ub_prog(p, i + 1, sc)
+    let k = nth(e, 0) in
+    if k == "package" then ub_prog(p, i + 1, sc)
+    else if k == "export" then ub_prog(p, i + 1, sc)
+    else if k == "import" then ub_prog(p, i + 1, append(import_names(e), sc))
+    else
+      let u = ub_expr(e, sc) in
+      if u != "" then u
+      else if k == "let" then ub_prog(p, i + 1, cons(nth(e, 1), sc))
+      else ub_prog(p, i + 1, sc)
 
 let free_vars(fnbody, params, funs) =
   let fv(anf, acc, shdw) =

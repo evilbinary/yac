@@ -222,6 +222,7 @@ static void name_pop(Names *ns) {
 static const char *YAC_KW[] = {
     "let", "in", "fun", "if", "then", "else", "not", "print",
     "callcc", "throw", "and", "or", "true", "false",
+    "package", "import", "export",
 };
 
 static bool is_kw(const char *s) {

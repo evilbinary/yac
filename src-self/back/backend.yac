@@ -121,8 +121,21 @@ let fun_off(fo, name) =
   else if nth(nth(fo, 0), 0) == name then nth(nth(fo, 0), 1)
   else fun_off(drop(fo, 1), name)
 
+let kernel_names_cache =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let kernel_fun_names(_) =
+  let c = box_get(kernel_names_cache) in
+  if c == 0 then
+    let v = rt_fun_names(runtime_funs(0)) in
+    let _ = box_set(kernel_names_cache, v) in
+    v
+  else c
+
 let report_unbound(src, ast) =
-  let nm = ub_prog(ast, 0, rt_fun_names(rt_image(0))) in
+  let nm = ub_prog(ast, 0, kernel_fun_names(0)) in
   if nm == "" then 0
   else
     let toks = tokenize(src) in

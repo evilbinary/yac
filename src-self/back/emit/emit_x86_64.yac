@@ -1,3 +1,5 @@
+import rt.os
+
 /* emit_x86_64.yac — x86-64 emit of LIR.
  *
  * Shared maps/patches: emit.yac. Encoding: encode_x64.yac.
