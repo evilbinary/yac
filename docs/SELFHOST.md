@@ -130,7 +130,7 @@ src-self/
 
 ### 5.3 编译单元（无语法；不是 `package`）
 
-**单元**只存在于编译器/构建：链接、版本、重建边界（CRP + CCP）。没有 `unit` 关键字。客镜像按 import 组装：`import a.b.c` → 文件 `a/b/c.yac`。查找根：`--pkg DIR[,DIR...]`、`./pkg`、可执行文件所在目录（C `yac` 与原生 `yc` 相同）。独立项目把 `rt/` 放在 `yc` 旁边。导出名单读源里的 `export`。
+**单元**只存在于编译器/构建：链接、版本、重建边界（CRP + CCP）。没有 `unit` 关键字。客镜像按 import 组装：`import a.b.c` → 文件 `a/b/c.yac`。查找根：`--pkg DIR[,DIR...]`、`./pkg`、可执行文件所在目录（C `yac` 与原生 `yc` 相同）。本仓库 `--pkg src-self`；独立项目把 `rt/` 放在 `yc` 旁边或另给 `--pkg`。导出名单读源里的 `export`。
 
 约束：
 

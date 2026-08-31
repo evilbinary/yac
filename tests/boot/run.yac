@@ -56,11 +56,11 @@ let drop_print0(s) =
 let native_build(src, bin) =
   let yc = native("build/test_tmp/yc_a") in
   let out = native(bin) in
-  let cr = run([yc, src, "-o", out]) in
+  let cr = run([yc, "--pkg", "src-self", src, "-o", out]) in
   let _ = run(["chmod", "+x", out]) in
   cr
 
-let interp_out(runner) = drop_print0(nth(run([native("./yac"), runner]), 1))
+let interp_out(runner) = drop_print0(nth(run([native("./yac"), "--pkg", "src-self", runner]), 1))
 
 let native_out(bin) = chomp(nth(run([native(bin)]), 1))
 

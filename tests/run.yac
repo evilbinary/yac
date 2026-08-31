@@ -3,8 +3,8 @@ import rt.os
 /* tests/run.yac — yac tests yac (L6: compiled and run by native yc).
  * Layout: tests/interp, tests/compiler/cases, tests/boot
  *
- *   make test          → yc_a compiles this file, then the binary runs it
- *   ./yac tests/run.yac  still works (C interp of this harness)
+ *   make test              → yc_a --pkg src-self compiles this file, then the binary runs it
+ *   ./yac --pkg src-self tests/run.yac  (C interp of this harness)
  *
  * C interpreter is only a subprocess for interp_suite (cps/callcc/float/bignum).
  * yc_a is copied from Makefile L4 (build/yc_tmp/yc_a); boot suite compiles yc_b natively.
@@ -14,6 +14,7 @@ let TMP = "build/test_tmp"
 let BUNDLE = "build/test_tmp/yc_bundle.yac"
 let INTERP = "tests/interp/"
 let CASES = "tests/compiler/cases/"
+let PKG = ["--pkg", "src-self"]
 
 let ip(f) = str_cat(INTERP, f)
 let case_src(name) = str_cat(CASES, str_cat(name, ".yac"))
@@ -47,6 +48,9 @@ let native(p) =
   if already then p
   else if host_os(0) == "windows" then str_cat(p, ".exe")
   else p
+
+let yc_pkg(bin) = append([bin], PKG)
+let yac_c(_) = append([native("./yac")], PKG)
 
 let strip_cr(s) =
   let b = bytes_new() in
@@ -100,17 +104,17 @@ let contains(s, sub) =
   else rec(0)
 
 let interp_eq(st, name, flags, path, want) =
-  let argv = append([native("./yac")], append(flags, [path])) in
+  let argv = append(yac_c(0), append(flags, [path])) in
   let r = run(argv) in
   check(st, name, want, chomp(nth(r, 1)))
 
 let interp_par(st, name, flags, path) =
-  let a = run([native("./yac"), path]) in
-  let b = run(append([native("./yac")], append(flags, [path]))) in
+  let a = run(append(yac_c(0), [path])) in
+  let b = run(append(yac_c(0), append(flags, [path]))) in
   check(st, name, chomp(nth(a, 1)), chomp(nth(b, 1)))
 
 let interp_err(st, name, flags, path, needle) =
-  let argv = append([native("./yac")], append(flags, [path])) in
+  let argv = append(yac_c(0), append(flags, [path])) in
   let r = run(argv) in
   let blob = str_cat(nth(r, 1), nth(r, 2)) in
   let ok =
@@ -218,7 +222,7 @@ let unbound_bads(_) = [
 let repl_feed(yc, src) =
   let p = str_cat(TMP, "/repl_in.yac") in
   let _ = write_file(p, src) in
-  run(["sh", "-c", str_cat(nth(yc, 0), str_cat(" --repl <", p))])
+  run(["sh", "-c", str_cat(join_cmd(yc), str_cat(" --repl <", p))])
 
 let repl_check(st, yc, name, src, needle) =
   let r = repl_feed(yc, src) in
@@ -462,8 +466,8 @@ let interp_suite(st) =
 let iso_one(st, ya, yb, name) =
   let a = native(str_cat(TMP, str_cat("/isoA_", name))) in
   let b = native(str_cat(TMP, str_cat("/isoB_", name))) in
-  let _ = run([ya, case_src(name), "-o", a]) in
-  let _ = run([yb, case_src(name), "-o", b]) in
+  let _ = run(append(yc_pkg(ya), [case_src(name), "-o", a])) in
+  let _ = run(append(yc_pkg(yb), [case_src(name), "-o", b])) in
   let xa = read_file(a) in
   let xb = read_file(b) in
   let same =
@@ -478,16 +482,16 @@ let boot_suite(st, ya) =
   let _ = run(["rm", "-f", yb, str_cat(yb, ".bin")]) in
   let st1 = check(st, "boot yc_a exists", "0", int_to_str(exists_rc(ya))) in
   let st2 = check(st1, "boot yc_a not .bin", "1", int_to_str(exists_rc(str_cat(ya, ".bin")))) in
-  let _ = run([ya, BUNDLE, "-o", yb]) in
+  let _ = run(append(yc_pkg(ya), [BUNDLE, "-o", yb])) in
   let st3 = check(st2, "boot yc_b exists", "0", int_to_str(exists_rc(yb))) in
   let st4 = check(st3, "boot yc_b not .bin", "1", int_to_str(exists_rc(str_cat(yb, ".bin")))) in
   let _ = run(["chmod", "+x", yb]) in
-  let stB = compiler_all(st4, [yb]) in
+  let stB = compiler_all(st4, yc_pkg(yb)) in
   let psrc = str_cat(TMP, "/p42.yac") in
   let pbin = native(str_cat(TMP, "/p42")) in
   let _ = write_file(psrc, "42\n") in
   let _ = run(["rm", "-f", pbin, str_cat(pbin, ".bin")]) in
-  let _ = run([ya, psrc]) in
+  let _ = run(append(yc_pkg(ya), [psrc])) in
   let st5 = check(stB, "boot default name p42", "0", int_to_str(exists_rc(pbin))) in
   let st6 = check(st5, "boot default not p42.bin", "1", int_to_str(exists_rc(str_cat(pbin, ".bin")))) in
   let _ = run(["chmod", "+x", pbin]) in
@@ -501,22 +505,19 @@ let main =
   let ya = native(str_cat(TMP, "/yc_a")) in
   let _ = run(["rm", "-f", ya, str_cat(ya, ".bin")]) in
   let _ = run(["cp", "-f", native("build/yc_tmp/yc_a"), ya]) in
-  let _ = system(str_cat("mkdir -p ", str_cat(TMP, "/rt"))) in
-  let _ = run(["cp", "-f", "src-self/rt/os.yac", "src-self/rt/ffi.yac",
-               "src-self/rt/num.yac", str_cat(TMP, "/rt/")]) in
   let _ = run(["chmod", "+x", ya]) in
   let boot_bin = native(str_cat(TMP, "/boot_run")) in
   let _ = run(["rm", "-f", boot_bin]) in
-  let _ = run([ya, "tests/boot/run.yac", "-o", boot_bin]) in
+  let _ = run(append(yc_pkg(ya), ["tests/boot/run.yac", "-o", boot_bin])) in
   let _ = run(["chmod", "+x", boot_bin]) in
   let st0 = interp_suite([0, 0]) in
   let _ = banner("boot", ya) in
   let br = run([boot_bin]) in
   let _ = print(chomp(nth(br, 1))) in
   let st1 = check(st0, "boot frontend", "0", int_to_str(nth(br, 0))) in
-  let st2 = compiler_all(st1, [ya]) in
-  let stQ = qemu_arch(st2, [ya], "arm64") in
-  let stR = qemu_arch(stQ, [ya], "riscv64") in
+  let st2 = compiler_all(st1, yc_pkg(ya)) in
+  let stQ = qemu_arch(st2, yc_pkg(ya), "arm64") in
+  let stR = qemu_arch(stQ, yc_pkg(ya), "riscv64") in
   let st3 = boot_suite(stR, ya) in
   let _ = print("") in
   let _ = print(str_cat(int_to_str(nth(st3, 0)),
