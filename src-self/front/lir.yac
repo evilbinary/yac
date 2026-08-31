@@ -165,8 +165,8 @@ let sigma_cons(fs, f) =
   let _ = fmap_put(m, intern(fun_src(f)), [nth(f, 1), nth(f, 3), idx]) in
   [cons(f, sigma_list(fs)), m, nth(fs, 2)]
 
-/* Load rt_image procs into Σ. Guest names come from kernel + import
- * exports; unexported stdlib lets (os_has) are not in ub_prog scope. */
+/* Load linked stdlib procs into Σ (kernel+num, plus os/ffi if imported).
+ * Unexported lets (os_has) are not in ub_prog scope. */
 let sigma_of_rt(rt) =
   let rec(i, fs) =
     if i >= len(rt) then fs

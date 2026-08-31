@@ -56,9 +56,9 @@ let stdlib_src(name) =
       else file_or_0(str_cat(d, str_cat("/../", rel)))
 
 /* Compile one rt/*.yac against already-lowered procs so later stdlib
- * files can call earlier ones. New stdlib: add stdlib_src("foo.yac")
- * in rt_image (after files it uses). Do not call runtime_funs() inside
- * a loop: that rebuilds every kernel insn list. */
+ * files can call earlier ones. Unit table (no keyword): rt.num always;
+ * rt.os / rt.ffi only if the guest imported them. Do not call
+ * runtime_funs() inside a loop. */
 let lir_extend(src, acc) =
   if src == 0 then acc
   else
@@ -71,21 +71,79 @@ let lir_extend(src, acc) =
         len(anf)) in
       reverse(sigma_list(nth(st, 2)))
 
-let rt_num_cache =
+let ast_has_import(ast, pkg, i) =
+  if i >= len(ast) then false
+  else
+    let e = nth(ast, i) in
+    if nth(e, 0) == "import" then
+      if nth(e, 1) == pkg then true
+      else ast_has_import(ast, pkg, i + 1)
+    else ast_has_import(ast, pkg, i + 1)
+
+let link_need_box =
+  let b = box_new() in
+  let _ = box_set(b, [false, false]) in
+  b
+
+let link_from_ast(ast) =
+  let _ = box_set(link_need_box,
+    [ast_has_import(ast, "rt.os", 0), ast_has_import(ast, "rt.ffi", 0)]) in
+  0
+
+let rt_cache_num =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let rt_cache_os =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let rt_cache_ffi =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let rt_cache_os_ffi =
   let b = box_new() in
   let _ = box_set(b, 0) in
   b
 
-let rt_image(_) =
-  let c = box_get(rt_num_cache) in
+let rt_base(_) =
+  let c = box_get(rt_cache_num) in
   if c == 0 then
-    let v = lir_extend(stdlib_src("os.yac"),
-              lir_extend(stdlib_src("ffi.yac"),
-                lir_extend(stdlib_src("num.yac"),
-                  runtime_funs(0)))) in
-    let _ = box_set(rt_num_cache, v) in
+    let v = lir_extend(stdlib_src("num.yac"), runtime_funs(0)) in
+    let _ = box_set(rt_cache_num, v) in
     v
   else c
+
+let rt_image_link(want_os, want_ffi) =
+  if want_os then
+    if want_ffi then
+      let c = box_get(rt_cache_os_ffi) in
+      if c == 0 then
+        let v = lir_extend(stdlib_src("os.yac"),
+                  lir_extend(stdlib_src("ffi.yac"), rt_base(0))) in
+        let _ = box_set(rt_cache_os_ffi, v) in
+        v
+      else c
+    else
+      let c = box_get(rt_cache_os) in
+      if c == 0 then
+        let v = lir_extend(stdlib_src("os.yac"), rt_base(0)) in
+        let _ = box_set(rt_cache_os, v) in
+        v
+      else c
+  else if want_ffi then
+    let c = box_get(rt_cache_ffi) in
+    if c == 0 then
+      let v = lir_extend(stdlib_src("ffi.yac"), rt_base(0)) in
+      let _ = box_set(rt_cache_ffi, v) in
+      v
+    else c
+  else rt_base(0)
+
+let rt_for_link(_) =
+  let w = box_get(link_need_box) in
+  rt_image_link(nth(w, 0), nth(w, 1))
 
 let rt_fun_names(funs) =
   let rec(i, acc) =
@@ -94,7 +152,7 @@ let rt_fun_names(funs) =
   rec(0, [])
 
 let pass_lir(anf_list) =
-  let rt0 = rt_image(0) in
+  let rt0 = rt_for_link(0) in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
              len(anf_list)) in
@@ -102,7 +160,7 @@ let pass_lir(anf_list) =
   tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
 
 let pass_lir_eval(anf_list, bind_name) =
-  let rt0 = rt_image(0) in
+  let rt0 = rt_for_link(0) in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
              len(anf_list)) in
@@ -159,6 +217,7 @@ let compile_jit(src, t, named) =
     let _ = print("error: syntax") in 1
   else if report_unbound(src, ast) != 0 then 1
   else
+    let _ = link_from_ast(ast) in
     let bn = if named then repl_last_let(ast) else "" in
     let _ = log_set_hush(true) in
     let r = lower_expr(pass_lir_eval(pass_anf(ast), bn), t) in
@@ -232,6 +291,7 @@ let compile_uncps(src, t, named, do_opt) =
     let _ = print("error: syntax") in 1
   else if report_unbound(src, ast) != 0 then 1
   else
+    let _ = link_from_ast(ast) in
     let r = uncps_all(cps_maybe_opt(cps_all(pass_anf(ast)), do_opt)) in
     if uncps_is_err(r) then
       let _ = print(str_cat("error: ", nth(r, 1))) in 1
@@ -245,6 +305,7 @@ let compile_src(src, outpath, t, profpath) =
     let _ = print("error: syntax") in 1
   else if report_unbound(src, ast0) != 0 then 1
   else
+    let _ = link_from_ast(ast0) in
     let t0 = time_ms() in
     let _ = if profpath == "" then 0 else yac_prof_enable(profpath) in
     let _ = log("yc", "start") in

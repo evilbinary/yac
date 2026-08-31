@@ -397,7 +397,7 @@ export    ::= export ident ("," ident)*
 
 `import P as a` 现阶段与 `import P` 相同（尚无 `a.x` 限定名）。`import P { x, y }` 只引入列出且确为导出的名字。
 
-客程序绑定检查：内核名（`runtime_funs`）加 `import` 的导出。未 import 则 `host_os` / `cload` 为未绑定。镜像仍可整表链接 `rt_image`（裁剪见单元阶段）。`os_has` 留在包 `rt.os` 且不导出。
+客程序绑定检查：内核名（`runtime_funs`）加 `import` 的导出。未 import 则 `host_os` / `cload` 为未绑定。链接同样按 import：默认 `kernel`+`rt.num`，`import rt.os` / `rt.ffi` 才链对应文件。`os_has` 留在包 `rt.os` 且不导出。
 
 
 ### 3.4 示例
