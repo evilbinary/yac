@@ -46,6 +46,16 @@ let native(p) =
   else if nth(run(["test", "-f", "build/yc_tmp/yc_a.exe"]), 0) == 0 then str_cat(p, ".exe")
   else p
 
+let strip_cr(s) =
+  let b = bytes_new() in
+  let rec(i) =
+    if i >= str_len(s) then bytes_to_str(b)
+    else
+      let c = str_ref(s, i) in
+      let _ = if c == 13 then 0 else bytes_append(b, c) in
+      rec(i + 1) in
+  rec(0)
+
 let chomp(s) =
   let n = str_len(s) in
   let rec(i) =
@@ -53,7 +63,8 @@ let chomp(s) =
     else if str_ref(s, i) == 0 then i
     else rec(i + 1) in
   let m = rec(0) in
-  let t = if m == n then s else str_slice(s, 0, m) in
+  let t0 = if m == n then s else str_slice(s, 0, m) in
+  let t = strip_cr(t0) in
   let k = str_len(t) in
   if k == 0 then t
   else if str_ref(t, k - 1) == 10 then str_slice(t, 0, k - 1)
@@ -310,7 +321,8 @@ let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
 
 let qemu_cmd(arch) =
-  if arch == "arm64" then
+  if nth(run(["sh", "-c", "test \"${OS:-}\" = Windows_NT"]), 0) == 0 then ""
+  else if arch == "arm64" then
     if has_cmd("qemu-aarch64") then "qemu-aarch64"
     else if has_cmd("qemu-aarch64-static") then "qemu-aarch64-static"
     else ""
