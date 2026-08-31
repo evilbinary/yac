@@ -1,0 +1,18 @@
+import net
+let h = htons(80) in
+let a = parse_ipv4("127.0.0.1") in
+let p = host_port("127.0.0.1:80") in
+let sa = sockaddr4(a, 80) in
+if h == 20480 then
+  if a == ipv4(127, 0, 0, 1) then
+    if parse_ipv4("256.0.0.1") == 0 then
+      if nth(p, 1) == 80 then
+        if nth(p, 0) == "127.0.0.1" then
+          if str_len(sa) == 16 then
+            if str_ref(sa, 0) == 2 then 42 else 0
+          else 0
+        else 0
+      else 0
+    else 0
+  else 0
+else 0

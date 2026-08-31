@@ -1,0 +1,221 @@
+/* net.yac — IPv4 TCP. No DNS / HTTP. Linux libc; Windows ws2_32 via GetProcAddress. */
+
+package net
+export htons, ipv4, parse_ipv4, host_port, sockaddr4
+export tcp_connect, tcp_listen, tcp_accept, tcp_send, tcp_recv, tcp_close
+
+/* ASCII prefix match. */
+let net_has(s, p) =
+  let n = str_len(p) in
+  if str_len(s) < n then false
+  else str_slice(s, 0, n) == p
+
+/* n zero bytes as a C buffer. */
+let net_zstr(n) =
+  let b = bytes_new() in
+  let rec(i) =
+    if i >= n then bytes_to_str(b)
+    else
+      let _ = bytes_append(b, 0) in
+      rec(i + 1) in
+  rec(0)
+
+/* C string at off inside a NUL-padded buffer. */
+let net_cstr_at(s, off) =
+  let n = str_len(s) in
+  if off >= n then ""
+  else
+    let rec(i) =
+      if off + i >= n then str_slice(s, off, n - off)
+      else if str_ref(s, off + i) == 0 then str_slice(s, off, i)
+      else rec(i + 1) in
+    rec(0)
+
+/* True on Windows (uname empty / MINGW / MSYS / …). */
+let net_is_win(_) =
+  let buf = net_zstr(256) in
+  let _ = ccall("uname", buf) in
+  let sys = net_cstr_at(buf, 0) in
+  if sys == "" then true
+  else if net_has(sys, "MINGW") then true
+  else if net_has(sys, "MSYS") then true
+  else if net_has(sys, "CYGWIN") then true
+  else if net_has(sys, "Windows") then true
+  else false
+
+/* ws2_32.dll, or 0 on Unix. */
+let net_wsock(_) =
+  if net_is_win(0) then ccall("LoadLibraryA", "ws2_32.dll")
+  else 0
+
+/* Named Winsock symbol. */
+let net_sym(name) = ccall("GetProcAddress", net_wsock(0), name)
+
+/* WSAStartup(2.2); no-op on Unix. */
+let net_wsa(_) =
+  if net_is_win(0) then ccall(net_sym("WSAStartup"), 514, net_zstr(512))
+  else 0
+
+/* 16-bit host to net. */
+let htons(p) = bor(bshl(band(p, 255), 8), band(bshr(p, 8), 255))
+
+/* Four octets → s_addr (LE memory is a.b.c.d). */
+let ipv4(a, b, c, d) =
+  bor(band(a, 255),
+    bor(bshl(band(b, 255), 8),
+      bor(bshl(band(c, 255), 16), bshl(band(d, 255), 24))))
+
+/* Decimal 0..255 from s[a,b), or -1. */
+let net_octet(s, a, b, v) =
+  if a >= b then 0 - 1
+  else
+    let c = str_ref(s, a) in
+    if c < 48 then 0 - 1
+    else if c > 57 then 0 - 1
+    else
+      let n = v * 10 + (c - 48) in
+      if n > 255 then 0 - 1
+      else if a + 1 == b then n
+      else net_octet(s, a + 1, b, n)
+
+/* Walk dotted quad; acc is octets reversed. */
+let parse_ipv4_go(s, i, start, dots, acc) =
+  let n = str_len(s) in
+  if i >= n then
+    if dots != 3 then 0
+    else if len(acc) != 3 then 0
+    else
+      let o = net_octet(s, start, n, 0) in
+      if o < 0 then 0
+      else ipv4(nth(acc, 2), nth(acc, 1), nth(acc, 0), o)
+  else if str_ref(s, i) != 46 then parse_ipv4_go(s, i + 1, start, dots, acc)
+  else if start >= i then 0
+  else
+    let o = net_octet(s, start, i, 0) in
+    if o < 0 then 0
+    else parse_ipv4_go(s, i + 1, i + 1, dots + 1, cons(o, acc))
+
+/* Dotted IPv4 → s_addr. Bad form → 0 (same as 0.0.0.0). */
+let parse_ipv4(s) = parse_ipv4_go(s, 0, 0, 0, [])
+
+/* Last ':' index, or -1. */
+let net_colon(s) =
+  let rec(i) =
+    if i < 0 then 0 - 1
+    else if str_ref(s, i) == 58 then i
+    else rec(i - 1) in
+  rec(str_len(s) - 1)
+
+/* Decimal digits from i. */
+let net_nat(s, i, n, v) =
+  if i >= n then v
+  else
+    let c = str_ref(s, i) in
+    if c < 48 then 0
+    else if c > 57 then 0
+    else net_nat(s, i + 1, n, v * 10 + (c - 48))
+
+/* "host:port" → [host, port]. No colon → port 0. */
+let host_port(s) =
+  let k = net_colon(s) in
+  if k < 0 then [s, 0]
+  else
+    let n = str_len(s) in
+    [str_slice(s, 0, k), net_nat(s, k + 1, n, 0)]
+
+/* Append 16-bit little-endian. */
+let net_put16(b, x) =
+  let _ = bytes_append(b, band(x, 255)) in
+  bytes_append(b, band(bshr(x, 8), 255))
+
+/* Append 32-bit little-endian. */
+let net_put32(b, x) =
+  let _ = bytes_append(b, band(x, 255)) in
+  let _ = bytes_append(b, band(bshr(x, 8), 255)) in
+  let _ = bytes_append(b, band(bshr(x, 16), 255)) in
+  bytes_append(b, band(bshr(x, 24), 255))
+
+/* 16-byte sockaddr_in for AF_INET. */
+let sockaddr4(addr, port) =
+  let b = bytes_new() in
+  let _ = net_put16(b, 2) in
+  let _ = net_put16(b, htons(port)) in
+  let _ = net_put32(b, addr) in
+  let rec(i) =
+    if i >= 8 then 0
+    else
+      let _ = bytes_append(b, 0) in
+      rec(i + 1) in
+  let _ = rec(0) in
+  bytes_to_str(b)
+
+/* AF_INET SOCK_STREAM TCP socket, or -1. */
+let tcp_socket(_) =
+  let _ = net_wsa(0) in
+  if net_is_win(0) then ccall(net_sym("socket"), 2, 1, 6)
+  else ccall("socket", 2, 1, 6)
+
+/* connect(2). 0 ok, else -1. */
+let tcp_do_connect(fd, addr, port) =
+  if net_is_win(0) then ccall(net_sym("connect"), fd, sockaddr4(addr, port), 16)
+  else ccall("connect", fd, sockaddr4(addr, port), 16)
+
+/* Connect dotted IPv4. Returns fd, or -1. No DNS. */
+let tcp_connect(host, port) =
+  let addr = parse_ipv4(host) in
+  if addr == 0 then
+    if host == "0.0.0.0" then
+      let fd = tcp_socket(0) in
+      if fd < 0 then fd
+      else if tcp_do_connect(fd, addr, port) < 0 then 0 - 1
+      else fd
+    else 0 - 1
+  else
+    let fd = tcp_socket(0) in
+    if fd < 0 then fd
+    else if tcp_do_connect(fd, addr, port) < 0 then 0 - 1
+    else fd
+
+/* bind(2). */
+let tcp_bind(fd, addr, port) =
+  if net_is_win(0) then ccall(net_sym("bind"), fd, sockaddr4(addr, port), 16)
+  else ccall("bind", fd, sockaddr4(addr, port), 16)
+
+/* Listen on dotted IPv4. Returns fd, or -1. */
+let tcp_listen(host, port) =
+  let addr = parse_ipv4(host) in
+  let ok = if addr == 0 then host == "0.0.0.0" else true in
+  if ok == false then 0 - 1
+  else
+    let fd = tcp_socket(0) in
+    if fd < 0 then fd
+    else if tcp_bind(fd, addr, port) < 0 then 0 - 1
+    else if net_is_win(0) then
+      if ccall(net_sym("listen"), fd, 1) < 0 then 0 - 1 else fd
+    else if ccall("listen", fd, 1) < 0 then 0 - 1
+    else fd
+
+/* accept(2). New fd, or -1. */
+let tcp_accept(fd) =
+  if net_is_win(0) then ccall(net_sym("accept"), fd, 0, 0)
+  else ccall("accept", fd, 0, 0)
+
+/* send(2) the whole string. Byte count, or -1. */
+let tcp_send(fd, s) =
+  if net_is_win(0) then ccall(net_sym("send"), fd, s, str_len(s), 0)
+  else ccall("send", fd, s, str_len(s), 0)
+
+/* recv(2) up to n bytes. Payload string, "" on EOF, or -1. */
+let tcp_recv(fd, n) =
+  let buf = net_zstr(n) in
+  let k =
+    if net_is_win(0) then ccall(net_sym("recv"), fd, buf, n, 0)
+    else ccall("recv", fd, buf, n, 0) in
+  if k < 0 then 0 - 1
+  else if k == 0 then ""
+  else str_slice(buf, 0, k)
+
+/* closesocket / close. */
+let tcp_close(fd) =
+  if net_is_win(0) then ccall(net_sym("closesocket"), fd)
+  else ccall("close", fd)
