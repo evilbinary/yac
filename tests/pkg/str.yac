@@ -1,0 +1,24 @@
+import str
+let xs = split("a,b", ",") in
+let ys = split("a,,b", ",") in
+if len(xs) == 2 then
+  if nth(xs, 0) == "a" then
+    if nth(xs, 1) == "b" then
+      if len(ys) == 3 then
+        if nth(ys, 1) == "" then
+          if len(split("", ",")) == 0 then
+            if split("a,b", "") == 0 then
+              if starts_with("abc", "ab") then
+                if starts_with("abc", "x") == false then
+                  if ends_with("a.yac", ".yac") then
+                    if ends_with("a.yac", ".c") == false then 42 else 0
+                  else 0
+                else 0
+              else 0
+            else 0
+          else 0
+        else 0
+      else 0
+    else 0
+  else 0
+else 0

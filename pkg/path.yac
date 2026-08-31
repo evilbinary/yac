@@ -1,4 +1,9 @@
-/* path.yac — join / dirname / basename / ext. / and \ are both separators. */
+/* path.yac — filesystem path strings (not OS calls).
+ *
+ * '/' and '\\' are both separators so Windows argv(0) works.
+ * join always inserts '/'. dirname of a name with no sep is ".".
+ * ext is the suffix after the last '.' in basename (no dot); none → "".
+ * Do not import this from backend pkg_src (load cycle). */
 
 package path
 export join, dirname, basename, ext

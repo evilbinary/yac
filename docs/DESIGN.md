@@ -400,7 +400,7 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 
 常见库按需增加，不一次写完：
 
-- 先做：`path`（`join` / `dirname` / `basename` / `ext`）、随后 `cli`（逗号列表与 flag）、`io`（在 `read_file` 失败为 `0` 的前提下封装存在性）。
+- 已落地：`path`（`join` / `dirname` / `basename` / `ext`）、`str`（`split` / `starts_with` / `ends_with`）、`io`（`exists` / `read_or_0`）。`--pkg` 的空段校验仍在 `backend.yac`，不放进 `str`。
 - 有真实调用再做：`yui`（从 `app/native/yui.yac` 收）、`fmt`（拼字符串）、`json`（真要解析时）。
 - 先不要：`http` / `re` / `crypto` / `thread`。
 

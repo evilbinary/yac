@@ -124,7 +124,7 @@ src-self/
   lang/          scheme.yac
   yc.yac         CLI（--arch / --format / --pkg）
   drivers/       各阶段测试驱动（不进 bundle）
-pkg/             客常见库（path 等；lookup 默认 ./pkg，不进 compiler cat）
+pkg/             客常见库（path / str / io；lookup 默认 ./pkg，不进 compiler cat）
 ```
 
 没有单独的 `regalloc.yac` / `link.yac`：M3 值为栈槽（`[rbp+off]`），符号/入口在 emit+pack 里完成。
