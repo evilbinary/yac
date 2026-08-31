@@ -1,0 +1,21 @@
+/* log.yac — guest stderr-style lines. Compiler logging stays in src-self/lib/log.yac. */
+
+package log
+export info, warn, error
+
+/* One line: [time] [tag] msg. Not exported. */
+let log_line(tag, msg) =
+  str_cat("[",
+    str_cat(time_str(),
+      str_cat("] [",
+        str_cat(tag,
+          str_cat("] ", msg)))))
+
+/* Print an info line. */
+let info(msg) = print(log_line("info", msg))
+
+/* Print a warn line. */
+let warn(msg) = print(log_line("warn", msg))
+
+/* Print an error line. */
+let error(msg) = print(log_line("error", msg))

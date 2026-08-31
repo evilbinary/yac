@@ -1,0 +1,27 @@
+/* fmt.yac — %s / %d / %% formatting. args is a list, one slot per conversion. */
+
+package fmt
+export format, printf
+
+/* Walk pat; i in pat, ai in args. Nested rec scrambled ncap. */
+let fmt_go(pat, args, i, ai, acc) =
+  let n = str_len(pat) in
+  if i >= n then acc
+  else
+    let c = str_ref(pat, i) in
+    if c != 37 then fmt_go(pat, args, i + 1, ai, str_cat(acc, str_chr(c)))
+    else if i + 1 >= n then str_cat(acc, "%")
+    else
+      let d = str_ref(pat, i + 1) in
+      if d == 37 then fmt_go(pat, args, i + 2, ai, str_cat(acc, "%"))
+      else if d == 115 then
+        fmt_go(pat, args, i + 2, ai + 1, str_cat(acc, nth(args, ai)))
+      else if d == 100 then
+        fmt_go(pat, args, i + 2, ai + 1, str_cat(acc, int_to_str(nth(args, ai))))
+      else fmt_go(pat, args, i + 1, ai, str_cat(acc, "%"))
+
+/* Build a string. %s = already a string, %d = int_to_str, %% = "%". */
+let format(pat, args) = fmt_go(pat, args, 0, 0, "")
+
+/* Print format(pat, args) and return that string. */
+let printf(pat, args) = print(format(pat, args))

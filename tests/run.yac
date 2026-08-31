@@ -161,7 +161,11 @@ let pkg_one(st, yc, c) =
     if kind == "rc" then check(st, str_cat("pkg ", name), want, int_to_str(nth(r, 0)))
     else check(st, str_cat("pkg ", name), want, chomp(nth(r, 1)))
 
-let pkg_cases(_) = [["path", "rc", "42"], ["str", "rc", "42"], ["io", "rc", "42"]]
+let pkg_cases(_) = [
+  ["path", "rc", "42"], ["str", "rc", "42"], ["io", "rc", "42"],
+  ["list", "rc", "42"], ["hash", "rc", "42"], ["fmt", "rc", "42"],
+  ["log", "rc", "42"], ["test", "rc", "42"]
+]
 
 let pkg_all(st, yc) =
   let _ = banner("pkg", nth(yc, 0)) in

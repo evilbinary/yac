@@ -1,0 +1,23 @@
+/* test.yac — tiny asserts for guest programs. Fail calls exit(1). */
+
+package test
+export fail, eq, ok
+
+/* Print FAIL: msg and abort. */
+let fail(msg) =
+  let _ = print(str_cat("FAIL: ", msg)) in
+  exit(1)
+
+/* 0 if want == got; otherwise print both and abort. */
+let eq(want, got) =
+  if want == got then 0
+  else
+    let _ = print("FAIL: not eq") in
+    let _ = print(want) in
+    let _ = print(got) in
+    exit(1)
+
+/* 0 if cond is true; otherwise fail("not ok"). */
+let ok(cond) =
+  if cond then 0
+  else fail("not ok")

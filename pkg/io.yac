@@ -1,18 +1,16 @@
-/* io.yac — read_file wrappers. Native miss is 0; C interp miss is ().
- *
- * exists: file opened (empty file is true).
- * read_or_0: contents, or 0 if missing. Empty file is "".
- * Package lookup uses its own file_or_0 (empty .yac is not a package). */
+/* io.yac — read_file wrappers. Native miss is 0; C interp miss is (). */
 
 package io
 export exists, read_or_0
 
+/* True if the path opened. Empty file is true. */
 let exists(p) =
   let r = read_file(p) in
   if r == 0 then false
   else if r == () then false
   else true
 
+/* File contents, or 0 if missing. Empty file is "". */
 let read_or_0(p) =
   let r = read_file(p) in
   if r == 0 then 0

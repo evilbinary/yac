@@ -1,29 +1,28 @@
-/* str.yac — string helpers that are not prims (str_len / str_cat / str_slice stay prims).
- *
- * split(s, sep): sep is one character. "a,b" / "," → ["a","b"].
- * Empty s → []. Adjacent seps keep empty pieces ("a,,b" → ["a","","b"]).
- * starts_with / ends_with: prefix/suffix match; empty needle is true. */
+/* str.yac — string helpers; str_len / str_cat / str_slice stay prims. */
 
 package str
 export split, starts_with, ends_with
 
-/* Top-level rec: nested rec inside split scrambled the sep slot (ncap). */
+/* Walk s; sc is the separator code. Nested rec inside split scrambled ncap. */
 let split_parts(s, sc, i, start, acc) =
   let n = str_len(s) in
   if i >= n then list_rev(cons(str_slice(s, start, i - start), acc))
   else if str_ref(s, i) != sc then split_parts(s, sc, i + 1, start, acc)
   else split_parts(s, sc, i + 1, i + 1, cons(str_slice(s, start, i - start), acc))
 
+/* Split on a one-character sep. Bad sep → 0. Empty s → []. "a,,b" keeps "". */
 let split(s, sep) =
   if str_len(sep) != 1 then 0
   else if str_len(s) == 0 then []
   else split_parts(s, str_ref(sep, 0), 0, 0, [])
 
+/* True if s begins with p. Empty p is true. */
 let starts_with(s, p) =
   let m = str_len(p) in
   if m > str_len(s) then false
   else str_slice(s, 0, m) == p
 
+/* True if s ends with p. Empty p is true. */
 let ends_with(s, p) =
   let n = str_len(s) in
   let m = str_len(p) in

@@ -1,0 +1,44 @@
+/* list.yac — cons-list helpers. len / nth / map / filter / foldl stay prims. */
+
+package list
+export last, contains, take, range, zip
+
+/* Last element, or 0 if empty. */
+let last(xs) =
+  if len(xs) == 0 then 0
+  else if len(xs) == 1 then nth(xs, 0)
+  else last(tail(xs))
+
+/* True if some element == x. */
+let contains(xs, x) =
+  if len(xs) == 0 then false
+  else if nth(xs, 0) == x then true
+  else contains(tail(xs), x)
+
+/* Acc for take; not exported. */
+let take_go(n, xs, acc) =
+  if n <= 0 then list_rev(acc)
+  else if len(xs) == 0 then list_rev(acc)
+  else take_go(n - 1, tail(xs), cons(nth(xs, 0), acc))
+
+/* First n elements (or fewer if xs is shorter). n <= 0 → []. */
+let take(n, xs) = take_go(n, xs, [])
+
+/* Acc for range; not exported. */
+let range_go(i, n, acc) =
+  if i >= n then list_rev(acc)
+  else range_go(i + 1, n, cons(i, acc))
+
+/* [0, 1, ..., n-1]. n <= 0 → []. */
+let range(n) =
+  if n <= 0 then []
+  else range_go(0, n, [])
+
+/* Acc for zip; not exported. */
+let zip_go(a, b, acc) =
+  if len(a) == 0 then list_rev(acc)
+  else if len(b) == 0 then list_rev(acc)
+  else zip_go(tail(a), tail(b), cons([nth(a, 0), nth(b, 0)], acc))
+
+/* Pairs until the shorter list ends. Each pair is [x, y]. */
+let zip(a, b) = zip_go(a, b, [])

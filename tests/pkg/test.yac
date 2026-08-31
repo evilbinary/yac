@@ -1,0 +1,4 @@
+import test
+let _ = eq(2, 2) in
+let _ = ok(true) in
+42

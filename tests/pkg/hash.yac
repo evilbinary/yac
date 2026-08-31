@@ -1,0 +1,10 @@
+import hash
+if get(put(put(new(0), "a", 1), "b", 2), "a") == 1 then
+  if get(put(put(new(0), "a", 1), "b", 2), "b") == 2 then
+    if has(put(new(0), "a", 0), "a") then
+      if has(new(0), "a") == false then
+        if of_str("x") == str_hash("x") then 42 else 0
+      else 0
+    else 0
+  else 0
+else 0

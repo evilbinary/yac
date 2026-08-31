@@ -1,15 +1,12 @@
-/* path.yac — filesystem path strings (not OS calls).
- *
- * '/' and '\\' are both separators so Windows argv(0) works.
- * join always inserts '/'. dirname of a name with no sep is ".".
- * ext is the suffix after the last '.' in basename (no dot); none → "".
- * Do not import this from backend pkg_src (load cycle). */
+/* path.yac — path strings, not OS calls. Do not import from backend pkg_src. */
 
 package path
 export join, dirname, basename, ext
 
+/* ASCII '/' or '\\'. */
 let path_sep(c) = if c == 47 then true else c == 92
 
+/* Index of the last separator, or -1. */
 let path_last_sep(s) =
   let n = str_len(s) in
   let rec(i) =
@@ -18,20 +15,24 @@ let path_last_sep(s) =
     else rec(i - 1) in
   rec(n - 1)
 
+/* Join with '/'. */
 let join(a, b) = str_cat(a, str_cat("/", b))
 
+/* Parent directory. No separator → ".". Leading-only sep → "/". */
 let dirname(s) =
   let k = path_last_sep(s) in
   if k < 0 then "."
   else if k == 0 then "/"
   else str_slice(s, 0, k)
 
+/* Final component after the last separator. */
 let basename(s) =
   let n = str_len(s) in
   let k = path_last_sep(s) in
   if k < 0 then s
   else str_slice(s, k + 1, n - (k + 1))
 
+/* Suffix after the last '.' in basename, without the dot. None → "". */
 let ext(s) =
   let b = basename(s) in
   let n = str_len(b) in

@@ -1,0 +1,31 @@
+/* hash.yac — string/int-key assoc list. Newest put wins. Miss get is 0. */
+
+package hash
+export new, get, put, has, of_str
+
+/* Empty map. Pass 0 (zero-arg lets are unused here). */
+let new(_) = []
+
+/* Walk pairs; not exported. */
+let get_go(m, k) =
+  if len(m) == 0 then 0
+  else if nth(nth(m, 0), 0) == k then nth(nth(m, 0), 1)
+  else get_go(tail(m), k)
+
+/* Value for k, or 0 if absent (so stored 0 looks like a miss; use has). */
+let get(m, k) = get_go(m, k)
+
+/* Cons [k, v] in front. Returns the new map; does not mutate m. */
+let put(m, k, v) = cons([k, v], m)
+
+/* Walk keys; not exported. */
+let has_go(m, k) =
+  if len(m) == 0 then false
+  else if nth(nth(m, 0), 0) == k then true
+  else has_go(tail(m), k)
+
+/* True if k is present, including when the value is 0. */
+let has(m, k) = has_go(m, k)
+
+/* Content hash of a string (wraps prim str_hash). */
+let of_str(s) = str_hash(s)
