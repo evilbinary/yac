@@ -4,7 +4,7 @@ VS Code / Cursor 扩展：为 `.yac` 提供语法高亮、括号配对与注释�
 
 ## 高亮内容
 
-- 关键字：`let` `in` `fun` `if` `then` `else` `callcc` `throw` `and` `or` `not` `print`
+- 关键字：`let` `in` `fun` `if` `then` `else` `callcc` `throw` `package` `export` `import` `and` `or` `not` `print`
 - 字面量：整数 / 浮点 / `true` `false` / 字符串 / `()`
 - 注释：`--` 行注释、`/* */` 块注释（空白后的 `/*` 可嵌套，因此 `rt/*.yac` 不会误开一层）、`/** **/`
 - 运算符：`+ - * / % == != < <= > >= = -> =>`
@@ -27,7 +27,8 @@ VS Code / Cursor 扩展：为 `.yac` 提供语法高亮、括号配对与注释�
 
 ```sh
 ln -sfn "$(pwd)/tools/vscode-yac" \
-  "$HOME/.cursor/extensions/yac-lang.yac-0.1.0"
+  "$HOME/.cursor/extensions/yac-lang.yac-0.1.1"
+# 若仍无高亮：打开 ~/.cursor/extensions/.obsolete，删掉 yac-lang.yac-* 后再重载
 ```
 
 ## 开发

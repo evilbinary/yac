@@ -87,7 +87,7 @@
       "patterns": [
         {
           "name": "keyword.control.yac",
-          "match": "\\b(if|then|else|let|in|fun|callcc|throw)\\b"
+          "match": "\\b(if|then|else|let|in|fun|callcc|throw|package|export|import)\\b"
         },
         {
           "name": "keyword.operator.logical.yac",

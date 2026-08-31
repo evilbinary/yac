@@ -374,15 +374,19 @@ let qemu_cmd(arch) =
     else ""
   else ""
 
+let qemu_interp(arch) =
+  if arch == "arm64" then "/lib/ld-linux-aarch64.so.1"
+  else if arch == "riscv64" then "/lib/ld-linux-riscv64-lp64d.so.1"
+  else ""
+
 let qemu_root(arch) =
-  if arch == "arm64" then
-    if nth(run(["test", "-d", "/usr/aarch64-linux-gnu"]), 0) == 0 then
-      "/usr/aarch64-linux-gnu"
-    else ""
-  else if arch == "riscv64" then
-    if nth(run(["test", "-d", "/usr/riscv64-linux-gnu"]), 0) == 0 then
-      "/usr/riscv64-linux-gnu"
-    else ""
+  let dir =
+    if arch == "arm64" then "/usr/aarch64-linux-gnu"
+    else if arch == "riscv64" then "/usr/riscv64-linux-gnu"
+    else "" in
+  if dir == "" then ""
+  else if nth(run(["test", "-f", str_cat(dir, qemu_interp(arch))]), 0) == 0 then
+    dir
   else ""
 
 let qemu_exec(qemu, arch, bin) =
@@ -420,6 +424,17 @@ let qemu_arch(st, yc, arch) =
                  str_cat(nth(yc, 0), str_cat(" --arch ", arch))) in
   if q == "" then
     let _ = print(str_cat("SKIP: qemu ", arch)) in st
+  else if qemu_root(arch) == "" then
+    let pkg =
+      if arch == "arm64" then "gcc-aarch64-linux-gnu (or libc6-arm64-cross)"
+      else "gcc-riscv64-linux-gnu (or libc6-riscv64-cross)" in
+    let _ = print(str_cat("SKIP: qemu ",
+      str_cat(arch, str_cat(" (no sysroot; guest ELF needs ld-linux + libc)")))) in
+    let _ = print(str_cat("  expected: /usr/",
+      str_cat(if arch == "arm64" then "aarch64" else "riscv64",
+        str_cat("-linux-gnu", qemu_interp(arch))))) in
+    let _ = print(str_cat("  install:  ", pkg)) in
+    st
   else foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st, compiler_cases(0))
 
 let exists_rc(p) = nth(run(["test", "-f", p]), 0)

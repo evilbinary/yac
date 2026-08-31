@@ -257,7 +257,7 @@ ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 lo
 
 **已知编译器限制**：小程序里 33 元列表 / 33 个 `let` 都正常；**编译器自己的 `_start`（bundle 几百条顶层 let 合成一帧）里**放 33 元 LIR cons 字面量会被错编（`bytes_to_str` → SIGSEGV 139）。对策：`runtime.yac` 的 insn 列表做成 `rt_*_ins(_)` 小函数。`emit_insn` 已拆成按 op 分组的小函数；不要再把大块逻辑塞回 dispatcher。
 
-**riscv64 / arm64**：与 x86 同源 `COMPILER_CASES` 在 qemu 下全过。`rv_li32_at` 必须保留原 `lui` 的 rd（`yac_alloc` 的 bump 用 t0）；若写成固定 t1，堆指针读到垃圾，用户函数/闭包会挂死或 SIGSEGV。
+**riscv64 / arm64**：与 x86 同源 `COMPILER_CASES` 在 qemu 下全过。客 ELF 因内核 `ccall("system")` 带 `ld-linux` + `libc.so.6`，需要交叉 sysroot：`qemu -L /usr/<triple>-linux-gnu`（包 `gcc-aarch64-linux-gnu` / `gcc-riscv64-linux-gnu`）。没有 sysroot 时整套 qemu 跳过，不逐条 SKIP。`rv_li32_at` 必须保留原 `lui` 的 rd（`yac_alloc` 的 bump 用 t0）；若写成固定 t1，堆指针读到垃圾，用户函数/闭包会挂死或 SIGSEGV。
 
 **近期完成（perf）**：全量 bundle 自编译曾 **~182s → ~35s**（emit patches 隔离、`bytes_extend`、lower/resolve hash map）。C 解释器 GC：收集后阈值为 `max(8MiB, 2×live)`，本轮几乎不回收则 `4×live`（避免每 1MiB 重扫大堆）。L4 客机约 **34s**、~257 次收集。`emit_insn` 已按 core/heap/clos/prim 拆开。`str_cat` / `str_slice` / `bytes_extend` / `bytes_to_str` 走 kernel `memcpy`（x86 `rep movsb`）。
 
