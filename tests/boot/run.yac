@@ -1,7 +1,7 @@
 /* tests/boot/run.yac — self-hosted frontend + unit tests (yac, not sh). */
 let TMP = "build/test_tmp"
 let LOG_STUB = "let log(mod, msg) = 0\nlet log_i(mod, key, n) = 0\n"
-let EMIT_STUB = "let emit_program_arm64(p, v, o) = emit_program_x86_64(p, v, o)\nlet emit_program_riscv64(p, v, o) = emit_program_x86_64(p, v, o)\n"
+let EMIT_STUB = "let emit_program_arm64(p, v, o) = emit_program_x86_64(p, v, o, \"elf\")\nlet emit_program_riscv64(p, v, o) = emit_program_x86_64(p, v, o, \"elf\")\n"
 
 let sh_quote(s) = str_cat("'", str_cat(s, "'"))
 

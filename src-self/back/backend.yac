@@ -3,7 +3,11 @@
 let backend_emit(t, ast) = nth(lower_expr(ast, t), 0)
 
 let backend_pack(t, code) =
-  if target_format(t) != "elf" then pack_image(t, code)
+  if target_format(t) == "pe" then
+    let img = pack_pe_target(t, code) in
+    let _ = pe_finish_imports(img, t, cimport_names(0), cimport_got(0)) in
+    img
+  else if target_format(t) != "elf" then pack_image(t, code)
   else if target_shared(t) then pack_image(t, code)
   else if cimport_n(0) == 0 then pack_image(t, code)
   else if target_emachine(t) == 62 then

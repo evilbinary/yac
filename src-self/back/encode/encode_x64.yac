@@ -1196,3 +1196,33 @@ let mov_rbp_rbx_disp8(b, d) =
 let mov_rsp_rbx_disp8(b, d) =
   let _ = e8(b, 72) in let _ = e8(b, 139) in let _ = e8(b, 99) in
   e8(b, band(d, 255))
+let inc_rbx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 255) in e8(b, 195)
+let inc_rdi(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 255) in e8(b, 199)
+let inc_r8(b) =
+  let _ = e8(b, 73) in let _ = e8(b, 255) in e8(b, 192)
+let movzx_ecx_mem_rbx(b) =
+  let _ = e8(b, 15) in let _ = e8(b, 182) in e8(b, 11)
+let test_ecx_ecx(b) =
+  let _ = e8(b, 133) in e8(b, 201)
+let cmp_ecx_imm8(b, v) =
+  let _ = e8(b, 131) in let _ = e8(b, 249) in e8(b, band(v, 255))
+let mov_mem_rdi_cl(b) =
+  let _ = e8(b, 136) in e8(b, 15)
+let stosb0(b) =
+  let _ = e8(b, 198) in let _ = e8(b, 7) in e8(b, 0)
+let jcc8(b, cc, off) =
+  let _ = e8(b, 112 + cc) in e8(b, band(off, 255))
+let lea_rcx_rip(b, disp) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 13) in e32(b, disp)
+let add_rdi_imm32(b, v) =
+  let _ = e8(b, 72) in let _ = e8(b, 129) in let _ = e8(b, 199) in e32(b, v)
+let mov_mem_rsi_r8_rdi(b) =
+  let _ = e8(b, 74) in let _ = e8(b, 137) in let _ = e8(b, 60) in e8(b, 198)
+let xor_r8_r8(b) =
+  let _ = e8(b, 77) in let _ = e8(b, 49) in e8(b, 192)
+let mov_rax_r8(b) =
+  let _ = e8(b, 76) in let _ = e8(b, 137) in e8(b, 192)
+let add_rbx_imm32(b, v) =
+  let _ = e8(b, 72) in let _ = e8(b, 129) in let _ = e8(b, 195) in e32(b, v)

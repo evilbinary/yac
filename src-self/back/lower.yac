@@ -52,7 +52,7 @@ let alloc_prog(prog) =
 let emit_by_target(ast, t) =
   let a = target_arch(t) in
   if a == "x86_64" then
-    emit_program_x86_64(ast, target_vaddr(t), target_text_off(t))
+    emit_program_x86_64(ast, target_vaddr(t), target_text_off(t), target_format(t))
   else if a == "arm64" then
     emit_program_arm64(ast, target_vaddr(t), target_text_off(t))
   else
