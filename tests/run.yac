@@ -483,6 +483,7 @@ let interp_suite(st) =
     ["par", "uncps list primitives", ["--uncps"], ip("list.yac"), ""],
     ["par", "uncps bignum arithmetic", ["--uncps"], ip("bignum.yac"), ""],
     ["err", "callcc rejected by un-CPS", ["--uncps"], ip("callcc.yac"), "cannot un-CPS"],
+    ["eq", "import after use", [], ip("import_late.yac"), "1"],
     ["err", "unbound variable detected", [], ip("unbound.yac"), "unbound variable 'y'"],
     ["err", "callcc rejected by ANF machine", [], ip("callcc.yac"), "CPS mode"],
     ["eq", "callcc runs under CPS", ["--cps"], ip("callcc.yac"), "42"],

@@ -1,0 +1,3 @@
+let f(_) = host_os(0)
+import rt.os
+if str_len(f(0)) > 0 then 1 else 0

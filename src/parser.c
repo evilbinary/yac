@@ -743,11 +743,41 @@ static int import_splice(Parser *errp, ImportCtx *ictx, const char *pkg,
         return 0;
     }
     Parser ip = {lx.toks, lx.n, 0, errp->a, NULL};
-    int ok = parse_items(&ip, ictx, items, nitems, cap);
+    /* Prepend: cat-bundle import is at the end (yc.yac). Appending left
+     * host_os unbound in earlier lets (emit). Native lir_extend is outer too. */
+    Item *pkg_items = NULL;
+    int pkg_n = 0, pkg_cap = 0;
+    int ok = parse_items(&ip, ictx, &pkg_items, &pkg_n, &pkg_cap);
     if (!ok && ip.error) errp->error = ip.error;
     free(lx.toks);
     free(src);
-    return ok;
+    if (!ok) {
+        free(pkg_items);
+        return 0;
+    }
+    if (pkg_n == 0) {
+        free(pkg_items);
+        return 1;
+    }
+    int new_n = pkg_n + *nitems;
+    if (new_n > *cap) {
+        int ncap = *cap ? *cap : 8;
+        while (ncap < new_n) ncap *= 2;
+        Item *grown = (Item *)realloc(*items, (size_t)ncap * sizeof(Item));
+        if (!grown) {
+            free(pkg_items);
+            p_err(errp, "out of memory");
+            return 0;
+        }
+        *items = grown;
+        *cap = ncap;
+    }
+    if (*nitems > 0)
+        memmove(*items + pkg_n, *items, (size_t)*nitems * sizeof(Item));
+    memcpy(*items, pkg_items, (size_t)pkg_n * sizeof(Item));
+    *nitems = new_n;
+    free(pkg_items);
+    return 1;
 }
 
 static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, int *cap) {
