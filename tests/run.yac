@@ -418,23 +418,27 @@ let qemu_one(st, yc, qemu, arch, c) =
       else if kind == "rc" then check(st, tag, want, int_to_str(nth(r, 0)))
       else check(st, tag, want, chomp(nth(r, 1)))
 
+/* Nested `if` as a str_cat argument inside a let-chain can SIGSEGV. */
+let qemu_skip_sysroot(st, arch) =
+  let triple =
+    if arch == "arm64" then "aarch64-linux-gnu" else "riscv64-linux-gnu" in
+  let pkg =
+    if arch == "arm64" then "gcc-aarch64-linux-gnu (or libc6-arm64-cross)"
+    else "gcc-riscv64-linux-gnu (or libc6-riscv64-cross)" in
+  let _ = print(str_cat("SKIP: qemu ",
+    str_cat(arch, " (no sysroot; guest ELF needs ld-linux + libc)"))) in
+  let _ = print(str_cat("  expected: /usr/",
+    str_cat(triple, qemu_interp(arch)))) in
+  let _ = print(str_cat("  install:  ", pkg)) in
+  st
+
 let qemu_arch(st, yc, arch) =
   let q = qemu_cmd(arch) in
   let _ = banner("compiler/cases",
                  str_cat(nth(yc, 0), str_cat(" --arch ", arch))) in
   if q == "" then
     let _ = print(str_cat("SKIP: qemu ", arch)) in st
-  else if qemu_root(arch) == "" then
-    let pkg =
-      if arch == "arm64" then "gcc-aarch64-linux-gnu (or libc6-arm64-cross)"
-      else "gcc-riscv64-linux-gnu (or libc6-riscv64-cross)" in
-    let _ = print(str_cat("SKIP: qemu ",
-      str_cat(arch, str_cat(" (no sysroot; guest ELF needs ld-linux + libc)")))) in
-    let _ = print(str_cat("  expected: /usr/",
-      str_cat(if arch == "arm64" then "aarch64" else "riscv64",
-        str_cat("-linux-gnu", qemu_interp(arch))))) in
-    let _ = print(str_cat("  install:  ", pkg)) in
-    st
+  else if qemu_root(arch) == "" then qemu_skip_sysroot(st, arch)
   else foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st, compiler_cases(0))
 
 let exists_rc(p) = nth(run(["test", "-f", p]), 0)
