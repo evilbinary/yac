@@ -4,6 +4,7 @@ import rt.os
  * Layout: tests/interp, tests/compiler/cases, tests/pkg (pkg/ libs), tests/boot
  *
  *   make test              → yc_a --pkg src-self compiles this file, then the binary runs it
+ *   make test-pkg          → same binary with argv "pkg": only tests/pkg
  *   ./yac --pkg src-self tests/run.yac  (C interp of this harness)
  *
  * C interpreter is only a subprocess for interp_suite (cps/callcc/float/bignum).
@@ -525,29 +526,37 @@ let boot_suite(st, ya) =
   let _ = banner("compiler/cases iso", str_cat(ya, " vs yc_b")) in
   foldl(fun(s, c) -> iso_one(s, ya, yb, nth(c, 0)), st7, compiler_cases(0))
 
+let suite_done(st) =
+  let _ = print("") in
+  let _ = print(str_cat(int_to_str(nth(st, 0)),
+                 str_cat(" passed, ",
+                   str_cat(int_to_str(nth(st, 1)), " failed")))) in
+  if nth(st, 1) == 0 then 0 else exit(1)
+
+let pkg_only(_) =
+  if argc() < 2 then false
+  else argv(1) == "pkg"
+
 let main =
   let _ = system(str_cat("mkdir -p ", TMP)) in
-  let _ = cat_bundle(0) in
   let ya = native(str_cat(TMP, "/yc_a")) in
   let _ = run(["rm", "-f", ya, str_cat(ya, ".bin")]) in
   let _ = run(["cp", "-f", native("build/yc_tmp/yc_a"), ya]) in
   let _ = run(["chmod", "+x", ya]) in
-  let boot_bin = native(str_cat(TMP, "/boot_run")) in
-  let _ = run(["rm", "-f", boot_bin]) in
-  let _ = run(append(yc_pkg(ya), ["tests/boot/run.yac", "-o", boot_bin])) in
-  let _ = run(["chmod", "+x", boot_bin]) in
-  let st0 = interp_suite([0, 0]) in
-  let _ = banner("boot", ya) in
-  let br = run([boot_bin]) in
-  let _ = print(chomp(nth(br, 1))) in
-  let st1 = check(st0, "boot frontend", "0", int_to_str(nth(br, 0))) in
-  let st2 = pkg_all(compiler_all(st1, yc_pkg(ya)), yc_pkg(ya)) in
-  let stQ = qemu_arch(st2, yc_pkg(ya), "arm64") in
-  let stR = qemu_arch(stQ, yc_pkg(ya), "riscv64") in
-  let st3 = boot_suite(stR, ya) in
-  let _ = print("") in
-  let _ = print(str_cat(int_to_str(nth(st3, 0)),
-                 str_cat(" passed, ",
-                   str_cat(int_to_str(nth(st3, 1)), " failed")))) in
-  if nth(st3, 1) == 0 then 0 else exit(1)
+  if pkg_only(0) then suite_done(pkg_all([0, 0], yc_pkg(ya)))
+  else
+    let _ = cat_bundle(0) in
+    let boot_bin = native(str_cat(TMP, "/boot_run")) in
+    let _ = run(["rm", "-f", boot_bin]) in
+    let _ = run(append(yc_pkg(ya), ["tests/boot/run.yac", "-o", boot_bin])) in
+    let _ = run(["chmod", "+x", boot_bin]) in
+    let st0 = interp_suite([0, 0]) in
+    let _ = banner("boot", ya) in
+    let br = run([boot_bin]) in
+    let _ = print(chomp(nth(br, 1))) in
+    let st1 = check(st0, "boot frontend", "0", int_to_str(nth(br, 0))) in
+    let st2 = pkg_all(compiler_all(st1, yc_pkg(ya)), yc_pkg(ya)) in
+    let stQ = qemu_arch(st2, yc_pkg(ya), "arm64") in
+    let stR = qemu_arch(stQ, yc_pkg(ya), "riscv64") in
+    suite_done(boot_suite(stR, ya))
 in main

@@ -89,6 +89,15 @@ test-boot: $(YC_A)
 	chmod +x build/test_tmp/boot_run$(EXEEXT)
 	./build/test_tmp/boot_run$(EXEEXT)
 
+# Only tests/pkg (pkg/*.yac). Same harness as make test, argv pkg.
+test-pkg: $(YC_A)
+	mkdir -p build/test_tmp
+	cp -f $(YC_A) build/test_tmp/yc_a$(EXEEXT)
+	chmod +x build/test_tmp/yc_a$(EXEEXT)
+	$(YC_A) --pkg src-self tests/run.yac -o build/test_tmp/run_pkg$(EXEEXT)
+	chmod +x build/test_tmp/run_pkg$(EXEEXT)
+	./build/test_tmp/run_pkg$(EXEEXT) pkg
+
 prop: $(BIN)
 	./$(BIN) --pkg src-self tests/prop.yac
 
@@ -100,4 +109,4 @@ clean:
 	rm -rf $(BUILD)
 	rm -f src/*.o
 
-.PHONY: all clean test test-boot prop yc bootstrap yc-iso
+.PHONY: all clean test test-boot test-pkg prop yc bootstrap yc-iso
