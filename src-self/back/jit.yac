@@ -231,6 +231,10 @@ let ast_repl_import(ast) =
     if nth(e, 0) != "import" then ast
     else append(ast, [["str", import_repl_str(e)]])
 
+let jit_run_ok(t) = target_arch(t) == host_arch(0)
+
+let jit_sess_ok(t) = target_arch(t) == "x86_64"
+
 let compile_jit(src, t, named) =
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then
@@ -242,7 +246,8 @@ let compile_jit(src, t, named) =
       let ast1 = jslot_rw_all(ast0) in
       if report_unbound(src, ast1) != 0 then 1
       else
-        let live = box_get(jit_live_box) in
+        let live0 = box_get(jit_live_box) in
+        let live = if jit_sess_ok(t) then live0 else 0 in
         let _ = link_from_ast_repl(ast1) in
         let _ =
           if live == 0 then emit_jsess_set(0)
@@ -257,15 +262,20 @@ let compile_jit(src, t, named) =
         let _ = emit_jsess_set(0) in
         let code = nth(r, 0) in
         let fo = nth(r, 1) in
-        let _ = if dest == 0 then cimport_jit_bind(code) else 0 in
-        let _ = jit_run(code, fun_off(fo, "_eval"), dest) in
+        let _ =
+          if jit_run_ok(t) then
+            let _ = if dest == 0 then cimport_jit_bind(code) else 0 in
+            jit_run(code, fun_off(fo, "_eval"), dest)
+          else 0 in
         let _ =
           if live == 0 then
-            let m = fmap_new(0) in
-            let _ = fmap_init_n(m, 4096) in
-            let _ = jsess_put_fo(m, fo) in
-            let lay = yjit_layout_get(0) in
-            box_set(jit_live_box, [bytes_len(code), JIT_VADDR + nth(lay, 2), m])
+            if jit_sess_ok(t) then
+              let m = fmap_new(0) in
+              let _ = fmap_init_n(m, 4096) in
+              let _ = jsess_put_fo(m, fo) in
+              let lay = yjit_layout_get(0) in
+              box_set(jit_live_box, [bytes_len(code), JIT_VADDR + nth(lay, 2), m])
+            else 0
           else
             let m = nth(live, 2) in
             let _ = jsess_merge_fo(m, fo, dest) in
@@ -279,16 +289,24 @@ let compile_jit(src, t, named) =
     let r = lower_expr(pass_lir_eval(pass_anf(ast), "", false), t) in
     let _ = emit_apply_unres(0) in
     let _ = log_set_hush(false) in
-    let _ = cimport_jit_bind(nth(r, 0)) in
-    let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0) in 0
+    let _ =
+      if jit_run_ok(t) then
+        let _ = cimport_jit_bind(nth(r, 0)) in
+        jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0)
+      else 0 in
+    0
 
 let compile_jit_anf(anf, t, bn) =
   let _ = log_set_hush(true) in
   let r = lower_expr(pass_lir_eval(anf, bn, false), t) in
   let _ = emit_apply_unres(0) in
   let _ = log_set_hush(false) in
-  let _ = cimport_jit_bind(nth(r, 0)) in
-  let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0) in 0
+  let _ =
+    if jit_run_ok(t) then
+      let _ = cimport_jit_bind(nth(r, 0)) in
+      jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0)
+    else 0 in
+  0
 
 let compile_uncps(src, t, named, do_opt) =
   let ast = pass_parse(pass_lex(src)) in

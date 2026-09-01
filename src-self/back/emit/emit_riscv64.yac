@@ -1387,8 +1387,9 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
   let extra = list_new() in
   let _ = patches_extend(extra, patches) in
-  let _ = rv_resolve_loop([b, offs, load_vaddr + text_off, GLOBALS_BASE, labels,
-                           load_vaddr + text_off + pool_start], extra, 0) in
+  let rst = [b, offs, load_vaddr + text_off, GLOBALS_BASE, labels,
+             load_vaddr + text_off + pool_start] in
+  let _ = emit_unres_set([rst, extra, "riscv64"]) in
   let _ = funsym_set(fo0) in
   let _ = yjit_layout_set(pool_start, pool_start, data_start, bytes_len(b)) in
   [b, fo0]

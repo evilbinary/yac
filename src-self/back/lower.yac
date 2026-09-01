@@ -87,6 +87,29 @@ let drop_unreachable(funs) =
 let alloc_prog(prog) =
   ["prog", drop_unreachable(nth(prog, 1)), nth(prog, 2)]
 
+/* off = extra TEXT VA (REPL append dest). AOT / first map: 0. */
+let emit_apply_unres(off) =
+  let u = emit_unres(0) in
+  if u == 0 then 0
+  else
+    let rst = nth(u, 0) in
+    let extra = nth(u, 1) in
+    let arch = if len(u) > 2 then nth(u, 2) else "x86_64" in
+    let st =
+      if off == 0 then rst
+      else if arch == "x86_64" then
+        [nth(rst, 0), nth(rst, 1), nth(rst, 2) + off, nth(rst, 3),
+         nth(rst, 4) + off, nth(rst, 5)]
+      else
+        [nth(rst, 0), nth(rst, 1), nth(rst, 2) + off, nth(rst, 3),
+         nth(rst, 4), nth(rst, 5) + off] in
+    let _ = log("emit", "resolve") in
+    let _ =
+      if arch == "arm64" then a64_resolve_loop(st, extra, 0)
+      else if arch == "riscv64" then rv_resolve_loop(st, extra, 0)
+      else emit_resolve_loop(st, extra, 0, len(extra)) in
+    emit_unres_set(0)
+
 let emit_by_target(ast, t) =
   let a = target_arch(t) in
   let r =

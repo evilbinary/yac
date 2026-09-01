@@ -56,9 +56,14 @@ let mk_target(arch, format, kind) =
      nth(ids, 2), nth(ids, 3), T_VADDR, 0]
   else 0
 
-/* In-process JIT: text at a high MAP_FIXED address, no ELF header. */
-let mk_jit_target(_) =
-  ["target", "x86_64", "elf", "exec", 62, 34404, 16777223, 3, JIT_VADDR, 0]
+/* In-process JIT: text at a high MAP_FIXED address, no ELF header.
+ * arch is x86_64 | arm64 | riscv64 (caller passes host or --arch). */
+let mk_jit_target(arch) =
+  let ids = arch_ids(arch) in
+  if ids == 0 then 0
+  else
+    ["target", arch, "elf", "exec", nth(ids, 0), nth(ids, 1),
+     nth(ids, 2), nth(ids, 3), JIT_VADDR, 0]
 
 let target_by_name(s) = mk_target(s, "elf", "exec")
 

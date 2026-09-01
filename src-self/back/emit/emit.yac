@@ -246,7 +246,7 @@ let emit_jsess_set(v) = box_set(emit_jsess_box, v)
 
 let emit_jsess(_) = box_get(emit_jsess_box)
 
-/* JIT: skip resolve in emit; jit.yac applies [rst, patches] after lower. */
+/* JIT: skip resolve in emit; apply in lower / jit.yac ([rst, patches, arch]). */
 let emit_unres_box =
   let b = box_new() in
   let _ = box_set(b, 0) in
@@ -637,17 +637,3 @@ let emit_resolve_loop(st, ps, i, n) =
   else
     let _ = emit_resolve_patch(st, nth(ps, i)) in
     emit_resolve_loop(st, ps, i + 1, n)
-
-/* off = extra TEXT VA (REPL append dest). AOT / first map: 0. */
-let emit_apply_unres(off) =
-  let u = emit_unres(0) in
-  if u == 0 then 0
-  else
-    let rst = nth(u, 0) in
-    let st =
-      if off == 0 then rst
-      else [nth(rst, 0), nth(rst, 1), nth(rst, 2) + off, nth(rst, 3),
-            nth(rst, 4) + off, nth(rst, 5)] in
-    let _ = log("emit", "resolve") in
-    let _ = emit_resolve_loop(st, nth(u, 1), 0, len(nth(u, 1))) in
-    emit_unres_set(0)
