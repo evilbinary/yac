@@ -1381,10 +1381,7 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = bytes_extend(b, strlit_bytes(0)) in
   let _ = pad8(0) in
   let data_start = bytes_len(b) in
-  let fill_data(i) =
-    if i >= 112 then 0
-    else let _ = bytes_append(b, 0) in fill_data(i + 1) in
-  let _ = fill_data(0) in
+  let _ = emit_glob_data(b) in
   let _ = emit_cplt_rv(b) in
   let _ = ckeep in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
@@ -1393,4 +1390,5 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let _ = rv_resolve_loop([b, offs, load_vaddr + text_off, GLOBALS_BASE, labels,
                            load_vaddr + text_off + pool_start], extra, 0) in
   let _ = funsym_set(fo0) in
+  let _ = yjit_layout_set(pool_start, pool_start, data_start, bytes_len(b)) in
   [b, fo0]

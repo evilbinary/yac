@@ -35,6 +35,7 @@ let layout_off(format, kind) =
   if format == "elf" then
     if kind == "dylib" then 192 else 120
   else if format == "pe" then 512
+  else if format == "yjit" then 0
   else 4096
 
 let mk_target(arch, format, kind) =
@@ -49,6 +50,9 @@ let mk_target(arch, format, kind) =
   else if format == "macho" then
     ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
      nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(format, kind)]
+  else if format == "yjit" then
+    ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
+     nth(ids, 2), nth(ids, 3), T_VADDR, 0]
   else 0
 
 /* In-process JIT: text at a high MAP_FIXED address, no ELF header. */
@@ -70,4 +74,5 @@ let parse_format_name(s) =
   else if s == "pe" then "pe"
   else if s == "macho" then "macho"
   else if s == "mach-o" then "macho"
+  else if s == "yjit" then "yjit"
   else ""

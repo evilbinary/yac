@@ -219,6 +219,23 @@ let emit_fmt(_) = box_get(emit_fmt_box)
 
 let emit_is_pe(_) = emit_fmt(0) == "pe"
 
+/* 112 bytes GC globals + 8 bytes host jit_map ptr (G+112). */
+let emit_glob_data(b) =
+  let fill(i) =
+    if i >= 120 then 0
+    else let _ = bytes_append(b, 0) in fill(i + 1) in
+  fill(0)
+
+let yjit_layout_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let yjit_layout_set(pool, smap, data, n) =
+  box_set(yjit_layout_box, [pool, smap, data, n])
+
+let yjit_layout_get(_) = box_get(yjit_layout_box)
+
 /* Win64 ccall/_start: PE guests, or in-process JIT on a Windows host. */
 let emit_abi_win_box =
   let b = box_new() in

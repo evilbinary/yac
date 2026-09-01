@@ -11,4 +11,7 @@ let pack_image(t, code) =
   if fmt == "elf" then pack_elf_target(t, code)
   else if fmt == "pe" then pack_pe_target(t, code)
   else if fmt == "macho" then pack_macho_target(t, code)
+  else if fmt == "yjit" then
+    pack_yjit_flat(code, yjit_arch_num(target_arch(t)), 0,
+                   target_vaddr(t), 0)
   else pack_elf_target(t, code)

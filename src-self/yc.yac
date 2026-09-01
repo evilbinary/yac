@@ -25,7 +25,7 @@ let usage(_) =
   let _ = print("  --pkg DIR[,DIR]  package roots (before ./pkg and this yc)") in
   let _ = print("  -g, --syms       write ELF function symbols (nm/gdb)") in
   let _ = print("  --arch x86_64|arm64|riscv64") in
-  let _ = print("  --format elf|pe|macho   (default: host)   --shared   --prof-out file") in
+  let _ = print("  --format elf|pe|macho|yjit   (default: host)   --shared   --prof-out file") in
   0
 
 let ends_with_yac(s) =

@@ -306,8 +306,19 @@ let compiler_all(st, yc) =
       let no_g = str_cat(nth(run(["nm", elf_n]), 1), nth(run(["nm", elf_n]), 2)) in
       check(stg, "elf default no symtab", "1",
             if contains(no_g, "无符号") or contains(no_g, "no symbols") then "1" else no_g) in
+  let yj = str_cat(TMP, "/c_l4_42.yjit") in
+  let _ = run(append(yc, [case_src("l4_42"), "--format", "yjit", "-o", yj])) in
+  let yb = read_file(yj) in
+  let yjit_ok =
+    if yb == 0 then false
+    else if str_len(yb) < 4 then false
+    else if str_ref(yb, 0) != 89 then false
+    else if str_ref(yb, 1) != 74 then false
+    else if str_ref(yb, 2) != 73 then false
+    else str_ref(yb, 3) == 84 in
+  let st1y = check(st1s, "yjit magic YJIT", "1", if yjit_ok then "1" else "0") in
   let st2 = foldl(fun(s, c) -> compile_syntax_err(s, yc, nth(c, 1),
-                  str_cat("syntax ", nth(c, 0))), st1s, syntax_bads(0)) in
+                  str_cat("syntax ", nth(c, 0))), st1y, syntax_bads(0)) in
   let st3 = foldl(fun(s, c) -> compile_msg_err(s, yc, nth(c, 1),
                   str_cat("unbound ", nth(c, 0)), nth(c, 2)), st2, unbound_bads(0)) in
   let st4 = foldl(fun(s, c) ->
@@ -459,7 +470,7 @@ let cat_bundle(_) =
              "src-self/front/lir.yac",
              "src-self/rt/runtime.yac",
              "src-self/back/pack/target.yac", "src-self/back/pack/elf.yac", "src-self/back/pack/pe.yac",
-             "src-self/back/pack/macho.yac", "src-self/back/pack/pack.yac",
+             "src-self/back/pack/macho.yac", "src-self/back/pack/yjit.yac", "src-self/back/pack/pack.yac",
              "src-self/back/encode/encode_x64.yac", "src-self/back/encode/encode_arm64.yac",
              "src-self/back/encode/encode_riscv64.yac",
              "src-self/back/emit/emit.yac",

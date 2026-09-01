@@ -1,0 +1,69 @@
+/* yjit.yac — Yac JIT image (docs/JIT_IMAGE.md). Not ELF.
+ * File: 64-byte hdr + TEXT [+ RODATA + DATA + LINK].
+ * v1 pack treats the emit blob as a single TEXT section. */
+
+let YJIT_HDR = 64
+let YJIT_VER = 1
+let YJIT_ARCH_X64 = 1
+let YJIT_ARCH_A64 = 2
+let YJIT_ARCH_RV = 3
+let YJIT_SEG_TEXT = 1
+let YJIT_SEG_RO = 2
+let YJIT_SEG_DATA = 3
+let YJIT_REL_REL32 = 1
+let YJIT_REL_ABS32 = 2
+let YJIT_REL_DATA64 = 3
+let YJIT_REL_STR = 4
+let YJIT_REL_TEXT64 = 5
+let YJIT_REL_PLT = 6
+let YJIT_SYM_NONE = 4294967295
+let JIT_TEXT_CAP = 16777216
+
+let yjit_arch_num(a) =
+  if a == "arm64" then 2
+  else if a == "riscv64" then 3
+  else 1
+
+let yjit_hdr_zeros(out) =
+  let _ = bytes_put(out, 63, 0) in
+  0
+
+/* h = [arch, abi, flags, base, entry, t_off, t_sz, r_off, r_sz, d_off, d_sz, l_off, l_sz] */
+let yjit_hdr_write(out, h) =
+  let _ = bytes_put(out, 0, 89) in
+  let _ = bytes_put(out, 1, 74) in
+  let _ = bytes_put(out, 2, 73) in
+  let _ = bytes_put(out, 3, 84) in
+  let _ = le16(out, 1, 4) in
+  let _ = le16(out, nth(h, 0), 6) in
+  let _ = le16(out, nth(h, 1), 8) in
+  let _ = le16(out, nth(h, 2), 10) in
+  let _ = le32(out, 64, 12) in
+  let _ = le64(out, nth(h, 3), 16) in
+  let _ = le32(out, nth(h, 4), 24) in
+  let _ = le32(out, 0, 28) in
+  let _ = le32(out, nth(h, 5), 32) in
+  let _ = le32(out, nth(h, 6), 36) in
+  let _ = le32(out, nth(h, 7), 40) in
+  let _ = le32(out, nth(h, 8), 44) in
+  let _ = le32(out, nth(h, 9), 48) in
+  let _ = le32(out, nth(h, 10), 52) in
+  let _ = le32(out, nth(h, 11), 56) in
+  let _ = le32(out, nth(h, 12), 60) in
+  0
+
+let pack_yjit_flat(code, arch, abi, base, entry) =
+  let n = bytes_len(code) in
+  let out = bytes_new() in
+  let _ = yjit_hdr_zeros(out) in
+  let _ = yjit_hdr_write(out,
+    [arch, abi, 0, base, entry, 64, n, 64 + n, 0, 64 + n, 0, 64 + n, 0]) in
+  let _ = bytes_extend(out, code) in
+  out
+
+let yjit_magic_ok(b) =
+  if bytes_len(b) < 4 then false
+  else if bytes_ref(b, 0) != 89 then false
+  else if bytes_ref(b, 1) != 74 then false
+  else if bytes_ref(b, 2) != 73 then false
+  else bytes_ref(b, 3) == 84
