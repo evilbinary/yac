@@ -20,7 +20,9 @@ let usage(_) =
   let _ = print("  --load-rt FILE   not supported in native yc") in
   let _ = print("  --repl           interactive loop; each line is compiled and jumped to") in
   let _ = print("                   empty line ignored; :q / :quit exits") in
-  let _ = print("                   :dump FILE.yjit  write live image (YJIT hdr + TEXT)") in
+  let _ = print("                   :dump FILE.yjit  write live image") in
+  let _ = print("                   :load FILE.yjit  map image and run entry") in
+  let _ = print("  file.yjit        load and run a dumped image (no --cps)") in
   let _ = print("  --scheme         translate a Scheme subset, then run or compile") in
   let _ = print("  -o out           write an executable instead of running") in
   let _ = print("  --pkg DIR[,DIR]  package roots (before ./pkg and this yc)") in
@@ -28,6 +30,11 @@ let usage(_) =
   let _ = print("  --arch x86_64|arm64|riscv64") in
   let _ = print("  --format elf|pe|macho|yjit   (default: host)   --shared   --prof-out file") in
   0
+
+let ends_with_yjit(s) =
+  let n = str_len(s) in
+  if n < 5 then false
+  else str_slice(s, n - 5, 5) == ".yjit"
 
 let ends_with_yac(s) =
   let n = str_len(s) in
@@ -151,11 +158,12 @@ let repl_is_blank(s, i) =
     else if c == 13 then repl_is_blank(s, i + 1)
     else false
 
-let repl_cmd_dump(s) =
-  if str_len(s) < 5 then false
-  else str_slice(s, 0, 5) == ":dump"
+let repl_cmd_is(s, cmd) =
+  let n = str_len(cmd) in
+  if str_len(s) < n then false
+  else str_slice(s, 0, n) == cmd
 
-let repl_dump_arg(s) =
+let repl_cmd_arg(s, skip) =
   let n = str_len(s) in
   let rec(i) =
     if i >= n then ""
@@ -164,7 +172,7 @@ let repl_dump_arg(s) =
       if c == 32 then rec(i + 1)
       else if c == 9 then rec(i + 1)
       else str_slice(s, i, n - i) in
-  rec(5)
+  rec(skip)
 
 let repl_loop(spec) =
   let arch = parse_arch_name(nth(spec, 0)) in
@@ -173,8 +181,14 @@ let repl_loop(spec) =
   if line == 0 then 0
   else if repl_is_blank(line, 0) then repl_loop(spec)
   else if line == ":q" or line == ":quit" or line == "(exit)" then 0
-  else if repl_cmd_dump(line) then
-    let _ = jit_dump_live(repl_dump_arg(line), arch) in
+  else if repl_cmd_is(line, ":dump") then
+    let _ = jit_dump_live(repl_cmd_arg(line, 5), arch) in
+    repl_loop(spec)
+  else if repl_cmd_is(line, ":load") then
+    let p = repl_cmd_arg(line, 5) in
+    let _ =
+      if p == "" then print("usage: :load FILE.yjit")
+      else jit_load_yjit(p, 1) in
     repl_loop(spec)
   else
     let _ = jit_eval_repl(prep_src(line, spec), arch) in
@@ -197,14 +211,19 @@ let run_cli(pr) =
       let npos = len(pos) in
       let inpath = if npos == 0 then "" else nth(pos, npos - 1) in
       if fl(spec, "repl") then
-        let acc0 = if inpath == "" then "" else read_file(inpath) in
-        let acc1 = if acc0 == 0 then "" else acc0 in
         let _ =
-          if acc1 == "" then 0
-          else jit_eval_repl(prep_src(acc1, spec), an) in
+          if inpath == "" then 0
+          else if ends_with_yjit(inpath) then jit_load_yjit(inpath, 1)
+          else
+            let acc0 = read_file(inpath) in
+            let acc1 = if acc0 == 0 then "" else acc0 in
+            if acc1 == "" then 0
+            else jit_eval_repl(prep_src(acc1, spec), an) in
         repl_loop(spec)
       else if inpath == "" then
         let _ = usage(0) in 2
+      else if ends_with_yjit(inpath) then
+        jit_load_yjit(inpath, 0)
       else
         let raw = read_file(inpath) in
         if raw == 0 then

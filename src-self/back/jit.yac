@@ -338,8 +338,31 @@ let jit_dump_live(path, arch) =
     let _ = print("usage: :dump FILE.yjit") in 1
   else
     let abi = if emit_abi_win(0) then 1 else 0 in
-    let img = pack_yjit_flat(nth(live, 3), yjit_arch_num(arch), abi,
-                             JIT_VADDR, nth(live, 4)) in
+    let drel = nth(live, 1) - JIT_VADDR in
+    let img = pack_yjit_ex(nth(live, 3), yjit_arch_num(arch),
+                           [abi, JIT_VADDR, nth(live, 4), drel]) in
     let _ = write_file(path, img) in
     let _ = print(path) in
     0
+
+let jit_load_yjit(path, sess) =
+  let im = yjit_read(path) in
+  if im == 0 then
+    let _ = print(str_cat("error: bad yjit ", path)) in 1
+  else
+    let an = yjit_arch_name(nth(im, 0)) in
+    if an != host_arch(0) then
+      let _ = print(str_cat("error: yjit arch ", an)) in 1
+    else
+      let code = nth(im, 4) in
+      let ent = nth(im, 2) in
+      let _ = cimport_jit_bind(code) in
+      let _ = jit_run(code, ent, 0) in
+      let _ =
+        if sess == 0 then 0
+        else
+          let m = fmap_new(0) in
+          let _ = fmap_init_n(m, 4096) in
+          box_set(jit_live_box,
+            [bytes_len(code), JIT_VADDR + nth(im, 3), m, code, ent]) in
+      0

@@ -52,14 +52,20 @@ let yjit_hdr_write(out, h) =
   let _ = le32(out, nth(h, 12), 60) in
   0
 
-let pack_yjit_flat(code, arch, abi, base, entry) =
+/* rest = [abi, base, entry, data_rel]. data_rel is DATA off in TEXT (hdr reserved0). */
+let pack_yjit_ex(code, arch, rest) =
   let n = bytes_len(code) in
   let out = bytes_new() in
   let _ = yjit_hdr_zeros(out) in
   let _ = yjit_hdr_write(out,
-    [arch, abi, 0, base, entry, 64, n, 64 + n, 0, 64 + n, 0, 64 + n, 0]) in
+    [arch, nth(rest, 0), 0, nth(rest, 1), nth(rest, 2),
+     64, n, 64 + n, 0, 64 + n, 0, 64 + n, 0]) in
+  let _ = le32(out, nth(rest, 3), 28) in
   let _ = bytes_extend(out, code) in
   out
+
+let pack_yjit_flat(code, arch, abi, base, entry) =
+  pack_yjit_ex(code, arch, [abi, base, entry, 0])
 
 let yjit_magic_ok(b) =
   if bytes_len(b) < 4 then false
@@ -67,3 +73,41 @@ let yjit_magic_ok(b) =
   else if bytes_ref(b, 1) != 74 then false
   else if bytes_ref(b, 2) != 73 then false
   else bytes_ref(b, 3) == 84
+
+let yjit_arch_name(n) =
+  if n == 2 then "arm64"
+  else if n == 3 then "riscv64"
+  else "x86_64"
+
+let ld16(b, i) = bytes_ref(b, i) + bshl(bytes_ref(b, i + 1), 8)
+
+let ld32(b, i) = ld16(b, i) + bshl(ld16(b, i + 2), 16)
+
+let bytes_from_str(s, i, n, b) =
+  if i >= n then b
+  else
+    let _ = bytes_append(b, str_ref(s, i)) in
+    bytes_from_str(s, i + 1, n, b)
+
+let bytes_copy_range(src, off, n, i, dst) =
+  if i >= n then dst
+  else
+    let _ = bytes_append(dst, bytes_ref(src, off + i)) in
+    bytes_copy_range(src, off, n, i + 1, dst)
+
+/* 0 or [arch, abi, entry, data_rel, text] */
+let yjit_parse(b) =
+  if bytes_len(b) < 64 then 0
+  else if yjit_magic_ok(b) == false then 0
+  else
+    let toff = ld32(b, 32) in
+    let tsz = ld32(b, 36) in
+    if toff + tsz > bytes_len(b) then 0
+    else
+      [ld16(b, 6), ld16(b, 8), ld32(b, 24), ld32(b, 28),
+       bytes_copy_range(b, toff, tsz, 0, bytes_new())]
+
+let yjit_read(path) =
+  let s = read_file(path) in
+  if s == 0 then 0
+  else yjit_parse(bytes_from_str(s, 0, str_len(s), bytes_new()))
