@@ -1,7 +1,14 @@
 import io
+let _ = write("build/test_tmp/pkg_io_w.txt", "ab") in
 if exists("pkg/path.yac") == false then 0
-else if exists("pkg/__no_such.yac") then 0
-else if read_or_0("pkg/__no_such.yac") != 0 then 0
 else
-  let s = read_or_0("pkg/path.yac") in
-  if str_len(s) > 10 then 42 else 0
+  if exists("pkg/__no_such.yac") then 0
+  else
+    if read_or_0("pkg/__no_such.yac") != 0 then 0
+    else
+      if read_or("pkg/__no_such.yac", "x") == "x" then
+        let s = read_or_0("pkg/path.yac") in
+        if str_len(s) > 10 then
+          if read_or_0("build/test_tmp/pkg_io_w.txt") == "ab" then 42 else 0
+        else 0
+      else 0

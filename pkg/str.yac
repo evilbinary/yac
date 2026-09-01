@@ -1,7 +1,7 @@
 /* str.yac — string helpers; str_len / str_cat / str_slice stay prims. */
 
 package str
-export split, starts_with, ends_with
+export split, starts_with, ends_with, join, trim, find, contains
 
 /* Walk s; sc is the separator code. Nested rec inside split scrambled ncap. */
 let split_parts(s, sc, i, start, acc) =
@@ -28,3 +28,53 @@ let ends_with(s, p) =
   let m = str_len(p) in
   if m > n then false
   else str_slice(s, n - m, m) == p
+
+/* Acc for join. */
+let join_rest(sep, xs, acc) =
+  if len(xs) == 0 then acc
+  else join_rest(sep, tail(xs), str_cat(acc, str_cat(sep, nth(xs, 0))))
+
+/* Concat xs with sep between. Empty xs → "". */
+let join(sep, xs) =
+  if len(xs) == 0 then ""
+  else join_rest(sep, tail(xs), nth(xs, 0))
+
+/* Space / tab / CR / LF. */
+let is_ws(c) =
+  if c == 32 then true
+  else if c == 9 then true
+  else if c == 10 then true
+  else c == 13
+
+/* First non-ws index, or n. */
+let trim_l(s, i, n) =
+  if i >= n then n
+  else if is_ws(str_ref(s, i)) then trim_l(s, i + 1, n)
+  else i
+
+/* End index after dropping trailing ws. */
+let trim_r(s, j) =
+  if j <= 0 then 0
+  else if is_ws(str_ref(s, j - 1)) then trim_r(s, j - 1)
+  else j
+
+/* Strip leading and trailing ASCII whitespace. */
+let trim(s) =
+  let n = str_len(s) in
+  let a = trim_l(s, 0, n) in
+  if a >= n then ""
+  else str_slice(s, a, trim_r(s, n) - a)
+
+/* Index of p in s from i, or -1. */
+let find_at(s, p, i, n, m) =
+  if i + m > n then 0 - 1
+  else if str_slice(s, i, m) == p then i
+  else find_at(s, p, i + 1, n, m)
+
+/* First index of substring p, or -1. Empty p → 0. */
+let find(s, p) = find_at(s, p, 0, str_len(s), str_len(p))
+
+/* True if p occurs in s. Empty p is true. */
+let contains(s, p) =
+  if find(s, p) < 0 then false
+  else true

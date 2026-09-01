@@ -11,7 +11,21 @@ if len(xs) == 2 then
               if starts_with("abc", "ab") then
                 if starts_with("abc", "x") == false then
                   if ends_with("a.yac", ".yac") then
-                    if ends_with("a.yac", ".c") == false then 42 else 0
+                    if ends_with("a.yac", ".c") == false then
+                      if join(",", xs) == "a,b" then
+                        if join(",", []) == "" then
+                          if trim("  a  ") == "a" then
+                            if find("abc", "b") == 1 then
+                              if find("abc", "z") < 0 then
+                                if contains("abc", "bc") then
+                                  if contains("abc", "x") == false then 42 else 0
+                                else 0
+                              else 0
+                            else 0
+                          else 0
+                        else 0
+                      else 0
+                    else 0
                   else 0
                 else 0
               else 0

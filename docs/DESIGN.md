@@ -400,7 +400,7 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 
 常见库按需增加，不一次写完：
 
-- 已落地：`path`、`str`、`io`、`list`、`hash`、`fmt`、`log`、`test`、`net`、`bytes`、`ffi`（`load` / `close` / `sym` / `sym0` / `syslib` / `zbuf` / `cstr` / `cstr_at`；`ccall` 仍是原语。`rt.ffi` 只保留 `cload`/`csym`）。
+- 已落地：`path`、`str`、`io`、`list`、`hash`、`fmt`、`log`、`test`、`net`、`bytes`、`ffi`、`json`（tagged：`["N",n]` / `["S",s]` / `["A",xs]` / `["O",pairs]` / `["T"]` `["F"]` `["Z"]`；`parse` / `stringify` / `get`。整数，无 frac/exp。`str` 另有 `join`/`trim`/`find`/`contains`；`io` 另有 `write`/`read_or`）。
 - 有真实调用再做：`yui`（从 `app/native/yui.yac` 收）、`json`、`http`（建在 `net` 上）。
 - 先不要：`re` / `crypto` / `thread`。
 

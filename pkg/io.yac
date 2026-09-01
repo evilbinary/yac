@@ -1,7 +1,7 @@
 /* io.yac — read_file wrappers. Native miss is 0; C interp miss is (). */
 
 package io
-export exists, read_or_0
+export exists, read_or_0, read_or, write
 
 /* True if the path opened. Empty file is true. */
 let exists(p) =
@@ -16,3 +16,12 @@ let read_or_0(p) =
   if r == 0 then 0
   else if r == () then 0
   else r
+
+/* File contents, or d if missing. */
+let read_or(p, d) =
+  let r = read_or_0(p) in
+  if r == 0 then d
+  else r
+
+/* Overwrite path with string or bytes (wraps write_file). */
+let write(p, s) = write_file(p, s)

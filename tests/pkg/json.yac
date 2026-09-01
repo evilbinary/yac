@@ -1,0 +1,24 @@
+import json
+let n = parse("12") in
+let a = parse("[1,2]") in
+let o = parse("{\"a\":1}") in
+let a0 = nth(nth(a, 1), 0) in
+if nth(n, 0) == "N" then
+  if nth(n, 1) == 12 then
+    if stringify(jtrue(0)) == "true" then
+      if stringify(jnull(0)) == "null" then
+        if nth(parse("-3"), 1) == 0 - 3 then
+          if nth(a0, 1) == 1 then
+            if stringify(a) == "[1,2]" then
+              if nth(get(o, "a"), 1) == 1 then
+                if stringify(o) == "{\"a\":1}" then
+                  if parse("{") == 0 then 42 else 0
+                else 0
+              else 0
+            else 0
+          else 0
+        else 0
+      else 0
+    else 0
+  else 0
+else 0

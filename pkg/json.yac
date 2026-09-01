@@ -1,0 +1,232 @@
+/* json.yac — tagged JSON. Native 0/false/() collide, so values are lists:
+ * ["N", n] ["S", s] ["A", xs] ["O", pairs] ["T"] ["F"] ["Z"].
+ * Integers only (no frac/exp). Objects are [k, val] pairs, k a string. */
+
+package json
+export parse, stringify, get, jnum, jstr, jarr, jobj, jtrue, jfalse, jnull
+
+/* Constructors. */
+let jnum(n) = ["N", n]
+let jstr(s) = ["S", s]
+let jarr(xs) = ["A", xs]
+let jobj(ps) = ["O", ps]
+let jtrue(_) = ["T"]
+let jfalse(_) = ["F"]
+let jnull(_) = ["Z"]
+
+/* Walk object pairs. */
+let get_go(ps, k) =
+  if len(ps) == 0 then 0
+  else if nth(nth(ps, 0), 0) == k then nth(nth(ps, 0), 1)
+  else get_go(tail(ps), k)
+
+/* Value for key k in an ["O", pairs], or 0. */
+let get(v, k) =
+  if len(v) == 0 then 0
+  else if nth(v, 0) == "O" then get_go(nth(v, 1), k)
+  else 0
+
+/* ASCII json whitespace. */
+let js_ws(c) =
+  if c == 32 then true
+  else if c == 9 then true
+  else if c == 10 then true
+  else c == 13
+
+/* Skip ws. */
+let js_skip(s, i) =
+  let n = str_len(s) in
+  if i >= n then i
+  else if js_ws(str_ref(s, i)) then js_skip(s, i + 1)
+  else i
+
+/* Acc for string body; i is inside the quotes. 0 on unterminated. */
+let js_str_go(s, i, acc) =
+  let n = str_len(s) in
+  if i >= n then 0
+  else
+    let c = str_ref(s, i) in
+    if c == 34 then [jstr(bytes_to_str(acc)), i + 1]
+    else if c == 92 then
+      if i + 1 >= n then 0
+      else
+        let e = str_ref(s, i + 1) in
+        let ch =
+          if e == 110 then 10
+          else if e == 116 then 9
+          else if e == 34 then 34
+          else if e == 92 then 92
+          else e in
+        let _ = bytes_append(acc, ch) in
+        js_str_go(s, i + 2, acc)
+    else
+      let _ = bytes_append(acc, c) in
+      js_str_go(s, i + 1, acc)
+
+/* "…" starting at i. */
+let js_str(s, i) =
+  if i >= str_len(s) then 0
+  else if str_ref(s, i) != 34 then 0
+  else js_str_go(s, i + 1, bytes_new())
+
+/* Digit acc. started=0 until first digit. */
+let js_num_go(s, i, acc, sign, started) =
+  let n = str_len(s) in
+  if i >= n then
+    if started == 0 then 0
+    else [jnum(sign * acc), i]
+  else
+    let c = str_ref(s, i) in
+    if c >= 48 then
+      if c <= 57 then js_num_go(s, i + 1, acc * 10 + (c - 48), sign, 1)
+      else if started == 0 then 0
+      else [jnum(sign * acc), i]
+    else if started == 0 then 0
+    else [jnum(sign * acc), i]
+
+/* Integer, optional leading '-'. */
+let js_num(s, i) =
+  if i >= str_len(s) then 0
+  else if str_ref(s, i) == 45 then js_num_go(s, i + 1, 0, 0 - 1, 0)
+  else js_num_go(s, i, 0, 1, 0)
+
+/* Literal word; returns new i or -1. */
+let js_word(s, i, w) =
+  let m = str_len(w) in
+  if i + m > str_len(s) then 0 - 1
+  else if str_slice(s, i, m) == w then i + m
+  else 0 - 1
+
+/* op 0=value, 1=array body, 2=object body. Self-rec (no sibling forward). */
+let js_work(op, s, i, acc) =
+  let n = str_len(s) in
+  if op == 0 then
+    let j = js_skip(s, i) in
+    if j >= n then 0
+    else
+      let c = str_ref(s, j) in
+      if c == 34 then js_str(s, j)
+      else if c == 91 then js_work(1, s, j + 1, [])
+      else if c == 123 then js_work(2, s, j + 1, [])
+      else if c == 116 then
+        let w = js_word(s, j, "true") in
+        if w < 0 then 0
+        else [jtrue(0), w]
+      else if c == 102 then
+        let w = js_word(s, j, "false") in
+        if w < 0 then 0
+        else [jfalse(0), w]
+      else if c == 110 then
+        let w = js_word(s, j, "null") in
+        if w < 0 then 0
+        else [jnull(0), w]
+      else js_num(s, j)
+  else if op == 1 then
+    let j = js_skip(s, i) in
+    if j >= n then 0
+    else if str_ref(s, j) == 93 then [jarr(list_rev(acc)), j + 1]
+    else
+      let r = js_work(0, s, j, 0) in
+      if r == 0 then 0
+      else
+        let k = js_skip(s, nth(r, 1)) in
+        if k >= n then 0
+        else if str_ref(s, k) == 44 then js_work(1, s, k + 1, cons(nth(r, 0), acc))
+        else if str_ref(s, k) == 93 then [jarr(list_rev(cons(nth(r, 0), acc))), k + 1]
+        else 0
+  else
+    let j = js_skip(s, i) in
+    if j >= n then 0
+    else if str_ref(s, j) == 125 then [jobj(list_rev(acc)), j + 1]
+    else
+      let kr = js_str(s, j) in
+      if kr == 0 then 0
+      else
+        let c = js_skip(s, nth(kr, 1)) in
+        if c >= n then 0
+        else if str_ref(s, c) != 58 then 0
+        else
+          let vr = js_work(0, s, c + 1, 0) in
+          if vr == 0 then 0
+          else
+            let pair = [nth(nth(kr, 0), 1), nth(vr, 0)] in
+            let k = js_skip(s, nth(vr, 1)) in
+            if k >= n then 0
+            else if str_ref(s, k) == 44 then js_work(2, s, k + 1, cons(pair, acc))
+            else if str_ref(s, k) == 125 then [jobj(list_rev(cons(pair, acc))), k + 1]
+            else 0
+
+/* Parse a whole buffer. Trailing junk → 0. */
+let parse(s) =
+  let r = js_work(0, s, 0, 0) in
+  if r == 0 then 0
+  else
+    let k = js_skip(s, nth(r, 1)) in
+    if k == str_len(s) then nth(r, 0)
+    else 0
+
+/* Escape one char into dst. */
+let js_esc_ch(dst, c) =
+  if c == 34 then
+    let _ = bytes_append(dst, 92) in
+    bytes_append(dst, 34)
+  else if c == 92 then
+    let _ = bytes_append(dst, 92) in
+    bytes_append(dst, 92)
+  else if c == 10 then
+    let _ = bytes_append(dst, 92) in
+    bytes_append(dst, 110)
+  else if c == 9 then
+    let _ = bytes_append(dst, 92) in
+    bytes_append(dst, 116)
+  else bytes_append(dst, c)
+
+/* Quote a string. */
+let js_esc_go(dst, s, i) =
+  if i >= str_len(s) then dst
+  else
+    let _ = js_esc_ch(dst, str_ref(s, i)) in
+    js_esc_go(dst, s, i + 1)
+
+/* "…". */
+let js_quote(s) =
+  let b = bytes_new() in
+  let _ = bytes_append(b, 34) in
+  let _ = js_esc_go(b, s, 0) in
+  let _ = bytes_append(b, 34) in
+  bytes_to_str(b)
+
+/* op 0=stringify v, 1=array join, 2=object join. */
+let js_out(op, v, i, acc) =
+  if op == 0 then
+    if len(v) == 0 then "null"
+    else
+      let k = nth(v, 0) in
+      if k == "N" then int_to_str(nth(v, 1))
+      else
+        if k == "S" then js_quote(nth(v, 1))
+        else
+          if k == "T" then "true"
+          else
+            if k == "F" then "false"
+            else
+              if k == "Z" then "null"
+              else
+                if k == "A" then str_cat("[", str_cat(js_out(1, nth(v, 1), 0, ""), "]"))
+                else
+                  if k == "O" then str_cat("{", str_cat(js_out(2, nth(v, 1), 0, ""), "}"))
+                  else "null"
+  else if op == 1 then
+    if i >= len(v) then acc
+    else if i == 0 then js_out(1, v, 1, js_out(0, nth(v, 0), 0, 0))
+    else js_out(1, v, i + 1, str_cat(acc, str_cat(",", js_out(0, nth(v, i), 0, 0))))
+  else
+    if i >= len(v) then acc
+    else
+      let p = nth(v, i) in
+      let one = str_cat(js_quote(nth(p, 0)), str_cat(":", js_out(0, nth(p, 1), 0, 0))) in
+      if i == 0 then js_out(2, v, 1, one)
+      else js_out(2, v, i + 1, str_cat(acc, str_cat(",", one)))
+
+/* Tagged value → JSON text. Unknown → "null". */
+let stringify(v) = js_out(0, v, 0, 0)
