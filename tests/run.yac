@@ -167,7 +167,7 @@ let pkg_cases(_) = [
   ["path", "rc", "42"], ["str", "rc", "42"], ["io", "rc", "42"],
   ["list", "rc", "42"], ["hash", "rc", "42"], ["fmt", "rc", "42"],
   ["log", "rc", "42"], ["test", "rc", "42"], ["net", "rc", "42"],
-  ["bytes", "rc", "42"]
+  ["bytes", "rc", "42"], ["ffi", "rc", "42"]
 ]
 
 let pkg_all(st, yc) =

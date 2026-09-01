@@ -1,4 +1,5 @@
-/* Runtime dlopen/dlsym via ccall. User .so symbols: csym + ccall(ptr, …). */
+/* Runtime dlopen/dlsym via ccall. Guest programs should import ffi (pkg/ffi).
+ * User .so symbols: csym + ccall(ptr, …). */
 
 package rt.ffi
 export cload, csym

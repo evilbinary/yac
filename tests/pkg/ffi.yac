@@ -1,0 +1,14 @@
+import ffi
+let h = load(syslib(0)) in
+let p = sym0("strlen") in
+if h != 0 then
+  if p != 0 then
+    if ccall(p, cstr("abc")) == 3 then
+      if cstr_at(cstr("xy"), 0) == "xy" then
+        if str_len(zbuf(4)) == 4 then
+          if str_ref(zbuf(4), 0) == 0 then 42 else 0
+        else 0
+      else 0
+    else 0
+  else 0
+else 0

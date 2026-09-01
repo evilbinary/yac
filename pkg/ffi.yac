@@ -1,0 +1,97 @@
+/* ffi.yac — load a C library and call through ccall(ptr, …).
+ * ccall itself stays a prim (literal name or function pointer).
+ * rt.ffi is Unix-shaped cload/csym; this package is the guest API. */
+
+package ffi
+export load, close, sym, sym0, syslib, zbuf, cstr, cstr_at
+
+/* ASCII prefix. */
+let ffi_has(s, p) =
+  let n = str_len(p) in
+  if str_len(s) < n then false
+  else str_slice(s, 0, n) == p
+
+/* Acc for zbuf. */
+let zbuf_go(b, i, n) =
+  if i >= n then bytes_to_str(b)
+  else
+    let _ = bytes_append(b, 0) in
+    zbuf_go(b, i + 1, n)
+
+/* n zero bytes as a C buffer (payload pointer). n<=0 → "". */
+let zbuf(n) =
+  if n <= 0 then ""
+  else zbuf_go(bytes_new(), 0, n)
+
+/* NUL-terminated copy of s for C. */
+let cstr_go(b, s, i) =
+  if i >= str_len(s) then
+    let _ = bytes_append(b, 0) in
+    bytes_to_str(b)
+  else
+    let _ = bytes_append(b, str_ref(s, i)) in
+    cstr_go(b, s, i + 1)
+
+/* s plus a trailing 0. */
+let cstr(s) = cstr_go(bytes_new(), s, 0)
+
+/* Scan a C string at off inside a buffer. */
+let cstr_at_go(s, off, i, n) =
+  if off + i >= n then str_slice(s, off, n - off)
+  else if str_ref(s, off + i) == 0 then str_slice(s, off, i)
+  else cstr_at_go(s, off, i + 1, n)
+
+/* Bytes until NUL from off, or rest of s. */
+let cstr_at(s, off) =
+  let n = str_len(s) in
+  if off >= n then ""
+  else cstr_at_go(s, off, 0, n)
+
+/* uname sysname; empty on PE stub miss. */
+let ffi_uname(_) =
+  let buf = zbuf(256) in
+  let _ = ccall("uname", buf) in
+  cstr_at(buf, 0)
+
+/* Windows (empty uname / MinGW / …). */
+let ffi_is_win(_) =
+  let sys = ffi_uname(0) in
+  if sys == "" then true
+  else if ffi_has(sys, "MINGW") then true
+  else if ffi_has(sys, "MSYS") then true
+  else if ffi_has(sys, "CYGWIN") then true
+  else if ffi_has(sys, "Windows") then true
+  else false
+
+/* macOS / iOS. */
+let ffi_is_darwin(_) = ffi_has(ffi_uname(0), "Darwin")
+
+/* Host libc / kernel32 path for load. */
+let syslib(_) =
+  if ffi_is_win(0) then "kernel32.dll"
+  else if ffi_is_darwin(0) then "/usr/lib/libSystem.B.dylib"
+  else "libc.so.6"
+
+/* dlopen flags: NOW|GLOBAL (Darwin GLOBAL is 8, Linux 256). */
+let ffi_rtld(_) =
+  if ffi_is_darwin(0) then 2 + 8
+  else 2 + 256
+
+/* Load a .dll / .so / .dylib. 0 on failure. */
+let load(path) =
+  if ffi_is_win(0) then ccall("LoadLibraryA", path)
+  else ccall("dlopen", path, ffi_rtld(0))
+
+/* Drop a load() handle. 0-ish on Unix success; Windows BOOL. */
+let close(h) =
+  if ffi_is_win(0) then
+    ccall(ccall("GetProcAddress", ccall("GetModuleHandleA", "kernel32.dll"), "FreeLibrary"), h)
+  else ccall("dlclose", h)
+
+/* Symbol in handle h (dlsym / GetProcAddress). 0 if missing. */
+let sym(h, name) =
+  if ffi_is_win(0) then ccall("GetProcAddress", h, name)
+  else ccall("dlsym", h, name)
+
+/* Symbol in already-loaded modules (dlsym(0); PE stub scans msvcrt/kernel32). */
+let sym0(name) = ccall("dlsym", 0, name)

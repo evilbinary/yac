@@ -124,7 +124,7 @@ src-self/
   lang/          scheme.yac
   yc.yac         CLI（--arch / --format / --pkg）
   drivers/       各阶段测试驱动（不进 bundle）
-pkg/             客常见库（path / str / io / list / hash / fmt / log / test / net / bytes；lookup 默认 ./pkg，不进 compiler cat）
+pkg/             客常见库（path / str / io / list / hash / fmt / log / test / net / bytes / ffi；lookup 默认 ./pkg，不进 compiler cat）
 ```
 
 没有单独的 `regalloc.yac` / `link.yac`：M3 值为栈槽（`[rbp+off]`），符号/入口在 emit+pack 里完成。
@@ -157,7 +157,7 @@ pkg/             客常见库（path / str / io / list / hash / fmt / log / test
 
 ISA 以 `docs/DESIGN.md` §2.1 为准。构造器与 emit 同一套标签（`local`/`add`/`cmpjmp`/`fcall`/`mref`/…）。手写 boot LIR 可带 `exit` 糖。
 
-槽机：值为栈槽，临时值走返回寄存器。没有独立寄存器分配。`nth`/`cons`/`len`/`str_cat` 不是 LIR 指令，走 `fcall yac_*`。`ccall("name", …)` 走 C ABI PLT；`ccall(ptr, …)` 走间接调用。C 参数按 arch ABI：x86_64 6 个寄存器 + 栈，arm64/riscv64 8 个寄存器 + 栈。`-g`/`--syms` 时 ELF 带 `.symtab`。`cload`/`csym` 在 `rt/ffi.yac`。
+槽机：值为栈槽，临时值走返回寄存器。没有独立寄存器分配。`nth`/`cons`/`len`/`str_cat` 不是 LIR 指令，走 `fcall yac_*`。`ccall("name", …)` 走 C ABI PLT；`ccall(ptr, …)` 走间接调用。C 参数按 arch ABI：x86_64 6 个寄存器 + 栈，arm64/riscv64 8 个寄存器 + 栈。`-g`/`--syms` 时 ELF 带 `.symtab`。客库 `import ffi`（`pkg/ffi.yac`：`load`/`sym`/`zbuf`/`cstr`）；`cload`/`csym` 仍在 `rt/ffi.yac`。
 
 ### 6.2 后端流程
 
