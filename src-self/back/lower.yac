@@ -57,6 +57,14 @@ let drop_unreachable(funs) =
       scan(insns, i + 1) in
   let _ = mark(intern("_start")) in
   let _ = mark(intern("_eval")) in
+  /* REPL import: keep pkg exports even if this line's _eval does not call them. */
+  let im = box_get(imap_box) in
+  let rec_im(i) =
+    if i >= len(im) then 0
+    else
+      let _ = mark(intern(nth(nth(im, i), 1))) in
+      rec_im(i + 1) in
+  let _ = rec_im(0) in
   let rec_wl(i) =
     if i >= len(q) then 0
     else

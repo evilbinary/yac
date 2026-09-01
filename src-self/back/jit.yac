@@ -107,7 +107,7 @@ let jslot_rw_prog(p, i, sc, acc) =
 
 let jslot_rw_all(p) = jslot_rw_prog(p, 0, [], list_new())
 
-let start_eval_ins(nslots, pslot, body, name) =
+let start_eval_ins(nslots, pslot, body, name, quiet) =
   let b0 = insn_extend(insn_push(list_new(), ["local", nslots + 8, 0]), body) in
   let b0s =
     if name == "" then b0
@@ -116,10 +116,12 @@ let start_eval_ins(nslots, pslot, body, name) =
       let b1 = insn_push(b0, ["mov_imm", nslots, ix + ix]) in
       insn_push(b1, ["fcall", nslots + 1, "yac_jslot_set", [nslots, pslot]]) in
   if name == "" then
-    insn_push(insn_push(insn_push(b0s,
-      ["mov_imm", nslots, 2]),
-      ["fcall", nslots + 1, "print", [pslot, nslots]]),
-      ["ret", pslot])
+    if quiet then insn_push(b0s, ["ret", pslot])
+    else
+      insn_push(insn_push(insn_push(b0s,
+        ["mov_imm", nslots, 2]),
+        ["fcall", nslots + 1, "print", [pslot, nslots]]),
+        ["ret", pslot])
   else
     let b1 = insn_push(b0s, ["strlit", nslots, name]) in
     let b2 = insn_push(b1, ["strlit", nslots + 1, " = "]) in
@@ -130,10 +132,10 @@ let start_eval_ins(nslots, pslot, body, name) =
     let b7 = insn_push(b6, ["fcall", nslots + 6, "print", [pslot, nslots + 3]]) in
     insn_push(b7, ["ret", pslot])
 
-let start_proc_eval(nslots, result_slot, body, name) =
-  ["proc", "_eval", 0, 0, start_eval_ins(nslots, result_slot, body, name), "_eval"]
+let start_proc_eval(nslots, result_slot, body, name, quiet) =
+  ["proc", "_eval", 0, 0, start_eval_ins(nslots, result_slot, body, name, quiet), "_eval"]
 
-let pass_lir_eval(anf_list, bind_name) =
+let pass_lir_eval(anf_list, bind_name, quiet) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
   let st = lir_all(0, anf_list,
@@ -144,7 +146,7 @@ let pass_lir_eval(anf_list, bind_name) =
     else
       let s = env_slot(nth(st, 0), bind_name) in
       if s == 0 then nth(st, 5) else s in
-  let entry = start_proc_eval(nth(st, 1), pslot, nth(st, 4), bind_name) in
+  let entry = start_proc_eval(nth(st, 1), pslot, nth(st, 4), bind_name, quiet) in
   /* prog[2] is the Linux process entry (is_entry in emit). JIT jumps to
    * _eval by name; it must not be prog[2] or it would get _start's ABI. */
   tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
@@ -181,6 +183,19 @@ let link_from_ast_repl(ast) =
   let _ = box_set(link_need_box, pkgs_append(box_get(link_need_box), more, 0)) in
   let _ = imap_load_merge(filled, 0) in
   0
+
+let repl_quiet_print(ast) =
+  let n = len(ast) in
+  if n == 0 then false
+  else
+    let e = nth(ast, n - 1) in
+    if nth(e, 0) != "call" then false
+    else
+      let f = nth(e, 1) in
+      if nth(f, 0) != "var" then false
+      else
+        let nm = nth(f, 1) in
+        if nm == "print" then true else nm == "printf"
 
 let repl_last_let(ast) =
   let n = len(ast) in
@@ -239,8 +254,9 @@ let compile_jit(src, t, named) =
           if live == 0 then emit_jsess_set(0)
           else emit_jsess_set(live) in
         let bn = repl_last_let(ast1) in
+        let q = repl_quiet_print(ast1) in
         let _ = log_set_hush(true) in
-        let r = lower_expr(pass_lir_eval(pass_anf(ast1), bn), t) in
+        let r = lower_expr(pass_lir_eval(pass_anf(ast1), bn, q), t) in
         let _ = log_set_hush(false) in
         let _ = emit_jsess_set(0) in
         let dest = if live == 0 then 0 else nth(live, 0) in
@@ -265,14 +281,14 @@ let compile_jit(src, t, named) =
     let _ = link_from_ast(ast) in
     let _ = emit_jsess_set(0) in
     let _ = log_set_hush(true) in
-    let r = lower_expr(pass_lir_eval(pass_anf(ast), ""), t) in
+    let r = lower_expr(pass_lir_eval(pass_anf(ast), "", false), t) in
     let _ = log_set_hush(false) in
     let _ = cimport_jit_bind(nth(r, 0)) in
     let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0) in 0
 
 let compile_jit_anf(anf, t, bn) =
   let _ = log_set_hush(true) in
-  let r = lower_expr(pass_lir_eval(anf, bn), t) in
+  let r = lower_expr(pass_lir_eval(anf, bn, false), t) in
   let _ = log_set_hush(false) in
   let _ = cimport_jit_bind(nth(r, 0)) in
   let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0) in 0

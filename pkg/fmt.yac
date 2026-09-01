@@ -23,5 +23,7 @@ let fmt_go(pat, args, i, ai, acc) =
 /* Build a string. %s = already a string, %d = int_to_str, %% = "%". */
 let format(pat, args) = fmt_go(pat, args, 0, 0, "")
 
-/* Print format(pat, args) and return that string. */
-let printf(pat, args) = print(format(pat, args))
+/* Print format(pat, args) and return that string.
+ * One arg (missing args is 0): print the value, like print(x). */
+let printf(pat, args) =
+  if args == 0 then print(pat) else print(format(pat, args))

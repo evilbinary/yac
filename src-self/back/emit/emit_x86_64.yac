@@ -58,6 +58,24 @@ let emit_x86_iccall(st, insn) =
   let _ = emit_store_rax_slot(b, dst) in
   emit_st4(st, b, cur, labels, patches)
 
+/* Unused SysV arg regs are 0 so missing formals are nil, not leftover. */
+let emit_zero_sysv_args(b, nargs) =
+  if nargs >= 6 then 0
+  else
+    let _ = xor_rax_rax(b) in
+    let rec(j) =
+      if j >= 6 then 0
+      else
+        let _ =
+          if j == 0 then mov_rdi_rax(b)
+          else if j == 1 then mov_rsi_rax(b)
+          else if j == 2 then mov_rdx_rax(b)
+          else if j == 3 then mov_rcx_rax(b)
+          else if j == 4 then mov_r8_rax(b)
+          else mov_r9_rax(b) in
+        rec(j + 1) in
+    rec(nargs)
+
 let emit_x86_i_core(st, insn, is_entry, is_raw) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
@@ -290,6 +308,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
           else mov_r9_rax(b) in
         loadarg(j + 1) in
     let _ = loadarg(0) in
+    let _ = emit_zero_sysv_args(b, nargs) in
     let callstart = bytes_len(b) in
     let _ = call_user(b) in
     let _ = emit_store_rax_slot(b, dst) in
@@ -328,6 +347,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
           else mov_r9_rax(b) in
         loadarg(j + 1) in
     let _ = loadarg(0) in
+    let _ = emit_zero_sysv_args(b, nargs) in
     let _ = mov_rsp_rbp(b) in
     let _ = pop_rbp(b) in
     let jmpstart = bytes_len(b) in
@@ -1043,6 +1063,9 @@ let emit_x86_i_prim(st, insn) =
     let _ = cmp_rax_imm8(b, 1) in
     let _ = jcc_rel32(b, 4, 0) in
     let jnil = bytes_len(b) - 4 in
+    let _ = test_rax_1(b) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let jfix = bytes_len(b) - 4 in
     let _ = and_rax_1(b) in
     let _ = mov_rax_rax_disp32(b, 24) in
     let _ = shl_rax_1(b) in
@@ -1051,6 +1074,7 @@ let emit_x86_i_prim(st, insn) =
     let zlen = bytes_len(b) in
     let _ = apply_patch(b, jz0, zlen) in
     let _ = apply_patch(b, jnil, zlen) in
+    let _ = apply_patch(b, jfix, zlen) in
     let _ = xor_rax_rax(b) in
     let done = bytes_len(b) in
     let _ = apply_patch(b, jdone, done) in
