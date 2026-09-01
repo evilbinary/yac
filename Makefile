@@ -106,6 +106,25 @@ test-interp: $(TEST_HARNESS)
 test-compiler: $(TEST_HARNESS)
 	./$(TEST_HARNESS) compiler
 
+# compiler/cases via yc --cps:  make test-cps   |  make test-cps add  |  CASE=add
+# REPL: make test-repl   |  make test-repl import  |  CASE="let a then b"
+CASE ?=
+test-cps: $(TEST_HARNESS)
+	./$(TEST_HARNESS) cps "$(if $(CASE),$(CASE),$(word 2,$(MAKECMDGOALS)))"
+
+test-repl: $(TEST_HARNESS)
+	./$(TEST_HARNESS) repl "$(if $(CASE),$(CASE),$(word 2,$(MAKECMDGOALS)))"
+
+SUITE_CASE_TGTS := test-cps test-repl
+ifneq ($(filter $(SUITE_CASE_TGTS),$(MAKECMDGOALS)),)
+EXTRA_SUITE_CASE := $(filter-out $(SUITE_CASE_TGTS) test test-interp test-compiler test-pkg test-boot test-qemu test-qemu-arm64 test-qemu-riscv64 test-iso prop yc yc_a yc_b bootstrap yc-iso all clean,$(MAKECMDGOALS))
+ifneq ($(EXTRA_SUITE_CASE),)
+.PHONY: $(EXTRA_SUITE_CASE)
+$(EXTRA_SUITE_CASE):
+	@:
+endif
+endif
+
 test-pkg: $(TEST_HARNESS)
 	./$(TEST_HARNESS) pkg
 
@@ -136,5 +155,5 @@ clean:
 	rm -f src/*.o
 
 .PHONY: all clean test test-interp test-compiler test-pkg test-boot \
-	test-qemu test-qemu-arm64 test-qemu-riscv64 test-iso prop \
+	test-qemu test-qemu-arm64 test-qemu-riscv64 test-iso test-cps test-repl prop \
 	yc yc_a yc_b bootstrap yc-iso

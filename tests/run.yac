@@ -5,7 +5,9 @@ import rt.os
  *
  *   make test                 → compile this file, run every suite
  *   make test-SUITE           → same binary, argv SUITE (one suite)
- *     interp | compiler | pkg | boot | qemu | qemu-arm64 | qemu-riscv64 | iso
+ *     interp | compiler | pkg | boot | qemu | qemu-arm64 | qemu-riscv64 | iso | cps | repl
+ *   make test-cps add         → one tests/compiler/cases file via yc --cps
+ *   make test-repl "let a then b"  → one --repl case (name or substring)
  *   ./yac --pkg src-self tests/run.yac  (C interp of this harness)
  *
  * C interpreter is only a subprocess for interp_suite (cps/callcc/float/bignum).
@@ -135,6 +137,45 @@ let cat_files(xs, dest) =
 
 let on_win(_) = host_os(0) == "windows"
 
+let last_slash(s, i, last) =
+  if i >= str_len(s) then last
+  else
+    let c = str_ref(s, i) in
+    if c == 47 then last_slash(s, i + 1, i)
+    else if c == 92 then last_slash(s, i + 1, i)
+    else last_slash(s, i + 1, last)
+
+let case_stem(s) =
+  let sl = last_slash(s, 0, 0 - 1) in
+  let base =
+    if sl < 0 then s
+    else str_slice(s, sl + 1, str_len(s) - (sl + 1)) in
+  let n = str_len(base) in
+  if n > 4 then
+    if str_slice(base, n - 4, 4) == ".yac" then str_slice(base, 0, n - 4)
+    else base
+  else base
+
+let case_find(xs, name, i) =
+  if i >= len(xs) then 0
+  else if nth(nth(xs, i), 0) == name then nth(xs, i)
+  else case_find(xs, name, i + 1)
+
+let cases_named(xs, stem, i, n, acc) =
+  if i >= n then acc
+  else
+    let c = nth(xs, i) in
+    let acc2 =
+      if contains(nth(c, 0), stem) then cons(c, acc) else acc in
+    cases_named(xs, stem, i + 1, n, acc2)
+
+let cases_pick(xs, stem) =
+  if stem == "" then xs
+  else
+    let exact = case_find(xs, stem, 0) in
+    if exact != 0 then cons(exact, [])
+    else list_rev(cases_named(xs, stem, 0, len(xs), []))
+
 let compiler_one(st, yc, c) =
   let name = nth(c, 0) in
   let kind = nth(c, 1) in
@@ -148,6 +189,33 @@ let compiler_one(st, yc, c) =
     let r = run([bin]) in
     if kind == "rc" then check(st, str_cat("compiler ", name), want, int_to_str(nth(r, 0)))
     else check(st, str_cat("compiler ", name), want, chomp(nth(r, 1)))
+
+/* `yc --cps`: rc cases print the value; out may also print it. */
+let cps_one(st, yc, c) =
+  let name = nth(c, 0) in
+  let kind = nth(c, 1) in
+  let want = nth(c, 2) in
+  let r = run(append(yc, ["--cps", case_src(name)])) in
+  let got = chomp(nth(r, 1)) in
+  let tag = str_cat("cps ", name) in
+  if kind == "rc" then check(st, tag, want, got)
+  else if got == want then check(st, tag, want, got)
+  else if contains(got, want) then check(st, tag, "1", "1")
+  else check(st, tag, want, got)
+
+let compiler_prep_libs(_) =
+  let _ = write_file(str_cat(TMP, "/tadd.c"),
+    "int tadd(int a, int b) { return a + b; }\n") in
+  let _ = write_file(str_cat(TMP, "/tmul.c"),
+    "int tmul(int a, int b) { return a * b; }\n") in
+  let _ = run(["gcc", "-shared", "-fPIC", "-o",
+    str_cat(TMP, "/libtadd.so"), str_cat(TMP, "/tadd.c")]) in
+  let _ = run(["gcc", "-shared", "-fPIC", "-o",
+    str_cat(TMP, "/libtmul.so"), str_cat(TMP, "/tmul.c")]) in
+  let _ = write_file(str_cat(TMP, "/tsum.c"),
+    "int tsum7(int a,int b,int c,int d,int e,int f,int g){return a+b+c+d+e+f+g;}\nint tsum8(int a,int b,int c,int d,int e,int f,int g,int h){return a+b+c+d+e+f+g+h;}\n") in
+  run(["gcc", "-shared", "-fPIC", "-o",
+    str_cat(TMP, "/libtsum.so"), str_cat(TMP, "/tsum.c")])
 
 let pkg_one(st, yc, c) =
   let name = nth(c, 0) in
@@ -288,20 +356,34 @@ let repl_cases(_) = [
   ["import then printf d", "let a=42\nimport fmt\nprintf(\"%d\", [a])\n:q\n", "42"],
   ["import then printf one", "let a=42\nimport fmt\nprintf(a)\n:q\n", "42"]]
 
+let repl_all(st, yc, stem) =
+  let _ = banner("repl", nth(yc, 0)) in
+  let xs = cases_pick(repl_cases(0), stem) in
+  if len(xs) == 0 then
+    let _ = print(str_cat("error: unknown repl test '",
+      str_cat(stem, "' (repl_cases name, or a substring)"))) in
+    exit(2)
+  else
+    foldl(fun(s, c) ->
+      repl_check(s, yc, str_cat("repl ", nth(c, 0)), nth(c, 1), nth(c, 2)),
+      st, xs)
+
+let cps_all(st, yc, stem) =
+  let _ = banner("cps", nth(yc, 0)) in
+  let _ = compiler_prep_libs(0) in
+  let all = compiler_cases(0) in
+  if stem == "" then foldl(fun(s, c) -> cps_one(s, yc, c), st, all)
+  else
+    let c = case_find(all, stem, 0) in
+    if c == 0 then
+      let _ = print(str_cat("error: unknown cps test '",
+        str_cat(stem, "' (tests/compiler/cases name)"))) in
+      exit(2)
+    else cps_one(st, yc, c)
+
 let compiler_all(st, yc) =
   let _ = banner("compiler/cases", nth(yc, 0)) in
-  let _ = write_file(str_cat(TMP, "/tadd.c"),
-    "int tadd(int a, int b) { return a + b; }\n") in
-  let _ = write_file(str_cat(TMP, "/tmul.c"),
-    "int tmul(int a, int b) { return a * b; }\n") in
-  let _ = run(["gcc", "-shared", "-fPIC", "-o",
-    str_cat(TMP, "/libtadd.so"), str_cat(TMP, "/tadd.c")]) in
-  let _ = run(["gcc", "-shared", "-fPIC", "-o",
-    str_cat(TMP, "/libtmul.so"), str_cat(TMP, "/tmul.c")]) in
-  let _ = write_file(str_cat(TMP, "/tsum.c"),
-    "int tsum7(int a,int b,int c,int d,int e,int f,int g){return a+b+c+d+e+f+g;}\nint tsum8(int a,int b,int c,int d,int e,int f,int g,int h){return a+b+c+d+e+f+g+h;}\n") in
-  let _ = run(["gcc", "-shared", "-fPIC", "-o",
-    str_cat(TMP, "/libtsum.so"), str_cat(TMP, "/tsum.c")]) in
+  let _ = compiler_prep_libs(0) in
   let st1 = foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)) in
   let st1s =
     if nth(run(["sh", "-c", "command -v nm >/dev/null 2>&1"]), 0) != 0 then st1
@@ -331,9 +413,7 @@ let compiler_all(st, yc) =
                   str_cat("syntax ", nth(c, 0))), st1y, syntax_bads(0)) in
   let st3 = foldl(fun(s, c) -> compile_msg_err(s, yc, nth(c, 1),
                   str_cat("unbound ", nth(c, 0)), nth(c, 2)), st2, unbound_bads(0)) in
-  let st4 = foldl(fun(s, c) ->
-    repl_check(s, yc, str_cat("repl ", nth(c, 0)), nth(c, 1), nth(c, 2)),
-    st3, repl_cases(0)) in
+  let st4 = repl_all(st3, yc, "") in
   let pscm = str_cat(TMP, "/t.scm") in
   let bscm = native(str_cat(TMP, "/t_scm")) in
   let _ = write_file(pscm, "(display (+ 1 2))\n") in
@@ -601,7 +681,7 @@ let qemu_both(st, yc) =
   qemu_arch(qemu_arch(st, yc, "arm64"), yc, "riscv64")
 
 let suite_usage(_) =
-  let _ = print("usage: run_tests [interp|compiler|pkg|boot|qemu|qemu-arm64|qemu-riscv64|iso]") in
+  let _ = print("usage: run_tests [interp|compiler|pkg|boot|qemu|qemu-arm64|qemu-riscv64|iso|cps|repl] [case]") in
   exit(2)
 
 let main =
@@ -615,6 +695,12 @@ let main =
   if s == "pkg" then suite_done(pkg_all([0, 0], yc))
   else if s == "interp" then suite_done(interp_suite([0, 0]))
   else if s == "compiler" then suite_done(compiler_all([0, 0], yc))
+  else if s == "cps" then
+    let stem = if argc() < 3 then "" else case_stem(argv(2)) in
+    suite_done(cps_all([0, 0], yc, stem))
+  else if s == "repl" then
+    let stem = if argc() < 3 then "" else argv(2) in
+    suite_done(repl_all([0, 0], yc, stem))
   else if s == "boot" then suite_done(boot_front([0, 0], ya))
   else if s == "qemu" then suite_done(qemu_both([0, 0], yc))
   else if s == "qemu-arm64" then suite_done(qemu_arch([0, 0], yc, "arm64"))
