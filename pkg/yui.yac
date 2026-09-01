@@ -1,0 +1,109 @@
+/* yui.yac — ccall bindings for libyui_yac. JSON onClick: yac_click. */
+
+package yui
+export yui_open, yui_init, yui_tick, yui_set_text, yui_click_is, yui_shutdown, yui_game_boot, yui_key, yui_game_vel, yui_game_get, yui_game_pos, yui_game_spawn, yui_game_box, yui_game_hit, yui_game_cull, yui_game_burst, yui_rand
+
+/* ASCII prefix. */
+let yui_has(s, p) =
+  let n = str_len(p) in
+  if str_len(s) < n then false
+  else str_slice(s, 0, n) == p
+
+/* Acc for zbuf. */
+let yui_z_go(b, i, n) =
+  if i >= n then bytes_to_str(b)
+  else
+    let _ = bytes_append(b, 0) in
+    yui_z_go(b, i + 1, n)
+
+/* n zero bytes. */
+let yui_zstr(n) =
+  if n <= 0 then ""
+  else yui_z_go(bytes_new(), 0, n)
+
+/* C string at 0. */
+let yui_cstr0_go(s, i, n) =
+  if i >= n then s
+  else if str_ref(s, i) == 0 then str_slice(s, 0, i)
+  else yui_cstr0_go(s, i + 1, n)
+
+/* uname sysname. */
+let yui_uname(_) =
+  let buf = yui_zstr(256) in
+  let _ = ccall("uname", buf) in
+  yui_cstr0_go(buf, 0, str_len(buf))
+
+/* Windows. */
+let yui_is_win(_) =
+  let sys = yui_uname(0) in
+  if sys == "" then true
+  else if yui_has(sys, "MINGW") then true
+  else if yui_has(sys, "MSYS") then true
+  else if yui_has(sys, "CYGWIN") then true
+  else if yui_has(sys, "Windows") then true
+  else false
+
+/* Darwin. */
+let yui_is_darwin(_) = yui_has(yui_uname(0), "Darwin")
+
+/* dlopen NOW|GLOBAL. */
+let yui_rtld(_) =
+  if yui_is_darwin(0) then 2 + 8
+  else 2 + 256
+
+/* Load glue .so / .dll. 0 on failure. */
+let yui_open(path) =
+  if yui_is_win(0) then ccall("LoadLibraryA", path)
+  else ccall("dlopen", path, yui_rtld(0))
+
+/* Named symbol after a successful yui_open (dlsym 0 / PE stub). */
+let yui_sym(name) = ccall("dlsym", 0, name)
+
+/* yui_yac_init(json_path, assets). */
+let yui_init(json, assets) = ccall(yui_sym("yui_yac_init"), json, assets)
+
+/* Pump one frame. Nonzero = quit. */
+let yui_tick(_) = ccall(yui_sym("yui_yac_tick"))
+
+/* Set widget text. */
+let yui_set_text(id, text) = ccall(yui_sym("yui_yac_set_text"), id, text)
+
+/* Nonzero if id was clicked. */
+let yui_click_is(id) = ccall(yui_sym("yui_yac_click_is"), id)
+
+/* Tear down. */
+let yui_shutdown(_) = ccall(yui_sym("yui_yac_shutdown"))
+
+/* Load a game scene JSON. */
+let yui_game_boot(path) = ccall(yui_sym("yui_yac_game_boot"), path)
+
+/* Key down? */
+let yui_key(name) = ccall(yui_sym("yui_yac_game_key"), name)
+
+/* Set velocity. */
+let yui_game_vel(id, vx, vy) = ccall(yui_sym("yui_yac_game_vel"), id, vx, vy)
+
+/* Field which of entity id. */
+let yui_game_get(id, which) = ccall(yui_sym("yui_yac_game_get"), id, which)
+
+/* Set position. */
+let yui_game_pos(id, x, y) = ccall(yui_sym("yui_yac_game_pos"), id, x, y)
+
+/* Spawn entity. */
+let yui_game_spawn(id, tag, x, y, rgb) =
+  ccall(yui_sym("yui_yac_game_spawn"), id, tag, x, y, rgb)
+
+/* Hit box. */
+let yui_game_box(id, w, h) = ccall(yui_sym("yui_yac_game_box"), id, w, h)
+
+/* Overlap with tag. */
+let yui_game_hit(id, tag) = ccall(yui_sym("yui_yac_game_hit"), id, tag)
+
+/* Drop tagged ents past ymax. */
+let yui_game_cull(tag, ymax) = ccall(yui_sym("yui_yac_game_cull"), tag, ymax)
+
+/* Burst at x,y. */
+let yui_game_burst(x, y, rgb) = ccall(yui_sym("yui_yac_game_burst"), x, y, rgb)
+
+/* Random 0..n-1. */
+let yui_rand(n) = ccall(yui_sym("yui_yac_rand"), n)

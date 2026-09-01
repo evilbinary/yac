@@ -1,3 +1,5 @@
+import yui
+
 let so =
   if argc() > 2 then argv(2)
   else "app/native/libyui_yac.so"

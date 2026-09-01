@@ -124,7 +124,7 @@ src-self/
   lang/          scheme.yac
   yc.yac         CLI（--arch / --format / --pkg）
   drivers/       各阶段测试驱动（不进 bundle）
-pkg/             客常见库（path / str / io / list / hash / fmt / log / test / net / bytes / ffi / json；lookup 默认 ./pkg，不进 compiler cat）
+pkg/             客常见库（path / str / io / list / hash / fmt / log / test / net / bytes / ffi / json / env / cli / http / yui；lookup 默认 ./pkg，不进 compiler cat）
 ```
 
 没有单独的 `regalloc.yac` / `link.yac`：M3 值为栈槽（`[rbp+off]`），符号/入口在 emit+pack 里完成。
@@ -135,7 +135,7 @@ pkg/             客常见库（path / str / io / list / hash / fmt / log / test
 
 约束：
 
-- 客默认链接：`kernel`（`runtime_funs`）+ `rt.num`。其它包有 `import` 才链对应 `.yac`。`rt.os` 与 `rt.ffi` 不进默认集（CRP）。
+- 客默认链接：`kernel`（`runtime_funs`）+ `rt.num`。其它包有 `import` 才链对应 `.yac`，并 DFS 包源里的 `import`（`http` → `net`）。`rt.os` 与 `rt.ffi` 不进默认集（CRP）。
 - `os_has` 留在语言包 `rt.os` 且不导出（CCP + 隐藏）。
 - 编译器 `cat` 仍是一个单元；把 pe 与 lexer 拆开是后续工作。
 

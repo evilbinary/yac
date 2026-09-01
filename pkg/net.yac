@@ -3,8 +3,7 @@
  * Darwin sockaddr_in has sin_len; Linux/Windows do not. */
 
 package net
-export htons, ipv4, parse_ipv4, host_port, sockaddr4
-export tcp_connect, tcp_listen, tcp_accept, tcp_send, tcp_recv, tcp_close
+export htons, ipv4, parse_ipv4, host_port, sockaddr4, tcp_connect, tcp_listen, tcp_accept, tcp_send, tcp_recv, tcp_close
 
 /* ASCII prefix match. */
 let net_has(s, p) =

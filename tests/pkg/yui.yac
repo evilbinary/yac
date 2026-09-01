@@ -1,0 +1,2 @@
+import yui
+if yui_open("pkg/__no_such_yui_lib") == 0 then 42 else 0

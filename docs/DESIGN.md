@@ -400,8 +400,7 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 
 常见库按需增加，不一次写完：
 
-- 已落地：`path`、`str`、`io`、`list`、`hash`、`fmt`、`log`、`test`、`net`、`bytes`、`ffi`、`json`（tagged：`["N",n]` / `["S",s]` / `["A",xs]` / `["O",pairs]` / `["T"]` `["F"]` `["Z"]`；`parse` / `stringify` / `get`。整数，无 frac/exp。`str` 另有 `join`/`trim`/`find`/`contains`；`io` 另有 `write`/`read_or`）。
-- 有真实调用再做：`yui`（从 `app/native/yui.yac` 收）、`json`、`http`（建在 `net` 上）。
+- 已落地：`path`、`str`、`io`、`list`、`hash`、`fmt`、`log`、`test`、`net`、`bytes`、`ffi`、`json`、`env`、`cli`、`http`（`import http` 会链 `net`）、`yui`。`json` tagged：`["N",n]` / `["S",s]` / `["A",xs]` / `["O",pairs]` / `["T"]` `["F"]` `["Z"]`。
 - 先不要：`re` / `crypto` / `thread`。
 
 包查找器（`backend.yac` 的 `pkg_src`）本身不能 `import path` / `import io`，否则加载 `path.yac` 会循环。
@@ -418,7 +417,7 @@ export    ::= export ident ("," ident)*
 
 `import P as a` 现阶段与 `import P` 相同（尚无 `a.x` 限定名）。`import P { x, y }` 只引入列出且确为导出的名字。
 
-客程序绑定检查：内核名（`runtime_funs`）加 `import` 的导出。未 import 则 `host_os` / `cload` 为未绑定。链接同样按 import：默认 `kernel`+`rt.num`，`import rt.os` / `rt.ffi` 才链对应文件。`os_has` 留在包 `rt.os` 且不导出。
+客程序绑定检查：内核名（`runtime_funs`）加 `import` 的导出。未 import 则 `host_os` / `cload` 为未绑定。链接按 import **及包源里的 import**（`http` 会链 `net`）：默认 `kernel`+`rt.num`，再 DFS 依赖。`os_has` 留在包 `rt.os` 且不导出。
 
 
 ### 3.4 示例

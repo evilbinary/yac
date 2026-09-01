@@ -1,0 +1,9 @@
+import http
+let req = request("GET", "127.0.0.1", "/x") in
+if status("HTTP/1.0 200 OK") == 200 then
+  if status("nope") == 0 then
+    if str_len(req) > 20 then
+      if str_ref(req, 0) == 71 then 42 else 0
+    else 0
+  else 0
+else 0

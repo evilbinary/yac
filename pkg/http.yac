@@ -1,0 +1,72 @@
+/* http.yac — HTTP/1.0 over net TCP. No TLS / DNS / chunked. Guest import http (pulls net). */
+
+import net
+
+package http
+export crlf, request, status, get
+
+/* CR LF. */
+let crlf(_) = str_cat(str_chr(13), str_chr(10))
+
+/* HTTP/1.0 request with Host and Connection: close. */
+let request(method, host, path) =
+  let nl = crlf(0) in
+  let p = if str_len(path) == 0 then "/" else path in
+  str_cat(method,
+    str_cat(" ",
+      str_cat(p,
+        str_cat(" HTTP/1.0",
+          str_cat(nl,
+            str_cat("Host: ",
+              str_cat(host,
+                str_cat(nl,
+                  str_cat("Connection: close",
+                    str_cat(nl, nl))))))))))
+
+/* Digit run at i; [n, next]. */
+let status_num(s, i, acc, started) =
+  let n = str_len(s) in
+  if i >= n then
+    if started == 0 then 0
+    else [acc, i]
+  else
+    let c = str_ref(s, i) in
+    if c >= 48 then
+      if c <= 57 then status_num(s, i + 1, acc * 10 + (c - 48), 1)
+      else if started == 0 then 0
+      else [acc, i]
+    else if started == 0 then 0
+    else [acc, i]
+
+/* First space after i, or n. */
+let status_sp(s, i) =
+  let n = str_len(s) in
+  if i >= n then n
+  else if str_ref(s, i) == 32 then i
+  else status_sp(s, i + 1)
+
+/* Status code from a response, or 0. */
+let status(s) =
+  if str_len(s) < 12 then 0
+  else
+    let sp = status_sp(s, 0) in
+    let r = status_num(s, sp + 1, 0, 0) in
+    if r == 0 then 0
+    else nth(r, 0)
+
+/* Acc for recv until close. */
+let http_read(fd, acc) =
+  let chunk = tcp_recv(fd, 4096) in
+  if chunk == 0 - 1 then acc
+  else if chunk == "" then acc
+  else http_read(fd, str_cat(acc, chunk))
+
+/* GET host:port path. Full response, or 0 on connect fail. */
+let get(host, port, path) =
+  let fd = tcp_connect(host, port) in
+  if fd < 0 then 0
+  else
+    let _ = tcp_send(fd, request("GET", host, path)) in
+    let body = http_read(fd, "") in
+    let _ = tcp_close(fd) in
+    body

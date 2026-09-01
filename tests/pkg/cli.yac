@@ -1,0 +1,8 @@
+import cli
+if argc() < 1 then 0
+else
+  if len(args(0)) == argc() - 1 then
+    if has("--no-such-cli-flag") == false then
+      if opt("--no-such-cli-flag") == 0 then 42 else 0
+    else 0
+  else 0

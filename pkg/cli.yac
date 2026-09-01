@@ -1,0 +1,32 @@
+/* cli.yac — argv helpers. argc / argv stay prims. */
+
+package cli
+export args, has, opt
+
+/* Acc for args; i from 1. */
+let args_go(i, n, acc) =
+  if i >= n then list_rev(acc)
+  else args_go(i + 1, n, cons(argv(i), acc))
+
+/* argv[1..] as a list. */
+let args(_) = args_go(1, argc(), [])
+
+/* True if some argv equals s (including argv[0]). */
+let has_go(i, n, s) =
+  if i >= n then false
+  else if argv(i) == s then true
+  else has_go(i + 1, n, s)
+
+/* True if s appears on the command line. */
+let has(s) = has_go(0, argc(), s)
+
+/* Value after flag, or 0. Last flag wins. */
+let opt_go(i, n, flag, acc) =
+  if i >= n then acc
+  else if argv(i) == flag then
+    if i + 1 >= n then opt_go(i + 1, n, flag, acc)
+    else opt_go(i + 1, n, flag, argv(i + 1))
+  else opt_go(i + 1, n, flag, acc)
+
+/* Next argv after flag, or 0 if absent. */
+let opt(flag) = opt_go(0, argc(), flag, 0)

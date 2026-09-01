@@ -45,20 +45,17 @@ apps: counter hello lantern
 
 counter: $(SO)
 	mkdir -p $(YAC_ROOT)/build/app
-	cat native/yui.yac counter/main.yac > $(YAC_ROOT)/build/app/counter.yac
-	cd $(YAC_ROOT) && $(YC) $(YC_PKG) $(YC_FLAGS) build/app/counter.yac -o app/counter/counter
+	cd $(YAC_ROOT) && $(YC) $(YC_PKG) $(YC_FLAGS) app/counter/main.yac -o app/counter/counter
 	chmod +x counter/counter
 
 hello: $(SO)
 	mkdir -p $(YAC_ROOT)/build/app
-	cat native/yui.yac hello/main.yac > $(YAC_ROOT)/build/app/hello.yac
-	cd $(YAC_ROOT) && $(YC) $(YC_PKG) $(YC_FLAGS) build/app/hello.yac -o app/hello/hello
+	cd $(YAC_ROOT) && $(YC) $(YC_PKG) $(YC_FLAGS) app/hello/main.yac -o app/hello/hello
 	chmod +x hello/hello
 
 lantern: $(SO)
 	mkdir -p $(YAC_ROOT)/build/app
-	cat native/yui.yac lantern/main.yac > $(YAC_ROOT)/build/app/lantern.yac
-	cd $(YAC_ROOT) && $(YC) $(YC_PKG) $(YC_FLAGS) build/app/lantern.yac -o app/lantern/lantern
+	cd $(YAC_ROOT) && $(YC) $(YC_PKG) $(YC_FLAGS) app/lantern/main.yac -o app/lantern/lantern
 	chmod +x lantern/lantern
 
 clean:

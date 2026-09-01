@@ -132,6 +132,26 @@ let ast_imports(ast, i, acc) =
       else ast_imports(ast, i + 1, cons(p, acc))
     else ast_imports(ast, i + 1, acc)
 
+/* Imports written inside a package source (so http can use net). */
+let pkg_file_imports(pkg) =
+  let src = pkg_src(pkg) in
+  if src == 0 then []
+  else ast_imports(pass_parse(pass_lex(src)), 0, [])
+
+/* DFS imports. op 0 = one pkg p; op 1 = xs[i..]. 6 args (emit max). */
+let visit_go(op, p, xs, i, seen, order) =
+  if op == 0 then
+    if in_list(p, seen) then [seen, order]
+    else if p == "rt.num" then [cons(p, seen), order]
+    else
+      let seen1 = cons(p, seen) in
+      let st = visit_go(1, p, pkg_file_imports(p), 0, seen1, order) in
+      [nth(st, 0), cons(p, nth(st, 1))]
+  else if i >= len(xs) then [seen, order]
+  else
+    let st = visit_go(0, nth(xs, i), xs, i, seen, order) in
+    visit_go(1, p, xs, i + 1, nth(st, 0), nth(st, 1))
+
 let intern_names(xs, i, acc) =
   if i >= len(xs) then acc
   else intern_names(xs, i + 1, cons(intern(nth(xs, i)), acc))
@@ -188,7 +208,8 @@ let rt_base(_) =
   else c
 
 let rt_for_link(_) =
-  let pkgs = box_get(link_need_box) in
+  let st = visit_go(1, 0, box_get(link_need_box), 0, [], []) in
+  let pkgs = reverse(nth(st, 1)) in
   let rec(i, acc) =
     if i >= len(pkgs) then acc
     else
