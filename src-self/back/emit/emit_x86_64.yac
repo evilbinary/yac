@@ -1453,9 +1453,9 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
     if T != 0 then nth(js, 1)
     else LOAD_VADDR + TEXT_OFF + data_start in
   let _ = patches_extend(extra, patches) in
-  let _ = log("emit", "resolve") in
-  let _ = emit_resolve_loop([b, offs, LOAD_VADDR + TEXT_OFF, GLOBALS_BASE,
-                             LOAD_VADDR + TEXT_OFF + pool_start, smap_start], extra, 0, len(extra)) in
+  let rst = [b, offs, LOAD_VADDR + TEXT_OFF, GLOBALS_BASE,
+             LOAD_VADDR + TEXT_OFF + pool_start, smap_start] in
+  let _ = emit_unres_set([rst, extra]) in
   let _ = log_i("emit", "code_len", bytes_len(b)) in
   let _ = log("emit", "done") in
   let _ = funsym_set(funOffsRev) in

@@ -24,6 +24,7 @@ let target_macho_cpusub(t) = nth(t, 7)
 let target_vaddr(t) = nth(t, 8)
 let target_text_off(t) = nth(t, 9)
 let target_shared(t) = target_kind(t) == "dylib"
+let target_live(t) = target_vaddr(t) == JIT_VADDR
 
 let arch_ids(arch) =
   if arch == "x86_64" then [62, 34404, 16777223, 3]

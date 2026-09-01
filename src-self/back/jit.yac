@@ -250,10 +250,11 @@ let compile_jit(src, t, named) =
         let bn = repl_last_let(ast1) in
         let q = repl_quiet_print(ast1) in
         let _ = log_set_hush(true) in
+        let dest = if live == 0 then 0 else nth(live, 0) in
         let r = lower_expr(pass_lir_eval(pass_anf(ast1), bn, q), t) in
+        let _ = emit_apply_unres(dest) in
         let _ = log_set_hush(false) in
         let _ = emit_jsess_set(0) in
-        let dest = if live == 0 then 0 else nth(live, 0) in
         let code = nth(r, 0) in
         let fo = nth(r, 1) in
         let _ = if dest == 0 then cimport_jit_bind(code) else 0 in
@@ -276,6 +277,7 @@ let compile_jit(src, t, named) =
     let _ = emit_jsess_set(0) in
     let _ = log_set_hush(true) in
     let r = lower_expr(pass_lir_eval(pass_anf(ast), "", false), t) in
+    let _ = emit_apply_unres(0) in
     let _ = log_set_hush(false) in
     let _ = cimport_jit_bind(nth(r, 0)) in
     let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0) in 0
@@ -283,6 +285,7 @@ let compile_jit(src, t, named) =
 let compile_jit_anf(anf, t, bn) =
   let _ = log_set_hush(true) in
   let r = lower_expr(pass_lir_eval(anf, bn, false), t) in
+  let _ = emit_apply_unres(0) in
   let _ = log_set_hush(false) in
   let _ = cimport_jit_bind(nth(r, 0)) in
   let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0) in 0
