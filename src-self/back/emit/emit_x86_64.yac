@@ -1429,7 +1429,8 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let patches = nth(st, 3) in
   let b = nth(st, 0) in
   let LOAD_VADDR = load_vaddr in
-  let TEXT_OFF = if T != 0 then T else text_off in
+  /* Blob-relative VAs (text_off only). REPL append adds dest in emit_apply_unres. */
+  let TEXT_OFF = text_off in
   /* writable globals: 112-byte GC block + 8-byte host jit_map at +112. */
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0

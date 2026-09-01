@@ -353,6 +353,7 @@ let repl_cases(_) = [
   ["let then print", "let a = 42\nprint(a)\n:q\n", "yc> 42"],
   ["let semi then print", "let a=1234;\nprint(a)\n:q\n", "yc> 1234"],
   ["print no replay", "print(\"ONLYONCE\")\n1\n:q\n", "yc> 1"],
+  ["print str after int", "1\nprint(\"hello\")\n:q\n", "hello"],
   ["import then printf d", "let a=42\nimport fmt\nprintf(\"%d\", [a])\n:q\n", "42"],
   ["import then printf one", "let a=42\nimport fmt\nprintf(a)\n:q\n", "42"]]
 
