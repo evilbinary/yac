@@ -263,6 +263,25 @@ let pass_lir(anf_list) =
   let entry = start_proc(nth(st, 1), nth(st, 5), nth(st, 4)) in
   tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
 
+/* In-process image: _eval + print, not OS _start. */
+let pass_lir_yjit(anf_list) =
+  let rt0 = rt_for_link(0) in
+  let _ = pkg_prefix_set("") in
+  let st = lir_all(0, anf_list,
+             [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
+             len(anf_list)) in
+  let nslots = nth(st, 1) in
+  let pslot = nth(st, 5) in
+  let b0 = insn_extend(insn_push(list_new(), ["local", nslots + 8, 0]),
+                       nth(st, 4)) in
+  let ins =
+    insn_push(insn_push(insn_push(b0,
+      ["mov_imm", nslots, 2]),
+      ["fcall", nslots + 1, "print", [pslot, nslots]]),
+      ["ret", pslot]) in
+  let entry = ["proc", "_eval", 0, 0, ins, "_eval"] in
+  tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
+
 let fun_off(fo, name) =
   if fo == [] then 0
   else if nth(nth(fo, 0), 0) == name then nth(nth(fo, 0), 1)
@@ -273,11 +292,13 @@ let pair_locals(xs, i, acc) =
   else pair_locals(xs, i + 1, cons(nth(nth(xs, i), 0), acc))
 
 let pack_yjit_prog(t, code) =
-  let e0 = fun_off(funsym_get(0), "_start") in
-  let ent = if e0 == 0 then fun_off(funsym_get(0), "_eval") else e0 in
+  let _ = cimport_jit_bind(code) in
+  let ent = fun_off(funsym_get(0), "_eval") in
   let abi = if emit_abi_win(0) then 1 else 0 in
-  pack_yjit_flat(code, yjit_arch_num(target_arch(t)), abi,
-                 target_vaddr(t), ent)
+  let lay = yjit_layout_get(0) in
+  let drel = if lay == 0 then 0 else nth(lay, 2) in
+  pack_yjit_ex(code, yjit_arch_num(target_arch(t)),
+               [abi, target_vaddr(t), ent, drel])
 
 let kernel_names_cache =
   let b = box_new() in
@@ -309,6 +330,8 @@ let report_unbound_ex(src, ast, extra) =
 let report_unbound(src, ast) = report_unbound_ex(src, ast, [])
 
 let make_pipeline(t) =
+  let pass_lir_t(anf) =
+    if target_format(t) == "yjit" then pass_lir_yjit(anf) else pass_lir(anf) in
   let pass_lower(ast) = nth(lower_expr(ast, t), 0) in
   let pass_pack(code) =
     if target_format(t) == "yjit" then pack_yjit_prog(t, code)
@@ -316,7 +339,7 @@ let make_pipeline(t) =
   [mk_pass("lex", pass_lex),
    mk_pass("parse", pass_parse),
    mk_pass("anf", pass_anf),
-   mk_pass("lir", pass_lir),
+   mk_pass("lir", pass_lir_t),
    mk_pass("lower", pass_lower),
    mk_pass("pack", pass_pack)]
 
