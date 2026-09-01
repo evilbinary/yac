@@ -265,6 +265,9 @@ let repl_check(st, yc, name, src, needle) =
 /* [name, stdin, needle]. () is unit (prints 0 natively); (exit) is grouping / quit. */
 let repl_cases(_) = [
   ["let a = 1", "let a = 1\n", "a = 1"],
+  ["import fmt", "import fmt\n:q\n", "fmt"],
+  ["import env as myenv", "import env as myenv\n:q\n", "myenv"],
+  ["import env brace as", "import env { get as env_get, get_or }\n:q\n", "env_get, get_or"],
   ["1+2 then :q", "1+2\n:q\n", "3"],
   ["float then (exit)", "0.001+0.002\n(exit)\n", "0.003"],
   ["(exit)", "(exit)\n", "yc>"],
