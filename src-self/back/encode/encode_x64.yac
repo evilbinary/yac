@@ -375,6 +375,16 @@ let idiv_rcx(b) =
   let _ = e8(b, 72) in
   let _ = e8(b, 247) in
   e8(b, 249)
+/* unsigned div rcx (48 f7 f1) */
+let div_rcx(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 247) in
+  e8(b, 241)
+/* unsigned div rbx (48 f7 f3) */
+let div_rbx(b) =
+  let _ = e8(b, 72) in
+  let _ = e8(b, 247) in
+  e8(b, 243)
 /* mov [rbp-8], rax (48 89 45 f8) */
 let mov_mem_rbp8_rax(b) =
   let _ = e8(b, 72) in

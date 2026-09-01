@@ -43,12 +43,16 @@ $(BUILD)/%.o: src/%.c $(wildcard src/*.h) | $(BUILD)
 $(YC_BUNDLE): $(YC_SRCS) | $(YC_BUILD)
 	cat $(YC_SRCS) > $@
 
-# First yc_a: L4 via C ./yac (slow GC). Later: native yc_a rebuilds itself (seconds).
-# Tests depend on yc_a, so src-self changes used to re-run L4; do not do that.
+# First yc_a: L4 via C ./yac (slow GC). Later: native yc_a rebuilds itself.
+# Two native passes: pass 1 updates emit in the compiler; pass 2 re-emits
+# runtime (win_clock / time_str) with that emit. One pass leaves [00:00:00].
 $(YC_A): $(BIN) $(YC_BUNDLE)
 	@if [ -x $@ ]; then \
-		echo "native rebuild: $@ compiling bundle"; \
-		$@ --pkg src-self $(YC_BUNDLE) -o $@.new && chmod +x $@.new && mv -f $@.new $@; \
+		echo "native rebuild pass 1 (emit): $@ compiling bundle"; \
+		$@ --pkg src-self $(YC_BUNDLE) -o $@.new && chmod +x $@.new && \
+		echo "native rebuild pass 2 (runtime): $@.new compiling bundle"; \
+		$@.new --pkg src-self $(YC_BUNDLE) -o $@.new2 && chmod +x $@.new2 && \
+		mv -f $@.new2 $@ && rm -f $@.new; \
 	else \
 		echo "L4: ./yac compiling bundle with C GC (slow; not the native <3s path)"; \
 		./$(BIN) --pkg src-self $(YC_BUNDLE) $(YC_BUNDLE) -o $@ && chmod +x $@; \
@@ -65,6 +69,10 @@ $(YC_BIN): $(YC_A)
 	chmod +x $@
 
 yc: $(YC_A) $(YC_BIN)
+
+yc_a: $(YC_A)
+
+yc_b: $(YC_B)
 
 # L5 native self-compile. Needs a yc_a built with the bitmap GC.
 bootstrap: $(YC_A) $(YC_B) $(YC_BIN)
@@ -127,4 +135,5 @@ clean:
 	rm -f src/*.o
 
 .PHONY: all clean test test-interp test-compiler test-pkg test-boot \
-	test-qemu test-qemu-arm64 test-qemu-riscv64 test-iso prop yc bootstrap yc-iso
+	test-qemu test-qemu-arm64 test-qemu-riscv64 test-iso prop \
+	yc yc_a yc_b bootstrap yc-iso

@@ -62,7 +62,8 @@ let win_need(_) =
             "ExitProcess", "GetCommandLineA", "GetEnvironmentVariableA",
             "GetComputerNameA", "GetModuleHandleA", "GetProcAddress",
             "CreateProcessA", "WaitForSingleObject", "GetExitCodeProcess",
-            "LoadLibraryA"] in
+            "LoadLibraryA", "GetSystemTimeAsFileTime",
+            "QueryPerformanceFrequency", "QueryPerformanceCounter"] in
   let rec(i) =
     if i >= len(xs) then 0
     else let _ = cimport_id(nth(xs, i)) in rec(i + 1) in
@@ -487,12 +488,82 @@ let win_write1(st, insn) =
     emit_patch_cimport(emit_patch_cimport(patches, g1 + 1, "GetStdHandle"),
                        g2 + 1, "WriteFile"))
 
-let win_clock(st, insn) =
+/* FILETIME → Unix sec/nsec. clk=0 (time_str). Was a zero stub. */
+let win_clock_wall(st, insn) =
   let b = nth(st, 0) in
-  let _ = mov_r64_imm(b, 0, 0) in
+  let patches = nth(st, 3) in
+  let _ = push_r64(b, 3) in
+  let _ = sub_rsp_imm32(b, 48) in
+  let _ = lea_rcx_rsp_disp32(b, 32) in
+  let c1 = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = mov_rax_mem_rsp_disp32(b, 32) in
+  let _ = mov_r64_imm64(b, 3, 116444736000000000) in
+  let _ = sub_rax_rbx(b) in
+  let _ = xor_rdx_rdx(b) in
+  let _ = mov_rcx_imm(b, 10000000) in
+  let _ = div_rcx(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  let _ = mov_r64_r64(b, 0, 2) in
+  let _ = mov_r64_imm(b, 7, 100) in
+  let _ = imul_rax_rdi(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 2)) in
+  let _ = add_rsp_imm32(b, 48) in
+  let _ = pop_r64(b, 3) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2),
+    emit_patch_cimport(patches, c1 + 1, "GetSystemTimeAsFileTime"))
+
+/* QPC sec/nsec. clk=1 (time_ms / time_ns). */
+let win_clock_mono(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let _ = push_r64(b, 3) in
+  let _ = sub_rsp_imm32(b, 48) in
+  let _ = lea_rcx_rsp_disp32(b, 32) in
+  let c1 = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = mov_rax_mem_rsp_disp32(b, 32) in
+  let _ = mov_r64_r64(b, 3, 0) in
+  let _ = cmp_rbx_imm32(b, 0) in
+  let je = bytes_len(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let _ = lea_rcx_rsp_disp32(b, 32) in
+  let c2 = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = mov_rax_mem_rsp_disp32(b, 32) in
+  let _ = xor_rdx_rdx(b) in
+  let _ = div_rbx(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  let _ = mov_r64_r64(b, 0, 2) in
+  let _ = mov_r64_imm64(b, 7, 1000000000) in
+  let _ = imul_rax_rdi(b) in
+  let _ = xor_rdx_rdx(b) in
+  let _ = div_rbx(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 2)) in
+  let jmpd = bytes_len(b) in
+  let _ = jmp_rel32(b, 0) in
+  let z = bytes_len(b) in
+  let _ = apply_patch(b, je + 2, z) in
+  let _ = xor_rax_rax(b) in
   let _ = emit_store_rax_slot(b, nth(insn, 1)) in
   let _ = emit_store_rax_slot(b, nth(insn, 2)) in
-  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+  let done = bytes_len(b) in
+  let _ = apply_patch(b, jmpd + 1, done) in
+  let _ = add_rsp_imm32(b, 48) in
+  let _ = pop_r64(b, 3) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2),
+    emit_patch_cimport(
+      emit_patch_cimport(patches, c1 + 1, "QueryPerformanceFrequency"),
+      c2 + 1, "QueryPerformanceCounter"))
+
+/* clock LIR: [sec, nsec, 0=realtime 1=monotonic]. */
+let win_clock(st, insn) =
+  if nth(insn, 3) == 0 then win_clock_wall(st, insn)
+  else win_clock_mono(st, insn)
 
 let win_ccall_patch(ps, pos, fn) =
   if fn == "uname" then emit_patch_pe_uname(ps, pos)

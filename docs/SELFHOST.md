@@ -533,7 +533,7 @@ ptr : (ptr | 1)        低 bit=1，指向堆闭包对象
 
 **L4 已通（原生 `yc_a`）**：`42` rc=42、`let f(n)=n+1 in f(41)` rc=42、`fact(5)` rc=120。CLI：`yc <file.yac> [-o output] [-g|--syms]`，默认输出为去掉 `.yac` 的路径（`fact.yac` → `fact`，不要 `.bin`）。`-g`/`--syms` 写 ELF 函数符号。引导产物命名 `yc` / `yc_a` / `yc_b`。
 
-**L5 已通**：`make yc` 为 L4（C `yac` 编 bundle → `build/yc_tmp/yc_a`，并复制为 `yc`）。`make bootstrap` 再让 `yc_a` 编 bundle → `yc_b`（数秒）。`make yc-iso` 检查二者对同一输入 ELF 逐字节相同。`yc_a` 与 `yc_b` 自身不必相同。
+**L5 已通**：`make yc` / `make yc_a` 为 L4（已有 `yc_a` 则原生两轮自编译，否则 C `yac` 编 bundle → `build/yc_tmp/yc_a`，`make yc` 再复制为 `yc`）。`make yc_b` / `make bootstrap` 再让 `yc_a` 编 bundle → `yc_b`（数秒）。`make yc-iso` 检查二者对同一输入 ELF 逐字节相同。`yc_a` 与 `yc_b` 自身不必相同。
 **L6 已通**：`make test` 依赖 `yc_a`，原生编译并执行 `tests/run.yac`。
 
 **关键修复**：

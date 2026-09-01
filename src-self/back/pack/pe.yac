@@ -131,6 +131,9 @@ let pe_is_k32(n) =
   else if n == "WaitForSingleObject" then true
   else if n == "GetExitCodeProcess" then true
   else if n == "LoadLibraryA" then true
+  else if n == "GetSystemTimeAsFileTime" then true
+  else if n == "QueryPerformanceFrequency" then true
+  else if n == "QueryPerformanceCounter" then true
   else false
 
 let pe_group_ids(names, want_k32) =
