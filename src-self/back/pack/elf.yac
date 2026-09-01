@@ -127,6 +127,17 @@ let DF_BIND_NOW = 8
 let DT_RELA = 7
 let R_JUMP_SLOT = 7
 
+/* ELF BIND_NOW looks up every JMPREL in libc. Win32 ccall names
+ * (LoadLibraryA, GetProcAddress, …) are still in the image for PE
+ * guests; they must not be JUMP_SLOTs on ELF or the loader exits 127. */
+let elf_cimport_bind(name) =
+  if str_len(name) == 0 then false
+  else
+    let c = str_ref(name, 0) in
+    if c < 65 then true
+    else if c > 90 then true
+    else false
+
 /* Filled by emit_program_*; pack reads it for .symtab. */
 let funsym_box =
   let b = box_new() in
@@ -345,16 +356,23 @@ let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
   let _ = chain(0) in
   let _ = pad8b(out) in
   let rela_off = bytes_len(out) in
+  let nrel_box =
+    let b = box_new() in
+    let _ = box_set(b, 0) in
+    b in
   let put_rela(i) =
     if i >= n then 0
+    else if elf_cimport_bind(nth(names, i)) == false then put_rela(i + 1)
     else
       let roff = vaddr + text_off + got_off + 24 + i * 8 in
       let info = bshl(i + 1, 32) + rtype in
       let _ = app64(out, roff) in
       let _ = app64(out, info) in
       let _ = app64(out, 0) in
+      let _ = box_set(nrel_box, box_get(nrel_box) + 1) in
       put_rela(i + 1) in
   let _ = put_rela(0) in
+  let nrel = box_get(nrel_box) in
   let dyn_off = bytes_len(out) in
   let va(off) = vaddr + off in
   let _ = dyn_pair(out, DT_NEEDED, libc_off) in
@@ -364,7 +382,7 @@ let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
   let _ = dyn_pair(out, DT_SYMENT, 24) in
   let _ = dyn_pair(out, 10, dynstr_sz) in
   let _ = dyn_pair(out, DT_PLTGOT, va(text_off + got_off)) in
-  let _ = dyn_pair(out, DT_PLTRELSZ, n * 24) in
+  let _ = dyn_pair(out, DT_PLTRELSZ, nrel * 24) in
   let _ = dyn_pair(out, DT_PLTREL, DT_RELA) in
   let _ = dyn_pair(out, DT_JMPREL, va(rela_off)) in
   let _ = dyn_pair(out, DT_FLAGS, DF_BIND_NOW) in
