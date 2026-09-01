@@ -767,6 +767,7 @@ static Value prim_read_line(Value *args, int nargs, PrimCtx *ctx) {
     }
     size_t n = strlen(buf);
     if (n > 0 && buf[n - 1] == '\n') buf[--n] = '\0';
+    if (n > 0 && buf[n - 1] == '\r') buf[--n] = '\0';
     char *p = (char *)arena_alloc(ctx->a, n + 1);
     memcpy(p, buf, n + 1);
     Str *st = (Str *)arena_alloc(ctx->a, sizeof(Str));

@@ -259,6 +259,7 @@ let repl_check(st, yc, name, src, needle) =
   let r = repl_feed(yc, src) in
   let blob = str_cat(nth(r, 1), nth(r, 2)) in
   if nth(r, 0) != 0 then check(st, name, "0", int_to_str(nth(r, 0)))
+  else if contains(blob, "4294967296") then check(st, name, "no junk int", blob)
   else if contains(blob, needle) then check(st, name, "1", "1")
   else check(st, name, needle, blob)
 
@@ -268,6 +269,7 @@ let repl_cases(_) = [
   ["import fmt", "import fmt\n:q\n", "fmt"],
   ["import env as myenv", "import env as myenv\n:q\n", "myenv"],
   ["import env brace as", "import env { get as env_get, get_or }\n:q\n", "env_get, get_or"],
+  ["blank enter", "\r\n:q\n", "yc>"],
   ["1+2 then :q", "1+2\n:q\n", "3"],
   ["float then (exit)", "0.001+0.002\n(exit)\n", "0.003"],
   ["(exit)", "(exit)\n", "yc>"],
