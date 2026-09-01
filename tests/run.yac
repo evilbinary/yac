@@ -278,6 +278,8 @@ let repl_cases(_) = [
   ["unit", "()\n:q\n", "0"],
   ["cons then unit twice", "cons\n()\n()\n:q\n", "0"],
   ["let then use", "let a = 42\na\n:q\n", "42"],
+  ["let then print", "let a = 42\nprint(a)\n:q\n", "yc> 42"],
+  ["let semi then print", "let a=1234;\nprint(a)\n:q\n", "yc> 1234"],
   ["print no replay", "print(\"ONLYONCE\")\n1\n:q\n", "yc> 1"]]
 
 let compiler_all(st, yc) =
