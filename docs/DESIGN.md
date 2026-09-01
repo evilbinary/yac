@@ -400,7 +400,7 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 
 常见库按需增加，不一次写完：
 
-- 已落地：`path`、`str`、`io`、`list`、`hash`、`fmt`、`log`、`test`、`net`（IPv4：`htons` / `parse_ipv4` / `host_port` / `sockaddr4` / `tcp_*`；无 DNS）。`--pkg` 的空段校验仍在 `backend.yac`。不要包名 `map`（与原语 `map` 冲突）。
+- 已落地：`path`、`str`、`io`、`list`、`hash`、`fmt`、`log`、`test`、`net`（IPv4 TCP：Linux/macOS libc `socket(2)`，Darwin `sockaddr_in.sin_len`，Windows ws2_32；无 DNS）。
 - 有真实调用再做：`yui`（从 `app/native/yui.yac` 收）、`json`、`http`（建在 `net` 上）。
 - 先不要：`re` / `crypto` / `thread`。
 

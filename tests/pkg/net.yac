@@ -9,7 +9,9 @@ if h == 20480 then
       if nth(p, 1) == 80 then
         if nth(p, 0) == "127.0.0.1" then
           if str_len(sa) == 16 then
-            if str_ref(sa, 0) == 2 then 42 else 0
+            if str_ref(sa, 0) == 2 then 42
+            else if str_ref(sa, 1) == 2 then 42
+            else 0
           else 0
         else 0
       else 0

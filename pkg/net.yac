@@ -1,4 +1,6 @@
-/* net.yac — IPv4 TCP. No DNS / HTTP. Linux libc; Windows ws2_32 via GetProcAddress. */
+/* net.yac — IPv4 TCP. No DNS / HTTP.
+ * Windows: ws2_32 via GetProcAddress. Linux/macOS: libc socket(2).
+ * Darwin sockaddr_in has sin_len; Linux/Windows do not. */
 
 package net
 export htons, ipv4, parse_ipv4, host_port, sockaddr4
@@ -31,17 +33,24 @@ let net_cstr_at(s, off) =
       else rec(i + 1) in
     rec(0)
 
-/* True on Windows (uname empty / MINGW / MSYS / …). */
-let net_is_win(_) =
+/* uname sysname (offset 0 is fine for Darwin 256-byte utsname too). */
+let net_uname_sys(_) =
   let buf = net_zstr(256) in
   let _ = ccall("uname", buf) in
-  let sys = net_cstr_at(buf, 0) in
+  net_cstr_at(buf, 0)
+
+/* True on Windows (uname empty / MINGW / MSYS / …). */
+let net_is_win(_) =
+  let sys = net_uname_sys(0) in
   if sys == "" then true
   else if net_has(sys, "MINGW") then true
   else if net_has(sys, "MSYS") then true
   else if net_has(sys, "CYGWIN") then true
   else if net_has(sys, "Windows") then true
   else false
+
+/* True on macOS / iOS (uname Darwin). */
+let net_is_darwin(_) = net_has(net_uname_sys(0), "Darwin")
 
 /* ws2_32.dll, or 0 on Unix. */
 let net_wsock(_) =
@@ -135,10 +144,17 @@ let net_put32(b, x) =
   let _ = bytes_append(b, band(bshr(x, 16), 255)) in
   bytes_append(b, band(bshr(x, 24), 255))
 
-/* 16-byte sockaddr_in for AF_INET. */
+/* AF_INET prefix: Darwin sin_len+family, else 16-bit family. */
+let net_put_family(b) =
+  if net_is_darwin(0) then
+    let _ = bytes_append(b, 16) in
+    bytes_append(b, 2)
+  else net_put16(b, 2)
+
+/* 16-byte sockaddr_in for AF_INET (Linux/Windows vs Darwin layout). */
 let sockaddr4(addr, port) =
   let b = bytes_new() in
-  let _ = net_put16(b, 2) in
+  let _ = net_put_family(b) in
   let _ = net_put16(b, htons(port)) in
   let _ = net_put32(b, addr) in
   let rec(i) =
@@ -149,11 +165,35 @@ let sockaddr4(addr, port) =
   let _ = rec(0) in
   bytes_to_str(b)
 
-/* AF_INET SOCK_STREAM TCP socket, or -1. */
+/* Little-endian int 1 for setsockopt. */
+let net_int1(_) =
+  let b = bytes_new() in
+  let _ = bytes_append(b, 1) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  bytes_to_str(b)
+
+/* SO_REUSEADDR so listen() can rebind. Constants differ by OS. */
+let net_reuse(fd) =
+  let v = net_int1(0) in
+  if net_is_win(0) then ccall(net_sym("setsockopt"), fd, 65535, 4, v, 4)
+  else if net_is_darwin(0) then ccall("setsockopt", fd, 65535, 4, v, 4)
+  else ccall("setsockopt", fd, 1, 2, v, 4)
+
+/* Darwin SO_NOSIGPIPE (0x1022) so send() does not raise. */
+let net_nosig(fd) =
+  if net_is_darwin(0) then ccall("setsockopt", fd, 65535, 4130, net_int1(0), 4)
+  else 0
+
+/* AF_INET SOCK_STREAM. Unix proto 0; Winsock wants IPPROTO_TCP. */
 let tcp_socket(_) =
   let _ = net_wsa(0) in
-  if net_is_win(0) then ccall(net_sym("socket"), 2, 1, 6)
-  else ccall("socket", 2, 1, 6)
+  let fd =
+    if net_is_win(0) then ccall(net_sym("socket"), 2, 1, 6)
+    else ccall("socket", 2, 1, 0) in
+  let _ = if fd < 0 then 0 else net_nosig(fd) in
+  fd
 
 /* connect(2). 0 ok, else -1. */
 let tcp_do_connect(fd, addr, port) =
@@ -189,11 +229,13 @@ let tcp_listen(host, port) =
   else
     let fd = tcp_socket(0) in
     if fd < 0 then fd
-    else if tcp_bind(fd, addr, port) < 0 then 0 - 1
-    else if net_is_win(0) then
-      if ccall(net_sym("listen"), fd, 1) < 0 then 0 - 1 else fd
-    else if ccall("listen", fd, 1) < 0 then 0 - 1
-    else fd
+    else
+      let _ = net_reuse(fd) in
+      if tcp_bind(fd, addr, port) < 0 then 0 - 1
+      else if net_is_win(0) then
+        if ccall(net_sym("listen"), fd, 1) < 0 then 0 - 1 else fd
+      else if ccall("listen", fd, 1) < 0 then 0 - 1
+      else fd
 
 /* accept(2). New fd, or -1. */
 let tcp_accept(fd) =
@@ -215,7 +257,7 @@ let tcp_recv(fd, n) =
   else if k == 0 then ""
   else str_slice(buf, 0, k)
 
-/* closesocket / close. */
+/* closesocket on Windows; close(2) on Linux and macOS. */
 let tcp_close(fd) =
   if net_is_win(0) then ccall(net_sym("closesocket"), fd)
   else ccall("close", fd)
