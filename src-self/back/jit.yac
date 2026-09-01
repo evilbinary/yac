@@ -17,23 +17,26 @@ let jit_let_idx(nm) =
     let e = fmap_get(nth(st, 0), intern(nm)) in
     if e == 0 then 0 - 1 else e - 1
 
+let jit_lets_fresh(_) =
+  let m = fmap_new(0) in
+  let _ = fmap_init_n(m, 64) in
+  let s = list_new() in
+  let _ = list_push(s, m) in
+  let _ = list_push(s, 0) in
+  let _ = list_push(s, list_new()) in
+  let _ = box_set(jit_lets_box, s) in
+  s
+
 let jit_let_ensure(nm) =
   let i0 = jit_let_idx(nm) in
   if i0 >= 0 then i0
   else
     let st0 = box_get(jit_lets_box) in
-    let st =
-      if st0 != 0 then st0
-      else
-        let m = fmap_new(0) in
-        let _ = fmap_init_n(m, 64) in
-        let s = [m, 0, []] in
-        let _ = box_set(jit_lets_box, s) in
-        s in
+    let st = if st0 != 0 then st0 else jit_lets_fresh(0) in
     let n = nth(st, 1) in
     let _ = fmap_put(nth(st, 0), intern(nm), n + 1) in
     let _ = list_set(st, 1, n + 1) in
-    let _ = list_set(st, 2, cons(intern(nm), nth(st, 2))) in
+    let _ = list_push(nth(st, 2), intern(nm)) in
     n
 
 let jit_let_sc(sc) =
@@ -228,14 +231,6 @@ let ast_repl_import(ast) =
     if nth(e, 0) != "import" then ast
     else append(ast, [["str", import_repl_str(e)]])
 
-let jit_bind_top_lets(p, i) =
-  if i >= len(p) then 0
-  else
-    let e = nth(p, i) in
-    let _ =
-      if nth(e, 0) == "let" then jit_let_ensure(nth(e, 1)) else 0 in
-    jit_bind_top_lets(p, i + 1)
-
 let compile_jit(src, t, named) =
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then
@@ -244,7 +239,6 @@ let compile_jit(src, t, named) =
     if len(ast) == 0 then 0
     else
       let ast0 = ast_repl_import(ast) in
-      let _ = jit_bind_top_lets(ast0, 0) in
       let ast1 = jslot_rw_all(ast0) in
       if report_unbound(src, ast1) != 0 then 1
       else
@@ -298,7 +292,6 @@ let compile_uncps(src, t, named, do_opt) =
   if prog_has_err(ast, 0) then
     let _ = print("error: syntax") in 1
   else
-    let _ = if named then jit_bind_top_lets(ast, 0) else 0 in
     let ast1 = if named then jslot_rw_all(ast) else ast in
     if report_unbound(src, ast1) != 0 then 1
     else
