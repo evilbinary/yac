@@ -106,6 +106,57 @@ let pkg_src(pkg) =
     if p != 0 then p
     else file_or_0(join_path(path_dirname(argv(0)), f))
 
+let intern_names(xs, i, acc) =
+  if i >= len(xs) then acc
+  else intern_names(xs, i + 1, cons(intern(nth(xs, i)), acc))
+
+let ast_export_list(ast, i) =
+  if i >= len(ast) then []
+  else if nth(nth(ast, i), 0) == "export" then intern_names(nth(nth(ast, i), 1), 0, [])
+  else ast_export_list(ast, i + 1)
+
+let ast_pkg_name(ast, i) =
+  if i >= len(ast) then ""
+  else if nth(nth(ast, i), 0) == "package" then nth(nth(ast, i), 1)
+  else ast_pkg_name(ast, i + 1)
+
+let pkg_export_names(pkg) =
+  let src = pkg_src(pkg) in
+  if src == 0 then []
+  else ast_export_list(pass_parse(pass_lex(src)), 0)
+
+let import_id_pairs(xs, i, acc) =
+  if i >= len(xs) then acc
+  else
+    let n = nth(xs, i) in
+    import_id_pairs(xs, i + 1, cons([n, n], acc))
+
+let import_sel(sel, all, i, acc) =
+  if i >= len(sel) then acc
+  else
+    let spec = nth(sel, i) in
+    let orig = intern(nth(spec, 1)) in
+    let loc = intern(nth(spec, 0)) in
+    if in_list(orig, all) then
+      import_sel(sel, all, i + 1, cons([loc, orig], acc))
+    else import_sel(sel, all, i + 1, acc)
+
+let fill_import(e) =
+  let all = pkg_export_names(nth(e, 1)) in
+  let alias = if len(e) > 3 then nth(e, 3) else 0 in
+  let pairs =
+    if len(e) < 3 then import_id_pairs(all, 0, [])
+    else if nth(e, 2) == 0 then import_id_pairs(all, 0, [])
+    else import_sel(nth(e, 2), all, 0, []) in
+  ["import", nth(e, 1), pairs, alias]
+
+let rewrite_imports(ast, i, acc) =
+  if i >= len(ast) then reverse(acc)
+  else
+    let e = nth(ast, i) in
+    let e2 = if nth(e, 0) == "import" then fill_import(e) else e in
+    rewrite_imports(ast, i + 1, cons(e2, acc))
+
 /* Compile one rt/*.yac against already-lowered procs so later stdlib
  * files can call earlier ones. Guest always gets rt.num; other packages
  * come from --pkg, ./pkg, then the directory of yc. Do not call
@@ -116,11 +167,21 @@ let lir_extend(src, acc) =
     let ast = pass_parse(pass_lex(src)) in
     if prog_has_err(ast, 0) then acc
     else
+      let saved_i = box_get(imap_box) in
+      let saved_m = box_get(malias_box) in
+      let saved_p = pkg_prefix_get(0) in
+      let filled = rewrite_imports(ast, 0, []) in
+      let _ = imap_load(filled, 0) in
+      let _ = pkg_prefix_set(ast_pkg_name(ast, 0)) in
       let anf = pass_anf(ast) in
       let st = lir_all(0, anf,
         [env_new(0), 1, sigma_of_rt(acc), 0, list_new(), 0],
         len(anf)) in
-      reverse(sigma_list(nth(st, 2)))
+      let out = reverse(sigma_list(nth(st, 2))) in
+      let _ = box_set(imap_box, saved_i) in
+      let _ = box_set(malias_box, saved_m) in
+      let _ = pkg_prefix_set(saved_p) in
+      out
 
 let ast_imports(ast, i, acc) =
   if i >= len(ast) then acc
@@ -152,46 +213,15 @@ let visit_go(op, p, xs, i, seen, order) =
     let st = visit_go(0, nth(xs, i), xs, i, seen, order) in
     visit_go(1, p, xs, i + 1, nth(st, 0), nth(st, 1))
 
-let intern_names(xs, i, acc) =
-  if i >= len(xs) then acc
-  else intern_names(xs, i + 1, cons(intern(nth(xs, i)), acc))
-
-let ast_export_list(ast, i) =
-  if i >= len(ast) then []
-  else if nth(nth(ast, i), 0) == "export" then intern_names(nth(nth(ast, i), 1), 0, [])
-  else ast_export_list(ast, i + 1)
-
-let pkg_export_names(pkg) =
-  let src = pkg_src(pkg) in
-  if src == 0 then []
-  else ast_export_list(pass_parse(pass_lex(src)), 0)
-
-let import_sel(sel, all, i, acc) =
-  if i >= len(sel) then acc
-  else
-    let n = nth(sel, i) in
-    if in_list(n, all) then import_sel(sel, all, i + 1, cons(n, acc))
-    else import_sel(sel, all, i + 1, acc)
-
-let fill_import(e) =
-  let all = pkg_export_names(nth(e, 1)) in
-  if len(e) < 3 then ["import", nth(e, 1), all]
-  else ["import", nth(e, 1), import_sel(nth(e, 2), all, 0, [])]
-
-let rewrite_imports(ast, i, acc) =
-  if i >= len(ast) then reverse(acc)
-  else
-    let e = nth(ast, i) in
-    let e2 = if nth(e, 0) == "import" then fill_import(e) else e in
-    rewrite_imports(ast, i + 1, cons(e2, acc))
-
 let link_need_box =
   let b = box_new() in
   let _ = box_set(b, []) in
   b
 
 let link_from_ast(ast) =
+  let filled = rewrite_imports(ast, 0, []) in
   let _ = box_set(link_need_box, ast_imports(ast, 0, [])) in
+  let _ = imap_load(filled, 0) in
   0
 
 let rt_cache_num =
@@ -226,6 +256,7 @@ let rt_fun_names(funs) =
 
 let pass_lir(anf_list) =
   let rt0 = rt_for_link(0) in
+  let _ = pkg_prefix_set("") in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
              len(anf_list)) in
@@ -234,6 +265,7 @@ let pass_lir(anf_list) =
 
 let pass_lir_eval(anf_list, bind_name) =
   let rt0 = rt_for_link(0) in
+  let _ = pkg_prefix_set("") in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
              len(anf_list)) in

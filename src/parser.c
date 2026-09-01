@@ -577,18 +577,27 @@ static int skip_dotted(Parser *p) {
     return 1;
 }
 
-static int skip_idlist(Parser *p) {
+static int skip_id_as(Parser *p) {
     if (!at(p, TK_IDENT)) {
         p_err(p, "expected identifier");
         return 0;
     }
     advance(p);
-    while (eat(p, TK_COMMA)) {
+    if (at(p, TK_IDENT) && peek(p)->text && strcmp(peek(p)->text, "as") == 0) {
+        advance(p);
         if (!at(p, TK_IDENT)) {
-            p_err(p, "expected identifier");
+            p_err(p, "expected identifier after 'as'");
             return 0;
         }
         advance(p);
+    }
+    return 1;
+}
+
+static int skip_idlist(Parser *p) {
+    if (!skip_id_as(p)) return 0;
+    while (eat(p, TK_COMMA)) {
+        if (!skip_id_as(p)) return 0;
     }
     return 1;
 }

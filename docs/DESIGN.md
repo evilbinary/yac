@@ -380,8 +380,10 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 规则：
 
 - 一个包对应一个 `.yac` 文件（`.` → `/`）：`import rt.os` → `rt/os.yac`。目录只是包名前缀，不是「一目录多文件同一包」。包内可前向引用同包绑定。
-- 未 `export` 的名字只在包内可见。LIR 符号日后为 `rt.os/os_has` 这种键；当前阶段客程序仍用裸名调用已链接的 stdlib 过程，隐藏只在绑定检查里执行。
+- 未 `export` 的名字只在包内可见。客库 LIR 键是 `env/get` 这种 `包/名`；`rt.*` 仍用裸名（内核 `fcall yac_num_slow`）。
 - `import` 只引入该包的导出集。没有默认 `import *`。
+- `import P as a` 只绑定模块名 `a`，不把导出放进当前作用域；用 `a.x`（AST `qvar`）。
+- `import P { x as y, z }` 把 `y`/`z` 放进当前作用域（`z` 未改名则仍叫 `z`）。
 - 查找根（每个根下再拼 `rt/os.yac` 这类相对路径）：`--pkg DIR[,DIR...]`（从左到右）、当前目录 `pkg/`、再是 `yc` / `yac` 可执行文件所在目录。空段（`a,,b`）为错误；`--pkg` 只能出现一次。本仓库开发用 `--pkg src-self`（提供 `rt.*`）；`./pkg` 提供常见库。独立项目把 `rt/` 放在 `yc` 旁边，或 `--pkg` 指向含 `rt/` 的根。
 - 原语名（`cons`、`ccall`、`str_cat` 等）走 `is_prim_name`，不是包。客库不得再导出这些名字。
 - 没有 `package` 的文件属于匿名主包（与改前行为相同）。
@@ -410,14 +412,15 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 ```
 package   ::= package ident ("." ident)*
 import    ::= import ident ("." ident)*
-            | import ident ("." ident)* "{" ident ("," ident)* "}"
+            | import ident ("." ident)* "{" import_spec ("," import_spec)* "}"
             | import ident ("." ident)* as ident
+import_spec ::= ident | ident as ident
 export    ::= export ident ("," ident)*
 ```
 
-`import P as a` 现阶段与 `import P` 相同（尚无 `a.x` 限定名）。`import P { x, y }` 只引入列出且确为导出的名字。
+`import P as a` 只引入模块别名：`a.x` 解析为 `P/x`。`import P { x as y, z }` 只引入列出且确为导出的名字（`y` 是本地名）。不要写 `import P as a { ... }`。
 
-客程序绑定检查：内核名（`runtime_funs`）加 `import` 的导出。未 import 则 `host_os` / `cload` 为未绑定。链接按 import **及包源里的 import**（`http` 会链 `net`）：默认 `kernel`+`rt.num`，再 DFS 依赖。`os_has` 留在包 `rt.os` 且不导出。
+客程序绑定检查：内核名（`runtime_funs`）加 `import` 的本地名（别名或选出的导出）。未 import 则 `host_os` / `cload` 为未绑定。链接按 import **及包源里的 import**（`http` 会链 `net`）：默认 `kernel`+`rt.num`，再 DFS 依赖。`os_has` 留在包 `rt.os` 且不导出。
 
 
 ### 3.4 示例

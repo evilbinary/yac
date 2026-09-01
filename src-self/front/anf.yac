@@ -36,6 +36,7 @@ let anf_expr(ast, counter) =
     else if k == "bool" then [[], expr, c]
     else if k == "unit" then [[], expr, c]
     else if k == "var" then [[], expr, c]
+    else if k == "qvar" then [[], expr, c]
     else if k == "fun" then
       /* closure: [fun, [params], body] */
       let br = anf_expr(nth(expr, 2), c) in
@@ -56,6 +57,7 @@ let anf_expr(ast, counter) =
   else if k == "bool" then [[], ast, counter]
   else if k == "unit" then [[], ast, counter]
   else if k == "var" then [[], ast, counter]
+  else if k == "qvar" then [[], ast, counter]
   else if k == "fun" then
     /* fun (params) -> body */
     let br = anf_expr(nth(ast, 2), counter) in

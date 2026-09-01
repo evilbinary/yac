@@ -15,6 +15,87 @@
 
 let reverse(xs) = list_rev(xs)
 
+/* Guest import aliases: local name → LIR key (env/get). Module as-name → pkg. */
+let imap_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+let malias_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+let pkg_prefix_box =
+  let b = box_new() in
+  let _ = box_set(b, "") in
+  b
+
+let pkg_is_rt(p) =
+  if str_len(p) < 3 then false
+  else if str_ref(p, 0) != 114 then false
+  else if str_ref(p, 1) != 116 then false
+  else str_ref(p, 2) == 46
+
+/* rt.* keeps bare LIR names (kernel fcall yac_num_slow). */
+let pkg_qn(pkg, name) =
+  if pkg == "" then name
+  else if pkg_is_rt(pkg) then name
+  else str_cat(pkg, str_cat("/", name))
+
+let imap_find(xs, k, i) =
+  if i >= len(xs) then 0
+  else if nth(nth(xs, i), 0) == k then nth(nth(xs, i), 1)
+  else imap_find(xs, k, i + 1)
+
+let malias_find(xs, k, i) =
+  if i >= len(xs) then 0
+  else if nth(nth(xs, i), 0) == k then nth(nth(xs, i), 1)
+  else malias_find(xs, k, i + 1)
+
+let qvar_key(a, f) =
+  let pkg = malias_find(box_get(malias_box), a, 0) in
+  if pkg == 0 then 0
+  else pkg_qn(pkg, f)
+
+let imap_reset(_) =
+  let _ = box_set(imap_box, []) in
+  let _ = box_set(malias_box, []) in
+  0
+
+let imap_add_pair(pkg, spec) =
+  let q = pkg_qn(pkg, intern(nth(spec, 1))) in
+  box_set(imap_box, cons([intern(nth(spec, 0)), intern(q)], box_get(imap_box)))
+
+let imap_add_pairs(pkg, pairs, i) =
+  if i >= len(pairs) then 0
+  else
+    let _ = imap_add_pair(pkg, nth(pairs, i)) in
+    imap_add_pairs(pkg, pairs, i + 1)
+
+let imap_load_one(e) =
+  if nth(e, 0) != "import" then 0
+  else if len(e) < 3 then 0
+  else
+    let pkg = nth(e, 1) in
+    let pairs = nth(e, 2) in
+    let alias = if len(e) > 3 then nth(e, 3) else 0 in
+    if alias != 0 then
+      if alias == "" then 0
+      else box_set(malias_box, cons([intern(alias), intern(pkg)], box_get(malias_box)))
+    else if pairs == 0 then 0
+    else imap_add_pairs(pkg, pairs, 0)
+
+let imap_load(ast, i) =
+  if i == 0 then
+    let _ = imap_reset(0) in
+    imap_load(ast, 1)
+  else if i - 1 >= len(ast) then 0
+  else
+    let _ = imap_load_one(nth(ast, i - 1)) in
+    imap_load(ast, i + 1)
+
+let pkg_prefix_set(p) = box_set(pkg_prefix_box, p)
+let pkg_prefix_get(_) = box_get(pkg_prefix_box)
+
 let fv_skip_go(xs, name, i, n, acc) =
   if i >= n then acc
   else if nth(xs, i) == name then fv_skip_go(xs, name, i + 1, n, acc)
@@ -162,7 +243,11 @@ let sigma_cons(fs, f) =
   let idx =
     if len(nth(f, 4)) == 0 then 0 - 1
     else len(sigma_list(fs)) in
-  let _ = fmap_put(m, intern(fun_src(f)), [nth(f, 1), nth(f, 3), idx]) in
+  let g = intern(nth(f, 1)) in
+  let src = intern(fun_src(f)) in
+  let ent = [nth(f, 1), nth(f, 3), idx] in
+  let _ = fmap_put(m, g, ent) in
+  let _ = if src == g then 0 else fmap_put(m, src, ent) in
   [cons(f, sigma_list(fs)), m, nth(fs, 2)]
 
 /* Load linked stdlib procs into Σ (kernel+num, plus os/ffi if imported).
@@ -333,6 +418,23 @@ let is_prim_name(w) =
   else if w == "ccall" then true
   else false
 
+let name_has_slash(s, i) =
+  if i >= str_len(s) then false
+  else if str_ref(s, i) == 47 then true
+  else name_has_slash(s, i + 1)
+
+let resolve_call(nm) =
+  if is_prim_name(nm) then nm
+  else
+    let m = imap_find(box_get(imap_box), nm, 0) in
+    if m != 0 then m
+    else if name_has_slash(nm, 0) then nm
+    else
+      let p = box_get(pkg_prefix_box) in
+      if p == "" then nm
+      else if pkg_is_rt(p) then nm
+      else pkg_qn(p, nm)
+
 /* AST scope check (C ANF in_scope). "" = ok, else the unbound name. */
 let ub_expr(e, sc) =
   let xs(ys, i) =
@@ -346,6 +448,10 @@ let ub_expr(e, sc) =
     if in_list(nm, sc) then ""
     else if is_prim_name(nm) then ""
     else nm
+  else if k == "qvar" then
+    let a = nth(e, 1) in
+    if in_list(a, sc) then ""
+    else str_cat(a, str_cat(".", nth(e, 2)))
   else if k == "call" then
     let u = ub_expr(nth(e, 1), sc) in
     if u != "" then u else xs(nth(e, 2), 0)
@@ -373,9 +479,20 @@ let ub_expr(e, sc) =
   else if k == "list" then xs(nth(e, 1), 0)
   else ""
 
-let import_names(e) =
+let import_alias(e) =
+  if len(e) > 3 then nth(e, 3) else 0
+
+let import_locals_go(pairs, i, acc) =
+  if i >= len(pairs) then acc
+  else import_locals_go(pairs, i + 1, cons(nth(nth(pairs, i), 0), acc))
+
+let import_locals(e) =
   if len(e) < 3 then []
-  else nth(e, 2)
+  else if nth(e, 2) == 0 then []
+  else
+    let alias = if len(e) > 3 then nth(e, 3) else 0 in
+    if alias != 0 then []
+    else import_locals_go(nth(e, 2), 0, [])
 
 let ub_prog(p, i, sc) =
   if i >= len(p) then ""
@@ -384,7 +501,12 @@ let ub_prog(p, i, sc) =
     let k = nth(e, 0) in
     if k == "package" then ub_prog(p, i + 1, sc)
     else if k == "export" then ub_prog(p, i + 1, sc)
-    else if k == "import" then ub_prog(p, i + 1, append(import_names(e), sc))
+    else if k == "import" then
+      let al = import_alias(e) in
+      let sc2 =
+        if al != 0 then cons(al, append(import_locals(e), sc))
+        else append(import_locals(e), sc) in
+      ub_prog(p, i + 1, sc2)
     else
       let u = ub_expr(e, sc) in
       if u != "" then u
@@ -399,17 +521,19 @@ let free_vars(fnbody, params, funs) =
         let nm = nth(atom, 1) in
         let h = hash_str(nm) in
         let ch = fmap_get_h(nth(sh, 0), nm, h) in
+        let g = resolve_call(nm) in
         if ch == 0 then
-          let se = sigma_ent_h(funs, nm, h) in
+          let se = sigma_ent_h(funs, g, hash_str(g)) in
           if se == 0 then fv_acc_add_h(a, nm, h)
           else if nth(se, 1) == 0 then a
           else fv_acc_add_h(a, nm, h)
         else if sh_has_chain(ch, nth(sh, 1)) then a
         else
-          let se = sigma_ent_h(funs, nm, h) in
+          let se = sigma_ent_h(funs, g, hash_str(g)) in
           if se == 0 then fv_acc_add_h(a, nm, h)
           else if nth(se, 1) == 0 then a
           else fv_acc_add_h(a, nm, h)
+      else if k == "qvar" then a
       else if k == "fun" then nth(fv(nth(atom, 2), a, sh), 0)
       else a in
     let args_vars(args, j, a, sh) =
@@ -434,7 +558,8 @@ let free_vars(fnbody, params, funs) =
           else if k == "letcall" then
             let fn = nth(b, 2) in
             let a2 =
-              if nth(fn, 0) == "var" then
+              if nth(fn, 0) == "qvar" then a
+              else if nth(fn, 0) == "var" then
                 if is_prim_name(nth(fn, 1)) then a
                 else atom_vars(fn, a, sh)
               else atom_vars(fn, a, sh) in
@@ -483,9 +608,20 @@ let lir_var(atom, st) =
     [nth(st, 0), nth(e, 0),
      nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
   else
-    let se = sigma_ent_h(nth(st, 3), nm, h) in
+    let g = resolve_call(nm) in
+    let se = sigma_ent_h(nth(st, 3), g, hash_str(g)) in
     if se != 0 then lir_clos_atom(st, nth(se, 0))
     else if is_prim_name(nm) then lir_clos_atom(st, "print")
+    else
+      [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
+
+let lir_qvar(atom, st) =
+  let g = qvar_key(nth(atom, 1), nth(atom, 2)) in
+  if g == 0 then
+    [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
+  else
+    let se = sigma_ent_h(nth(st, 3), g, hash_str(g)) in
+    if se != 0 then lir_clos_atom(st, nth(se, 0))
     else
       [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
 
@@ -512,6 +648,8 @@ let lir_atom(atom, st) =
      nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
   else if k == "var" then
     lir_var(atom, st)
+  else if k == "qvar" then
+    lir_qvar(atom, st)
   else
     [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
 
@@ -635,9 +773,11 @@ let lir_rt(g, dst, ss) =
 
 /* callι: Σ then Γ then runtime. Do not turn every ncap>0 into icall.
  * Named self uses fcall/tcall + capture slots 1..n. */
-let calli(g, dst, ss, env, funs, self) =
+let calli(g0, dst, ss, env, funs, self) =
+  let h0 = hash_str(g0) in
+  let e = env_rec_h(env, g0, h0) in
+  let g = resolve_call(g0) in
   let h = hash_str(g) in
-  let e = env_rec_h(env, g, h) in
   if e != 0 then
     let ncap = nth(e, 1) in
     if ncap > 0 then
@@ -655,7 +795,7 @@ let calli(g, dst, ss, env, funs, self) =
     let se = sigma_ent_h(funs, g, h) in
     if se != 0 then ["fcall", dst, nth(se, 0), ss]
     else
-      let p = lir_rt(g, dst, ss) in
+      let p = lir_rt(g0, dst, ss) in
       if p == 0 then ["fcall", dst, g, ss]
       else p
 
@@ -779,9 +919,15 @@ let lir_letcall(b, pack) =
     let lr = lir_loadargs(nth(b, 3),
               [0, nth(s, 0), nth(s, 1), nth(s, 2), nth(s, 3)], []) in
     let dst = nth(lr, 3) in
+    let fn = nth(b, 2) in
+    let g0 =
+      if nth(fn, 0) == "qvar" then
+        let k = qvar_key(nth(fn, 1), nth(fn, 2)) in
+        if k == 0 then nth(fn, 1) else k
+      else nth(fn, 1) in
     let ins = maybe_tcall(
       rest_is_tail(nth(s, 5), [nth(pack, 1), nth(pack, 2), nth(pack, 3), nth(b, 1)]),
-      calli(nth(nth(b, 2), 1), dst, nth(lr, 1), nth(s, 1), nth(s, 3), nth(s, 5)),
+      calli(g0, dst, nth(lr, 1), nth(s, 1), nth(s, 3), nth(s, 5)),
       nth(s, 5)) in
     [insn_push(nth(lr, 0), ins),
      env_bind(nth(lr, 2), nth(b, 1), dst, 0), dst + 1,
@@ -804,10 +950,15 @@ let lir_letfun_prep(b, s) =
   let body = nth(b, 3) in
   let nparams = len(params) in
   let uid = nth(s, 4) in
+  let pfx = pkg_prefix_get(0) in
+  let base =
+    if pfx == "" then name
+    else if pkg_is_rt(pfx) then name
+    else pkg_qn(pfx, name) in
   let gname0 =
-    if sigma_has(nth(s, 3), name) then
-      str_cat(name, str_cat("#", int_to_str(uid)))
-    else name in
+    if sigma_has(nth(s, 3), base) then
+      str_cat(base, str_cat("#", int_to_str(uid)))
+    else base in
   let gname = intern(gname0) in
   let fvs_raw = free_vars(body, params, nth(s, 3)) in
   let is_rec = in_list(name, fvs_raw) in

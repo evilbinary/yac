@@ -80,6 +80,27 @@ let parse_idlist(toks, i, acc) =
     parse_idlist(toks, i + 2, cons(tok_t(toks, i), acc))
   else [reverse(cons(tok_t(toks, i), acc)), i + 1]
 
+/* One brace spec: name or `name as alias` → [local, orig]. */
+let parse_imp1(toks, i) =
+  if tok_k(toks, i) != "ident" then 0
+  else
+    let orig = tok_t(toks, i) in
+    if tok_k(toks, i + 1) == "ident" then
+      if tok_t(toks, i + 1) == "as" then
+        if tok_k(toks, i + 2) != "ident" then 0
+        else [[tok_t(toks, i + 2), orig], i + 3]
+      else [[orig, orig], i + 1]
+    else [[orig, orig], i + 1]
+
+/* Brace import list. */
+let parse_implist(toks, i, acc) =
+  let one = parse_imp1(toks, i) in
+  if one == 0 then [reverse(acc), i]
+  else
+    let j = nth(one, 1) in
+    if tok_k(toks, j) == "comma" then parse_implist(toks, j + 1, cons(nth(one, 0), acc))
+    else [reverse(cons(nth(one, 0), acc)), j]
+
 let hdr_semi(toks, j) =
   if tok_k(toks, j) == "semi" then j + 1 else j
 
@@ -181,7 +202,11 @@ let parse_expr(toks, i, min_prec) =
       if rec(0) then [["float", t], j + 1]
       else [["int", t], j + 1]
     else if kk(j) == "str" then [["str", tt(j)], j + 1]
-    else if kk(j) == "ident" then [["var", tt(j)], j + 1]
+    else if kk(j) == "ident" then
+      if kk(j + 1) == "dot" then
+        if kk(j + 2) == "ident" then [["qvar", tt(j), tt(j + 2)], j + 3]
+        else [["var", tt(j)], j + 1]
+      else [["var", tt(j)], j + 1]
     else if is_kw(j, "true") then [["bool", "true"], j + 1]
     else if is_kw(j, "false") then [["bool", "false"], j + 1]
     else if kk(j) == "lbrk" then
@@ -368,15 +393,15 @@ let parse_program(toks, i, acc) =
     else
       let j = nth(d, 1) in
       if tok_k(toks, j) == "lbrace" then
-        let ids = parse_idlist(toks, j + 1, []) in
+        let ids = parse_implist(toks, j + 1, []) in
         if tok_k(toks, nth(ids, 1)) != "rbrace" then cons(["error", "syntax"], acc)
         else parse_program(toks, hdr_semi(toks, nth(ids, 1) + 1),
-               cons(["import", nth(d, 0), nth(ids, 0)], acc))
+               cons(["import", nth(d, 0), nth(ids, 0), 0], acc))
       else if tok_k(toks, j) == "ident" then
         if tok_t(toks, j) == "as" then
           if tok_k(toks, j + 1) != "ident" then cons(["error", "syntax"], acc)
           else parse_program(toks, hdr_semi(toks, j + 2),
-                 cons(["import", nth(d, 0)], acc))
+                 cons(["import", nth(d, 0), 0, tok_t(toks, j + 1)], acc))
         else parse_program(toks, hdr_semi(toks, j),
                cons(["import", nth(d, 0)], acc))
       else parse_program(toks, hdr_semi(toks, j),

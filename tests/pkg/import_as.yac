@@ -1,0 +1,13 @@
+import env as e
+import hash
+import env { get as env_get, get_or }
+let p = e.get("PATH") in
+if p == 0 then 0
+else
+  if str_len(p) == 0 then 0
+  else
+    if env_get("YAC_NO_SUCH_ENV_ZZZ") == 0 then
+      if get_or("YAC_NO_SUCH_ENV_ZZZ", "x") == "x" then
+        if get(new(0), "k") == 0 then 42 else 0
+      else 0
+    else 0
