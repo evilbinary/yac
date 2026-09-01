@@ -400,7 +400,7 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 
 常见库按需增加，不一次写完：
 
-- 已落地：`path`、`str`、`io`、`list`、`hash`、`fmt`、`log`、`test`、`net`（IPv4 TCP：Linux/macOS libc `socket(2)`，Darwin `sockaddr_in.sin_len`，Windows ws2_32；无 DNS）。
+- 已落地：`path`、`str`、`io`、`list`、`hash`、`fmt`、`log`、`test`、`net`、`bytes`（`alloc` / `copy` / 游标 `buf`·`r8`·`w8` / `from_str` / `slice` / `eq` / `concat` / `put_*`·`get_*` 追加读写；`bytes_new` 等仍是原语）。
 - 有真实调用再做：`yui`（从 `app/native/yui.yac` 收）、`json`、`http`（建在 `net` 上）。
 - 先不要：`re` / `crypto` / `thread`。
 

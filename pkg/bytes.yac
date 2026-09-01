@@ -1,0 +1,182 @@
+/* bytes.yac — helpers on the bytes buffer prims (bytes_new / bytes_ref stay prims). */
+
+package bytes
+export from_str, to_str, slice, eq, concat, alloc, copy, buf, tell, seek, remain, r8, w8, r_le16, w_le16, r_le32, w_le32, put_le16, put_le32, put_be16, put_be32, get_le16, get_le32, get_be16, get_be32
+
+/* Append each byte of string s onto b. */
+let from_str_go(b, s, i) =
+  if i >= str_len(s) then b
+  else
+    let _ = bytes_append(b, str_ref(s, i)) in
+    from_str_go(b, s, i + 1)
+
+/* New buffer holding the bytes of s. */
+let from_str(s) = from_str_go(bytes_new(), s, 0)
+
+/* Buffer → string (wraps bytes_to_str). */
+let to_str(b) = bytes_to_str(b)
+
+/* Copy n bytes from src[si] into dst. */
+let copy_go(dst, src, si, n, k) =
+  if k >= n then dst
+  else
+    let _ = bytes_append(dst, bytes_ref(src, si + k)) in
+    copy_go(dst, src, si, n, k + 1)
+
+/* Write n bytes from src[si] into dst[di] (grows dst). n<=0 or si OOB → dst. */
+let copy_at_go(dst, di, src, si, n, k) =
+  if k >= n then dst
+  else
+    let _ = bytes_put(dst, di + k, bytes_ref(src, si + k)) in
+    copy_at_go(dst, di, src, si, n, k + 1)
+
+/* Copy n bytes src[si..] → dst[di..]. Clips to src length. */
+let copy(dst, di, src, si, n) =
+  if n <= 0 then dst
+  else if si < 0 then dst
+  else
+    let m = bytes_len(src) in
+    if si >= m then dst
+    else
+      let take = if si + n > m then m - si else n in
+      copy_at_go(dst, di, src, si, take, 0)
+
+/* New buffer of n bytes from b starting at i. OOB or n<=0 → empty. */
+let slice(b, i, n) =
+  let m = bytes_len(b) in
+  if n <= 0 then bytes_new()
+  else if i < 0 then bytes_new()
+  else if i >= m then bytes_new()
+  else
+    let take = if i + n > m then m - i else n in
+    copy_go(bytes_new(), b, i, take, 0)
+
+/* True if same length and every byte ==. */
+let eq_go(a, b, i, n) =
+  if i >= n then true
+  else if bytes_ref(a, i) == bytes_ref(b, i) then eq_go(a, b, i + 1, n)
+  else false
+
+/* Bytewise equality. */
+let eq(a, b) =
+  let n = bytes_len(a) in
+  if n == bytes_len(b) then eq_go(a, b, 0, n)
+  else false
+
+/* New buffer a then b. */
+let concat(a, b) =
+  let c = bytes_new() in
+  let _ = bytes_extend(c, a) in
+  let _ = bytes_extend(c, b) in
+  c
+
+/* Acc for alloc; not exported. */
+let alloc_go(b, i, n) =
+  if i >= n then b
+  else
+    let _ = bytes_append(b, 0) in
+    alloc_go(b, i + 1, n)
+
+/* n zero bytes. n<=0 → empty. */
+let alloc(n) =
+  if n <= 0 then bytes_new()
+  else alloc_go(bytes_new(), 0, n)
+
+/* Cursor listbuf [bytes, pos] at 0. Cons [b, 0] is not list_set-able. */
+let buf(b) =
+  let c = list_new() in
+  let _ = list_push(c, b) in
+  let _ = list_push(c, 0) in
+  c
+
+/* Cursor pos. */
+let tell(c) = nth(c, 1)
+
+/* Set pos (no clip). Returns c. */
+let seek(c, i) =
+  let _ = list_set(c, 1, i) in
+  c
+
+/* Bytes left from pos, or 0. */
+let remain(c) =
+  let n = bytes_len(nth(c, 0)) in
+  let i = nth(c, 1) in
+  if i >= n then 0
+  else n - i
+
+/* Write one byte at pos and advance. Grows the buffer. */
+let w8(c, x) =
+  let i = nth(c, 1) in
+  let _ = bytes_put(nth(c, 0), i, band(x, 255)) in
+  let _ = list_set(c, 1, i + 1) in
+  c
+
+/* Read one byte and advance. Short → 0, pos unchanged. */
+let r8(c) =
+  let b = nth(c, 0) in
+  let i = nth(c, 1) in
+  if i >= bytes_len(b) then 0
+  else
+    let v = bytes_ref(b, i) in
+    let _ = list_set(c, 1, i + 1) in
+    v
+
+/* Write 16-bit LE at pos. */
+let w_le16(c, x) =
+  let _ = w8(c, x) in
+  w8(c, bshr(x, 8))
+
+/* Read 16-bit LE at pos. Short → 0. */
+let r_le16(c) =
+  let lo = r8(c) in
+  bor(lo, bshl(r8(c), 8))
+
+/* Write 32-bit LE at pos. */
+let w_le32(c, x) =
+  let _ = w_le16(c, x) in
+  w_le16(c, bshr(x, 16))
+
+/* Read 32-bit LE at pos. Short → 0. */
+let r_le32(c) =
+  let lo = r_le16(c) in
+  bor(lo, bshl(r_le16(c), 16))
+
+/* Append 16-bit little-endian. */
+let put_le16(b, x) =
+  let _ = bytes_append(b, band(x, 255)) in
+  bytes_append(b, band(bshr(x, 8), 255))
+
+/* Append 32-bit little-endian. */
+let put_le32(b, x) =
+  let _ = put_le16(b, x) in
+  put_le16(b, bshr(x, 16))
+
+/* Append 16-bit big-endian. */
+let put_be16(b, x) =
+  let _ = bytes_append(b, band(bshr(x, 8), 255)) in
+  bytes_append(b, band(x, 255))
+
+/* Append 32-bit big-endian. */
+let put_be32(b, x) =
+  let _ = put_be16(b, bshr(x, 16)) in
+  put_be16(b, x)
+
+/* Read 16-bit LE at i, or 0 if short. */
+let get_le16(b, i) =
+  if i + 1 >= bytes_len(b) then 0
+  else bor(bytes_ref(b, i), bshl(bytes_ref(b, i + 1), 8))
+
+/* Read 32-bit LE at i, or 0 if short. */
+let get_le32(b, i) =
+  if i + 3 >= bytes_len(b) then 0
+  else bor(get_le16(b, i), bshl(get_le16(b, i + 2), 16))
+
+/* Read 16-bit BE at i, or 0 if short. */
+let get_be16(b, i) =
+  if i + 1 >= bytes_len(b) then 0
+  else bor(bshl(bytes_ref(b, i), 8), bytes_ref(b, i + 1))
+
+/* Read 32-bit BE at i, or 0 if short. */
+let get_be32(b, i) =
+  if i + 3 >= bytes_len(b) then 0
+  else bor(bshl(get_be16(b, i), 16), get_be16(b, i + 2))

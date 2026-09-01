@@ -1,0 +1,39 @@
+import bytes
+let a = alloc(3) in
+let c = buf(a) in
+let _ = w8(c, 7) in
+let _ = seek(c, 0) in
+let b = from_str("AB") in
+let d = bytes_new() in
+let _ = put_le16(d, 80) in
+let e = alloc(2) in
+let _ = copy(e, 0, b, 0, 2) in
+if bytes_len(a) == 3 then
+  if bytes_ref(a, 0) == 7 then
+    if bytes_ref(a, 2) == 0 then
+      if r8(c) == 7 then
+        if remain(c) == 2 then
+          if to_str(e) == "AB" then
+            if bytes_len(b) == 2 then
+              if bytes_ref(b, 0) == 65 then
+                if to_str(b) == "AB" then
+                  if get_le16(b, 0) == 16961 then
+                    if get_be16(b, 0) == 16706 then
+                      if eq(b, from_str("AB")) then
+                        if to_str(slice(b, 1, 1)) == "B" then
+                          if to_str(concat(from_str("A"), from_str("B"))) == "AB" then
+                            if get_le16(d, 0) == 80 then 42 else 0
+                          else 0
+                        else 0
+                      else 0
+                    else 0
+                  else 0
+                else 0
+              else 0
+            else 0
+          else 0
+        else 0
+      else 0
+    else 0
+  else 0
+else 0
