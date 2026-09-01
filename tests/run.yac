@@ -276,7 +276,9 @@ let repl_cases(_) = [
   ["exit as value", "exit\n:q\n", "<fun>"],
   ["cons", "cons\n:q\n", "<fun>"],
   ["unit", "()\n:q\n", "0"],
-  ["cons then unit twice", "cons\n()\n()\n:q\n", "0"]]
+  ["cons then unit twice", "cons\n()\n()\n:q\n", "0"],
+  ["let then use", "let a = 42\na\n:q\n", "42"],
+  ["print no replay", "print(\"ONLYONCE\")\n1\n:q\n", "yc> 1"]]
 
 let compiler_all(st, yc) =
   let _ = banner("compiler/cases", nth(yc, 0)) in
@@ -479,7 +481,8 @@ let cat_bundle(_) =
              "src-self/back/emit/emit_arm64.yac",
              "src-self/back/emit/emit_riscv64.yac",
              "src-self/back/lower.yac", "src-self/back/profile.yac",
-             "src-self/back/backend.yac", "src-self/lang/scheme.yac", "src-self/yc.yac"],
+             "src-self/back/backend.yac", "src-self/back/jit.yac",
+             "src-self/lang/scheme.yac", "src-self/yc.yac"],
             BUNDLE)
 
 let interp_step(st, row) =

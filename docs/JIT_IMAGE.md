@@ -1,6 +1,6 @@
 # JIT Image（Yac 内存映像）
 
-状态：**部分实现。** `src-self/back/pack/yjit.yac` 写出 64 字节头 + 整段 emit blob（当作 TEXT）；`yc --format yjit -o file.yjit`。DATA 区 120 字节（G+112 = 宿主 `jit_map` 指针）。`yac_jit_run` 在 `JIT_VADDR` 一次 mmap 16MiB，之后只 memcpy + `icall`（不再每次 VirtualFree / MAP_FIXED 拆掉映射）。尚未：独立 VM 段、reloc 延后、REPL append、停源码拼接。
+状态：**部分实现。** 里程碑 1 + REPL append：`--repl` 每行只编译该行，机器码追加到同一 16MiB 映射；`let` 槽在映像 12MiB 处。尚未：独立 RODATA/DATA 映射、reloc 表延后、W^X。
 
 磁盘 ELF / PE / Mach-O 仍由 `pack_*` 产出；本格式 **不是** ELF，逻辑上与 ELF 段角色同构，便于以后 dump 再 pack。
 
@@ -287,8 +287,8 @@ Mach-O 同理走 `pack_macho_*`。
 
 1. **map-once + call**（已做）：16MiB 一次 mmap；`.yjit` 扁平 TEXT dump。仍整份 emit+resolve+memcpy。
 2. **未 resolve + rela 加载**：一份模块 load 进固定基址，行为与今日 `jit_run` 相同。
-3. **append**：第二份模块链进同一 TEXT/DATA；`print` 只在第一份。
-4. **REPL**：宿主 export 跨行；停源码拼接。
+3. **append**（已做雏形）：REPL 第二行起 skip 已 emit 的 proc，把新 blob 拷到 `text_end`，`globbase` 沿用首份映像。
+4. **REPL**（已做雏形）：不再拼接源码；顶层 `let` 进 `JIT_LET_BASE`（映射内 12MiB 处）；imap/malias 跨行保留。
 5. **dump `.yjit`**，再接 pack ELF/PE。
 6. W^X、funstarts、RODATA 只读。
 

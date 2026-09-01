@@ -1,0 +1,281 @@
+/* jit.yac — in-process JIT / REPL session (not ANF→LIR, not AOT pack).
+ *
+ * Live image: mmap once, append TEXT, skip already-emitted procs.
+ * Top-level lets: yac_jslot_get/set in the map at JIT_VADDR+12MiB.
+ * Session names are rewritten to calls before ANF so lir.yac stays generic.
+ */
+
+let jit_lets_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let jit_let_idx(nm) =
+  let st = box_get(jit_lets_box) in
+  if st == 0 then 0 - 1
+  else
+    let e = fmap_get(nth(st, 0), intern(nm)) in
+    if e == 0 then 0 - 1 else e - 1
+
+let jit_let_ensure(nm) =
+  let i0 = jit_let_idx(nm) in
+  if i0 >= 0 then i0
+  else
+    let st0 = box_get(jit_lets_box) in
+    let st =
+      if st0 != 0 then st0
+      else
+        let m = fmap_new(0) in
+        let _ = fmap_init_n(m, 64) in
+        let s = [m, 0, []] in
+        let _ = box_set(jit_lets_box, s) in
+        s in
+    let n = nth(st, 1) in
+    let _ = fmap_put(nth(st, 0), intern(nm), n + 1) in
+    let _ = list_set(st, 1, n + 1) in
+    let _ = list_set(st, 2, cons(nm, nth(st, 2))) in
+    n
+
+let jit_let_sc(sc) =
+  let st = box_get(jit_lets_box) in
+  if st == 0 then sc
+  else append(nth(st, 2), sc)
+
+let jslot_rw_expr(e, sc) =
+  let rw_list(ys) =
+    let n = len(ys) in
+    let loop(i, acc) =
+      if i >= n then acc
+      else
+        let _ = list_push(acc, jslot_rw_expr(nth(ys, i), sc)) in
+        loop(i + 1, acc) in
+    loop(0, list_new()) in
+  let k = nth(e, 0) in
+  if k == "var" then
+    let nm = nth(e, 1) in
+    if in_list(nm, sc) then e
+    else if is_prim_name(nm) then e
+    else
+      let li = jit_let_idx(nm) in
+      if li >= 0 then
+        ["call", ["var", "yac_jslot_get"], [["int", int_to_str(li)]]]
+      else e
+  else if k == "call" then
+    ["call", jslot_rw_expr(nth(e, 1), sc), rw_list(nth(e, 2))]
+  else if k == "fun" then
+    ["fun", nth(e, 1), jslot_rw_expr(nth(e, 2), append(nth(e, 1), sc))]
+  else if k == "if" then
+    ["if", jslot_rw_expr(nth(e, 1), sc),
+     jslot_rw_expr(nth(e, 2), sc), jslot_rw_expr(nth(e, 3), sc)]
+  else if k == "let" then
+    let nm = nth(e, 1) in
+    let bound = nth(e, 2) in
+    let scb = if nth(bound, 0) == "fun" then cons(nm, sc) else sc in
+    ["let", nm, jslot_rw_expr(bound, scb), jslot_rw_expr(nth(e, 3), cons(nm, sc))]
+  else if k == "binop" then
+    ["binop", nth(e, 1), jslot_rw_expr(nth(e, 2), sc), jslot_rw_expr(nth(e, 3), sc)]
+  else if k == "not" then ["not", jslot_rw_expr(nth(e, 1), sc)]
+  else if k == "callcc" then ["callcc", jslot_rw_expr(nth(e, 1), sc)]
+  else if k == "throw" then
+    ["throw", jslot_rw_expr(nth(e, 1), sc), jslot_rw_expr(nth(e, 2), sc)]
+  else if k == "list" then ["list", rw_list(nth(e, 1))]
+  else e
+
+let jslot_rw_prog(p, i, sc, acc) =
+  if i >= len(p) then acc
+  else
+    let e = nth(p, i) in
+    let k = nth(e, 0) in
+    if k == "package" then
+      let _ = list_push(acc, e) in
+      jslot_rw_prog(p, i + 1, sc, acc)
+    else if k == "export" then
+      let _ = list_push(acc, e) in
+      jslot_rw_prog(p, i + 1, sc, acc)
+    else if k == "import" then
+      let al = import_alias(e) in
+      let sc2 =
+        if al != 0 then cons(al, append(import_locals(e), sc))
+        else append(import_locals(e), sc) in
+      let _ = list_push(acc, e) in
+      jslot_rw_prog(p, i + 1, sc2, acc)
+    else
+      let e2 = jslot_rw_expr(e, sc) in
+      let _ = list_push(acc, e2) in
+      let sc2 = if k == "let" then cons(nth(e, 1), sc) else sc in
+      jslot_rw_prog(p, i + 1, sc2, acc)
+
+let jslot_rw_all(p) = jslot_rw_prog(p, 0, [], list_new())
+
+let start_eval_ins(nslots, pslot, body, name) =
+  let b0 = insn_extend(insn_push(list_new(), ["local", nslots + 8, 0]), body) in
+  let b0s =
+    if name == "" then b0
+    else
+      let ix = jit_let_ensure(name) in
+      let b1 = insn_push(b0, ["mov_imm", nslots, ix + ix]) in
+      insn_push(b1, ["fcall", nslots + 1, "yac_jslot_set", [nslots, pslot]]) in
+  if name == "" then
+    insn_push(insn_push(insn_push(b0s,
+      ["mov_imm", nslots, 2]),
+      ["fcall", nslots + 1, "print", [pslot, nslots]]),
+      ["ret", pslot])
+  else
+    let b1 = insn_push(b0s, ["strlit", nslots, name]) in
+    let b2 = insn_push(b1, ["strlit", nslots + 1, " = "]) in
+    let b3 = insn_push(b2, ["mov_imm", nslots + 2, 0]) in
+    let b4 = insn_push(b3, ["mov_imm", nslots + 3, 2]) in
+    let b5 = insn_push(b4, ["fcall", nslots + 4, "print", [nslots, nslots + 2]]) in
+    let b6 = insn_push(b5, ["fcall", nslots + 5, "print", [nslots + 1, nslots + 2]]) in
+    let b7 = insn_push(b6, ["fcall", nslots + 6, "print", [pslot, nslots + 3]]) in
+    insn_push(b7, ["ret", pslot])
+
+let start_proc_eval(nslots, result_slot, body, name) =
+  ["proc", "_eval", 0, 0, start_eval_ins(nslots, result_slot, body, name), "_eval"]
+
+let pass_lir_eval(anf_list, bind_name) =
+  let rt0 = rt_for_link(0) in
+  let _ = pkg_prefix_set("") in
+  let st = lir_all(0, anf_list,
+             [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
+             len(anf_list)) in
+  let pslot =
+    if bind_name == "" then nth(st, 5)
+    else
+      let s = env_slot(nth(st, 0), bind_name) in
+      if s == 0 then nth(st, 5) else s in
+  let entry = start_proc_eval(nth(st, 1), pslot, nth(st, 4), bind_name) in
+  /* prog[2] is the Linux process entry (is_entry in emit). JIT jumps to
+   * _eval by name; it must not be prog[2] or it would get _start's ABI. */
+  tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
+
+let jit_live_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let jsess_put_fo(m, fo) =
+  if fo == [] then 0
+  else
+    let p = nth(fo, 0) in
+    let _ = fmap_put(m, intern(nth(p, 0)), nth(p, 1) + 1) in
+    jsess_put_fo(m, drop(fo, 1))
+
+let jsess_merge_fo(m, fo, base) =
+  if fo == [] then 0
+  else
+    let p = nth(fo, 0) in
+    let _ = fmap_put(m, intern(nth(p, 0)), base + nth(p, 1) + 1) in
+    jsess_merge_fo(m, drop(fo, 1), base)
+
+let pkgs_append(dst, src, i) =
+  if i >= len(src) then dst
+  else
+    let p = nth(src, i) in
+    if in_list(p, dst) then pkgs_append(dst, src, i + 1)
+    else pkgs_append(cons(p, dst), src, i + 1)
+
+let link_from_ast_repl(ast) =
+  let filled = rewrite_imports(ast, 0, []) in
+  let more = ast_imports(ast, 0, []) in
+  let _ = box_set(link_need_box, pkgs_append(box_get(link_need_box), more, 0)) in
+  let _ = imap_load_merge(filled, 0) in
+  0
+
+let repl_last_let(ast) =
+  let n = len(ast) in
+  if n == 0 then ""
+  else
+    let e = nth(ast, n - 1) in
+    if nth(e, 0) == "let" then nth(e, 1) else ""
+
+let import_spec_locals(pairs, i, acc) =
+  if i >= len(pairs) then acc
+  else
+    let loc = nth(nth(pairs, i), 0) in
+    let acc2 = if acc == "" then loc else str_cat(acc, str_cat(", ", loc)) in
+    import_spec_locals(pairs, i + 1, acc2)
+
+let import_repl_str(e) =
+  let al = if len(e) > 3 then nth(e, 3) else 0 in
+  if al != 0 then al
+  else if len(e) < 3 then nth(e, 1)
+  else if nth(e, 2) == 0 then nth(e, 1)
+  else
+    let s = import_spec_locals(nth(e, 2), 0, "") in
+    if s == "" then nth(e, 1) else s
+
+let ast_repl_import(ast) =
+  let n = len(ast) in
+  if n == 0 then ast
+  else
+    let e = nth(ast, n - 1) in
+    if nth(e, 0) != "import" then ast
+    else append(ast, [["str", import_repl_str(e)]])
+
+let compile_jit(src, t, named) =
+  let ast = pass_parse(pass_lex(src)) in
+  if prog_has_err(ast, 0) then
+    let _ = print("error: syntax") in 1
+  else if report_unbound_ex(src, ast, jit_let_sc([])) != 0 then 1
+  else if named then
+    if len(ast) == 0 then 0
+    else
+      let ast1 = jslot_rw_all(ast_repl_import(ast)) in
+      let live = box_get(jit_live_box) in
+      let _ = link_from_ast_repl(ast1) in
+      let _ =
+        if live == 0 then emit_jsess_set(0)
+        else emit_jsess_set(live) in
+      let bn = repl_last_let(ast1) in
+      let _ = log_set_hush(true) in
+      let r = lower_expr(pass_lir_eval(pass_anf(ast1), bn), t) in
+      let _ = log_set_hush(false) in
+      let _ = emit_jsess_set(0) in
+      let dest = if live == 0 then 0 else nth(live, 0) in
+      let code = nth(r, 0) in
+      let fo = nth(r, 1) in
+      let _ = if dest == 0 then cimport_jit_bind(code) else 0 in
+      let _ = jit_run(code, fun_off(fo, "_eval"), dest) in
+      let _ =
+        if live == 0 then
+          let m = fmap_new(0) in
+          let _ = fmap_init_n(m, 4096) in
+          let _ = jsess_put_fo(m, fo) in
+          let lay = yjit_layout_get(0) in
+          box_set(jit_live_box, [bytes_len(code), JIT_VADDR + nth(lay, 2), m])
+        else
+          let m = nth(live, 2) in
+          let _ = jsess_merge_fo(m, fo, dest) in
+          box_set(jit_live_box, [dest + bytes_len(code), nth(live, 1), m]) in
+      0
+  else
+    let _ = link_from_ast(ast) in
+    let _ = emit_jsess_set(0) in
+    let _ = log_set_hush(true) in
+    let r = lower_expr(pass_lir_eval(pass_anf(ast), ""), t) in
+    let _ = log_set_hush(false) in
+    let _ = cimport_jit_bind(nth(r, 0)) in
+    let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0) in 0
+
+let compile_jit_anf(anf, t, bn) =
+  let _ = log_set_hush(true) in
+  let r = lower_expr(pass_lir_eval(anf, bn), t) in
+  let _ = log_set_hush(false) in
+  let _ = cimport_jit_bind(nth(r, 0)) in
+  let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0) in 0
+
+let compile_uncps(src, t, named, do_opt) =
+  let ast = pass_parse(pass_lex(src)) in
+  if prog_has_err(ast, 0) then
+    let _ = print("error: syntax") in 1
+  else if report_unbound_ex(src, ast, jit_let_sc([])) != 0 then 1
+  else
+    let ast1 = if named then jslot_rw_all(ast) else ast in
+    let _ = link_from_ast(ast) in
+    let r = uncps_all(cps_maybe_opt(cps_all(pass_anf(ast1)), do_opt)) in
+    if uncps_is_err(r) then
+      let _ = print(str_cat("error: ", nth(r, 1))) in 1
+    else
+      let bn = if named then repl_last_let(ast) else "" in
+      compile_jit_anf(r, t, bn)

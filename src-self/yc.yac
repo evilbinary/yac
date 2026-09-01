@@ -150,17 +150,15 @@ let repl_is_blank(s, i) =
     else if c == 13 then repl_is_blank(s, i + 1)
     else false
 
-let repl_loop(acc, spec) =
+let repl_loop(spec) =
   let _ = print("yc> ", false) in
   let line = read_line() in
   if line == 0 then 0
-  else if repl_is_blank(line, 0) then repl_loop(acc, spec)
+  else if repl_is_blank(line, 0) then repl_loop(spec)
   else if line == ":q" or line == ":quit" or line == "(exit)" then 0
   else
-    let acc2 = str_cat(acc, str_cat(line, "\n")) in
-    let rc = jit_eval_repl(prep_src(acc2, spec)) in
-    if rc == 0 then repl_loop(acc2, spec)
-    else repl_loop(acc, spec)
+    let _ = jit_eval_repl(prep_src(line, spec)) in
+    repl_loop(spec)
 
 let run_cli(pr) =
   let out_opt = nth(pr, 0) in
@@ -184,7 +182,7 @@ let run_cli(pr) =
         let _ =
           if acc1 == "" then 0
           else jit_eval_repl(prep_src(acc1, spec)) in
-        repl_loop(acc1, spec)
+        repl_loop(spec)
       else if inpath == "" then
         let _ = usage(0) in 2
       else

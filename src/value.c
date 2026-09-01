@@ -1288,7 +1288,7 @@ static const Prim PRIMS[] = {
     {"write_file", 2, false, true, prim_write_file},
     {"system", 1, false, false, prim_system},
     {"read_line", -1, false, true, prim_read_line},
-    {"jit_run", 2, false, true, prim_jit_run},
+    {"jit_run", 3, false, true, prim_jit_run},
     {"popen", 2, false, true, prim_popen},
     {"uname", 1, true, true, prim_uname}, /* called as uname(); parser passes unit */
     {"bshl", 2, true, false, prim_bshl},

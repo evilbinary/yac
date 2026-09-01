@@ -236,6 +236,23 @@ let yjit_layout_set(pool, smap, data, n) =
 
 let yjit_layout_get(_) = box_get(yjit_layout_box)
 
+/* Append session for emit: 0 or [text_off, globbase, exports_fmap]. */
+let emit_jsess_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let emit_jsess_set(v) = box_set(emit_jsess_box, v)
+
+let emit_jsess(_) = box_get(emit_jsess_box)
+
+let emit_jsess_skip(name) =
+  let s = emit_jsess(0) in
+  if s == 0 then 0 - 1
+  else
+    let e = fmap_get(nth(s, 2), intern(name)) in
+    if e == 0 then 0 - 1 else e - 1
+
 /* Win64 ccall/_start: PE guests, or in-process JIT on a Windows host. */
 let emit_abi_win_box =
   let b = box_new() in

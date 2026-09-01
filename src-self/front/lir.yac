@@ -93,6 +93,12 @@ let imap_load(ast, i) =
     let _ = imap_load_one(nth(ast, i - 1)) in
     imap_load(ast, i + 1)
 
+let imap_load_merge(ast, i) =
+  if i >= len(ast) then 0
+  else
+    let _ = imap_load_one(nth(ast, i)) in
+    imap_load_merge(ast, i + 1)
+
 let pkg_prefix_set(p) = box_set(pkg_prefix_box, p)
 let pkg_prefix_get(_) = box_get(pkg_prefix_box)
 
@@ -741,7 +747,7 @@ let lir_rt_bytes(g, dst, ss) =
   else if g == "system" then ["fcall", dst, "yac_system", [nth(ss, 0)]]
   else if g == "read_line" then ["fcall", dst, "yac_read_line", []]
   else if g == "jit_run" then
-    ["fcall", dst, "yac_jit_run", [nth(ss, 0), nth(ss, 1)]]
+    ["fcall", dst, "yac_jit_run", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
   else if g == "exit" then ["exit", nth(ss, 0)]
   else if g == "gc_collect" then ["fcall", dst, "gc_collect", []]
   else if g == "band" then bin("&", dst, nth(ss, 0), nth(ss, 1))
@@ -1172,25 +1178,3 @@ let start_proc(nslots, result_slot, body) =
         insn_extend(insn_push(list_new(), ["local", nslots, 0]), body),
         ["untag", nslots, result_slot]),
       ["syscall", 0, 60, [nslots]]), "_start"]
-
-/* Callable entry for in-process JIT: print the last value, then ret.
- * If name is non-empty (REPL top-level let), print `name = value` like C yac. */
-let start_eval_ins(nslots, pslot, body, name) =
-  let b0 = insn_extend(insn_push(list_new(), ["local", nslots + 8, 0]), body) in
-  if name == "" then
-    insn_push(insn_push(insn_push(b0,
-      ["mov_imm", nslots, 2]),
-      ["fcall", nslots + 1, "print", [pslot, nslots]]),
-      ["ret", pslot])
-  else
-    let b1 = insn_push(b0, ["strlit", nslots, name]) in
-    let b2 = insn_push(b1, ["strlit", nslots + 1, " = "]) in
-    let b3 = insn_push(b2, ["mov_imm", nslots + 2, 0]) in
-    let b4 = insn_push(b3, ["mov_imm", nslots + 3, 2]) in
-    let b5 = insn_push(b4, ["fcall", nslots + 4, "print", [nslots, nslots + 2]]) in
-    let b6 = insn_push(b5, ["fcall", nslots + 5, "print", [nslots + 1, nslots + 2]]) in
-    let b7 = insn_push(b6, ["fcall", nslots + 6, "print", [pslot, nslots + 3]]) in
-    insn_push(b7, ["ret", pslot])
-
-let start_proc_eval(nslots, result_slot, body, name) =
-  ["proc", "_eval", 0, 0, start_eval_ins(nslots, result_slot, body, name), "_eval"]

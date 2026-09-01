@@ -1336,10 +1336,12 @@ let resolve_local_labels(b, labels, patches) =
   step(0)
 
 let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
+  let js = emit_jsess(0) in
+  let T = if js == 0 then 0 else nth(js, 0) in
   let _ = emit_fmt_set(fmt) in
   let _ = strlit_pool_reset(0) in
   let _ = smap_reset(0) in
-  let _ = cimport_reset(0) in
+  let _ = if T != 0 then 0 else cimport_reset(0) in
   let _ = box_set(pe_uname_off_box, 0) in
   let _ = box_set(pe_dlsym_off_box, 0) in
   let _ = box_set(pe_system_off_box, 0) in
@@ -1374,10 +1376,14 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
        * That's whoever prog[2] names — often _start, not a hard-coded name.
        * A JIT callable (_eval) must not be prog[2], or call/ret would break. */
       let is_entry = name == entry in
+      let skipat = if name == "_eval" then 0 - 1 else emit_jsess_skip(name) in
       let fstart = nth(st, 1) in
       let st0 = [nth(st, 0), nth(st, 1), [], [], nth(st, 4)] in
       let insns = nth(f, 4) in
-      if len(insns) == 0 then
+      if skipat >= 0 then
+        let _ = list_push(offs, skipat - T) in
+        emit_fun(i + 1, st, fo)
+      else if len(insns) == 0 then
         let _ = list_push(offs, 0) in
         emit_fun(i + 1, st, fo)
       else
@@ -1399,7 +1405,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let patches = nth(st, 3) in
   let b = nth(st, 0) in
   let LOAD_VADDR = load_vaddr in
-  let TEXT_OFF = text_off in
+  let TEXT_OFF = if T != 0 then T else text_off in
   /* writable globals: 112-byte GC block + 8-byte host jit_map at +112. */
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
@@ -1412,13 +1418,16 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let smap_start = smap_emit_table(b, extra) in
   let _ = pad8(0) in
   let data_start = bytes_len(b) in
-  let _ = emit_glob_data(b) in
-  let _ = emit_cplt(b) in
+  let _ = if T != 0 then 0 else emit_glob_data(b) in
+  let _ = if T != 0 then 0 else emit_cplt(b) in
   let _ =
-    if emit_host_win(0) then win_finish(b, extra)
+    if T != 0 then 0
+    else if emit_host_win(0) then win_finish(b, extra)
     else linux_finish(b, extra) in
   let _ = ckeep in
-  let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
+  let GLOBALS_BASE =
+    if T != 0 then nth(js, 1)
+    else LOAD_VADDR + TEXT_OFF + data_start in
   let _ = patches_extend(extra, patches) in
   let _ = log("emit", "resolve") in
   let _ = emit_resolve_loop([b, offs, LOAD_VADDR + TEXT_OFF, GLOBALS_BASE,

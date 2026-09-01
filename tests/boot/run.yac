@@ -146,6 +146,7 @@ let src_self_rel(n) =
   else if n == "lower.yac" then "back/lower.yac"
   else if n == "profile.yac" then "back/profile.yac"
   else if n == "backend.yac" then "back/backend.yac"
+  else if n == "jit.yac" then "back/jit.yac"
   else if n == "scheme.yac" then "lang/scheme.yac"
   else if n == "emit.yac" then "back/emit/emit.yac"
   else if str_slice(n, 0, 7) == "encode_" then str_cat("back/encode/", n)

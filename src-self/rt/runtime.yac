@@ -1762,17 +1762,19 @@ let rt_read_line_ins(_) =
    ["mov_imm", 8, 0],
    ["ret", 8]]
 
-/* Map 16MiB RWX at 2^33 once (host G+112). Copy guest blob, call _eval.
- * Windows mmap would VirtualFree that address every call; skip remap. */
+/* Map 16MiB RWX at 2^33 once (host G+112). Copy blob at dest, call dest+entry.
+ * arg3 dest = byte offset in the mapping (0 = first load). */
 let rt_jit_run_ins(_) =
-  [["$local", 22, 2],
-   ["$and", 3, 1, 0 - 2],
-   ["$ld64", 4, 3, 24],
-   ["$ld64", 5, 3, 40],
+  [["$local", 24, 3],
+   ["$shr", 17, 3, 1],
+   ["$and", 19, 1, 0 - 2],
+   ["$ld64", 4, 19, 24],
+   ["$ld64", 5, 19, 40],
    ["$and", 5, 5, 0 - 2],
    ["$addi", 5, 5, 32],
    ["mov_imm", 16, 16777216],
-   ["$icmp", ">=u", 11, 4, 16],
+   ["$add", 18, 17, 4],
+   ["$icmp", ">=u", 11, 18, 16],
    ["cmpjmp", 11, "jr_fail", "jr_oksz"],
    ["label", "jr_oksz"],
    ["$gbase", 14],
@@ -1794,6 +1796,7 @@ let rt_jit_run_ins(_) =
    ["$gbase", 14],
    ["$st64", 14, 112, 13],
    ["label", "jr_copy"],
+   ["$add", 13, 13, 17],
    ["$memcpy", 13, 5, 4],
    ["$shr", 10, 2, 1],
    ["$add", 9, 13, 10],
@@ -1802,6 +1805,31 @@ let rt_jit_run_ins(_) =
    ["label", "jr_fail"],
    ["mov_imm", 12, 0],
    ["ret", 12]]
+
+/* REPL top-level lets: qword slots at JIT_VADDR+12MiB (same 16MiB map).
+ * Must not use $gbase: this $proc is emitted into the JIT image, whose G
+ * is guest DATA; the map pointer lives in the host G+112. */
+let rt_jslot_get_ins(_) =
+  [["$local", 8, 1],
+   ["$shr", 2, 1, 1],
+   ["$add", 2, 2, 2],
+   ["$add", 2, 2, 2],
+   ["$add", 2, 2, 2],
+   ["mov_imm", 3, 8602517504],
+   ["$add", 3, 3, 2],
+   ["$ld64", 4, 3, 0],
+   ["ret", 4]]
+
+let rt_jslot_set_ins(_) =
+  [["$local", 8, 2],
+   ["$shr", 3, 1, 1],
+   ["$add", 3, 3, 3],
+   ["$add", 3, 3, 3],
+   ["$add", 3, 3, 3],
+   ["mov_imm", 4, 8602517504],
+   ["$add", 4, 4, 3],
+   ["$st64", 4, 0, 2],
+   ["ret", 2]]
 
 let rt_num_add_ins(_) =
   [["local", 8, 2],
@@ -1899,7 +1927,9 @@ let runtime_funs(_) =
    ["$proc", "yac_argv", 1, 0, rt_argv_ins(0), "yac_argv"],
    ["$proc", "yac_system", 1, 0, rt_system_ins(0), "yac_system"],
    ["$proc", "yac_read_line", 0, 0, rt_read_line_ins(0), "yac_read_line"],
-   ["$proc", "yac_jit_run", 2, 0, rt_jit_run_ins(0), "yac_jit_run"],
+   ["$proc", "yac_jit_run", 3, 0, rt_jit_run_ins(0), "yac_jit_run"],
+   ["$proc", "yac_jslot_get", 1, 0, rt_jslot_get_ins(0), "yac_jslot_get"],
+   ["$proc", "yac_jslot_set", 2, 0, rt_jslot_set_ins(0), "yac_jslot_set"],
    ["$proc", "yac_alloc", 1, 0, rt_alloc_ins(0), "yac_alloc"],
    ["$proc", "yac_apply1", 2, 0, rt_apply1_ins(0), "yac_apply1"],
    ["$proc", "yac_apply2", 3, 0, rt_apply2_ins(0), "yac_apply2"],

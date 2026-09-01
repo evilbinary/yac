@@ -263,26 +263,14 @@ let pass_lir(anf_list) =
   let entry = start_proc(nth(st, 1), nth(st, 5), nth(st, 4)) in
   tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
 
-let pass_lir_eval(anf_list, bind_name) =
-  let rt0 = rt_for_link(0) in
-  let _ = pkg_prefix_set("") in
-  let st = lir_all(0, anf_list,
-             [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
-             len(anf_list)) in
-  let pslot =
-    if bind_name == "" then nth(st, 5)
-    else
-      let s = env_slot(nth(st, 0), bind_name) in
-      if s == 0 then nth(st, 5) else s in
-  let entry = start_proc_eval(nth(st, 1), pslot, nth(st, 4), bind_name) in
-  /* prog[2] is the Linux process entry (is_entry in emit). JIT jumps to
-   * _eval by name; it must not be prog[2] or it would get _start's ABI. */
-  tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
-
 let fun_off(fo, name) =
   if fo == [] then 0
   else if nth(nth(fo, 0), 0) == name then nth(nth(fo, 0), 1)
   else fun_off(drop(fo, 1), name)
+
+let pair_locals(xs, i, acc) =
+  if i >= len(xs) then acc
+  else pair_locals(xs, i + 1, cons(nth(nth(xs, i), 0), acc))
 
 let pack_yjit_prog(t, code) =
   let e0 = fun_off(funsym_get(0), "_start") in
@@ -304,8 +292,10 @@ let kernel_fun_names(_) =
     v
   else c
 
-let report_unbound(src, ast) =
-  let nm = ub_prog(rewrite_imports(ast, 0, []), 0, kernel_fun_names(0)) in
+let report_unbound_ex(src, ast, extra) =
+  let sc0 = pair_locals(box_get(imap_box), 0, kernel_fun_names(0)) in
+  let sc1 = pair_locals(box_get(malias_box), 0, sc0) in
+  let nm = ub_prog(rewrite_imports(ast, 0, []), 0, append(extra, sc1)) in
   if nm == "" then 0
   else
     let toks = tokenize(src) in
@@ -316,61 +306,7 @@ let report_unbound(src, ast) =
           str_cat(nm, "'"))))) in
     1
 
-let repl_last_let(ast) =
-  let n = len(ast) in
-  if n == 0 then ""
-  else
-    let e = nth(ast, n - 1) in
-    if nth(e, 0) == "let" then nth(e, 1) else ""
-
-/* REPL: last form is import → a string to print (alias, locals, or package). */
-let import_spec_locals(pairs, i, acc) =
-  if i >= len(pairs) then acc
-  else
-    let loc = nth(nth(pairs, i), 0) in
-    let acc2 = if acc == "" then loc else str_cat(acc, str_cat(", ", loc)) in
-    import_spec_locals(pairs, i + 1, acc2)
-
-let import_repl_str(e) =
-  let al = if len(e) > 3 then nth(e, 3) else 0 in
-  if al != 0 then al
-  else if len(e) < 3 then nth(e, 1)
-  else if nth(e, 2) == 0 then nth(e, 1)
-  else
-    let s = import_spec_locals(nth(e, 2), 0, "") in
-    if s == "" then nth(e, 1) else s
-
-let ast_repl_import(ast) =
-  let n = len(ast) in
-  if n == 0 then ast
-  else
-    let e = nth(ast, n - 1) in
-    if nth(e, 0) != "import" then ast
-    else append(ast, [["str", import_repl_str(e)]])
-
-let compile_jit(src, t, named) =
-  let ast = pass_parse(pass_lex(src)) in
-  if prog_has_err(ast, 0) then
-    let _ = print("error: syntax") in 1
-  else if report_unbound(src, ast) != 0 then 1
-  else if named then
-    if len(ast) == 0 then 0
-    else
-      let ast1 = ast_repl_import(ast) in
-      let _ = link_from_ast(ast1) in
-      let bn = repl_last_let(ast1) in
-      let _ = log_set_hush(true) in
-      let r = lower_expr(pass_lir_eval(pass_anf(ast1), bn), t) in
-      let _ = log_set_hush(false) in
-      let _ = cimport_jit_bind(nth(r, 0)) in
-      let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval")) in 0
-  else
-    let _ = link_from_ast(ast) in
-    let _ = log_set_hush(true) in
-    let r = lower_expr(pass_lir_eval(pass_anf(ast), ""), t) in
-    let _ = log_set_hush(false) in
-    let _ = cimport_jit_bind(nth(r, 0)) in
-    let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval")) in 0
+let report_unbound(src, ast) = report_unbound_ex(src, ast, [])
 
 let make_pipeline(t) =
   let pass_lower(ast) = nth(lower_expr(ast, t), 0) in
@@ -426,27 +362,6 @@ let dump_uncps(src, do_opt) =
       let _ = print(str_cat("error: ", nth(r, 1))) in 1
     else
       let _ = print(r) in 0
-
-let compile_jit_anf(anf, t, bn) =
-  let _ = log_set_hush(true) in
-  let r = lower_expr(pass_lir_eval(anf, bn), t) in
-  let _ = log_set_hush(false) in
-  let _ = cimport_jit_bind(nth(r, 0)) in
-  let _ = jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval")) in 0
-
-let compile_uncps(src, t, named, do_opt) =
-  let ast = pass_parse(pass_lex(src)) in
-  if prog_has_err(ast, 0) then
-    let _ = print("error: syntax") in 1
-  else if report_unbound(src, ast) != 0 then 1
-  else
-    let _ = link_from_ast(ast) in
-    let r = uncps_all(cps_maybe_opt(cps_all(pass_anf(ast)), do_opt)) in
-    if uncps_is_err(r) then
-      let _ = print(str_cat("error: ", nth(r, 1))) in 1
-    else
-      let bn = if named then repl_last_let(ast) else "" in
-      compile_jit_anf(r, t, bn)
 
 let compile_src(src, outpath, t, profpath) =
   let ast0 = pass_parse(pass_lex(src)) in
