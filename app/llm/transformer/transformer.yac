@@ -501,7 +501,7 @@ let parse_ints(s, i, n, acc) =
       let _ = list_push(acc, nth(r, 0)) in
       parse_ints(s, nth(r, 1), n, acc)
 
-/* 用 bytes 写盘，避免 str_cat 把整文件拼到 4KiB 上限后截断。 */
+/* 用 bytes 写盘：反复 str_cat(acc, 下一段) 是 O(n²) 拷贝。 */
 let put_uint(b, x) =
   if x < 10 then bytes_append(b, 48 + x)
   else
