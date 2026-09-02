@@ -82,6 +82,17 @@ let a64_mov_reg(b, rd, rm) =
 let a64_mov_sp(b, rd, rn) = a64_add_imm(b, rd, rn, 0)
 
 /* LDR Xt,[Xn,#off] unsigned, off multiple of 8. */
+let a64_nop_at(b, pos) = a64_u32_at(b, pos, 3573751839)
+
+/* ADRP Xd, #imm21 pages. imm is signed page count. */
+let a64_adrp_at(b, pos, rd, imm21) =
+  let i = band(imm21, 2097151) in
+  a64_u32_at(b, pos, 2415919104 + bshl(band(i, 3), 29) + bshl(bshr(i, 2), 5) + rd)
+
+let a64_ldr_at(b, pos, rt, rn, off) =
+  a64_u32_at(b, pos, 4181721088 + bshl(band(bshr(off, 3), 4095), 10)
+             + bshl(rn, 5) + rt)
+
 let a64_ldr(b, rt, rn, off) =
   a64_u32(b, 4181721088 + bshl(band(bshr(off, 3), 4095), 10) + bshl(rn, 5) + rt)
 

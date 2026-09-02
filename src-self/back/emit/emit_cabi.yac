@@ -1,0 +1,222 @@
+/* emit_cabi.yac — C ABI wrappers + yac_init for shared images (all archs).
+ * PIC abs64: x86 patches an imm64 in-place; ARM/RISC-V load a pooled u64.
+ */
+
+let dlib_pool_put(b, val) =
+  let pad(_) =
+    if band(bytes_len(b), 7) == 0 then 0
+    else
+      let _ = bytes_append(b, 0) in
+      pad(0) in
+  let _ = pad(0) in
+  let pos = bytes_len(b) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = bytes_append(b, 0) in
+  let _ = apply_u64_rel(b, pos, val) in
+  pos
+
+let dlib_a64_ldr_va(b, pos, rd, val, codebase) =
+  let slot = dlib_pool_put(b, val) in
+  let pc = codebase + pos in
+  let tgt = codebase + slot in
+  let pg = 4096 in
+  let pc_page = pc - (pc % pg) in
+  let tgt_page = tgt - (tgt % pg) in
+  let imm = (tgt_page - pc_page) / pg in
+  let lo = tgt - tgt_page in
+  let _ = a64_adrp_at(b, pos, rd, imm) in
+  let _ = a64_ldr_at(b, pos + 4, rd, rd, lo) in
+  let _ = a64_nop_at(b, pos + 8) in
+  a64_nop_at(b, pos + 12)
+
+let dlib_rv_ld_va(b, pos, rd, val, codebase) =
+  let slot = dlib_pool_put(b, val) in
+  let delta = slot - pos in
+  let lo0 = band(delta, 4095) in
+  let lo = if lo0 > 2047 then lo0 - 4096 else lo0 in
+  let hi = bshr(delta - lo, 12) in
+  let _ = rv_auipc_at(b, pos, rd, hi) in
+  let _ = rv_ld_at(b, pos + 4, rd, rd, lo) in
+  let _ = rv_nop_at(b, pos + 8) in
+  let _ = rv_nop_at(b, pos + 12) in
+  let _ = rv_nop_at(b, pos + 16) in
+  let _ = rv_nop_at(b, pos + 20) in
+  let _ = rv_nop_at(b, pos + 24) in
+  rv_nop_at(b, pos + 28)
+
+let dlib_a64_va(b, pos, rd, val, codebase) =
+  if elf_pic(0) == false then a64_mov_imm64_at(b, pos, rd, val)
+  else dlib_a64_ldr_va(b, pos, rd, val, codebase)
+
+let dlib_rv_va(b, pos, rd, val, codebase) =
+  if elf_pic(0) == false then rv_li32_at(b, pos, rd, val)
+  else dlib_rv_ld_va(b, pos, rd, val, codebase)
+
+let cabi_shl_arg(b, j) =
+  if emit_abi_win(0) then
+    if j == 0 then shl_rcx_1(b)
+    else if j == 1 then shl_rdx_1(b)
+    else if j == 2 then shl_r8_1(b)
+    else shl_r9_1(b)
+  else if j == 0 then shl_rdi_1(b)
+  else if j == 1 then shl_rsi_1(b)
+  else if j == 2 then shl_rdx_1(b)
+  else if j == 3 then shl_rcx_1(b)
+  else if j == 4 then shl_r8_1(b)
+  else shl_r9_1(b)
+
+let cabi_shl_args(b, j, n) =
+  if j >= n then 0
+  else
+    let _ = cabi_shl_arg(b, j) in
+    cabi_shl_args(b, j + 1, n)
+
+let cabi_a64_shl(b, j, n) =
+  if j >= n then 0
+  else
+    let _ = a64_lsl1(b, j, j) in
+    cabi_a64_shl(b, j + 1, n)
+
+let cabi_rv_shl(b, j, n) =
+  if j >= n then 0
+  else
+    let r = 10 + j in
+    let _ = rv_slli(b, r, r, 1) in
+    cabi_rv_shl(b, j + 1, n)
+
+let emit_cabi_stub_x86(b, ids, ps, name, nargs) =
+  let _ =
+    if band(bytes_len(b), 1) == 0 then 0
+    else bytes_append(b, 144) in
+  let start = bytes_len(b) in
+  let _ = push_rbp(b) in
+  let _ = mov_rbp_rsp(b) in
+  let _ = cabi_shl_args(b, 0, nargs) in
+  let cpos = bytes_len(b) + 1 in
+  let _ = call_user(b) in
+  let _ = sar_rax_1(b) in
+  let _ = pop_rbp(b) in
+  let _ = ret(b) in
+  let _ = list_push(ps, [1, cpos, emit_map_get(ids, name)]) in
+  start
+
+let emit_cabi_stub_a64(b, ids, ps, name, nargs) =
+  let start = bytes_len(b) in
+  let _ = a64_stp_fp_lr(b) in
+  let _ = a64_mov_sp(b, 29, 31) in
+  let _ = cabi_a64_shl(b, 0, nargs) in
+  let cpos = bytes_len(b) in
+  let _ = a64_bl(b, 0) in
+  let _ = a64_asr1(b, 0, 0) in
+  let _ = a64_ldp_fp_lr(b) in
+  let _ = a64_ret(b) in
+  let _ = list_push(ps, [1, cpos, emit_map_get(ids, name)]) in
+  start
+
+let emit_cabi_stub_rv(b, ids, ps, name, nargs) =
+  let start = bytes_len(b) in
+  let _ = rv_addi(b, 2, 2, 0 - 16) in
+  let _ = rv_sd(b, 1, 2, 8) in
+  let _ = cabi_rv_shl(b, 0, nargs) in
+  let cpos = bytes_len(b) in
+  let _ = rv_jal(b, 1, 0) in
+  let _ = rv_srai(b, 10, 10, 1) in
+  let _ = rv_ld(b, 1, 2, 8) in
+  let _ = rv_addi(b, 2, 2, 16) in
+  let _ = rv_jalr(b, 0, 1, 0) in
+  let _ = list_push(ps, [1, cpos, emit_map_get(ids, name)]) in
+  start
+
+let emit_cabi_stub(b, ids, ps, name, nargs) =
+  let a = emit_arch(0) in
+  if a == "arm64" then emit_cabi_stub_a64(b, ids, ps, name, nargs)
+  else if a == "riscv64" then emit_cabi_stub_rv(b, ids, ps, name, nargs)
+  else emit_cabi_stub_x86(b, ids, ps, name, nargs)
+
+let emit_yac_init_x86(b, ps) =
+  let start = bytes_len(b) in
+  let _ = push_rbp(b) in
+  let _ = mov_rbp_rsp(b) in
+  let _ = xor_rax_rax(b) in
+  let _ = mov_rdi_rax(b) in
+  let _ = mov_rax_imm64(b, 0) in
+  let ac = bytes_len(b) - 8 in
+  let _ = mov_mem_rax_rdi(b) in
+  let _ = mov_rax_imm64(b, 0) in
+  let av = bytes_len(b) - 8 in
+  let _ = mov_mem_rax_rdi(b) in
+  let _ = xor_rax_rax(b) in
+  let _ = pop_rbp(b) in
+  let _ = ret(b) in
+  let _ = list_push(ps, [4, ac]) in
+  let _ = list_push(ps, [5, av]) in
+  let _ = elf_init_off_set(start) in
+  start
+
+let emit_yac_init_a64(b, ps) =
+  let start = bytes_len(b) in
+  let _ = a64_stp_fp_lr(b) in
+  let _ = a64_mov_sp(b, 29, 31) in
+  let _ = a64_movz(b, 2, 0, 0) in
+  let ac = bytes_len(b) in
+  let _ = a64_mov_imm64(b, 0, 0) in
+  let _ = a64_str(b, 2, 0, 0) in
+  let av = bytes_len(b) in
+  let _ = a64_mov_imm64(b, 0, 0) in
+  let _ = a64_str(b, 2, 0, 0) in
+  let _ = a64_ldp_fp_lr(b) in
+  let _ = a64_ret(b) in
+  let _ = list_push(ps, [4, ac]) in
+  let _ = list_push(ps, [5, av]) in
+  let _ = elf_init_off_set(start) in
+  start
+
+let emit_yac_init_rv(b, ps) =
+  let start = bytes_len(b) in
+  let _ = rv_addi(b, 2, 2, 0 - 16) in
+  let _ = rv_sd(b, 1, 2, 8) in
+  let _ = rv_addi(b, 10, 0, 0) in
+  let ac = bytes_len(b) in
+  let _ = rv_li32_pair(b, 6, 0) in
+  let _ = rv_sd(b, 10, 6, 0) in
+  let av = bytes_len(b) in
+  let _ = rv_li32_pair(b, 6, 0) in
+  let _ = rv_sd(b, 10, 6, 0) in
+  let _ = rv_ld(b, 1, 2, 8) in
+  let _ = rv_addi(b, 2, 2, 16) in
+  let _ = rv_jalr(b, 0, 1, 0) in
+  let _ = list_push(ps, [4, ac]) in
+  let _ = list_push(ps, [5, av]) in
+  let _ = elf_init_off_set(start) in
+  start
+
+let emit_yac_init(b, ps) =
+  let a = emit_arch(0) in
+  if a == "arm64" then emit_yac_init_a64(b, ps)
+  else if a == "riscv64" then emit_yac_init_rv(b, ps)
+  else emit_yac_init_x86(b, ps)
+
+let emit_cabi_funs(st, i) =
+  let funs = nth(st, 0) in
+  let n = nth(st, 1) in
+  if i >= n then nth(st, 5)
+  else
+    let f = nth(funs, i) in
+    if cabi_should(f) == false then emit_cabi_funs(st, i + 1)
+    else
+      let start = emit_cabi_stub(nth(st, 2), nth(st, 3), nth(st, 4),
+                                 nth(f, 1), nth(f, 2)) in
+      let acc = cons([nth(f, 1), start], nth(st, 5)) in
+      emit_cabi_funs([funs, n, nth(st, 2), nth(st, 3), nth(st, 4), acc],
+                     i + 1)
+
+let emit_cabi_all(b, ids, ps, funs) =
+  let ioff = emit_yac_init(b, ps) in
+  let acc = emit_cabi_funs([funs, len(funs), b, ids, ps, [["yac_init", ioff]]], 0) in
+  elf_dynexp_set(acc)

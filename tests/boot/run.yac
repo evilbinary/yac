@@ -3,7 +3,7 @@ import rt.os
 /* tests/boot/run.yac — self-hosted frontend + unit tests (yac, not sh). */
 let TMP = "build/test_tmp"
 let LOG_STUB = "let log(mod, msg) = 0\nlet log_i(mod, key, n) = 0\nlet log_set_hush(v) = 0\nlet log_get_hush(_) = true\n"
-let EMIT_STUB = "let emit_program_arm64(p, v, o) = emit_program_x86_64(p, v, o, \"elf\")\nlet emit_program_riscv64(p, v, o) = emit_program_x86_64(p, v, o, \"elf\")\nlet a64_resolve_loop(st, extra, i) = 0\nlet rv_resolve_loop(st, extra, i) = 0\n"
+let EMIT_STUB = "let emit_program_arm64(p, v, o, f) = emit_program_x86_64(p, v, o, \"elf\")\nlet emit_program_riscv64(p, v, o, f) = emit_program_x86_64(p, v, o, \"elf\")\nlet a64_resolve_loop(st, extra, i) = 0\nlet rv_resolve_loop(st, extra, i) = 0\n"
 
 let sh_quote(s) = str_cat("'", str_cat(s, "'"))
 
@@ -131,6 +131,7 @@ let src_self_rel(n) =
   else if n == "pass.yac" then "lib/pass.yac"
   else if n == "map.yac" then "lib/map.yac"
   else if n == "target.yac" then "back/pack/target.yac"
+  else if n == "dlib.yac" then "back/pack/dlib.yac"
   else if n == "lexer.yac" then "front/lexer.yac"
   else if n == "parser.yac" then "front/parser.yac"
   else if n == "anf.yac" then "front/anf.yac"
@@ -340,7 +341,7 @@ let unit_suite(st) =
     ["pe mz magic", ["target.yac", "pe.yac"], "let t = mk_target(\"x86_64\", \"pe\", \"exec\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet pe = pack_pe_target(t, b);\nprint bytes_ref(pe, 0);\nprint \"\";\nprint bytes_ref(pe, 1);\nprint \"\";\n0;\n", "77\n\n90\n\n0"],
     ["macho magic", ["target.yac", "macho.yac"], "let t = mk_target(\"x86_64\", \"macho\", \"exec\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet m = pack_macho_target(t, b);\nprint bytes_ref(m, 0);\nprint \"\";\nprint bytes_ref(m, 1);\nprint \"\";\n0;\n", "207\n\n250\n\n0"],
     ["pe dll chars", ["target.yac", "pe.yac"], "let t = mk_target(\"x86_64\", \"pe\", \"dylib\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet pe = pack_pe_target(t, b);\nprint bytes_ref(pe, 150);\nprint \"\";\nprint bytes_ref(pe, 151);\nprint \"\";\n0;\n", "34\n\n32\n\n0"],
-    ["macho dylib filetype", ["target.yac", "elf.yac", "macho.yac"], "let t = mk_target(\"x86_64\", \"macho\", \"dylib\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet m = pack_macho_target(t, b);\nprint bytes_ref(m, 12);\nprint \"\";\n0;\n", "6\n\n0"],
+    ["macho dylib filetype", ["target.yac", "dlib.yac", "elf.yac", "macho.yac"], "let t = mk_target(\"x86_64\", \"macho\", \"dylib\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet m = pack_macho_target(t, b);\nprint bytes_ref(m, 12);\nprint \"\";\n0;\n", "6\n\n0"],
     ["elf dylib et_dyn", ["target.yac", "elf.yac"], "let t = mk_target(\"x86_64\", \"elf\", \"dylib\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet elf = pack_elf_ex(b, target_emachine(t), target_vaddr(t), target_text_off(t), 1);\nprint bytes_ref(elf, 16);\nprint \"\";\n0;\n", "3\n\n0"],
     ["target arm64 ids", ["target.yac"], "let t = mk_target(\"arm64\", \"elf\", \"exec\");\nprint target_arch(t);\nprint \"\";\nprint target_emachine(t);\nprint \"\";\n0;\n", "arm64\n\n183\n\n0"],
     ["target riscv64 ids", ["target.yac"], "let t = mk_target(\"riscv64\", \"elf\", \"exec\");\nprint target_arch(t);\nprint \"\";\nprint target_emachine(t);\nprint \"\";\n0;\n", "riscv64\n\n243\n\n0"],
@@ -394,6 +395,7 @@ let main =
   let _ = write_file(str_cat(TMP, "/emit_stub.yac"), EMIT_STUB) in
   let _ = cat_files([str_cat(TMP, "/log_stub.yac"),
                      "src-self/back/pack/target.yac",
+                     "src-self/back/pack/dlib.yac",
                      "src-self/lib/map.yac",
                      "src-self/front/lexer.yac", "src-self/front/parser.yac",
                      "src-self/back/encode/encode_x64.yac",
@@ -404,6 +406,7 @@ let main =
                      "src-self/front/lir.yac",
                      "src-self/back/emit/emit.yac",
                      "src-self/back/emit/linux_x86_64.yac", "src-self/back/emit/win_x86_64.yac",
+                     "src-self/back/emit/emit_cabi.yac",
                      "src-self/back/emit/emit_x86_64.yac",
                      str_cat(TMP, "/emit_stub.yac"),
                      "src-self/back/lower.yac",
@@ -411,6 +414,7 @@ let main =
                     str_cat(TMP, "/emit_run.yac")) in
   let _ = cat_files([str_cat(TMP, "/log_stub.yac"),
                      "src-self/back/pack/target.yac",
+                     "src-self/back/pack/dlib.yac",
                      "src-self/lib/map.yac",
                      "src-self/front/lexer.yac", "src-self/front/parser.yac",
                      "src-self/front/anf.yac",
@@ -422,6 +426,7 @@ let main =
                      "src-self/front/lir.yac", "src-self/rt/runtime.yac",
                      "src-self/back/emit/emit.yac",
                      "src-self/back/emit/linux_x86_64.yac", "src-self/back/emit/win_x86_64.yac",
+                     "src-self/back/emit/emit_cabi.yac",
                      "src-self/back/emit/emit_x86_64.yac",
                      str_cat(TMP, "/emit_stub.yac"),
                      "src-self/back/lower.yac",

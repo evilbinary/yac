@@ -143,58 +143,6 @@ let elf_shared(_) =
   let v = box_get(elf_shared_box) in
   if v == 0 then false else true
 
-let elf_dynexp_box =
-  let b = box_new() in
-  let _ = box_set(b, []) in
-  b
-
-let elf_dynexp_set(v) = box_set(elf_dynexp_box, v)
-
-let elf_dynexp_get(_) =
-  let v = box_get(elf_dynexp_box) in
-  if v == 0 then [] else v
-
-let elf_init_off_box =
-  let b = box_new() in
-  let _ = box_set(b, 0) in
-  b
-
-let elf_init_off_set(n) = box_set(elf_init_off_box, n)
-
-let elf_init_off(_) = box_get(elf_init_off_box)
-
-let elf_pic_box =
-  let b = box_new() in
-  let _ = box_set(b, 0) in
-  b
-
-let elf_relocs_box =
-  let b = box_new() in
-  let _ = box_set(b, 0) in
-  b
-
-let elf_pic_set(on) = box_set(elf_pic_box, on)
-
-let elf_pic(_) =
-  let v = box_get(elf_pic_box) in
-  if v == 0 then false else true
-
-let elf_relocs_reset(_) =
-  let _ = box_set(elf_relocs_box, list_new()) in
-  let _ = elf_init_off_set(0) in
-  elf_dynexp_set([])
-
-let elf_relocs_get(_) =
-  let v = box_get(elf_relocs_box) in
-  if v == 0 then list_new() else v
-
-let elf_note_abs64(pos) =
-  if box_get(elf_pic_box) == 0 then 0
-  else
-    let xs = box_get(elf_relocs_box) in
-    if xs == 0 then 0
-    else list_push(xs, pos)
-
 let elf_u64_at(b, i) =
   let b0 = bytes_ref(b, i) in
   let b1 = bytes_ref(b, i + 1) in

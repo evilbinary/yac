@@ -65,6 +65,15 @@ let rv_sltiu(b, rd, rs1, imm) =
 let rv_lui(b, rd, imm20) =
   rv_u32(b, bshl(band(imm20, 1048575), 12) + bshl(rd, 7) + 55)
 
+let rv_nop_at(b, pos) = rv_u32_at(b, pos, 19)
+
+let rv_ld_at(b, pos, rd, rs1, imm) =
+  rv_u32_at(b, pos, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + 12288
+            + bshl(rd, 7) + 3)
+
+let rv_auipc_at(b, pos, rd, imm20) =
+  rv_u32_at(b, pos, bshl(band(imm20, 1048575), 12) + bshl(rd, 7) + 23)
+
 let rv_ld(b, rd, rs1, imm) =
   rv_u32(b, bshl(band(imm, 4095), 20) + bshl(rs1, 15) + 12288 + bshl(rd, 7) + 3)
 

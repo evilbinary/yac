@@ -1680,27 +1680,27 @@ let rv_resolve_patch(st, p) =
   if tag == 1 then
     rv_apply_jal(b, nth(p, 1), nth(offs, nth(p, 2)), 1)
   else if tag == 2 then
-    rv_li32_at(b, nth(p, 1), 11, codebase + nth(offs, nth(p, 2)))
+    dlib_rv_va(b, nth(p, 1), 11, codebase + nth(offs, nth(p, 2)), codebase)
   else if tag == 3 then
-    rv_li32_at(b, nth(p, 1), 6, globbase)
+    dlib_rv_va(b, nth(p, 1), 6, globbase, codebase)
   else if tag == 4 then
-    rv_li32_at(b, nth(p, 1), 6, globbase + 8)
+    dlib_rv_va(b, nth(p, 1), 6, globbase + 8, codebase)
   else if tag == 5 then
-    rv_li32_at(b, nth(p, 1), 6, globbase + 16)
+    dlib_rv_va(b, nth(p, 1), 6, globbase + 16, codebase)
   else if tag == 6 then
-    rv_li32_at(b, nth(p, 1), 6, globbase + 24)
+    dlib_rv_va(b, nth(p, 1), 6, globbase + 24, codebase)
   else if tag == 7 then
-    rv_li32_at(b, nth(p, 1), 6, globbase + 48)
+    dlib_rv_va(b, nth(p, 1), 6, globbase + 48, codebase)
   else if tag == 8 then
-    rv_li32_at(b, nth(p, 1), 6, globbase + 56)
+    dlib_rv_va(b, nth(p, 1), 6, globbase + 56, codebase)
   else if tag == 9 then
     rv_apply_jal(b, nth(p, 1), nth(offs, nth(p, 2)), 0)
   else if tag == 11 then
-    rv_li32_at(b, nth(p, 1), 10, nth(st, 5) + nth(p, 2) + 1)
+    dlib_rv_va(b, nth(p, 1), 10, nth(st, 5) + nth(p, 2) + 1, codebase)
   else if tag == 15 then
     rv_apply_jal(b, nth(p, 1), nth(nth(cimport_buf(0), 1), nth(p, 2)), 1)
   else if tag == "cclab" then
-    rv_li32_at(b, nth(p, 1), 6, codebase + nth(p, 2))
+    dlib_rv_va(b, nth(p, 1), 6, codebase + nth(p, 2), codebase)
   else
     let pos = nth(p, 1) in
     let lab = nth(p, 2) in
@@ -1713,7 +1713,13 @@ let rv_resolve_loop(st, ps, i) =
     let _ = rv_resolve_patch(st, nth(ps, i)) in
     rv_resolve_loop(st, ps, i + 1)
 
-let emit_program_riscv64(prog, load_vaddr, text_off) =
+let emit_program_riscv64(prog, load_vaddr, text_off, fmt) =
+  let _ = emit_fmt_set(fmt) in
+  let _ =
+    emit_abi_win_set(
+      if fmt == "pe" then true
+      else if load_vaddr == JIT_VADDR then host_os(0) == "windows"
+      else false) in
   let _ = strlit_pool_reset(0) in
   let _ = cimport_reset(0) in
   let ckeep = cimport_buf(0) in
@@ -1753,6 +1759,9 @@ let emit_program_riscv64(prog, load_vaddr, text_off) =
   let b = nth(st, 0) in
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
+  let _ =
+    if elf_pic(0) then emit_cabi_all(b, nth(st, 4), patches, funs)
+    else 0 in
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in

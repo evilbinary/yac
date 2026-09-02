@@ -395,6 +395,37 @@ let cps_all(st, yc, stem) =
       exit(2)
     else cps_one(st, yc, c)
 
+let elf_so_hdr(path, emlo) =
+  let b = read_file(path) in
+  if b == 0 then false
+  else if str_len(b) < 20 then false
+  else if str_ref(b, 16) != 3 then false
+  else if str_ref(b, 18) != emlo then false
+  else str_ref(b, 19) == 0
+
+let pe_dll_hdr(path) =
+  let b = read_file(path) in
+  if b == 0 then false
+  else if str_len(b) < 270 then false
+  else if str_ref(b, 0) != 77 then false
+  else if str_ref(b, 1) != 90 then false
+  else if str_ref(b, 150) != 34 then false
+  else if str_ref(b, 151) != 32 then false
+  else str_ref(b, 264) + str_ref(b, 265) + str_ref(b, 266) + str_ref(b, 267) != 0
+
+let macho_dylib_hdr(path) =
+  let b = read_file(path) in
+  if b == 0 then false
+  else if str_len(b) < 16 then false
+  else if str_ref(b, 0) != 207 then false
+  else str_ref(b, 12) == 6
+
+let shared_out(yc, arch, fmt, suf) =
+  let p = str_cat(TMP, str_cat("/libdadd_", str_cat(arch, suf))) in
+  let _ = run(append(yc, [case_src("dylib_add"), "--arch", arch,
+                          "--format", fmt, "--shared", "-o", p])) in
+  p
+
 let compiler_all(st, yc) =
   let _ = banner("compiler/cases", nth(yc, 0)) in
   let _ = compiler_prep_libs(0) in
@@ -506,9 +537,27 @@ let compiler_all(st, yc) =
   let st1dm = check(st1dp, "macho --shared default .dylib", "1",
                     if nth(run(["test", "-f", str_cat(TMP, "/dlibmo.dylib")]), 0) == 0
                     then "1" else "0") in
+  let st1as = check(st1dm, "arm64 elf --shared", "1",
+                    if elf_so_hdr(shared_out(yc, "arm64", "elf", ".so"), 183)
+                    then "1" else "0") in
+  let st1rs = check(st1as, "riscv64 elf --shared", "1",
+                    if elf_so_hdr(shared_out(yc, "riscv64", "elf", ".so"), 243)
+                    then "1" else "0") in
+  let st1ap = check(st1rs, "arm64 pe --shared", "1",
+                    if pe_dll_hdr(shared_out(yc, "arm64", "pe", ".dll"))
+                    then "1" else "0") in
+  let st1rp = check(st1ap, "riscv64 pe --shared", "1",
+                    if pe_dll_hdr(shared_out(yc, "riscv64", "pe", ".dll"))
+                    then "1" else "0") in
+  let st1am = check(st1rp, "arm64 macho --shared", "1",
+                    if macho_dylib_hdr(shared_out(yc, "arm64", "macho", ".dylib"))
+                    then "1" else "0") in
+  let st1rm = check(st1am, "riscv64 macho --shared", "1",
+                    if macho_dylib_hdr(shared_out(yc, "riscv64", "macho", ".dylib"))
+                    then "1" else "0") in
   let yjs = str_cat(TMP, "/sess.yjit") in
   let rdump = repl_feed(yc, str_cat("1+2\n:dump ", str_cat(yjs, "\n:q\n"))) in
-  let st1d = check(st1dm, "yjit dump sess", "0", int_to_str(nth(rdump, 0))) in
+  let st1d = check(st1rm, "yjit dump sess", "0", int_to_str(nth(rdump, 0))) in
   let rload = repl_feed(yc, str_cat(":load ", str_cat(yjs, "\nprint(\"hello\")\n:q\n"))) in
   let lblob = str_cat(nth(rload, 1), nth(rload, 2)) in
   let st1l =
@@ -664,12 +713,13 @@ let yc_srcs(_) = [
   "src-self/front/lexer.yac", "src-self/front/parser.yac", "src-self/front/anf.yac",
   "src-self/front/cps.yac", "src-self/front/eval_cps.yac", "src-self/front/uncps.yac",
   "src-self/front/lir.yac", "src-self/rt/runtime.yac",
-  "src-self/back/pack/target.yac", "src-self/back/pack/elf.yac", "src-self/back/pack/pe.yac",
+  "src-self/back/pack/target.yac", "src-self/back/pack/dlib.yac", "src-self/back/pack/elf.yac", "src-self/back/pack/pe.yac",
   "src-self/back/pack/macho.yac", "src-self/back/pack/yjit.yac", "src-self/back/pack/pack.yac",
   "src-self/back/encode/encode_x64.yac", "src-self/back/encode/encode_arm64.yac",
   "src-self/back/encode/encode_riscv64.yac",
   "src-self/back/emit/emit.yac",
   "src-self/back/emit/linux_x86_64.yac", "src-self/back/emit/win_x86_64.yac",
+  "src-self/back/emit/emit_cabi.yac",
   "src-self/back/emit/emit_x86_64.yac", "src-self/back/emit/emit_arm64.yac",
   "src-self/back/emit/emit_riscv64.yac",
   "src-self/back/lower.yac", "src-self/back/profile.yac",

@@ -46,3 +46,4 @@ app/llm/chat_data.jsonl
 app/llm/pretrain_t2t_mini.jsonl
 liba.so
 a.yac
+tests/run

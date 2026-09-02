@@ -300,6 +300,15 @@ let emit_abi_win(_) = box_get(emit_abi_win_box)
 
 let emit_host_win(_) = emit_abi_win(0)
 
+let emit_arch_box =
+  let b = box_new() in
+  let _ = box_set(b, "x86_64") in
+  b
+
+let emit_arch_set(a) = box_set(emit_arch_box, a)
+
+let emit_arch(_) = box_get(emit_arch_box)
+
 let cabi_maxargs(_) = if emit_abi_win(0) then 4 else 6
 
 let cabi_should(f) =

@@ -1675,27 +1675,27 @@ let a64_resolve_patch(st, p) =
   if tag == 1 then
     a64_apply_bl(b, nth(p, 1), nth(offs, nth(p, 2)))
   else if tag == 2 then
-    a64_mov_imm64_at(b, nth(p, 1), 1, codebase + nth(offs, nth(p, 2)))
+    dlib_a64_va(b, nth(p, 1), 1, codebase + nth(offs, nth(p, 2)), codebase)
   else if tag == 3 then
-    a64_mov_imm64_at(b, nth(p, 1), 0, globbase)
+    dlib_a64_va(b, nth(p, 1), 0, globbase, codebase)
   else if tag == 4 then
-    a64_mov_imm64_at(b, nth(p, 1), 0, globbase + 8)
+    dlib_a64_va(b, nth(p, 1), 0, globbase + 8, codebase)
   else if tag == 5 then
-    a64_mov_imm64_at(b, nth(p, 1), 0, globbase + 16)
+    dlib_a64_va(b, nth(p, 1), 0, globbase + 16, codebase)
   else if tag == 6 then
-    a64_mov_imm64_at(b, nth(p, 1), 0, globbase + 24)
+    dlib_a64_va(b, nth(p, 1), 0, globbase + 24, codebase)
   else if tag == 7 then
-    a64_mov_imm64_at(b, nth(p, 1), 0, globbase + 48)
+    dlib_a64_va(b, nth(p, 1), 0, globbase + 48, codebase)
   else if tag == 8 then
-    a64_mov_imm64_at(b, nth(p, 1), 0, globbase + 56)
+    dlib_a64_va(b, nth(p, 1), 0, globbase + 56, codebase)
   else if tag == 9 then
     a64_apply_b26(b, nth(p, 1), nth(offs, nth(p, 2)))
   else if tag == 11 then
-    a64_mov_imm64_at(b, nth(p, 1), 0, nth(st, 5) + nth(p, 2) + 1)
+    dlib_a64_va(b, nth(p, 1), 0, nth(st, 5) + nth(p, 2) + 1, codebase)
   else if tag == 15 then
     a64_apply_bl(b, nth(p, 1), nth(nth(cimport_buf(0), 1), nth(p, 2)))
   else if tag == "cclab" then
-    a64_mov_imm64_at(b, nth(p, 1), 8, codebase + nth(p, 2))
+    dlib_a64_va(b, nth(p, 1), 8, codebase + nth(p, 2), codebase)
   else
     let pos = nth(p, 1) in
     let lab = nth(p, 2) in
@@ -1709,7 +1709,13 @@ let a64_resolve_loop(st, ps, i) =
     let _ = a64_resolve_patch(st, nth(ps, i)) in
     a64_resolve_loop(st, ps, i + 1)
 
-let emit_program_arm64(prog, load_vaddr, text_off) =
+let emit_program_arm64(prog, load_vaddr, text_off, fmt) =
+  let _ = emit_fmt_set(fmt) in
+  let _ =
+    emit_abi_win_set(
+      if fmt == "pe" then true
+      else if load_vaddr == JIT_VADDR then host_os(0) == "windows"
+      else false) in
   let _ = strlit_pool_reset(0) in
   let _ = cimport_reset(0) in
   let ckeep = cimport_buf(0) in
@@ -1749,6 +1755,9 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
   let b = nth(st, 0) in
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
+  let _ =
+    if elf_pic(0) then emit_cabi_all(b, nth(st, 4), patches, funs)
+    else 0 in
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in
