@@ -11,7 +11,6 @@
  *   ./app/llm/llm [语料路径] [提示词]
  * 默认语料 app/llm/corpus.txt（日常短对话），默认提示「你好」。
  *
- * 热循环参数个数 ≤ 5，否则 Windows 上尾调用无法折叠会撑爆栈。
  * 可变数组必须 list_new + list_push，字面量 [] 不能 list_set。
  */
 
@@ -133,14 +132,12 @@ let dist(m, a, b) =
   if row_sum(row, 0, 0) <= 0 then nth(m, 1)
   else row
 
-/* 贪心命中数。st = [n, hit, 占位]。 */
-let acc_ids(w, ids, v, i, st) =
-  if i >= nth(st, 0) then nth(st, 1)
+/* 贪心命中数：从 i 扫到 n。 */
+let acc_ids(w, ids, v, i, n, hit) =
+  if i >= n then hit
   else
     let pred = argmax(row_at(w, nth(ids, i - 2), nth(ids, i - 1), v)) in
-    let h = nth(st, 1) in
-    let _ = list_set(st, 1, if pred == nth(ids, i) then h + 1 else h) in
-    acc_ids(w, ids, v, i + 1, st)
+    acc_ids(w, ids, v, i + 1, n, if pred == nth(ids, i) then hit + 1 else hit)
 
 /* LCG；结果折成非负，避免 irem 出负下标、采样永远打到词表[0]。 */
 let rng_next(s) =
@@ -171,38 +168,20 @@ let prompt_ids(prompt, vocab, i, a, b) =
     if k < 0 then prompt_ids(prompt, vocab, i + str_len(c), a, b)
     else prompt_ids(prompt, vocab, i + str_len(c), b, k)
 
-/* 贪心续写 n 个字。st = [prev2, prev1, 已生成字符串]。 */
-let generate(m, vocab, st, n) =
-  if n <= 0 then nth(st, 2)
+/* 贪心续写 n 个字。 */
+let generate(m, vocab, a, b, acc, n) =
+  if n <= 0 then acc
   else
-    let nxt = argmax(dist(m, nth(st, 0), nth(st, 1))) in
-    let acc = str_cat(nth(st, 2), nth(vocab, nxt)) in
-    let _ = list_set(st, 0, nth(st, 1)) in
-    let _ = list_set(st, 1, nxt) in
-    let _ = list_set(st, 2, acc) in
-    generate(m, vocab, st, n - 1)
+    let nxt = argmax(dist(m, a, b)) in
+    generate(m, vocab, b, nxt, str_cat(acc, nth(vocab, nxt)), n - 1)
 
-/* 采样续写。st = [prev2, prev1, 已生成字符串, rng 种子]。 */
-let generate_s(m, vocab, st, n) =
-  if n <= 0 then nth(st, 2)
+/* 采样续写。 */
+let generate_s(m, vocab, a, b, acc, n, seed) =
+  if n <= 0 then acc
   else
-    let r = sample(dist(m, nth(st, 0), nth(st, 1)), nth(st, 3)) in
+    let r = sample(dist(m, a, b), seed) in
     let nxt = nth(r, 0) in
-    let acc = str_cat(nth(st, 2), nth(vocab, nxt)) in
-    let _ = list_set(st, 0, nth(st, 1)) in
-    let _ = list_set(st, 1, nxt) in
-    let _ = list_set(st, 2, acc) in
-    let _ = list_set(st, 3, nth(r, 1)) in
-    generate_s(m, vocab, st, n - 1)
-
-/* 可变 4 元组，给 list_set 用。 */
-let st4(a, b, c, d) =
-  let s = list_new() in
-  let _ = list_push(s, a) in
-  let _ = list_push(s, b) in
-  let _ = list_push(s, c) in
-  let _ = list_push(s, d) in
-  s
+    generate_s(m, vocab, b, nxt, str_cat(acc, nth(vocab, nxt)), n - 1, nth(r, 1))
 
 /* 可变 3 元组。 */
 let st3(a, b, c) =
@@ -246,13 +225,13 @@ let rc =
     let _ = print("--- train (count C[prev2,prev1][next]) ---") in
     let _ = train_ids(w, ids, v, 2, len(ids)) in
     let _ = train_u(u, ids, 0, len(ids)) in
-    let hit = acc_ids(w, ids, v, 2, st3(len(ids), 0, 0)) in
+    let hit = acc_ids(w, ids, v, 2, len(ids), 0) in
     let _ = print(format("greedy acc %d / %d", [hit, pairs])) in
     let pb = prompt_ids(prompt, vocab, 0, nth(ids, 0), nth(ids, 0)) in
     let a0 = nth(pb, 0) in
     let b0 = nth(pb, 1) in
-    let g = generate(m, vocab, st3(a0, b0, prompt), ngen) in
-    let s = generate_s(m, vocab, st4(a0, b0, prompt, time_ns()), ngen) in
+    let g = generate(m, vocab, a0, b0, prompt, ngen) in
+    let s = generate_s(m, vocab, a0, b0, prompt, ngen, time_ns()) in
     let _ = print("--- infer greedy ---") in
     let _ = print(g) in
     let _ = print("--- infer sample ---") in
