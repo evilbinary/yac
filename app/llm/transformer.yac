@@ -200,6 +200,7 @@ let model_new(vocab, seed) =
   let _ = mat_rand(Wq, 0, seed + 1, 2) in
   let _ = mat_rand(Wk, 0, seed + 2, 2) in
   let _ = mat_rand(Wv, 0, seed + 3, 2) in
+  let _ = mat_rand(Wout, 0, seed + 4, 2) in
   let m = list_new() in
   let _ = list_push(m, E) in
   let _ = list_push(m, Wq) in
@@ -235,16 +236,16 @@ let mv_j(W, x, y, j, s) =
     let _ = list_set(y, j, mv_i(W, x, j, 0, 0) / s) in
     mv_j(W, x, y, j + 1, s)
 
-/* 位置 t：X[t] = E[id] + 3t·e_0（简易位置编码），再算 Q/K/V。 */
-let embed_t(m, ids, t, d) =
-  if t >= ctx(0) then 0
+/* 位置 t：X[t] = E[id] + 3t·e_0（简易位置编码），再算 Q/K/V。n = 实际长度。 */
+let embed_t(m, ids, t, n) =
+  if t >= n then 0
   else
     let _ = copy_row(nth(nth(m, 5), t), nth(nth(m, 0), nth(ids, t)), 0) in
     let _ = list_set(nth(nth(m, 5), t), 0, nth(nth(nth(m, 5), t), 0) + t * 3) in
     let _ = mv_j(nth(m, 1), nth(nth(m, 5), t), nth(nth(m, 6), t), 0, sc(0)) in
     let _ = mv_j(nth(m, 2), nth(nth(m, 5), t), nth(nth(m, 7), t), 0, sc(0)) in
     let _ = mv_j(nth(m, 3), nth(nth(m, 5), t), nth(nth(m, 8), t), 0, sc(0)) in
-    embed_t(m, ids, t + 1, d)
+    embed_t(m, ids, t + 1, n)
 
 /* 整数 exp 近似：e^{x/S} ≈ 2^{-⌊(-x)/3⌋}（x≤0）。用于 softmax 稳定化后的 exp(s-max)。 */
 let exp_w(x) =
@@ -309,17 +310,13 @@ let sm_logits(m, mx, i, v, z) =
     let _ = list_set(nth(m, 13), i, w) in
     sm_logits(m, mx, i + 1, v, z + w)
 
-/* p[i] = S · w[i] / Σw */
-let sm_p(m, z, i, v, s) =
-  if i >= v then 0
-  else
-    let _ = list_set(nth(m, 13), i, nth(nth(m, 13), i) * s / z) in
-    sm_p(m, z, i + 1, v, s)
+/* p[i] = S·w[i]/Σw。整数除法在 V 大时会全变成 0，所以前向把未归一化的
+ * w=exp(logit-max) 留在 m[13]，解码用 logits / w，训练用 g = w − z·onehot。 */
 
-/* 因果注意力 + 读出最后位置的 p。写入 m[9..13]。 */
+/* 因果注意力 + 读出最后位置。m[12]=logits，m[13]=softmax 分子 w。 */
 let forward_last(m, ids) =
-  let t = ctx(0) - 1 in
-  let _ = embed_t(m, ids, 0, 0) in
+  let t = len(ids) - 1 in
+  let _ = embed_t(m, ids, 0, len(ids)) in
   let _ = score_j(m, t, 0) in
   let mx = sc_max(nth(m, 9), 0, t, nth(nth(m, 9), 0)) in
   let z = attn_w(m, mx, 0, t, 0) in
@@ -329,39 +326,49 @@ let forward_last(m, ids) =
   let _ = logits_fill(m) in
   let v = ntok(m) in
   let lmx = sc_max(nth(m, 12), 0, v - 1, nth(nth(m, 12), 0)) in
-  let pz = sm_logits(m, lmx, 0, v, 0) in
-  let pz2 = if pz < 1 then 1 else pz in
-  sm_p(m, pz2, 0, v, sc(0))
+  sm_logits(m, lmx, 0, v, 0)
 
-/* Wout 一行：W[i][j] -= lr · h[i] · g[j] / S
- * 对应 dL/dW_out = h ⊗ (p − y)，L 为交叉熵。 */
-let outer_wj(row, xi, g, j, lr) =
+let clip(x, lo, hi) =
+  if x < lo then lo
+  else if x > hi then hi
+  else x
+
+/* Wout[i][j] -= h[i] · g[j] / den
+ * 交叉熵：g = w − z·onehot(y)，den 含学习率（z·8）。 */
+let outer_wj(row, xi, g, j, den) =
   if j >= len(g) then 0
   else
-    let _ = list_set(row, j, nth(row, j) - lr * xi * nth(g, j) / sc(0)) in
-    outer_wj(row, xi, g, j + 1, lr)
+    let u = nth(row, j) - xi * nth(g, j) / den in
+    let _ = list_set(row, j, clip(u, 0 - 512, 512)) in
+    outer_wj(row, xi, g, j + 1, den)
 
-let outer_w(W, x, g, i, lr) =
+let outer_w(W, x, g, i, den) =
   if i >= len(x) then 0
   else
-    let _ = outer_wj(nth(W, i), nth(x, i), g, 0, lr) in
-    outer_w(W, x, g, i + 1, lr)
+    let _ = outer_wj(nth(W, i), nth(x, i), g, 0, den) in
+    outer_w(W, x, g, i + 1, den)
 
-/* 把 hidden 的一小步加回最后 token 的 embedding（简化的 ∂L/∂E）。 */
-let add_embed(E, id, h, i, lr) =
-  if i >= len(h) then 0
+/* dh[k] = Σ_j Wout[k][j] g[j]  （未除 den） */
+let dh_k(W, g, k, j, acc) =
+  if j >= len(g) then acc
+  else dh_k(W, g, k, j + 1, acc + nth(nth(W, k), j) * nth(g, j))
+
+/* E[id] -= lr · (Wout g / den)。残差使 ∂L/∂E_last = ∂L/∂h。 */
+let embed_grad(m, id, den, lr, k) =
+  let row = nth(nth(m, 0), id) in
+  if k >= len(row) then 0
   else
-    let row = nth(E, id) in
-    let _ = list_set(row, i, nth(row, i) + lr * nth(h, i) / 8) in
-    add_embed(E, id, h, i + 1, lr)
+    let dh = dh_k(nth(m, 4), nth(m, 13), k, 0, 0) / den in
+    let _ = list_set(row, k, clip(nth(row, k) - lr * dh, 0 - 256, 256)) in
+    embed_grad(m, id, den, lr, k + 1)
 
-/* g = p − onehot(y)，p 与 onehot 都在尺度 S 上（onehot 的 1 ↔ S）。 */
-let g_fill(p, y, i, v) =
+/* g[i] = w[i] − (i==y ? z : 0)，即 z·(p − onehot)。 */
+let g_fill(w, y, z, i, v) =
   if i >= v then 0
   else
-    let t = if i == y then sc(0) else 0 in
-    let _ = list_set(p, i, nth(p, i) - t) in
-    g_fill(p, y, i + 1, v)
+    let t = if i == y then z else 0 in
+    let _ = list_set(w, i, nth(w, i) - t) in
+    g_fill(w, y, z, i + 1, v)
 
 /* ids[pos .. pos+T) */
 let win_ids(ids, pos, t, acc, k) =
@@ -370,24 +377,35 @@ let win_ids(ids, pos, t, acc, k) =
     let _ = list_push(acc, nth(ids, pos + k)) in
     win_ids(ids, pos, t, acc, k + 1)
 
-/* 一步：窗口预测 ids[pos+T]。更新 Wout 与 E[last]。返回贪心是否命中。 */
+/* 一步：窗口预测 ids[pos+T]。g=w−z·onehot，Wout 按 /z 更新。 */
 let train_step(m, ids, pos, lr) =
   let t = ctx(0) in
   let wids = win_ids(ids, pos, t, list_new(), 0) in
   let y = nth(ids, pos + t) in
   let _ = forward_last(m, wids) in
-  let p = nth(m, 13) in
-  let hit = if argmax(p) == y then 1 else 0 in
-  let _ = g_fill(p, y, 0, ntok(m)) in
-  let _ = outer_w(nth(m, 4), nth(m, 11), p, 0, lr) in
-  let _ = add_embed(nth(m, 0), nth(wids, t - 1), nth(m, 11), 0, lr) in
+  let w = nth(m, 13) in
+  let z0 = row_sum(w, 0, 0) in
+  let z = if z0 < 1 then 1 else z0 in
+  let hit = if argmax(nth(m, 12)) == y then 1 else 0 in
+  let _ = g_fill(w, y, z, 0, ntok(m)) in
+  let den = z * 8 in
+  let _ = outer_w(nth(m, 4), nth(m, 11), w, 0, den) in
+  let _ = embed_grad(m, nth(wids, t - 1), den, lr, 0) in
   hit
 
-let pad_ctx(ids, pad, t) =
+/* 左侧补 pad，避免短提示把最后一位填成词表[0]（语料里常是「你」）。 */
+let copy_ids(src, i, dst) =
+  if i >= len(src) then dst
+  else
+    let _ = list_push(dst, nth(src, i)) in
+    copy_ids(src, i + 1, dst)
+
+let pad_left(ids, pad, t) =
   if len(ids) >= t then ids
   else
-    let _ = list_push(ids, pad) in
-    pad_ctx(ids, pad, t)
+    let out = list_new() in
+    let _ = list_push(out, pad) in
+    pad_left(copy_ids(ids, 0, out), pad, t)
 
 let take_from(ids, i, acc) =
   if i >= len(ids) then acc
@@ -395,13 +413,14 @@ let take_from(ids, i, acc) =
     let _ = list_push(acc, nth(ids, i)) in
     take_from(ids, i + 1, acc)
 
-/* 取末尾 T 个 id；不够则 pad。 */
+/* 取末尾最多 T 个 id。短序列不补 pad，避免注意力被填充符淹没。 */
 let ctx_from(ids, pad) =
   let t = ctx(0) in
   if len(ids) >= t then take_from(ids, len(ids) - t, list_new())
-  else pad_ctx(ids, pad, t)
+  else if len(ids) < 1 then pad_left(ids, pad, 1)
+  else ids
 
-/* 贪心续写 n 字：每次 argmax(p)。 */
+/* 贪心续写：argmax(logits)，避免 truncated p 全 0 时永远落到词表[0]。 */
 let generate(m, acc, n, pad) =
   if n <= 0 then acc
   else
@@ -409,17 +428,17 @@ let generate(m, acc, n, pad) =
     let pids = prompt_tail(acc, vocab, pad, list_new()) in
     let w = ctx_from(pids, pad) in
     let _ = forward_last(m, w) in
-    let nxt = argmax(nth(m, 13)) in
+    let nxt = argmax(nth(m, 12)) in
     generate(m, str_cat(acc, nth(vocab, nxt)), n - 1, pad)
 
-/* 按 p 采样续写。 */
+/* 按未归一化 w=exp(logit-max) 采样。 */
 let generate_s(m, acc, n, pad, seed) =
   if n <= 0 then acc
   else
     let vocab = vocab_of(m) in
     let pids = prompt_tail(acc, vocab, pad, list_new()) in
-    let w = ctx_from(pids, pad) in
-    let _ = forward_last(m, w) in
+    let win = ctx_from(pids, pad) in
+    let _ = forward_last(m, win) in
     let r = sample(nth(m, 13), seed) in
     let nxt = nth(r, 0) in
     generate_s(m, str_cat(acc, nth(vocab, nxt)), n - 1, pad, nth(r, 1))

@@ -23,7 +23,9 @@ let rc =
   if m == 0 then
     let _ = print("load failed (train first: app/llm/train)") in 1
   else
-    let pad = 0 in
+    let vocab = vocab_of(m) in
+    let nl = find_char(vocab, "\n", 0) in
+    let pad = if nl < 0 then 0 else nl in
     let _ = print(format("transformer  V=%d  d=%d  T=%d", [ntok(m), dim(0), ctx(0)])) in
     let g = generate(m, prompt, 40, pad) in
     let s = generate_s(m, prompt, 40, pad, time_ns()) in

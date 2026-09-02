@@ -89,6 +89,10 @@ let rc =
       [ntok(m), dim(0), ctx(0), n, nwin])) in
     let _ = print("--- train (fixed-point SGD on last position) ---") in
     let _ = run_ep(m, ids, st4(0, epochs, 1, nwin)) in
+    let nl = find_char(vocab, "\n", 0) in
+    let pad = if nl < 0 then 0 else nl in
+    let _ = print("--- after train, greedy 你好 ---") in
+    let _ = print(generate(m, "你好", 24, pad)) in
     let _ = save_model(m, wpath) in
     let _ = print(str_cat("wrote ", wpath)) in
     0
