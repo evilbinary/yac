@@ -1,0 +1,109 @@
+/* math.yac — integers plus IEEE f64 helpers (Newton / Taylor, no libm). */
+
+package math
+export abs, min, max, clamp, sign, gcd, lcm, even, odd, pow, fact,
+  isqrt, sqrt, hypot, pi, e, sin, cos, exp
+
+let abs(n) = if n < 0 then 0 - n else n
+
+let min(a, b) = if a < b then a else b
+
+let max(a, b) = if a > b then a else b
+
+let clamp(x, lo, hi) =
+  if x < lo then lo
+  else if x > hi then hi
+  else x
+
+let sign(n) =
+  if n < 0 then 0 - 1
+  else if n == 0 then 0
+  else 1
+
+let gcd_go(a, b) =
+  if b == 0 then a else gcd_go(b, a % b)
+
+let gcd(a, b) = gcd_go(abs(a), abs(b))
+
+let lcm(a, b) =
+  if a == 0 then 0
+  else if b == 0 then 0
+  else abs(a / gcd(a, b) * b)
+
+let even(n) = n % 2 == 0
+
+let odd(n) = n % 2 != 0
+
+let pow_go(b, e, acc) =
+  if e == 0 then acc else pow_go(b, e - 1, acc * b)
+
+let pow(b, e) =
+  if e < 0 then 0
+  else pow_go(b, e, 1)
+
+let fact(n) =
+  if n <= 1 then 1
+  else n * fact(n - 1)
+
+let isqrt_go(n, lo, hi, ans) =
+  if lo > hi then ans
+  else
+    let mid = lo + (hi - lo) / 2 in
+    let sq = mid * mid in
+    if sq == n then mid
+    else if sq < n then isqrt_go(n, mid + 1, hi, mid)
+    else isqrt_go(n, lo, mid - 1, ans)
+
+let isqrt(n) =
+  if n <= 0 then 0
+  else isqrt_go(n, 1, n, 0)
+
+let pi(_) = 3.141592653589793
+
+let e(_) = 2.718281828459045
+
+let sqrt_go(x, g, i) =
+  if i <= 0 then g
+  else sqrt_go(x, 0.5 * (g + x / g), i - 1)
+
+let sqrt(x) =
+  if x < 0.0 then 0.0
+  else if x == 0.0 then 0.0
+  else sqrt_go(x, x, 16)
+
+let hypot(a, b) = sqrt(a * a + b * b)
+
+let wrap(x, p) =
+  if x < 0.0 then wrap(x + p, p)
+  else if x >= p then wrap(x - p, p)
+  else x
+
+let sin_go(x2, k, term, acc) =
+  if k >= 10 then acc
+  else
+    let den = (2.0 * k) * (2.0 * k + 1.0) in
+    let t2 = 0.0 - term * x2 / den in
+    sin_go(x2, k + 1, t2, acc + t2)
+
+let sin(x) =
+  let y = wrap(x, pi(0) * 2.0) in
+  sin_go(y * y, 1, y, y)
+
+let cos_go(x2, k, term, acc) =
+  if k >= 10 then acc
+  else
+    let den = (2.0 * k - 1.0) * (2.0 * k) in
+    let t2 = 0.0 - term * x2 / den in
+    cos_go(x2, k + 1, t2, acc + t2)
+
+let cos(x) =
+  let y = wrap(x, pi(0) * 2.0) in
+  cos_go(y * y, 1, 1.0, 1.0)
+
+let exp_go(x, k, term, acc) =
+  if k >= 20 then acc
+  else
+    let t2 = term * x / k in
+    exp_go(x, k + 1, t2, acc + t2)
+
+let exp(x) = exp_go(x, 1, 1.0, 1.0)

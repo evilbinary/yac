@@ -6,7 +6,7 @@
  * m：0 E  1 Wq  2 Wk  3 Wv  4 Wout
  *    5 X  6 Q   7 K   8 V   9 score  10 α
  *    11 H(T×d)  12 logits(T×V)  13 w(V)  14 vocab
- *    15 pred(T)  16 conf(T)
+ *    15 pred(T)  16 conf(T)  17 字频（闲置）  18 Adam m  19 Adam v
  *
  *   make -C app llm-snapshot
  *   --pkg 含 app/llm/snapshot
@@ -119,6 +119,13 @@ let copy_row(dst, src, i) =
     let _ = list_set(dst, i, nth(src, i)) in
     copy_row(dst, src, i + 1)
 
+/* 把一行清零（MASK 的 K/V：别让一排░把提示淹没）。 */
+let zero_row(row, k) =
+  if k >= len(row) then 0
+  else
+    let _ = list_set(row, k, 0) in
+    zero_row(row, k + 1)
+
 /* 扫描 [0, last) 的最大值下标；并列保留更小的 i。 */
 let argmax_go(row, i, last, bi, bv) =
   if i >= last then bi
@@ -227,6 +234,9 @@ let model_new(vocab, seed) =
   let _ = list_push(m, vocab) in
   let _ = list_push(m, fill(t, 0)) in
   let _ = list_push(m, fill(t, 0)) in
+  let _ = list_push(m, fill(v, 0)) in
+  let _ = list_push(m, mat(d, v)) in
+  let _ = list_push(m, mat(d, v)) in
   m
 
 /* a·b = Σ_i a[i] b[i]（未除 S，调用方再除）。 */
@@ -246,7 +256,7 @@ let mv_j(W, x, y, j, s) =
     let _ = list_set(y, j, mv_i(W, x, j, 0, 0) / s) in
     mv_j(W, x, y, j + 1, s)
 
-/* 位置 t：X[t] = E[id] + 3t·e_0，再算 Q/K/V。n 一般为 T。不改 ids。 */
+/* 位置 t：X[t] = E[id] + 3t·e_0，再算 Q/K/V。MASK 格 K/V 清零，只当 query。 */
 let embed_t(m, ids, t, n) =
   if t >= n then 0
   else
@@ -255,6 +265,11 @@ let embed_t(m, ids, t, n) =
     let _ = mv_j(nth(m, 1), nth(nth(m, 5), t), nth(nth(m, 6), t), 0, sc(0)) in
     let _ = mv_j(nth(m, 2), nth(nth(m, 5), t), nth(nth(m, 7), t), 0, sc(0)) in
     let _ = mv_j(nth(m, 3), nth(nth(m, 5), t), nth(nth(m, 8), t), 0, sc(0)) in
+    let _ =
+      if nth(ids, t) != mask_id(m) then 0
+      else
+        let _ = zero_row(nth(nth(m, 7), t), 0) in
+        zero_row(nth(nth(m, 8), t), 0) in
     embed_t(m, ids, t + 1, n)
 
 /* 整数 exp 近似：e^{x/S} ≈ 2^{-⌊(-x)/3⌋}（x≤0）。softmax 减 max 之后用。 */
@@ -329,14 +344,47 @@ let forward(m, ids) =
   let _ = embed_t(m, ids, 0, ctx(0)) in
   fwd_pos(m, 0)
 
+/* ⌊√n⌋。Newton，x 从 n 收。 */
+let isqrt_n(n, x) =
+  if x <= 0 then 0
+  else
+    let x2 = (x + n / x) / 2 in
+    if x2 >= x then x
+    else isqrt_n(n, x2)
+
+let isqrt(n) =
+  if n <= 0 then 0
+  else if n <= 3 then 1
+  else isqrt_n(n, n)
+
 /* 权重更新裁剪，防止定点爆炸。 */
 let clip(x, lo, hi) =
   if x < lo then lo
   else if x > hi then hi
   else x
 
-/* Wout[i][j] -= h[i] · g[j] / den
- * 交叉熵：g = w − z·onehot(y)，den 含学习率（z·32，因每窗多个 MASK）。 */
+/* 一格 Adam：β1=7/8，β2=3/4。v 上限 2^20，避免 √v 把整数步长除成 0。 */
+let adam_cell(m, i, j, gi) =
+  let mr = nth(nth(m, 18), i) in
+  let vr = nth(nth(m, 19), i) in
+  let g1 = gi / 16 in
+  let mm = nth(mr, j) + (g1 - nth(mr, j)) / 8 in
+  let vv0 = nth(vr, j) + (g1 * g1 - nth(vr, j)) / 4 in
+  let vv = if vv0 < 1 then 1 else clip(vv0, 1, 1048576) in
+  let _ = list_set(mr, j, clip(mm, 0 - 65536, 65536)) in
+  let _ = list_set(vr, j, vv) in
+  let step = mm / (isqrt(vv) + 1) in
+  let wr = nth(nth(m, 4), i) in
+  list_set(wr, j, clip(nth(wr, j) - step, 0 - 512, 512))
+
+let adam_w(m, x, g, i, j) =
+  if i >= len(x) then 0
+  else if j >= len(g) then adam_w(m, x, g, i + 1, 0)
+  else
+    let _ = adam_cell(m, i, j, nth(x, i) * nth(g, j)) in
+    adam_w(m, x, g, i, j + 1)
+
+/* Wout[i][j] -= h[i] · g[j] / den（旧 SGD，embed 备用）。 */
 let outer_wj(row, xi, g, j, den) =
   if j >= len(g) then 0
   else
@@ -482,8 +530,7 @@ let train_at(m, gold, flags, t, acc) =
     let nll = nll_bits(nth(m, 13), y, z) in
     let hit = if argmax(nth(nth(m, 12), t)) == y then 1 else 0 in
     let _ = g_fill(nth(m, 13), y, z, 0, ntok(m)) in
-    let den = z * 32 in
-    let _ = outer_w(nth(m, 4), nth(nth(m, 11), t), nth(m, 13), 0, den) in
+    let _ = adam_w(m, nth(nth(m, 11), t), nth(m, 13), 0, 0) in
     let _ = list_set(acc, 0, nth(acc, 0) + hit) in
     let _ = list_set(acc, 1, nth(acc, 1) + 1) in
     let _ = list_set(acc, 2, nth(acc, 2) + nll) in
@@ -506,35 +553,29 @@ let train_step(m, ids, pos, seed, lr) =
   let _ = list_push(acc, seed2) in
   acc
 
-/* 对话一步：0..u-1 冻结用户，u.. 全部 MASK，只在回复真字上算损失。 */
-let mask_chat(gold, canvas, flags, st, i) =
-  if i >= ctx(0) then 0
+/* mask_i 也会挖用户区；再把 0..u-1 还原成真字、不算损失。 */
+let restore_user(gold, canvas, flags, u, i) =
+  if i >= u then 0
   else
-    let u = nth(st, 0) in
-    let mid = nth(st, 1) in
-    let g = nth(gold, i) in
-    let _ =
-      if i < u then
-        let _ = list_set(canvas, i, g) in
-        list_set(flags, i, 0)
-      else
-        let _ = list_set(canvas, i, mid) in
-        if g == mid then list_set(flags, i, 0)
-        else list_set(flags, i, 1) in
-    mask_chat(gold, canvas, flags, st, i + 1)
+    let _ = list_set(canvas, i, nth(gold, i)) in
+    let _ = list_set(flags, i, 0) in
+    restore_user(gold, canvas, flags, u, i + 1)
 
+/* 对话一步：冻用户，回复区抽 25/50/75/100% MASK。lr 占位。 */
 let train_step_chat(m, gold, u, seed, lr) =
   let mid = mask_id(m) in
   let canvas = copy_ids(gold, 0, list_new()) in
   let flags = flags_new(0) in
-  let _ = mask_chat(gold, canvas, flags, pair(u, mid), 0) in
+  let rate = 25 * (irem(seed, 4) + 1) in
+  let seed2 = mask_i(gold, canvas, flags, triple(seed, mid, rate), 0) in
+  let _ = restore_user(gold, canvas, flags, u, 0) in
   let _ = forward(m, canvas) in
   let acc = triple(0, 0, 0) in
   let _ = train_at(m, gold, flags, 0, acc) in
-  let _ = list_push(acc, rng_next(seed)) in
+  let _ = list_push(acc, seed2) in
   acc
 
-/* 一张对话底片：问句后缀 + 答句前缀，返回 [gold, u]。 */
+/* 一张对话底片：问句后缀 + 答句一段（不总切句首「哼～」）。返回 [gold, u]。 */
 let gold_chat(m, user, asst) =
   let vocab = vocab_of(m) in
   let mid = mask_id(m) in
@@ -542,9 +583,12 @@ let gold_chat(m, user, asst) =
   let aids = encode(asst, vocab, list_new(), 0) in
   let cap = freeze_n(0) in
   let u = if len(uids) < cap then len(uids) else cap in
+  let need = ctx(0) - u in
+  let extra = len(aids) - need in
+  let off = if extra <= 0 then 0 else irem(len(uids) * 13 + len(aids), extra + 1) in
   let gold = fill(ctx(0), mid) in
   let _ = set_range(gold, 0, tail_ids(uids, u), 0, u) in
-  let _ = set_range(gold, u, aids, 0, ctx(0) - u) in
+  let _ = set_range(gold, u, take_from(aids, off, list_new()), 0, need) in
   pair(gold, u)
 
 /* 提示词 → id；跳过未知字和 MASK 符本身。 */

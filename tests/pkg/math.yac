@@ -1,0 +1,36 @@
+import math
+if abs(0 - 3) == 3 then
+  if min(2, 9) == 2 then
+    if max(2, 9) == 9 then
+      if clamp(5, 0, 3) == 3 then
+        if sign(0 - 4) == 0 - 1 then
+          if gcd(12, 8) == 4 then
+            if lcm(12, 8) == 24 then
+              if even(4) then
+                if odd(3) then
+                  if pow(2, 10) == 1024 then
+                    if fact(5) == 120 then
+                      if isqrt(144) == 12 then
+                        if abs(sqrt(4.0) - 2.0) < 0.001 then
+                          if abs(hypot(3.0, 4.0) - 5.0) < 0.001 then
+                            if abs(sin(0.0)) < 0.001 then
+                              if abs(cos(0.0) - 1.0) < 0.001 then
+                                if abs(sin(pi(0) * 0.5) - 1.0) < 0.01 then
+                                  if abs(exp(1.0) - e(0)) < 0.01 then 42 else 0
+                                else 0
+                              else 0
+                            else 0
+                          else 0
+                        else 0
+                      else 0
+                    else 0
+                  else 0
+                else 0
+              else 0
+            else 0
+          else 0
+        else 0
+      else 0
+    else 0
+  else 0
+else 0

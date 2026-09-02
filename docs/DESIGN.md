@@ -403,7 +403,7 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 
 常见库按需增加，不一次写完：
 
-- 已落地：`path`、`str`、`io`、`list`、`hash`、`fmt`、`log`、`test`、`net`、`bytes`、`ffi`、`json`、`env`、`cli`、`http`（`import http` 会链 `net`）、`yui`。`json` tagged：`["N",n]` / `["S",s]` / `["A",xs]` / `["O",pairs]` / `["T"]` `["F"]` `["Z"]`。
+- 已落地：`path`、`str`、`io`、`list`、`hash`、`fmt`、`log`、`test`、`net`、`bytes`、`ffi`、`json`、`env`、`cli`、`http`（`import http` 会链 `net`）、`yui`、`math`（整数 gcd/pow/isqrt；f64 用牛顿/泰勒，不链 libm）。`json` tagged：`["N",n]` / `["S",s]` / `["A",xs]` / `["O",pairs]` / `["T"]` `["F"]` `["Z"]`。
 - 先不要：`re` / `crypto` / `thread`。
 
 包查找器（`backend.yac` 的 `pkg_src`）本身不能 `import path` / `import io`，否则加载 `path.yac` 会循环。
