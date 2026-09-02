@@ -9,6 +9,7 @@ YC ?= $(firstword $(wildcard \
 	$(YAC_ROOT)/yc_a) \
 	$(YAC_ROOT)/build/yc_tmp/yc_a)
 YC_PKG ?= --pkg src-self,pkg
+YC_PKG_LLM ?= --pkg src-self,pkg,app/llm
 # e.g. make lantern YC_FLAGS=-g  for nm/gdb function names
 YC_FLAGS ?=
 
@@ -37,7 +38,7 @@ YUI_LIBS = \
 	$(YUI_LIBDIR)/libsocket.a \
 	$(SDL_LIBS) -lm -ldl -lpthread
 
-.PHONY: all so apps counter hello lantern llm clean
+.PHONY: all so apps counter hello lantern llm llm-transformer llm-train llm-infer clean
 
 all: so apps
 
@@ -64,12 +65,25 @@ lantern: $(SO)
 	cd $(YAC_ROOT) && $(YC) $(YC_PKG) $(YC_FLAGS) app/lantern/main.yac -o app/lantern/lantern
 	chmod +x lantern/lantern
 
-# No YUI; char-level neural bigram train + greedy decode.
+# No YUI; char-level count LM, plus tiny Transformer train/infer.
 llm:
 	mkdir -p $(YAC_ROOT)/build/app
 	cd $(YAC_ROOT) && $(YC) $(YC_PKG) $(YC_FLAGS) app/llm/main.yac -o app/llm/llm
 	chmod +x llm/llm
 
+llm-transformer: llm-train llm-infer
+
+llm-train:
+	mkdir -p $(YAC_ROOT)/build/app
+	cd $(YAC_ROOT) && $(YC) $(YC_PKG_LLM) $(YC_FLAGS) app/llm/train.yac -o app/llm/train
+	chmod +x llm/train
+
+llm-infer:
+	mkdir -p $(YAC_ROOT)/build/app
+	cd $(YAC_ROOT) && $(YC) $(YC_PKG_LLM) $(YC_FLAGS) app/llm/infer.yac -o app/llm/infer
+	chmod +x llm/infer
+
 clean:
-	rm -f $(SO) native/yui_host counter/counter hello/hello lantern/lantern llm/llm llm/llm.exe
+	rm -f $(SO) native/yui_host counter/counter hello/hello lantern/lantern \
+		llm/llm llm/llm.exe llm/train llm/train.exe llm/infer llm/infer.exe llm/transformer.w
 	rm -rf $(YAC_ROOT)/build/app

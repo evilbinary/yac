@@ -1,0 +1,96 @@
+/* 训练 1 层 1 头 causal Transformer，写出 app/llm/transformer.w。
+ *
+ *   make -C app llm-train
+ *   ./app/llm/train [语料] [权重] [epoch数]
+ * 默认：app/llm/corpus.txt  app/llm/transformer.w  5
+ *
+ * 每步：窗口 ids[pos..pos+T) 预测 ids[pos+T]，交叉熵对 Wout（及 E）做 SGD。
+ */
+
+import transformer
+import io
+import fmt
+
+/* 语料文件读不到时的内置短对话。 */
+let default_text(_) =
+  "你好。\n你好，今天怎么样？\n我很好，你呢？\n我也很好，谢谢。\n再见。\n"
+
+/* 可变四元组，给 list_set 用。 */
+let st4(a, b, c, d) =
+  let s = list_new() in
+  let _ = list_push(s, a) in
+  let _ = list_push(s, b) in
+  let _ = list_push(s, c) in
+  let _ = list_push(s, d) in
+  s
+
+/* 扫完一个 epoch。st = [pos, nwin, lr, hit]。 */
+let epoch_go(m, ids, st) =
+  let pos = nth(st, 0) in
+  if pos >= nth(st, 1) then nth(st, 3)
+  else
+    let h = train_step(m, ids, pos, nth(st, 2)) in
+    let _ = list_set(st, 0, pos + 1) in
+    let _ = list_set(st, 3, nth(st, 3) + h) in
+    epoch_go(m, ids, st)
+
+/* 多个 epoch。st = [ep, epochs, lr, nwin]。 */
+let run_ep(m, ids, st) =
+  let ep = nth(st, 0) in
+  if ep >= nth(st, 1) then 0
+  else
+    let hit = epoch_go(m, ids, st4(0, nth(st, 3), nth(st, 2), 0)) in
+    let _ = print(format("epoch %d  last-token acc %d / %d", [ep, hit, nth(st, 3)])) in
+    let _ = list_set(st, 0, ep + 1) in
+    run_ep(m, ids, st)
+
+/* 命令行 epoch 数。 */
+let parse_ep(s, i, n, acc) =
+  if i >= n then acc
+  else
+    let c = str_ref(s, i) in
+    if c >= 48 then
+      if c <= 57 then parse_ep(s, i + 1, n, acc * 10 + (c - 48))
+      else acc
+    else acc
+
+let path =
+  if argc() > 1 then argv(1)
+  else "app/llm/corpus.txt"
+
+let wpath =
+  if argc() > 2 then argv(2)
+  else "app/llm/transformer.w"
+
+let epochs =
+  if argc() > 3 then parse_ep(argv(3), 0, str_len(argv(3)), 0)
+  else 5
+
+let text =
+  let t = read_or_0(path) in
+  if t == 0 then default_text(0)
+  else t
+
+let vocab = build_vocab(text, list_new(), 0)
+let ids = encode(text, vocab, list_new(), 0)
+let n = len(ids)
+let nwin = n - ctx(0)
+let m = model_new(vocab, 1)
+/* 训练。 
+  make -C app llm-transformer
+./app/llm/train.exe app/llm/corpus.txt app/llm/transformer.w 5
+./app/llm/infer.exe app/llm/transformer.w 你好
+*/
+let rc =
+  if nwin <= 0 then
+    let _ = print("need more than ctx tokens") in 1
+  else
+    let _ = print(format("transformer  V=%d  d=%d  T=%d  tokens=%d  windows=%d",
+      [ntok(m), dim(0), ctx(0), n, nwin])) in
+    let _ = print("--- train (fixed-point SGD on last position) ---") in
+    let _ = run_ep(m, ids, st4(0, epochs, 1, nwin)) in
+    let _ = save_model(m, wpath) in
+    let _ = print(str_cat("wrote ", wpath)) in
+    0
+
+rc
