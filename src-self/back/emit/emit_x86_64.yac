@@ -76,6 +76,32 @@ let emit_zero_sysv_args(b, nargs) =
         rec(j + 1) in
     rec(nargs)
 
+/* Stack args: push indices n-1 .. 6 so the 7th lands at [rbp+16] in the callee. */
+let emit_x86_push_stack_args(b, args, nargs) =
+  let pushi(i) =
+    if i < 6 then 0
+    else
+      let _ = emit_load_rax_slot(b, nth(args, i)) in
+      let _ = push_r64(b, 0) in
+      pushi(i - 1) in
+  if nargs > 6 then pushi(nargs - 1) else 0
+
+let emit_x86_load_reg_args(b, args, nargs) =
+  let nreg = if nargs < 6 then nargs else 6 in
+  let loadarg(j) =
+    if j >= nreg then 0
+    else
+      let _ = emit_load_rax_slot(b, nth(args, j)) in
+      let _ =
+        if j == 0 then mov_rdi_rax(b)
+        else if j == 1 then mov_rsi_rax(b)
+        else if j == 2 then mov_rdx_rax(b)
+        else if j == 3 then mov_rcx_rax(b)
+        else if j == 4 then mov_r8_rax(b)
+        else mov_r9_rax(b) in
+      loadarg(j + 1) in
+  loadarg(0)
+
 /* Self tcall: shuffle args into slots 1..n then jmp $tco (no new frame). */
 let emit_x86_tloop(st, args) =
   let b = nth(st, 0) in
@@ -314,27 +340,20 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
     let nm = nth(insn, 1) in
     emit_st4(st, b, cur, label_put(labels, nm, cur), patches)
   else if k == "fcall" then
-    /* call fn(argSlots...): load args to rdi,rsi,rdx,rcx,r8,r9; call; store. */
+    /* SysV: 6 regs then stack (7th at callee [rbp+16]). apply already did this. */
     let dst = nth(insn, 1) in
     let fn = nth(insn, 2) in
     let args = nth(insn, 3) in
     let nargs = len(args) in
-    let loadarg(j) =
-      if j >= nargs then 0
-      else
-        let _ = emit_load_rax_slot(b, nth(args, j)) in
-        let _ =
-          if j == 0 then mov_rdi_rax(b)
-          else if j == 1 then mov_rsi_rax(b)
-          else if j == 2 then mov_rdx_rax(b)
-          else if j == 3 then mov_rcx_rax(b)
-          else if j == 4 then mov_r8_rax(b)
-          else mov_r9_rax(b) in
-        loadarg(j + 1) in
-    let _ = loadarg(0) in
+    let nstack = if nargs > 6 then nargs - 6 else 0 in
+    let _ = emit_x86_push_stack_args(b, args, nargs) in
+    let _ = emit_x86_load_reg_args(b, args, nargs) in
     let _ = emit_zero_sysv_args(b, nargs) in
     let callstart = bytes_len(b) in
     let _ = call_user(b) in
+    let _ =
+      if nstack == 0 then 0
+      else add_rsp_imm32(b, bshl(nstack, 3)) in
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, callstart + 1, fn))
   else if k == "ccall" then

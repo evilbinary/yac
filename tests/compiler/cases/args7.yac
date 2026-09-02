@@ -1,0 +1,2 @@
+/* ncap=0 so this is fcall, not apply; 7th must be on the stack. */
+let f(a, b, c, d, e, g, h) = a + b + c + d + e + g + h in f(1, 2, 3, 4, 5, 6, 7)

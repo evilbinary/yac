@@ -250,6 +250,7 @@ let compiler_cases(_) = [
   ["let", "rc", "6"], ["precedence", "rc", "7"], ["div", "rc", "3"], ["mod", "rc", "2"],
   ["if_true", "rc", "7"], ["if_false", "rc", "9"], ["func_call", "rc", "10"],
   ["recursion", "rc", "120"], ["args2", "rc", "9"], ["args3", "rc", "6"], ["args6", "rc", "21"],
+  ["args7", "rc", "28"],
   ["capture", "rc", "15"], ["multi_capture", "rc", "13"], ["capture_2args", "rc", "103"],
   ["ncap12_disp8", "rc", "16"],
   ["higher", "rc", "7"], ["curry", "rc", "7"], ["return_clo", "rc", "15"],
