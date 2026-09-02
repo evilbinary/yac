@@ -291,7 +291,7 @@ self ; Γ ⊢ [ b1, …, bn ], a  ⇒  s  ▹  I₁ · … · Iₙ · I_a  ▹  
                    "_start"]
 ```
 
-`runtime` 是 `yac_*` 等过程，不从 ANF 来。调用约定最多 6 个参数。
+`runtime` 是 `yac_*` 等过程，不从 ANF 来。内部 yac ABI：x86 6 个寄存器 + 栈；arm64/riscv64 8 个寄存器 + 栈。
 
 **例子**
 

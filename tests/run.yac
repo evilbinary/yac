@@ -411,8 +411,18 @@ let compiler_all(st, yc) =
     else if str_ref(yb, 2) != 73 then false
     else str_ref(yb, 3) == 84 in
   let st1y = check(st1s, "yjit magic YJIT", "1", if yjit_ok then "1" else "0") in
+  let yjs = str_cat(TMP, "/sess.yjit") in
+  let rdump = repl_feed(yc, str_cat("1+2\n:dump ", str_cat(yjs, "\n:q\n"))) in
+  let st1d = check(st1y, "yjit dump sess", "0", int_to_str(nth(rdump, 0))) in
+  let rload = repl_feed(yc, str_cat(":load ", str_cat(yjs, "\nprint(\"hello\")\n:q\n"))) in
+  let lblob = str_cat(nth(rload, 1), nth(rload, 2)) in
+  let st1l =
+    if nth(rload, 0) != 0 then
+      check(st1d, "yjit load then print", "0", int_to_str(nth(rload, 0)))
+    else if contains(lblob, "hello") then check(st1d, "yjit load then print", "1", "1")
+    else check(st1d, "yjit load then print", "hello", lblob) in
   let st2 = foldl(fun(s, c) -> compile_syntax_err(s, yc, nth(c, 1),
-                  str_cat("syntax ", nth(c, 0))), st1y, syntax_bads(0)) in
+                  str_cat("syntax ", nth(c, 0))), st1l, syntax_bads(0)) in
   let st3 = foldl(fun(s, c) -> compile_msg_err(s, yc, nth(c, 1),
                   str_cat("unbound ", nth(c, 0)), nth(c, 2)), st2, unbound_bads(0)) in
   let st4 = repl_all(st3, yc, "") in

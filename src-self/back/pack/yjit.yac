@@ -52,16 +52,30 @@ let yjit_hdr_write(out, h) =
   let _ = le32(out, nth(h, 12), 60) in
   0
 
-/* rest = [abi, base, entry, data_rel]. data_rel is DATA off in TEXT (hdr reserved0). */
+let yjit_app8(b, v) = bytes_append(b, band(v, 255))
+
+let yjit_app16(b, v) =
+  let _ = yjit_app8(b, v) in
+  yjit_app8(b, bshr(v, 8))
+
+let yjit_app32(b, v) =
+  let _ = yjit_app16(b, v) in
+  yjit_app16(b, bshr(v, 16))
+
+/* rest = [abi, base, entry, data_rel] or + link bytes. */
 let pack_yjit_ex(code, arch, rest) =
   let n = bytes_len(code) in
+  let link = if len(rest) > 4 then nth(rest, 4) else bytes_new() in
+  let ln = bytes_len(link) in
+  let loff = 64 + n in
   let out = bytes_new() in
   let _ = yjit_hdr_zeros(out) in
   let _ = yjit_hdr_write(out,
     [arch, nth(rest, 0), 0, nth(rest, 1), nth(rest, 2),
-     64, n, 64 + n, 0, 64 + n, 0, 64 + n, 0]) in
+     64, n, 64 + n, 0, 64 + n, 0, loff, ln]) in
   let _ = le32(out, nth(rest, 3), 28) in
   let _ = bytes_extend(out, code) in
+  let _ = if ln == 0 then 0 else bytes_extend(out, link) in
   out
 
 let pack_yjit_flat(code, arch, abi, base, entry) =
@@ -95,17 +109,73 @@ let bytes_copy_range(src, off, n, i, dst) =
     let _ = bytes_append(dst, bytes_ref(src, off + i)) in
     bytes_copy_range(src, off, n, i + 1, dst)
 
-/* 0 or [arch, abi, entry, data_rel, text] */
+/* Skip-map LINK: u32 n; n × { u32 off+1, u16 nlen, name }. */
+let yjit_export_walk(vec, i, cap, b, n) =
+  if i >= cap then n
+  else
+    let e = nth(vec, i) in
+    let n2 =
+      if e == 0 then n
+      else
+        let k = nth(e, 0) in
+        let nl = str_len(k) in
+        let _ = yjit_app32(b, nth(e, 1)) in
+        let _ = yjit_app16(b, nl) in
+        let _ = bytes_from_str(k, 0, nl, b) in
+        n + 1 in
+    yjit_export_walk(vec, i + 1, cap, b, n2)
+
+let yjit_export_enc(m) =
+  let b = bytes_new() in
+  let _ = yjit_app32(b, 0) in
+  let cap = nth(m, 2) in
+  let n =
+    if fmap_cap_ok(cap) then yjit_export_walk(nth(m, 0), 0, cap, b, 0)
+    else 0 in
+  let _ = le32(b, n, 0) in
+  b
+
+let yjit_export_dec(link) =
+  let m = fmap_new(0) in
+  let _ = fmap_init_n(m, 4096) in
+  let ln = bytes_len(link) in
+  if ln < 4 then m
+  else
+    let n = ld32(link, 0) in
+    let rec(i, off) =
+      if i >= n then m
+      else if off + 6 > ln then m
+      else
+        let v = ld32(link, off) in
+        let nl = ld16(link, off + 4) in
+        if off + 6 + nl > ln then m
+        else
+          let k = bytes_to_str(bytes_copy_range(link, off + 6, nl, 0, bytes_new())) in
+          let _ = fmap_put(m, intern(k), v) in
+          rec(i + 1, off + 6 + nl) in
+    rec(0, 4)
+
+/* 0 or [arch, abi, entry, data_rel, text, link] */
 let yjit_parse(b) =
   if bytes_len(b) < 64 then 0
   else if yjit_magic_ok(b) == false then 0
   else
     let toff = ld32(b, 32) in
     let tsz = ld32(b, 36) in
-    if toff + tsz > bytes_len(b) then 0
+    let loff = ld32(b, 56) in
+    let lsz = ld32(b, 60) in
+    let nb = bytes_len(b) in
+    if toff + tsz > nb then 0
+    else if lsz > 0 then
+      if loff + lsz > nb then 0
+      else
+        [ld16(b, 6), ld16(b, 8), ld32(b, 24), ld32(b, 28),
+         bytes_copy_range(b, toff, tsz, 0, bytes_new()),
+         bytes_copy_range(b, loff, lsz, 0, bytes_new())]
     else
       [ld16(b, 6), ld16(b, 8), ld32(b, 24), ld32(b, 28),
-       bytes_copy_range(b, toff, tsz, 0, bytes_new())]
+       bytes_copy_range(b, toff, tsz, 0, bytes_new()),
+       bytes_new()]
 
 let yjit_read(path) =
   let s = read_file(path) in

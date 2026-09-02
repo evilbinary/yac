@@ -242,7 +242,7 @@ Windows：`VirtualProtect` 对应；或 RW 视图 + RX 视图同一物理页（�
 [64B hdr][TEXT][RODATA][DATA filesz][LINK]
 ```
 
-`hdr.base` 可写 0（可重定位）或写当前 `JIT_VADDR`。GOT 全 0，`flags.bit0 = 0`。rela 必须完整，否则只能在原基址 mmap。
+`hdr.base` 可写 0（可重定位）或写当前 `JIT_VADDR`。GOT 全 0，`flags.bit0 = 0`。REPL `:dump` 把 skip-map 写进 LINK：`u32 n`；接着 `n` 组 `{ u32 text_off+1, u16 nlen, name }`。`:load` 读回 fmap，后续行才能 skip 已 emit 的 proc。
 
 ### 8.2 ELF / PE / Mach-O
 
