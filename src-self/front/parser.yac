@@ -402,7 +402,8 @@ let parse_expr(toks, i, min_prec) =
         let k = nth(br, 1) in
         let bound1 =
           if has_params then ["fun", params, bound0] else bound0 in
-        if is_kw(k, "in") then
+        if is_err(bound0) then br
+        else if is_kw(k, "in") then
           let bodyr = parse_expr(toks, k + 1, 0) in
           [["let", name, bound1, nth(bodyr, 0)], nth(bodyr, 1)]
         else [["let", name, bound1, ["unit"]], k]
@@ -416,7 +417,7 @@ let parse_expr(toks, i, min_prec) =
       let p = prec_of(op) in
       if p >= minp then
         let rr = parse_expr(toks, j + 1, p + 1) in
-        if is_err(nth(rr, 0)) then parse_err(toks,j)
+        if is_err(nth(rr, 0)) then rr
         else parse_binloop(nth(rr, 1), ["binop", op, lhs, nth(rr, 0)], minp)
       else [lhs, j]
     else [lhs, j] in
@@ -428,7 +429,7 @@ let parse_expr(toks, i, min_prec) =
     /* unary minus: -x  ==  (0 - x); operand binds tightest (min_prec high),
      * then continue with trailing binary operators */
     let ur = parse_expr(toks, i + 1, 7) in
-    if is_err(nth(ur, 0)) then parse_err(toks,i)
+    if is_err(nth(ur, 0)) then ur
     else
       let u = nth(ur, 0) in
       let un =
@@ -442,10 +443,10 @@ let parse_expr(toks, i, min_prec) =
       parse_binloop(nth(ur, 1), un, min_prec)
   else
     let pr = parse_primary(i) in
-    if is_err(nth(pr, 0)) then parse_err(toks,i)
+    if is_err(nth(pr, 0)) then pr
     else
       let appr = parse_app(nth(pr, 1), nth(pr, 0)) in
-      if is_err(nth(appr, 0)) then parse_err(toks,i)
+      if is_err(nth(appr, 0)) then appr
       else parse_binloop(nth(appr, 1), nth(appr, 0), min_prec)
 
 /* ---- program: headers then a sequence of top-level exprs ---- */
