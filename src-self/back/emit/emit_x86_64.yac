@@ -1873,6 +1873,72 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
 let emit_insn(st, insn, is_entry, is_raw) =
   emit_insn_go(st, insn, is_entry, is_raw)
 
+let cabi_shl_arg(b, j) =
+  if j == 0 then shl_rdi_1(b)
+  else if j == 1 then shl_rsi_1(b)
+  else if j == 2 then shl_rdx_1(b)
+  else if j == 3 then shl_rcx_1(b)
+  else if j == 4 then shl_r8_1(b)
+  else shl_r9_1(b)
+
+let cabi_shl_args(b, j, n) =
+  if j >= n then 0
+  else
+    let _ = cabi_shl_arg(b, j) in
+    cabi_shl_args(b, j + 1, n)
+
+let emit_cabi_stub(b, ids, ps, name, nargs) =
+  let start = bytes_len(b) in
+  let _ = push_rbp(b) in
+  let _ = mov_rbp_rsp(b) in
+  let _ = cabi_shl_args(b, 0, nargs) in
+  let cpos = bytes_len(b) + 1 in
+  let _ = call_user(b) in
+  let _ = sar_rax_1(b) in
+  let _ = pop_rbp(b) in
+  let _ = ret(b) in
+  let _ = list_push(ps, [1, cpos, emit_map_get(ids, name)]) in
+  start
+
+let emit_yac_init(b, ps) =
+  let start = bytes_len(b) in
+  let _ = push_rbp(b) in
+  let _ = mov_rbp_rsp(b) in
+  let _ = xor_rax_rax(b) in
+  let _ = mov_rdi_rax(b) in
+  let _ = mov_rax_imm64(b, 0) in
+  let ac = bytes_len(b) - 8 in
+  let _ = mov_mem_rax_rdi(b) in
+  let _ = mov_rax_imm64(b, 0) in
+  let av = bytes_len(b) - 8 in
+  let _ = mov_mem_rax_rdi(b) in
+  let _ = xor_rax_rax(b) in
+  let _ = pop_rbp(b) in
+  let _ = ret(b) in
+  let _ = list_push(ps, [4, ac]) in
+  let _ = list_push(ps, [5, av]) in
+  let _ = elf_init_off_set(start) in
+  start
+
+let emit_cabi_funs(st, i) =
+  let funs = nth(st, 0) in
+  let n = nth(st, 1) in
+  if i >= n then nth(st, 5)
+  else
+    let f = nth(funs, i) in
+    if cabi_should(f) == false then emit_cabi_funs(st, i + 1)
+    else
+      let start = emit_cabi_stub(nth(st, 2), nth(st, 3), nth(st, 4),
+                                 nth(f, 1), nth(f, 2)) in
+      let acc = cons([nth(f, 1), start], nth(st, 5)) in
+      emit_cabi_funs([funs, n, nth(st, 2), nth(st, 3), nth(st, 4), acc],
+                     i + 1)
+
+let emit_cabi_all(b, ids, ps, funs) =
+  let ioff = emit_yac_init(b, ps) in
+  let acc = emit_cabi_funs([funs, len(funs), b, ids, ps, [["yac_init", ioff]]], 0) in
+  elf_dynexp_set(acc)
+
 
 let resolve_local_labels(b, labels, patches) =
   let n = len(patches) in
@@ -1961,6 +2027,9 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
   let b = nth(st, 0) in
+  let _ =
+    if elf_pic(0) then emit_cabi_all(b, nth(st, 4), patches, funs)
+    else 0 in
   let LOAD_VADDR = load_vaddr in
   /* Blob-relative VAs (text_off only). REPL append adds dest in emit_apply_unres. */
   let TEXT_OFF = text_off in

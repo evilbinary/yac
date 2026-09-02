@@ -171,6 +171,26 @@ let fun_is_raw(f) =
     if len(ins) == 0 then false
     else nth(nth(ins, 0), 0) == "$local"
 
+/* C ABI stubs: skip kernel, pkg-qualified (slash), and libc names. */
+let cabi_has_slash(s, i) =
+  if i >= str_len(s) then false
+  else if str_ref(s, i) == 47 then true
+  else cabi_has_slash(s, i + 1)
+
+let cabi_skip(name) =
+  if name == "_start" then true
+  else if name == "_eval" then true
+  else if name == "print" then true
+  else if cabi_has_slash(name, 0) then true
+  else if str_len(name) < 4 then false
+  else str_slice(name, 0, 4) == "yac_"
+
+let cabi_should(f) =
+  if fun_is_raw(f) then false
+  else if nth(f, 2) > 6 then false
+  else if cabi_skip(nth(f, 1)) then false
+  else true
+
 let emit_ids_bind(ids, funs, i, n) =
   if i >= n then ids
   else

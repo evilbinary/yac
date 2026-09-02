@@ -128,6 +128,7 @@ let DF_BIND_NOW = 8
 let DT_RELA = 7
 let DT_RELASZ = 8
 let DT_RELAENT = 9
+let DT_INIT = 12
 let DT_TEXTREL = 22
 let R_JUMP_SLOT = 7
 
@@ -142,6 +143,26 @@ let elf_shared(_) =
   let v = box_get(elf_shared_box) in
   if v == 0 then false else true
 
+let elf_dynexp_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+let elf_dynexp_set(v) = box_set(elf_dynexp_box, v)
+
+let elf_dynexp_get(_) =
+  let v = box_get(elf_dynexp_box) in
+  if v == 0 then [] else v
+
+let elf_init_off_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let elf_init_off_set(n) = box_set(elf_init_off_box, n)
+
+let elf_init_off(_) = box_get(elf_init_off_box)
+
 let elf_pic_box =
   let b = box_new() in
   let _ = box_set(b, 0) in
@@ -154,7 +175,14 @@ let elf_relocs_box =
 
 let elf_pic_set(on) = box_set(elf_pic_box, on)
 
-let elf_relocs_reset(_) = box_set(elf_relocs_box, list_new())
+let elf_pic(_) =
+  let v = box_get(elf_pic_box) in
+  if v == 0 then false else true
+
+let elf_relocs_reset(_) =
+  let _ = box_set(elf_relocs_box, list_new()) in
+  let _ = elf_init_off_set(0) in
+  elf_dynexp_set([])
 
 let elf_relocs_get(_) =
   let v = box_get(elf_relocs_box) in
@@ -387,7 +415,11 @@ let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
   let offs_rev = name_off(0, []) in
   let libc_off = bytes_len(out) - dynstr_off in
   let _ = app_str(out, "libc.so.6", 0, 9) in
-  let exps = if shared then list_rev(funsym_get(0)) else [] in
+  let exps =
+    if shared then
+      let d = elf_dynexp_get(0) in
+      if d == [] then list_rev(funsym_get(0)) else list_rev(d)
+    else [] in
   let nexp = len(exps) in
   let exp_offs = list_new() in
   let addexp(i) =
@@ -494,6 +526,12 @@ let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
   let _ = if nrelr == 0 then 0 else dyn_pair(out, DT_TEXTREL, 0) in
   let dflags = if nrelr == 0 then DF_BIND_NOW else DF_BIND_NOW + 4 in
   let _ = dyn_pair(out, DT_FLAGS, dflags) in
+  let ioff = elf_init_off(0) in
+  let _ =
+    if shared then
+      if ioff == 0 then 0
+      else dyn_pair(out, DT_INIT, vaddr + text_off + ioff)
+    else 0 in
   let _ = dyn_pair(out, DT_NULL, 0) in
   let dyn_sz = bytes_len(out) - dyn_off in
   let ph_off = bytes_len(out) in

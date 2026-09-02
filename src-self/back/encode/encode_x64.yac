@@ -555,6 +555,18 @@ let sar_rax_1(b) =
 /* shl rax, 1  (48 d1 e0) — tag an int */
 let shl_rax_1(b) =
   let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 224)
+let shl_rdi_1(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 231)
+let shl_rsi_1(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 230)
+let shl_rdx_1(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 226)
+let shl_rcx_1(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 209) in e8(b, 225)
+let shl_r8_1(b) =
+  let _ = e8(b, 73) in let _ = e8(b, 209) in e8(b, 224)
+let shl_r9_1(b) =
+  let _ = e8(b, 73) in let _ = e8(b, 209) in e8(b, 225)
 
 /* mov [rbp-8], rdx  (48 89 55 f8) */
 let mov_mem_rbp8_rdx(b) =

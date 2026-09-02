@@ -44,3 +44,5 @@ app/llm/pretrain_t2t_mini.jsonl
 app/llm/pretrain_head.jsonl
 app/llm/chat_data.jsonl
 app/llm/pretrain_t2t_mini.jsonl
+liba.so
+a.yac

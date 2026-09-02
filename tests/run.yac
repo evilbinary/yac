@@ -443,11 +443,20 @@ let compiler_all(st, yc) =
   let st1dl =
     if nth(run(["sh", "-c", "command -v python3 >/dev/null 2>&1"]), 0) != 0 then st1so
     else check(st1so, "elf --shared dlopen", "0", int_to_str(nth(rdl, 0))) in
+  let soadd = str_cat(TMP, "/libdadd.so") in
+  let _ = run(append(yc, [case_src("dylib_add"), "--shared", "-o", soadd])) in
+  let pyadd = str_cat("from ctypes import CDLL, c_int64\n",
+    str_cat("l=CDLL(\"",
+      str_cat(soadd, "\")\nl.add.argtypes=[c_int64,c_int64]\nl.add.restype=c_int64\nraise SystemExit(0 if l.add(2,3)==5 else 1)\n"))) in
+  let radd = run(["python3", "-c", pyadd]) in
+  let st1ad =
+    if nth(run(["sh", "-c", "command -v python3 >/dev/null 2>&1"]), 0) != 0 then st1dl
+    else check(st1dl, "elf --shared ccall add", "0", int_to_str(nth(radd, 0))) in
   let pdef = str_cat(TMP, "/dlib.yac") in
   let _ = write_file(pdef, "42;\n") in
   let _ = run(append(yc, ["--shared", pdef])) in
   let defso = str_cat(TMP, "/dlib.so") in
-  let st1df = check(st1dl, "elf --shared default .so", "1",
+  let st1df = check(st1ad, "elf --shared default .so", "1",
                     if nth(run(["test", "-f", defso]), 0) == 0 then "1" else "0") in
   let yjs = str_cat(TMP, "/sess.yjit") in
   let rdump = repl_feed(yc, str_cat("1+2\n:dump ", str_cat(yjs, "\n:q\n"))) in
