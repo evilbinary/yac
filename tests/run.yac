@@ -257,7 +257,7 @@ let compiler_cases(_) = [
   ["list_len", "rc", "3"], ["list_nth", "rc", "20"], ["list_set", "rc", "20"], ["list_cons", "rc", "3"],
   ["foldl", "rc", "10"], ["map_len", "rc", "3"], ["map_nth", "rc", "4"], ["filter", "rc", "2"],
   ["append", "rc", "4"], ["drop", "rc", "3"], ["str_len", "rc", "3"], ["str_ref", "rc", "105"],
-  ["str_cat", "rc", "4"], ["band", "rc", "3"], ["bits", "rc", "21"], ["bytes", "rc", "66"],
+  ["str_cat", "rc", "4"], ["str_cat_4k", "out", "5120"], ["band", "rc", "3"], ["bits", "rc", "21"], ["bytes", "rc", "66"],
   ["bytes_grow", "rc", "39"],
   ["int_to_str", "rc", "50"], ["str_slice", "rc", "99"], ["bytes_to_str", "rc", "90"],
   ["str_eq", "rc", "1"], ["str_neq", "rc", "0"], ["bool", "rc", "7"], ["and", "rc", "5"],

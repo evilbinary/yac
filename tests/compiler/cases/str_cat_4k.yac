@@ -1,0 +1,4 @@
+let rec(i, acc) =
+  if i >= 80 then acc
+  else rec(i + 1, str_cat(acc, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")) in
+print str_len(rec(0, ""))
