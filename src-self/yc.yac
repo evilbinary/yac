@@ -3,7 +3,7 @@ import rt.os
 /* yc.yac — CLI: compile to ELF by default; yac-compatible run/dump flags JIT. */
 
 let usage(_) =
-  let _ = print("usage: yc [options] file.yac") in
+  let _ = print("usage: yc [options] file.yac...") in
   let _ = print("options:") in
   let _ = print("  --cps            compile to machine code and run (in-process)") in
   let _ = print("  --dump-anf       print the ANF and exit") in
@@ -23,6 +23,7 @@ let usage(_) =
   let _ = print("                   :dump FILE.yjit  write live image") in
   let _ = print("                   :load FILE.yjit  map image and run entry") in
   let _ = print("  file.yjit        load and run a dumped image (no --cps)") in
+  let _ = print("  file.yac...      concatenate in order as one program") in
   let _ = print("  --scheme         translate a Scheme subset, then run or compile") in
   let _ = print("  -o out           write an executable instead of running") in
   let _ = print("  --pkg DIR[,DIR]  package roots (before ./pkg and this yc)") in
@@ -141,6 +142,26 @@ let parse_args(i, argc, out, pos, spec) =
       [out, pos, 2, spec]
     else parse_args(i + 1, argc, out, append(pos, [a]), spec)
 
+let pos_has_yjit(pos, i) =
+  if i >= len(pos) then false
+  else if ends_with_yjit(nth(pos, i)) then true
+  else pos_has_yjit(pos, i + 1)
+
+/* Concatenate sources in argv order. 0 if any path cannot be read. */
+let read_sources(paths, i, acc) =
+  if i >= len(paths) then acc
+  else
+    let p = nth(paths, i) in
+    let raw = read_file(p) in
+    if raw == 0 then
+      let _ = print(str_cat("cannot read file: ", p)) in
+      0
+    else
+      let next =
+        if acc == "" then raw
+        else str_cat(str_cat(acc, "\n"), raw) in
+      read_sources(paths, i + 1, next)
+
 let prep_src(raw, spec) =
   if fl(spec, "scheme") then scheme_to_yac(raw) else raw
 
@@ -176,6 +197,19 @@ let repl_cmd_arg(s, skip) =
       else if c == 9 then rec(i + 1)
       else str_slice(s, i, n - i) in
   rec(skip)
+
+let repl_preload(pos, spec, an) =
+  let npos = len(pos) in
+  if npos == 0 then 0
+  else if npos == 1 and ends_with_yjit(nth(pos, 0)) then
+    jit_load_yjit(nth(pos, 0), 1)
+  else if pos_has_yjit(pos, 0) then
+    print("error: .yjit cannot be mixed with other inputs")
+  else
+    let raw = read_sources(pos, 0, "") in
+    if raw == 0 then 0
+    else if raw == "" then 0
+    else jit_eval_repl(prep_src(raw, spec), an)
 
 let repl_loop(spec) =
   let arch = parse_arch_name(nth(spec, 0)) in
@@ -215,23 +249,17 @@ let run_cli(pr) =
       let npos = len(pos) in
       let inpath = if npos == 0 then "" else nth(pos, npos - 1) in
       if fl(spec, "repl") then
-        let _ =
-          if inpath == "" then 0
-          else if ends_with_yjit(inpath) then jit_load_yjit(inpath, 1)
-          else
-            let acc0 = read_file(inpath) in
-            let acc1 = if acc0 == 0 then "" else acc0 in
-            if acc1 == "" then 0
-            else jit_eval_repl(prep_src(acc1, spec), an) in
+        let _ = repl_preload(pos, spec, an) in
         repl_loop(spec)
-      else if inpath == "" then
+      else if npos == 0 then
         let _ = usage(0) in 2
-      else if ends_with_yjit(inpath) then
+      else if npos == 1 and ends_with_yjit(inpath) then
         jit_load_yjit(inpath, 0)
+      else if pos_has_yjit(pos, 0) then
+        let _ = print("error: .yjit cannot be mixed with other inputs") in 2
       else
-        let raw = read_file(inpath) in
-        if raw == 0 then
-          let _ = print(str_cat("cannot read file: ", inpath)) in 2
+        let raw = read_sources(pos, 0, "") in
+        if raw == 0 then 2
         else
           let src = prep_src(raw, spec) in
           let bad_scm =

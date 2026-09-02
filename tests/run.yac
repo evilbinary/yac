@@ -15,7 +15,6 @@ import rt.os
  */
 
 let TMP = "build/test_tmp"
-let BUNDLE = "build/test_tmp/yc_bundle.yac"
 let INTERP = "tests/interp/"
 let CASES = "tests/compiler/cases/"
 let PKGDIR = "tests/pkg/"
@@ -129,12 +128,6 @@ let interp_err(st, name, flags, path, needle) =
   if ok then check(st, name, "1", "1")
   else check(st, name, needle, blob)
 
-let cat_files(xs, dest) =
-  let rec(i, acc) =
-    if i >= len(xs) then write_file(dest, acc)
-    else rec(i + 1, str_cat(acc, read_file(nth(xs, i)))) in
-  rec(0, "")
-
 let on_win(_) = host_os(0) == "windows"
 
 let last_slash(s, i, last) =
@@ -189,6 +182,21 @@ let compiler_one(st, yc, c) =
     let r = run([bin]) in
     if kind == "rc" then check(st, str_cat("compiler ", name), want, int_to_str(nth(r, 0)))
     else check(st, str_cat("compiler ", name), want, chomp(nth(r, 1)))
+
+let compiler_multi(st, yc) =
+  let a = str_cat(TMP, "/multi_a.yac") in
+  let b = str_cat(TMP, "/multi_b.yac") in
+  let bin = native(str_cat(TMP, "/c_multi")) in
+  let _ = write_file(a, "let add(x, y) = x + y\n") in
+  let _ = write_file(b, "add(10, 32)\n") in
+  let cr = run(append(yc, [a, b, "-o", bin])) in
+  if nth(run(["test", "-f", bin]), 0) != 0 then
+    check(st, "compiler multi-file", "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
+  else
+    let _ = run(["chmod", "+x", bin]) in
+    let st1 = check(st, "compiler multi-file", "42", int_to_str(nth(run([bin]), 0))) in
+    let r2 = run(append(yc, ["--cps", a, b])) in
+    check(st1, "cps multi-file", "42", chomp(nth(r2, 1)))
 
 /* `yc --cps`: rc cases print the value; out may also print it. */
 let cps_one(st, yc, c) =
@@ -388,7 +396,8 @@ let cps_all(st, yc, stem) =
 let compiler_all(st, yc) =
   let _ = banner("compiler/cases", nth(yc, 0)) in
   let _ = compiler_prep_libs(0) in
-  let st1 = foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)) in
+  let st1 = compiler_multi(
+    foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)), yc) in
   let st1s =
     if nth(run(["sh", "-c", "command -v nm >/dev/null 2>&1"]), 0) != 0 then st1
     else
@@ -566,26 +575,22 @@ let qemu_arch(st, yc, arch) =
 
 let exists_rc(p) = nth(run(["test", "-f", p]), 0)
 
-let cat_bundle(_) =
-  cat_files(["src-self/lib/log.yac", "src-self/lib/pass.yac",
-             "src-self/lib/map.yac",
-             "src-self/front/lexer.yac", "src-self/front/parser.yac", "src-self/front/anf.yac",
-             "src-self/front/cps.yac", "src-self/front/eval_cps.yac", "src-self/front/uncps.yac",
-             "src-self/front/lir.yac",
-             "src-self/rt/runtime.yac",
-             "src-self/back/pack/target.yac", "src-self/back/pack/elf.yac", "src-self/back/pack/pe.yac",
-             "src-self/back/pack/macho.yac", "src-self/back/pack/yjit.yac", "src-self/back/pack/pack.yac",
-             "src-self/back/encode/encode_x64.yac", "src-self/back/encode/encode_arm64.yac",
-             "src-self/back/encode/encode_riscv64.yac",
-             "src-self/back/emit/emit.yac",
-             "src-self/back/emit/linux_x86_64.yac", "src-self/back/emit/win_x86_64.yac",
-             "src-self/back/emit/emit_x86_64.yac",
-             "src-self/back/emit/emit_arm64.yac",
-             "src-self/back/emit/emit_riscv64.yac",
-             "src-self/back/lower.yac", "src-self/back/profile.yac",
-             "src-self/back/backend.yac", "src-self/back/jit.yac",
-             "src-self/lang/scheme.yac", "src-self/yc.yac"],
-            BUNDLE)
+let yc_srcs(_) = [
+  "src-self/lib/log.yac", "src-self/lib/pass.yac", "src-self/lib/map.yac",
+  "src-self/front/lexer.yac", "src-self/front/parser.yac", "src-self/front/anf.yac",
+  "src-self/front/cps.yac", "src-self/front/eval_cps.yac", "src-self/front/uncps.yac",
+  "src-self/front/lir.yac", "src-self/rt/runtime.yac",
+  "src-self/back/pack/target.yac", "src-self/back/pack/elf.yac", "src-self/back/pack/pe.yac",
+  "src-self/back/pack/macho.yac", "src-self/back/pack/yjit.yac", "src-self/back/pack/pack.yac",
+  "src-self/back/encode/encode_x64.yac", "src-self/back/encode/encode_arm64.yac",
+  "src-self/back/encode/encode_riscv64.yac",
+  "src-self/back/emit/emit.yac",
+  "src-self/back/emit/linux_x86_64.yac", "src-self/back/emit/win_x86_64.yac",
+  "src-self/back/emit/emit_x86_64.yac", "src-self/back/emit/emit_arm64.yac",
+  "src-self/back/emit/emit_riscv64.yac",
+  "src-self/back/lower.yac", "src-self/back/profile.yac",
+  "src-self/back/backend.yac", "src-self/back/jit.yac",
+  "src-self/lang/scheme.yac", "src-self/yc.yac"]
 
 let interp_step(st, row) =
   let k = nth(row, 0) in
@@ -654,7 +659,7 @@ let boot_suite(st, ya) =
   let _ = run(["rm", "-f", yb, str_cat(yb, ".bin")]) in
   let st1 = check(st, "boot yc_a exists", "0", int_to_str(exists_rc(ya))) in
   let st2 = check(st1, "boot yc_a not .bin", "1", int_to_str(exists_rc(str_cat(ya, ".bin")))) in
-  let _ = run(append(yc_pkg(ya), [BUNDLE, "-o", yb])) in
+  let _ = run(append(append(yc_pkg(ya), yc_srcs(0)), ["-o", yb])) in
   let st3 = check(st2, "boot yc_b exists", "0", int_to_str(exists_rc(yb))) in
   let st4 = check(st3, "boot yc_b not .bin", "1", int_to_str(exists_rc(str_cat(yb, ".bin")))) in
   let _ = run(["chmod", "+x", yb]) in
@@ -720,11 +725,9 @@ let main =
   else if s == "qemu-arm64" then suite_done(qemu_arch([0, 0], yc, "arm64"))
   else if s == "qemu-riscv64" then suite_done(qemu_arch([0, 0], yc, "riscv64"))
   else if s == "iso" then
-    let _ = cat_bundle(0) in
     suite_done(boot_suite([0, 0], ya))
   else if s != "all" then suite_usage(0)
   else
-    let _ = cat_bundle(0) in
     let st0 = interp_suite([0, 0]) in
     let st1 = boot_front(st0, ya) in
     let st2 = pkg_all(compiler_all(st1, yc), yc) in
