@@ -185,12 +185,6 @@ let cabi_skip(name) =
   else if str_len(name) < 4 then false
   else str_slice(name, 0, 4) == "yac_"
 
-let cabi_should(f) =
-  if fun_is_raw(f) then false
-  else if nth(f, 2) > 6 then false
-  else if cabi_skip(nth(f, 1)) then false
-  else true
-
 let emit_ids_bind(ids, funs, i, n) =
   if i >= n then ids
   else
@@ -305,6 +299,14 @@ let emit_abi_win_set(v) = box_set(emit_abi_win_box, v)
 let emit_abi_win(_) = box_get(emit_abi_win_box)
 
 let emit_host_win(_) = emit_abi_win(0)
+
+let cabi_maxargs(_) = if emit_abi_win(0) then 4 else 6
+
+let cabi_should(f) =
+  if fun_is_raw(f) then false
+  else if nth(f, 2) > cabi_maxargs(0) then false
+  else if cabi_skip(nth(f, 1)) then false
+  else true
 
 /* Current proc name while emitting (self-tcall loopify vs cross-fun tcall). */
 let emit_self_box =

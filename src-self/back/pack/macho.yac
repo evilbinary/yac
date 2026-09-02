@@ -2,6 +2,11 @@
  * Headers padded to text_off (4096); __text follows. vmaddr = vaddr.
  */
 
+let mo_le16(b, v, i) =
+  let _ = bytes_put(b, i + 0, band(v, 255)) in
+  let _ = bytes_put(b, i + 1, band(bshr(v, 8), 255)) in
+  0
+
 let mo_le32(b, v, i) =
   let _ = bytes_put(b, i + 0, band(v, 255)) in
   let _ = bytes_put(b, i + 1, band(bshr(v, 8), 255)) in
@@ -23,6 +28,86 @@ let mo_name16(b, i, s) =
       let _ = bytes_put(b, i + j, ch) in
       loop(j + 1) in
   loop(0)
+
+let mo_uleb(b, v) =
+  if v < 128 then bytes_append(b, v)
+  else
+    let _ = bytes_append(b, bor(band(v, 127), 128)) in
+    mo_uleb(b, bshr(v, 7))
+
+let macho_finish_dylib(out, t, cmdat) =
+  let vaddr = target_vaddr(t) in
+  let text_off = target_text_off(t) in
+  let ioff = elf_init_off(0) in
+  let exps = list_rev(elf_dynexp_get(0)) in
+  let nexp = len(exps) in
+  let relp = elf_relocs_get(0) in
+  let nrel = len(relp) in
+  let _ = mo_le32(out, 26, cmdat) in
+  let _ = mo_le32(out, 80, cmdat + 4) in
+  let initva =
+    if ioff == 0 then 0 else vaddr + text_off + ioff in
+  let _ = mo_le64(out, initva, cmdat + 8) in
+  let _ = mo_le64(out, 0, cmdat + 16) in
+  let str_off = bytes_len(out) in
+  let _ = bytes_append(out, 0) in
+  let name_off = list_new() in
+  let addn(i) =
+    if i >= nexp then 0
+    else
+      let _ = list_push(name_off, bytes_len(out) - str_off) in
+      let nm = str_cat("_", nth(nth(exps, i), 0)) in
+      let _ = app_str(out, nm, 0, str_len(nm)) in
+      let _ = bytes_append(out, 0) in
+      addn(i + 1) in
+  let _ = addn(0) in
+  let str_sz = bytes_len(out) - str_off in
+  let sym_off = bytes_len(out) in
+  let puts(i) =
+    if i >= nexp then 0
+    else
+      let e = nth(exps, i) in
+      let at = bytes_len(out) in
+      let _ = mo_le32(out, nth(name_off, i), at) in
+      let _ = bytes_put(out, at + 4, 15) in
+      let _ = bytes_put(out, at + 5, 1) in
+      let _ = mo_le16(out, 0, at + 6) in
+      let _ = mo_le64(out, vaddr + text_off + nth(e, 1), at + 8) in
+      puts(i + 1) in
+  let _ = puts(0) in
+  let reb = bytes_new() in
+  let _ = bytes_append(reb, 17) in
+  let putr(i) =
+    if i >= nrel then 0
+    else
+      let _ = bytes_append(reb, 32) in
+      let _ = mo_uleb(reb, text_off + nth(relp, i)) in
+      let _ = bytes_append(reb, 81) in
+      putr(i + 1) in
+  let _ = putr(0) in
+  let _ = bytes_append(reb, 0) in
+  let reb_off = bytes_len(out) in
+  let _ = bytes_extend(out, reb) in
+  let reb_sz = bytes_len(reb) in
+  let _ = mo_le32(out, 2, cmdat + 80) in
+  let _ = mo_le32(out, 24, cmdat + 84) in
+  let _ = mo_le32(out, sym_off, cmdat + 88) in
+  let _ = mo_le32(out, nexp, cmdat + 92) in
+  let _ = mo_le32(out, str_off, cmdat + 96) in
+  let _ = mo_le32(out, str_sz, cmdat + 100) in
+  let _ = mo_le32(out, 2147483682, cmdat + 104) in
+  let _ = mo_le32(out, 48, cmdat + 108) in
+  let _ = mo_le32(out, reb_off, cmdat + 112) in
+  let _ = mo_le32(out, reb_sz, cmdat + 116) in
+  let z(i) =
+    if i >= 32 then 0
+    else
+      let _ = mo_le32(out, 0, cmdat + 120 + i) in
+      z(i + 4) in
+  let _ = z(0) in
+  let _ = mo_le32(out, 5, 16) in
+  let _ = mo_le32(out, 344, 20) in
+  out
 
 let pack_macho_target(t, code) =
   let cputype = target_macho_cputype(t) in
@@ -71,7 +156,7 @@ let pack_macho_target(t, code) =
   let _ = mo_le32(out, 0, 172) in
   let _ = mo_le32(out, 0, 176) in
   let _ = mo_le32(out, 0, 180) in
-  let _ =
+  let cmdend =
     if shared then
       let _ = mo_le32(out, 13, 184) in
       let _ = mo_le32(out, 40, 188) in
@@ -79,11 +164,13 @@ let pack_macho_target(t, code) =
       let _ = mo_le32(out, 0, 196) in
       let _ = mo_le32(out, 65536, 200) in
       let _ = mo_le32(out, 65536, 204) in
-      mo_name16(out, 208, "libyac.dylib")
+      let _ = mo_name16(out, 208, "libyac.dylib") in
+      224
     else
       let _ = mo_le32(out, 2147483688, 184) in
       let _ = mo_le32(out, 24, 188) in
       let _ = mo_le64(out, text_off, 192) in
-      mo_le64(out, 0, 200) in
+      let _ = mo_le64(out, 0, 200) in
+      208 in
   let _ = bytes_extend(out, code) in
-  out
+  if shared then macho_finish_dylib(out, t, cmdend) else out

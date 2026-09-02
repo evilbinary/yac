@@ -473,9 +473,42 @@ let compiler_all(st, yc) =
   let defso = str_cat(TMP, "/dlib.so") in
   let st1df = check(st1dv, "elf --shared default .so", "1",
                     if nth(run(["test", "-f", defso]), 0) == 0 then "1" else "0") in
+  let dll = str_cat(TMP, "/libdadd.dll") in
+  let _ = run(append(yc, [case_src("dylib_add"), "--format", "pe", "--shared", "-o", dll])) in
+  let dllb = read_file(dll) in
+  let pe_ok =
+    if dllb == 0 then false
+    else if str_len(dllb) < 270 then false
+    else if str_ref(dllb, 0) != 77 then false
+    else if str_ref(dllb, 1) != 90 then false
+    else if str_ref(dllb, 150) != 34 then false
+    else if str_ref(dllb, 151) != 32 then false
+    else str_ref(dllb, 264) + str_ref(dllb, 265) + str_ref(dllb, 266) + str_ref(dllb, 267) != 0 in
+  let st1pe = check(st1df, "pe --shared dll", "1", if pe_ok then "1" else "0") in
+  let dyl = str_cat(TMP, "/libdadd.dylib") in
+  let _ = run(append(yc, [case_src("dylib_add"), "--format", "macho", "--shared", "-o", dyl])) in
+  let dylb = read_file(dyl) in
+  let mo_ok =
+    if dylb == 0 then false
+    else if str_len(dylb) < 16 then false
+    else if str_ref(dylb, 0) != 207 then false
+    else str_ref(dylb, 12) == 6 in
+  let st1mo = check(st1pe, "macho --shared dylib", "1", if mo_ok then "1" else "0") in
+  let pdefpe = str_cat(TMP, "/dlibpe.yac") in
+  let _ = write_file(pdefpe, "42;\n") in
+  let _ = run(append(yc, ["--format", "pe", "--shared", pdefpe])) in
+  let st1dp = check(st1mo, "pe --shared default .dll", "1",
+                    if nth(run(["test", "-f", str_cat(TMP, "/dlibpe.dll")]), 0) == 0
+                    then "1" else "0") in
+  let pdefmo = str_cat(TMP, "/dlibmo.yac") in
+  let _ = write_file(pdefmo, "42;\n") in
+  let _ = run(append(yc, ["--format", "macho", "--shared", pdefmo])) in
+  let st1dm = check(st1dp, "macho --shared default .dylib", "1",
+                    if nth(run(["test", "-f", str_cat(TMP, "/dlibmo.dylib")]), 0) == 0
+                    then "1" else "0") in
   let yjs = str_cat(TMP, "/sess.yjit") in
   let rdump = repl_feed(yc, str_cat("1+2\n:dump ", str_cat(yjs, "\n:q\n"))) in
-  let st1d = check(st1df, "yjit dump sess", "0", int_to_str(nth(rdump, 0))) in
+  let st1d = check(st1dm, "yjit dump sess", "0", int_to_str(nth(rdump, 0))) in
   let rload = repl_feed(yc, str_cat(":load ", str_cat(yjs, "\nprint(\"hello\")\n:q\n"))) in
   let lblob = str_cat(nth(rload, 1), nth(rload, 2)) in
   let st1l =

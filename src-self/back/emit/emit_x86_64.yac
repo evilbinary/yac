@@ -1874,7 +1874,12 @@ let emit_insn(st, insn, is_entry, is_raw) =
   emit_insn_go(st, insn, is_entry, is_raw)
 
 let cabi_shl_arg(b, j) =
-  if j == 0 then shl_rdi_1(b)
+  if emit_abi_win(0) then
+    if j == 0 then shl_rcx_1(b)
+    else if j == 1 then shl_rdx_1(b)
+    else if j == 2 then shl_r8_1(b)
+    else shl_r9_1(b)
+  else if j == 0 then shl_rdi_1(b)
   else if j == 1 then shl_rsi_1(b)
   else if j == 2 then shl_rdx_1(b)
   else if j == 3 then shl_rcx_1(b)

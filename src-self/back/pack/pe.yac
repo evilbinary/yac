@@ -67,7 +67,7 @@ let pack_pe_target(t, code) =
   let _ = pe_le32(out, text_off, 212) in
   let _ = pe_le32(out, 0, 216) in
   let _ = pe_le16(out, 3, 220) in
-  let _ = pe_le16(out, 0, 222) in
+  let _ = pe_le16(out, if shared then 320 else 0, 222) in
   let _ = pe_le64(out, 8388608, 224) in
   let _ = pe_le64(out, 65536, 232) in
   let _ = pe_le64(out, 1048576, 240) in
@@ -266,3 +266,101 @@ let pe_finish_imports(out, t, names, got) =
     let _ = pe_le32(out, (ndll + 1) * 20, 276) in
     let _ = pe_le32(out, iat0, 360) in
     pe_le32(out, pe_iat_qwords(names) * 8, 364)
+
+let pe_pad4(b) =
+  if (bytes_len(b) % 4) == 0 then 0
+  else
+    let _ = bytes_append(b, 0) in
+    pe_pad4(b)
+
+let pe_bump(out, text_off) =
+  let pad = pe_align(bytes_len(out), 512) in
+  let _ = bytes_put(out, pad - 1, 0) in
+  let _ = pe_le32(out, pad, 208) in
+  let _ = pe_le32(out, pad - text_off, 400) in
+  pe_le32(out, pad - text_off, 408)
+
+let pe_write_exports(out, text_off, exps) =
+  let n = len(exps) in
+  if n == 0 then 0
+  else
+    let _ = pe_pad4(out) in
+    let name_rvas = list_new() in
+    let addn(i) =
+      if i >= n then 0
+      else
+        let _ = list_push(name_rvas, bytes_len(out)) in
+        let _ = pe_put_cstr(out, nth(nth(exps, i), 0), 0) in
+        addn(i + 1) in
+    let _ = addn(0) in
+    let dll_rva = bytes_len(out) in
+    let _ = pe_put_cstr(out, "libyac.dll", 0) in
+    let _ = pe_pad4(out) in
+    let eat = bytes_len(out) in
+    let _ = bytes_put(out, eat + n * 4 - 1, 0) in
+    let pute(i) =
+      if i >= n then 0
+      else
+        let _ = pe_le32(out, text_off + nth(nth(exps, i), 1), eat + i * 4) in
+        pute(i + 1) in
+    let _ = pute(0) in
+    let npt = bytes_len(out) in
+    let _ = bytes_put(out, npt + n * 4 - 1, 0) in
+    let putn(i) =
+      if i >= n then 0
+      else
+        let _ = pe_le32(out, nth(name_rvas, i), npt + i * 4) in
+        putn(i + 1) in
+    let _ = putn(0) in
+    let ord = bytes_len(out) in
+    let _ = bytes_put(out, ord + n * 2 - 1, 0) in
+    let puto(i) =
+      if i >= n then 0
+      else
+        let _ = pe_le16(out, i, ord + i * 2) in
+        puto(i + 1) in
+    let _ = puto(0) in
+    let _ = pe_pad4(out) in
+    let dir = bytes_len(out) in
+    let _ = bytes_put(out, dir + 39, 0) in
+    let _ = pe_le32(out, dll_rva, dir + 12) in
+    let _ = pe_le32(out, 1, dir + 16) in
+    let _ = pe_le32(out, n, dir + 20) in
+    let _ = pe_le32(out, n, dir + 24) in
+    let _ = pe_le32(out, eat, dir + 28) in
+    let _ = pe_le32(out, npt, dir + 32) in
+    let _ = pe_le32(out, ord, dir + 36) in
+    let _ = pe_le32(out, dir, 264) in
+    pe_le32(out, 40, 268)
+
+let pe_write_relocs(out, text_off, xs) =
+  let n = len(xs) in
+  if n == 0 then 0
+  else
+    let _ = pe_pad4(out) in
+    let start = bytes_len(out) in
+    let rec(i) =
+      if i >= n then 0
+      else
+        let rva = text_off + nth(xs, i) in
+        let page = rva - (rva % 4096) in
+        let off = rva - page in
+        let at = bytes_len(out) in
+        let _ = pe_le32(out, page, at) in
+        let _ = pe_le32(out, 12, at + 4) in
+        let _ = pe_le16(out, 40960 + off, at + 8) in
+        let _ = pe_le16(out, 0, at + 10) in
+        rec(i + 1) in
+    let _ = rec(0) in
+    let _ = pe_le32(out, start, 304) in
+    pe_le32(out, bytes_len(out) - start, 308)
+
+let pe_finish_dll(out, t) =
+  let text_off = target_text_off(t) in
+  let ioff = elf_init_off(0) in
+  let _ =
+    if ioff == 0 then 0
+    else pe_le32(out, text_off + ioff, 168) in
+  let _ = pe_write_exports(out, text_off, list_rev(elf_dynexp_get(0))) in
+  let _ = pe_write_relocs(out, text_off, elf_relocs_get(0)) in
+  pe_bump(out, text_off)
