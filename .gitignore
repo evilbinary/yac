@@ -21,9 +21,16 @@ app/native/libyui_yac.so
 app/lantern/lantern
 app/llm/llm
 app/llm/llm.exe
+app/llm/trigram/trigram
+app/llm/trigram/trigram.exe
 app/llm/train
 app/llm/train.exe
 app/llm/infer
 app/llm/infer.exe
 app/llm/transformer.w
+app/llm/transformer/train
+app/llm/transformer/train.exe
+app/llm/transformer/infer
+app/llm/transformer/infer.exe
+app/llm/transformer/transformer.w
 *.jit

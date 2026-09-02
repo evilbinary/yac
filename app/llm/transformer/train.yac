@@ -1,8 +1,8 @@
-/* 训练 1 层 1 头 causal Transformer，写出 app/llm/transformer.w。
+/* 训练 1 层 1 头 causal Transformer，写出 app/llm/transformer/transformer.w。
  *
  *   make -C app llm-train
- *   ./app/llm/train [语料] [权重] [epoch数]
- * 默认：app/llm/corpus.txt  app/llm/transformer.w  5
+ *   ./app/llm/transformer/train [语料] [权重] [epoch数]
+ * 默认：app/llm/corpus.txt  app/llm/transformer/transformer.w  5
  *
  * 每步：窗口 ids[pos..pos+T) 预测 ids[pos+T]，交叉熵对 Wout（及 E）做 SGD。
  */
@@ -60,7 +60,7 @@ let path =
 
 let wpath =
   if argc() > 2 then argv(2)
-  else "app/llm/transformer.w"
+  else "app/llm/transformer/transformer.w"
 
 let epochs =
   if argc() > 3 then parse_ep(argv(3), 0, str_len(argv(3)), 0)
@@ -76,11 +76,10 @@ let ids = encode(text, vocab, list_new(), 0)
 let n = len(ids)
 let nwin = n - ctx(0)
 let m = model_new(vocab, 1)
-/* 训练。 
-  make -C app llm-transformer
-./app/llm/train.exe app/llm/corpus.txt app/llm/transformer.w 5
-./app/llm/infer.exe app/llm/transformer.w 你好
-*/
+/*  make -C app llm-transformer
+ *  ./app/llm/transformer/train.exe app/llm/corpus.txt app/llm/transformer/transformer.w 5
+ *  ./app/llm/transformer/infer.exe app/llm/transformer/transformer.w 你好
+ */
 let rc =
   if nwin <= 0 then
     let _ = print("need more than ctx tokens") in 1

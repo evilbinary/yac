@@ -20,7 +20,7 @@
  *
  *   import transformer
  *   make -C app llm-train / llm-infer
- *   --pkg 需包含 app/llm（transformer.yac）
+ *   --pkg 需包含 app/llm/transformer
  */
 
 package transformer

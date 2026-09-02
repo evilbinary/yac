@@ -1,8 +1,8 @@
 /* 加载 Transformer 权重，贪心 / 采样续写。
  *
  *   make -C app llm-infer
- *   ./app/llm/infer [权重] [提示词]
- * 默认：app/llm/transformer.w  你好
+ *   ./app/llm/transformer/infer [权重] [提示词]
+ * 默认：app/llm/transformer/transformer.w  你好
  */
 
 import transformer
@@ -11,7 +11,7 @@ import fmt
 
 let wpath =
   if argc() > 1 then argv(1)
-  else "app/llm/transformer.w"
+  else "app/llm/transformer/transformer.w"
 
 let prompt =
   if argc() > 2 then argv(2)
@@ -21,7 +21,7 @@ let m = load_model(wpath)
 
 let rc =
   if m == 0 then
-    let _ = print("load failed (train first: app/llm/train)") in 1
+    let _ = print("load failed (train first: app/llm/transformer/train)") in 1
   else
     let vocab = vocab_of(m) in
     let nl = find_char(vocab, "\n", 0) in

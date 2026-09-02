@@ -9,7 +9,7 @@ YC ?= $(firstword $(wildcard \
 	$(YAC_ROOT)/yc_a) \
 	$(YAC_ROOT)/build/yc_tmp/yc_a)
 YC_PKG ?= --pkg src-self,pkg
-YC_PKG_LLM ?= --pkg src-self,pkg,app/llm
+YC_PKG_LLM ?= --pkg src-self,pkg,app/llm/transformer
 # e.g. make lantern YC_FLAGS=-g  for nm/gdb function names
 YC_FLAGS ?=
 
@@ -38,7 +38,7 @@ YUI_LIBS = \
 	$(YUI_LIBDIR)/libsocket.a \
 	$(SDL_LIBS) -lm -ldl -lpthread
 
-.PHONY: all so apps counter hello lantern llm llm-transformer llm-train llm-infer clean
+.PHONY: all so apps counter hello lantern llm llm-trigram llm-transformer llm-train llm-infer clean
 
 all: so apps
 
@@ -65,25 +65,31 @@ lantern: $(SO)
 	cd $(YAC_ROOT) && $(YC) $(YC_PKG) $(YC_FLAGS) app/lantern/main.yac -o app/lantern/lantern
 	chmod +x lantern/lantern
 
-# No YUI; char-level count LM, plus tiny Transformer train/infer.
-llm:
+# No YUI. Examples live in app/llm/<name>/ ; shared corpus at app/llm/corpus.txt.
+llm: llm-trigram
+
+llm-trigram:
 	mkdir -p $(YAC_ROOT)/build/app
-	cd $(YAC_ROOT) && $(YC) $(YC_PKG) $(YC_FLAGS) app/llm/main.yac -o app/llm/llm
-	chmod +x llm/llm
+	cd $(YAC_ROOT) && $(YC) $(YC_PKG) $(YC_FLAGS) app/llm/trigram/main.yac -o app/llm/trigram/trigram
+	chmod +x llm/trigram/trigram
 
 llm-transformer: llm-train llm-infer
 
 llm-train:
 	mkdir -p $(YAC_ROOT)/build/app
-	cd $(YAC_ROOT) && $(YC) $(YC_PKG_LLM) $(YC_FLAGS) app/llm/train.yac -o app/llm/train
-	chmod +x llm/train
+	cd $(YAC_ROOT) && $(YC) $(YC_PKG_LLM) $(YC_FLAGS) app/llm/transformer/train.yac -o app/llm/transformer/train
+	chmod +x llm/transformer/train
 
 llm-infer:
 	mkdir -p $(YAC_ROOT)/build/app
-	cd $(YAC_ROOT) && $(YC) $(YC_PKG_LLM) $(YC_FLAGS) app/llm/infer.yac -o app/llm/infer
-	chmod +x llm/infer
+	cd $(YAC_ROOT) && $(YC) $(YC_PKG_LLM) $(YC_FLAGS) app/llm/transformer/infer.yac -o app/llm/transformer/infer
+	chmod +x llm/transformer/infer
 
 clean:
 	rm -f $(SO) native/yui_host counter/counter hello/hello lantern/lantern \
-		llm/llm llm/llm.exe llm/train llm/train.exe llm/infer llm/infer.exe llm/transformer.w
+		llm/llm llm/llm.exe llm/trigram/trigram llm/trigram/trigram.exe \
+		llm/train llm/train.exe llm/infer llm/infer.exe llm/transformer.w \
+		llm/transformer/train llm/transformer/train.exe \
+		llm/transformer/infer llm/transformer/infer.exe \
+		llm/transformer/transformer.w
 	rm -rf $(YAC_ROOT)/build/app

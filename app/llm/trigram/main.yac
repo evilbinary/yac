@@ -7,8 +7,8 @@
  * 未见过的 (prev2,prev1) 回退到 unigram。
  *
  * 用法（在仓库根目录）：
- *   make -C app llm
- *   ./app/llm/llm [语料路径] [提示词]
+ *   make -C app llm-trigram
+ *   ./app/llm/trigram/trigram [语料路径] [提示词]
  * 默认语料 app/llm/corpus.txt（日常短对话），默认提示「你好」。
  *
  * 可变数组必须 list_new + list_push，字面量 [] 不能 list_set。
