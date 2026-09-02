@@ -143,7 +143,9 @@ let pe_is_crt(n) =
   else if n == "fflush" then true
   else if n == "getenv" then true
   else if n == "strncpy" then true
-  else n == "strlen"
+  else if n == "strlen" then true
+  else if n == "strtod" then true
+  else n == "sprintf"
 
 let pe_group_ids(names, want_k32) =
   let out = list_new() in

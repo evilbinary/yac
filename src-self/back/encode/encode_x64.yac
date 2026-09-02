@@ -1323,3 +1323,32 @@ let dec_rcx(b) =
   let _ = e8(b, 72) in let _ = e8(b, 255) in e8(b, 201)
 let dec_rdi(b) =
   let _ = e8(b, 72) in let _ = e8(b, 255) in e8(b, 207)
+/* IEEE f64: movq xmm ↔ gpr, addsd/mulsd, cvtsi2sd, ucomisd */
+let movq_xmm0_rax(b) =
+  let _ = e8(b, 102) in let _ = e8(b, 72) in let _ = e8(b, 15) in let _ = e8(b, 110) in e8(b, 192)
+let movq_rax_xmm0(b) =
+  let _ = e8(b, 102) in let _ = e8(b, 72) in let _ = e8(b, 15) in let _ = e8(b, 126) in e8(b, 192)
+let movq_xmm1_rax(b) =
+  let _ = e8(b, 102) in let _ = e8(b, 72) in let _ = e8(b, 15) in let _ = e8(b, 110) in e8(b, 200)
+let movq_xmm2_rax(b) =
+  let _ = e8(b, 102) in let _ = e8(b, 72) in let _ = e8(b, 15) in let _ = e8(b, 110) in e8(b, 208)
+let addsd_xmm0_xmm1(b) =
+  let _ = e8(b, 242) in let _ = e8(b, 15) in let _ = e8(b, 88) in e8(b, 193)
+let subsd_xmm0_xmm1(b) =
+  let _ = e8(b, 242) in let _ = e8(b, 15) in let _ = e8(b, 92) in e8(b, 193)
+let mulsd_xmm0_xmm1(b) =
+  let _ = e8(b, 242) in let _ = e8(b, 15) in let _ = e8(b, 89) in e8(b, 193)
+let divsd_xmm0_xmm1(b) =
+  let _ = e8(b, 242) in let _ = e8(b, 15) in let _ = e8(b, 94) in e8(b, 193)
+let cvtsi2sd_xmm0_rax(b) =
+  let _ = e8(b, 242) in let _ = e8(b, 72) in let _ = e8(b, 15) in let _ = e8(b, 42) in e8(b, 192)
+let ucomisd_xmm0_xmm1(b) =
+  let _ = e8(b, 102) in let _ = e8(b, 15) in let _ = e8(b, 46) in e8(b, 193)
+let xor_edx_edx(b) =
+  let _ = e8(b, 49) in e8(b, 210)
+let inc_rdx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 255) in e8(b, 194)
+let lea_rdx_rip(b, disp) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 21) in e32(b, disp)
+let lea_rcx_rip(b, disp) =
+  let _ = e8(b, 72) in let _ = e8(b, 141) in let _ = e8(b, 13) in e32(b, disp)
