@@ -171,12 +171,12 @@ let prompt_ids(prompt, vocab, i, a, b) =
     if k < 0 then prompt_ids(prompt, vocab, i + str_len(c), a, b)
     else prompt_ids(prompt, vocab, i + str_len(c), b, k)
 
-/* 贪心续写 n 个字符。st = [prev2, prev1, 已生成字符串]。 */
+/* 贪心续写 n 个字。st = [prev2, prev1, 已生成字符串]。 */
 let generate(m, vocab, st, n) =
   if n <= 0 then nth(st, 2)
   else
     let nxt = argmax(dist(m, nth(st, 0), nth(st, 1))) in
-    let acc = str_cat(nth(st, 2), str_chr(nth(vocab, nxt))) in
+    let acc = str_cat(nth(st, 2), nth(vocab, nxt)) in
     let _ = list_set(st, 0, nth(st, 1)) in
     let _ = list_set(st, 1, nxt) in
     let _ = list_set(st, 2, acc) in
@@ -188,7 +188,7 @@ let generate_s(m, vocab, st, n) =
   else
     let r = sample(dist(m, nth(st, 0), nth(st, 1)), nth(st, 3)) in
     let nxt = nth(r, 0) in
-    let acc = str_cat(nth(st, 2), str_chr(nth(vocab, nxt))) in
+    let acc = str_cat(nth(st, 2), nth(vocab, nxt)) in
     let _ = list_set(st, 0, nth(st, 1)) in
     let _ = list_set(st, 1, nxt) in
     let _ = list_set(st, 2, acc) in
