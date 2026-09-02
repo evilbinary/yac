@@ -1,0 +1,262 @@
+/* 字符级语言模型（trigram）
+ *
+ * 词表按 UTF-8 字（不是字节）：中文一个汉字算一个 token。
+ * 训练：在语料上数 C[前两个字][下一个字]（整数计数）。
+ *       原生 yc 没有可用的 IEEE 浮点，不能做 softmax+SGD。
+ * 推理：贪心取计数最大的下一字符；或按计数做多项式采样。
+ * 未见过的 (prev2,prev1) 回退到 unigram。
+ *
+ * 用法（在仓库根目录）：
+ *   make -C app llm
+ *   ./app/llm/llm [语料路径] [提示词]
+ * 默认语料 app/llm/corpus.txt（日常短对话），默认提示「你好」。
+ *
+ * 热循环参数个数 ≤ 5，否则 Windows 上尾调用无法折叠会撑爆栈。
+ * 可变数组必须 list_new + list_push，字面量 [] 不能 list_set。
+ */
+
+import io
+import fmt
+
+/* 语料文件读不到时用的内置短对话。 */
+let default_text(_) =
+  "你好。\n你好，今天怎么样？\n我很好，你呢？\n我也很好，谢谢。\n再见。\n"
+
+/* UTF-8 字宽：ASCII=1，汉字通常=3。续字节当 1，避免卡死。 */
+let u8len(b) =
+  if b < 128 then 1
+  else if b < 192 then 1
+  else if b < 224 then 2
+  else if b < 240 then 3
+  else 4
+
+/* s[i] 起一个 UTF-8 字；i 靠近末尾则吃完剩余字节。 */
+let ch_at(s, i) =
+  let n = str_len(s) in
+  if i >= n then ""
+  else
+    let k = u8len(str_ref(s, i)) in
+    if i + k > n then str_slice(s, i, n - i)
+    else str_slice(s, i, k)
+
+/* 往 xs 追加 n 个 v。 */
+let fill_go(xs, n, v) =
+  if n <= 0 then xs
+  else
+    let _ = list_push(xs, v) in
+    fill_go(xs, n - 1, v)
+
+/* 长度为 n、初值全是 v 的可变向量。 */
+let fill(n, v) = fill_go(list_new(), n, v)
+
+/* 往 m 追加 rows 行，每行 cols 个 0。 */
+let mat_go(m, rows, cols) =
+  if rows <= 0 then m
+  else
+    let _ = list_push(m, fill(cols, 0)) in
+    mat_go(m, rows - 1, cols)
+
+/* rows × cols 的可变整数矩阵。 */
+let mat(rows, cols) = mat_go(list_new(), rows, cols)
+
+/* vocab 里字 c（一段 UTF-8）的下标；没有则 -1。 */
+let find_char(vocab, c, i) =
+  if i >= len(vocab) then 0 - 1
+  else if nth(vocab, i) == c then i
+  else find_char(vocab, c, i + 1)
+
+/* 第一次见到的字追加进词表。 */
+let add_char(vocab, c) =
+  if find_char(vocab, c, 0) < 0 then list_push(vocab, c)
+  else 0
+
+/* 按出现顺序收集 s 里的唯一 UTF-8 字。 */
+let build_vocab(s, vocab, i) =
+  if i >= str_len(s) then vocab
+  else
+    let c = ch_at(s, i) in
+    let _ = add_char(vocab, c) in
+    build_vocab(s, vocab, i + str_len(c))
+
+/* 把字符串编成词表下标序列（一字一 token）。 */
+let encode(s, vocab, ids, i) =
+  if i >= str_len(s) then ids
+  else
+    let c = ch_at(s, i) in
+    let _ = list_push(ids, find_char(vocab, c, 0)) in
+    encode(s, vocab, ids, i + str_len(c))
+
+/* 上下文 (a,b) 对应的那一行：行号 a*V + b。 */
+let row_at(w, a, b, v) = nth(w, a * v + b)
+
+/* C[a,b][nxt] += 1。 */
+let bump(w, a, b, nxt, v) =
+  let row = row_at(w, a, b, v) in
+  list_set(row, nxt, nth(row, nxt) + 1)
+
+/* unigram[nxt] += 1。 */
+let bump_u(u, nxt) = list_set(u, nxt, nth(u, nxt) + 1)
+
+/* 从 i=2 起扫 ids，对每个三元组计数。 */
+let train_ids(w, ids, v, i, n) =
+  if i >= n then 0
+  else
+    let _ = bump(w, nth(ids, i - 2), nth(ids, i - 1), nth(ids, i), v) in
+    train_ids(w, ids, v, i + 1, n)
+
+/* 扫一遍 ids，填 unigram。 */
+let train_u(u, ids, i, n) =
+  if i >= n then 0
+  else
+    let _ = bump_u(u, nth(ids, i)) in
+    train_u(u, ids, i + 1, n)
+
+/* 一行计数之和。 */
+let row_sum(row, i, acc) =
+  if i >= len(row) then acc
+  else row_sum(row, i + 1, acc + nth(row, i))
+
+/* 扫描找最大值下标；并列时保留先出现的（更小的 i）。 */
+let argmax_go(row, i, bi, bv) =
+  if i >= len(row) then bi
+  else
+    let x = nth(row, i) in
+    if x > bv then argmax_go(row, i + 1, i, x)
+    else argmax_go(row, i + 1, bi, bv)
+
+/* 计数最大的下一字符下标。 */
+let argmax(row) = argmax_go(row, 1, 0, nth(row, 0))
+
+/* m = [W, unigram, V]。有过的上下文用 W 的那一行，否则用 unigram。 */
+let dist(m, a, b) =
+  let row = row_at(nth(m, 0), a, b, nth(m, 2)) in
+  if row_sum(row, 0, 0) <= 0 then nth(m, 1)
+  else row
+
+/* 贪心命中数。st = [n, hit, 占位]。 */
+let acc_ids(w, ids, v, i, st) =
+  if i >= nth(st, 0) then nth(st, 1)
+  else
+    let pred = argmax(row_at(w, nth(ids, i - 2), nth(ids, i - 1), v)) in
+    let h = nth(st, 1) in
+    let _ = list_set(st, 1, if pred == nth(ids, i) then h + 1 else h) in
+    acc_ids(w, ids, v, i + 1, st)
+
+/* LCG；结果折成非负，避免 irem 出负下标、采样永远打到词表[0]。 */
+let rng_next(s) =
+  let x = irem(iadd(imul(s, 1103515245), 12345), 2147483647) in
+  if x < 0 then 0 - x else x
+
+/* 在计数行上走累计分布：r 减到 <0 的那个槽。 */
+let sample_go(row, i, r) =
+  if i >= len(row) then i - 1
+  else
+    let r2 = r - nth(row, i) in
+    if r2 < 0 then i
+    else sample_go(row, i + 1, r2)
+
+/* 按计数比例抽一个下标；返回 [下标, 新种子]。空行则 0。 */
+let sample(row, seed) =
+  let s = row_sum(row, 0, 0) in
+  let seed2 = rng_next(seed) in
+  if s <= 0 then [0, seed2]
+  else [sample_go(row, 0, irem(seed2, s)), seed2]
+
+/* 提示词编成最后两个字的下标 (a,b)；不在词表里的字跳过。 */
+let prompt_ids(prompt, vocab, i, a, b) =
+  if i >= str_len(prompt) then [a, b]
+  else
+    let c = ch_at(prompt, i) in
+    let k = find_char(vocab, c, 0) in
+    if k < 0 then prompt_ids(prompt, vocab, i + str_len(c), a, b)
+    else prompt_ids(prompt, vocab, i + str_len(c), b, k)
+
+/* 贪心续写 n 个字符。st = [prev2, prev1, 已生成字符串]。 */
+let generate(m, vocab, st, n) =
+  if n <= 0 then nth(st, 2)
+  else
+    let nxt = argmax(dist(m, nth(st, 0), nth(st, 1))) in
+    let acc = str_cat(nth(st, 2), str_chr(nth(vocab, nxt))) in
+    let _ = list_set(st, 0, nth(st, 1)) in
+    let _ = list_set(st, 1, nxt) in
+    let _ = list_set(st, 2, acc) in
+    generate(m, vocab, st, n - 1)
+
+/* 采样续写。st = [prev2, prev1, 已生成字符串, rng 种子]。 */
+let generate_s(m, vocab, st, n) =
+  if n <= 0 then nth(st, 2)
+  else
+    let r = sample(dist(m, nth(st, 0), nth(st, 1)), nth(st, 3)) in
+    let nxt = nth(r, 0) in
+    let acc = str_cat(nth(st, 2), str_chr(nth(vocab, nxt))) in
+    let _ = list_set(st, 0, nth(st, 1)) in
+    let _ = list_set(st, 1, nxt) in
+    let _ = list_set(st, 2, acc) in
+    let _ = list_set(st, 3, nth(r, 1)) in
+    generate_s(m, vocab, st, n - 1)
+
+/* 可变 4 元组，给 list_set 用。 */
+let st4(a, b, c, d) =
+  let s = list_new() in
+  let _ = list_push(s, a) in
+  let _ = list_push(s, b) in
+  let _ = list_push(s, c) in
+  let _ = list_push(s, d) in
+  s
+
+/* 可变 3 元组。 */
+let st3(a, b, c) =
+  let s = list_new() in
+  let _ = list_push(s, a) in
+  let _ = list_push(s, b) in
+  let _ = list_push(s, c) in
+  s
+
+let path =
+  if argc() > 1 then argv(1)
+  else "app/llm/corpus.txt"
+
+let prompt =
+  if argc() > 2 then argv(2)
+  else "你好"
+
+/* 缺文件时 read_or_0 为 0，改走内置语料。 */
+let text =
+  let t = read_or_0(path) in
+  if t == 0 then default_text(0)
+  else t
+
+let vocab = build_vocab(text, list_new(), 0)
+let ids = encode(text, vocab, list_new(), 0)
+let v = len(vocab)
+/* W：V² 行（每个二元上下文一行），每行 V 个下一字计数。 */
+let w = mat(v * v, v)
+let u = fill(v, 0)
+let m = st3(w, u, v)
+let ngen = 48
+let pairs = len(ids) - 2
+
+let rc =
+  if v <= 0 then
+    let _ = print("empty corpus") in 1
+  else if pairs <= 0 then
+    let _ = print("need at least 3 characters") in 1
+  else
+    let _ = print(format("char LM (trigram)  vocab %d  tokens %d  rows %d", [v, len(ids), v * v])) in
+    let _ = print("--- train (count C[prev2,prev1][next]) ---") in
+    let _ = train_ids(w, ids, v, 2, len(ids)) in
+    let _ = train_u(u, ids, 0, len(ids)) in
+    let hit = acc_ids(w, ids, v, 2, st3(len(ids), 0, 0)) in
+    let _ = print(format("greedy acc %d / %d", [hit, pairs])) in
+    let pb = prompt_ids(prompt, vocab, 0, nth(ids, 0), nth(ids, 0)) in
+    let a0 = nth(pb, 0) in
+    let b0 = nth(pb, 1) in
+    let g = generate(m, vocab, st3(a0, b0, prompt), ngen) in
+    let s = generate_s(m, vocab, st4(a0, b0, prompt, time_ns()), ngen) in
+    let _ = print("--- infer greedy ---") in
+    let _ = print(g) in
+    let _ = print("--- infer sample ---") in
+    let _ = print(s) in
+    0
+
+rc

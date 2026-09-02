@@ -19,4 +19,6 @@ app/counter/counter
 app/hello/hello
 app/native/libyui_yac.so
 app/lantern/lantern
+app/llm/llm
+app/llm/llm.exe
 *.jit
