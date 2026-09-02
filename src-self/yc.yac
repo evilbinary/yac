@@ -29,6 +29,7 @@ let usage(_) =
   let _ = print("  -g, --syms       write ELF function symbols (nm/gdb)") in
   let _ = print("  --arch x86_64|arm64|riscv64") in
   let _ = print("  --format elf|pe|macho|yjit   (default: host)   --shared   --prof-out file") in
+  let _ = print("  -v, --verbose    compile progress ([yc]/[prof]/[emit])") in
   0
 
 let ends_with_yjit(s) =
@@ -99,6 +100,8 @@ let parse_args(i, argc, out, pos, spec) =
          nth(spec, 4), nth(spec, 5), nth(spec, 6)])
     else if a == "--profile" then
       parse_args(i + 1, argc, out, pos, spec)
+    else if a == "-v" or a == "--verbose" then
+      parse_args(i + 1, argc, out, pos, spec_flag(spec, "verbose"))
     else if a == "--prof-out" then
       if i + 1 >= argc then [out, pos, 2, spec]
       else parse_args(i + 2, argc, out, pos,
@@ -198,6 +201,7 @@ let run_cli(pr) =
   let out_opt = nth(pr, 0) in
   let pos = nth(pr, 1) in
   let spec = nth(pr, 3) in
+  let _ = if fl(spec, "verbose") then log_set_hush(false) else 0 in
   if fl(spec, "load-rt") then
     let _ = print("error: --load-rt is not supported in native yc") in 1
   else

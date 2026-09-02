@@ -10,7 +10,7 @@
  *   log(mod, msg)       — string message
  *   log_i(mod, key, n)  — key=int helper
  *
- * Pass wall times go to module `prof` (milliseconds):
+ * Off unless `--verbose` (yc) / `log_set_hush(false)`. Pass wall times:
  *   [..] [prof] lex=8
  * C interpreter function profile (counts + incl/excl ns):
  *   ./yac --prof-out FILE.prof bundle.yac input.yac
@@ -23,9 +23,10 @@
 
 let log_hush =
   let b = box_new() in
-  let _ = box_set(b, false) in
+  let _ = box_set(b, true) in
   b
 let log_set_hush(v) = box_set(log_hush, v)
+let log_get_hush(_) = box_get(log_hush)
 
 let log(mod, msg) =
   if box_get(log_hush) then 0
