@@ -10,6 +10,7 @@ YC ?= $(firstword $(wildcard \
 	$(YAC_ROOT)/build/yc_tmp/yc_a)
 YC_PKG ?= --pkg src-self,pkg
 YC_PKG_LLM ?= --pkg src-self,pkg,app/llm/transformer
+YC_PKG_SNAP ?= --pkg src-self,pkg,app/llm/snapshot
 # e.g. make lantern YC_FLAGS=-g  for nm/gdb function names
 YC_FLAGS ?=
 
@@ -38,7 +39,7 @@ YUI_LIBS = \
 	$(YUI_LIBDIR)/libsocket.a \
 	$(SDL_LIBS) -lm -ldl -lpthread
 
-.PHONY: all so apps counter hello lantern llm llm-trigram llm-transformer llm-train llm-infer clean
+.PHONY: all so apps counter hello lantern llm llm-trigram llm-transformer llm-train llm-infer llm-snapshot llm-snapshot-train llm-snapshot-infer clean
 
 all: so apps
 
@@ -85,11 +86,26 @@ llm-infer:
 	cd $(YAC_ROOT) && $(YC) $(YC_PKG_LLM) $(YC_FLAGS) app/llm/transformer/infer.yac -o app/llm/transformer/infer
 	chmod +x llm/transformer/infer
 
+llm-snapshot: llm-snapshot-train llm-snapshot-infer
+
+llm-snapshot-train:
+	mkdir -p $(YAC_ROOT)/build/app
+	cd $(YAC_ROOT) && $(YC) $(YC_PKG_SNAP) $(YC_FLAGS) app/llm/snapshot/train.yac -o app/llm/snapshot/train
+	chmod +x llm/snapshot/train
+
+llm-snapshot-infer:
+	mkdir -p $(YAC_ROOT)/build/app
+	cd $(YAC_ROOT) && $(YC) $(YC_PKG_SNAP) $(YC_FLAGS) app/llm/snapshot/infer.yac -o app/llm/snapshot/infer
+	chmod +x llm/snapshot/infer
+
 clean:
 	rm -f $(SO) native/yui_host counter/counter hello/hello lantern/lantern \
 		llm/llm llm/llm.exe llm/trigram/trigram llm/trigram/trigram.exe \
 		llm/train llm/train.exe llm/infer llm/infer.exe llm/transformer.w \
 		llm/transformer/train llm/transformer/train.exe \
 		llm/transformer/infer llm/transformer/infer.exe \
-		llm/transformer/transformer.w
+		llm/transformer/transformer.w \
+		llm/snapshot/train llm/snapshot/train.exe \
+		llm/snapshot/infer llm/snapshot/infer.exe \
+		llm/snapshot/snapshot.w
 	rm -rf $(YAC_ROOT)/build/app

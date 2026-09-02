@@ -1,0 +1,89 @@
+/* 快照并行：随机挖 MASK，双向填空，写出 snapshot.w。
+ *
+ *   make -C app llm-snapshot
+ *   ./app/llm/snapshot/train [语料] [权重] [epoch]
+ * 默认：app/llm/corpus.txt  app/llm/snapshot/snapshot.w  3
+ */
+
+import snapshot
+import io
+import fmt
+
+let default_text(_) =
+  "你好。\n你好，今天怎么样？\n我很好，你呢？\n我也很好，谢谢。\n再见。\n"
+
+let st5(a, b, c, d, e) =
+  let s = list_new() in
+  let _ = list_push(s, a) in
+  let _ = list_push(s, b) in
+  let _ = list_push(s, c) in
+  let _ = list_push(s, d) in
+  let _ = list_push(s, e) in
+  s
+
+/* st = [pos, nwin, seed, hit, nmask] */
+let epoch_go(m, ids, st) =
+  let pos = nth(st, 0) in
+  if pos >= nth(st, 1) then 0
+  else
+    let r = train_step(m, ids, pos, nth(st, 2), 1) in
+    let _ = list_set(st, 0, pos + 1) in
+    let _ = list_set(st, 2, nth(r, 2)) in
+    let _ = list_set(st, 3, nth(st, 3) + nth(r, 0)) in
+    let _ = list_set(st, 4, nth(st, 4) + nth(r, 1)) in
+    epoch_go(m, ids, st)
+
+/* st = [ep, epochs, nwin, seed] */
+let run_ep(m, ids, st) =
+  let ep = nth(st, 0) in
+  if ep >= nth(st, 1) then 0
+  else
+    let row = st5(0, nth(st, 2), nth(st, 3), 0, 0) in
+    let _ = epoch_go(m, ids, row) in
+    let nm = nth(row, 4) in
+    let hit = nth(row, 3) in
+    let _ = print(format("epoch %d  mask-acc %d / %d", [ep, hit, nm])) in
+    let _ = list_set(st, 0, ep + 1) in
+    let _ = list_set(st, 3, nth(row, 2)) in
+    run_ep(m, ids, st)
+
+let path =
+  if argc() > 1 then argv(1)
+  else "app/llm/corpus.txt"
+
+let wpath =
+  if argc() > 2 then argv(2)
+  else "app/llm/snapshot/snapshot.w"
+
+let epochs =
+  if argc() > 3 then parse_int(argv(3), 0, str_len(argv(3)), 0)
+  else 3
+
+let text =
+  let t = read_or_0(path) in
+  if t == 0 then default_text(0)
+  else t
+
+let vocab = build_vocab(text, list_new(), 0)
+let _ = list_push(vocab, "░")
+let ids = encode(text, vocab, list_new(), 0)
+let n = len(ids)
+let t = ctx(0)
+let nwin = if n >= t then n - t + 1 else 1
+let m = model_new(vocab, 1)
+
+let rc =
+  if n <= 0 then
+    let _ = print("empty corpus") in 1
+  else
+    let _ = print(format("snapshot  V=%d  d=%d  T=%d  tokens=%d  windows=%d",
+      [ntok(m), dim(0), t, n, nwin])) in
+    let _ = print("--- train (MLM, bidirectional, fixed-point) ---") in
+    let _ = run_ep(m, ids, st5(0, epochs, nwin, 1, 0)) in
+    let _ = print("--- after train, denoise 你好  K=8 ---") in
+    let _ = denoise(m, "你好", 8) in
+    let _ = save_model(m, wpath) in
+    let _ = print(str_cat("wrote ", wpath)) in
+    0
+
+rc

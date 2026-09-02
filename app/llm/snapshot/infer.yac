@@ -1,0 +1,39 @@
+/* 加载快照权重，K 步全局曝光 + 按置信度揭 MASK。
+ *
+ *   make -C app llm-snapshot-infer
+ *   ./app/llm/snapshot/infer [权重] [提示词] [K]
+ * 默认：app/llm/snapshot/snapshot.w  你好  8
+ */
+
+import snapshot
+import io
+import fmt
+
+let wpath =
+  if argc() > 1 then argv(1)
+  else "app/llm/snapshot/snapshot.w"
+
+let prompt =
+  if argc() > 2 then argv(2)
+  else "你好"
+
+let k0 =
+  if argc() > 3 then parse_int(argv(3), 0, str_len(argv(3)), 0)
+  else 8
+
+let k = if k0 < 1 then 1 else k0
+
+let m = load_model(wpath)
+
+let rc =
+  if m == 0 then
+    let _ = print("load failed (train first: app/llm/snapshot/train)") in 1
+  else
+    let _ = print(format("snapshot  V=%d  d=%d  T=%d  K=%d",
+      [ntok(m), dim(0), ctx(0), k])) in
+    let _ = print("--- denoise (one forward per step, then unveil) ---") in
+    let canvas = denoise(m, prompt, k) in
+    let _ = print(str_cat("final  ", show_canvas(m, canvas))) in
+    0
+
+rc

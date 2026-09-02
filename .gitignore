@@ -33,4 +33,9 @@ app/llm/transformer/train.exe
 app/llm/transformer/infer
 app/llm/transformer/infer.exe
 app/llm/transformer/transformer.w
+app/llm/snapshot/train
+app/llm/snapshot/train.exe
+app/llm/snapshot/infer
+app/llm/snapshot/infer.exe
+app/llm/snapshot/snapshot.w
 *.jit
