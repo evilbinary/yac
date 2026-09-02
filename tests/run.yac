@@ -452,11 +452,22 @@ let compiler_all(st, yc) =
   let st1ad =
     if nth(run(["sh", "-c", "command -v python3 >/dev/null 2>&1"]), 0) != 0 then st1dl
     else check(st1dl, "elf --shared ccall add", "0", int_to_str(nth(radd, 0))) in
+  let pdrv = str_cat(TMP, "/dadd_drv.yac") in
+  let _ = write_file(pdrv, str_cat("import ffi\nlet h = load(\"",
+    str_cat(soadd, "\")\nlet f = sym(h, \"add\")\nif ccall(f, 2, 3) == 5 then 42 else 0\n"))) in
+  let bdrv = native(str_cat(TMP, "/dadd_drv")) in
+  let _ = run(append(yc, [pdrv, "-o", bdrv])) in
+  let rdrv =
+    if nth(run(["test", "-f", bdrv]), 0) != 0 then [1, "", ""]
+    else
+      let _ = run(["chmod", "+x", bdrv]) in
+      run([bdrv]) in
+  let st1dv = check(st1ad, "elf --shared yc ccall add", "42", int_to_str(nth(rdrv, 0))) in
   let pdef = str_cat(TMP, "/dlib.yac") in
   let _ = write_file(pdef, "42;\n") in
   let _ = run(append(yc, ["--shared", pdef])) in
   let defso = str_cat(TMP, "/dlib.so") in
-  let st1df = check(st1ad, "elf --shared default .so", "1",
+  let st1df = check(st1dv, "elf --shared default .so", "1",
                     if nth(run(["test", "-f", defso]), 0) == 0 then "1" else "0") in
   let yjs = str_cat(TMP, "/sess.yjit") in
   let rdump = repl_feed(yc, str_cat("1+2\n:dump ", str_cat(yjs, "\n:q\n"))) in

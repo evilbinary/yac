@@ -98,16 +98,16 @@ let emit_x86_c_stkarg(b, args, j) =
     emit_x86_c_stkarg(b, args, j - 1)
 
 let emit_x86_c_align(b) =
-  let _ = push_r64(b, 3) in
-  let _ = mov_r64_r64(b, 3, 4) in
+  let _ = push_r12(b) in
+  let _ = mov_r12_rsp(b) in
   let _ = e8(b, 72) in
   let _ = e8(b, 131) in
   let _ = e8(b, 228) in
   e8(b, 240)
 
 let emit_x86_c_unalign(b) =
-  let _ = mov_r64_r64(b, 4, 3) in
-  pop_r64(b, 3)
+  let _ = mov_rsp_r12(b) in
+  pop_r12(b)
 
 let linux_cc_marshal(b, args) =
   let nargs = len(args) in

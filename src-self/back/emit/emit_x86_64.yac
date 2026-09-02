@@ -1888,6 +1888,9 @@ let cabi_shl_args(b, j, n) =
     cabi_shl_args(b, j + 1, n)
 
 let emit_cabi_stub(b, ids, ps, name, nargs) =
+  let _ =
+    if band(bytes_len(b), 1) == 0 then 0
+    else bytes_append(b, 144) in
   let start = bytes_len(b) in
   let _ = push_rbp(b) in
   let _ = mov_rbp_rsp(b) in
