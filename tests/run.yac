@@ -430,9 +430,28 @@ let compiler_all(st, yc) =
   let _ = run(["cp", "-f", yj, jitp]) in
   let rjit = run(append(yc, [jitp])) in
   let st1jt = check(st1yj, "yc file.jit", "42", chomp(nth(rjit, 1))) in
+  let so = str_cat(TMP, "/libl4_42.so") in
+  let _ = run(append(yc, [case_src("l4_42"), "--shared", "-o", so])) in
+  let sob = read_file(so) in
+  let et =
+    if sob == 0 then 0
+    else if str_len(sob) < 17 then 0
+    else str_ref(sob, 16) in
+  let st1so = check(st1jt, "elf --shared et_dyn", "3", int_to_str(et)) in
+  let rdl = run(["python3", "-c",
+    str_cat("import ctypes; ctypes.CDLL(\"", str_cat(so, "\"))")]) in
+  let st1dl =
+    if nth(run(["sh", "-c", "command -v python3 >/dev/null 2>&1"]), 0) != 0 then st1so
+    else check(st1so, "elf --shared dlopen", "0", int_to_str(nth(rdl, 0))) in
+  let pdef = str_cat(TMP, "/dlib.yac") in
+  let _ = write_file(pdef, "42;\n") in
+  let _ = run(append(yc, ["--shared", pdef])) in
+  let defso = str_cat(TMP, "/dlib.so") in
+  let st1df = check(st1dl, "elf --shared default .so", "1",
+                    if nth(run(["test", "-f", defso]), 0) == 0 then "1" else "0") in
   let yjs = str_cat(TMP, "/sess.yjit") in
   let rdump = repl_feed(yc, str_cat("1+2\n:dump ", str_cat(yjs, "\n:q\n"))) in
-  let st1d = check(st1jt, "yjit dump sess", "0", int_to_str(nth(rdump, 0))) in
+  let st1d = check(st1df, "yjit dump sess", "0", int_to_str(nth(rdump, 0))) in
   let rload = repl_feed(yc, str_cat(":load ", str_cat(yjs, "\nprint(\"hello\")\n:q\n"))) in
   let lblob = str_cat(nth(rload, 1), nth(rload, 2)) in
   let st1l =

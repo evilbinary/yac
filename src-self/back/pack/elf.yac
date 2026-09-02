@@ -1,7 +1,8 @@
 /* elf.yac — ELF64 packer (ET_EXEC or ET_DYN).
  *
  * Exec: ehdr + 1 PT_LOAD, text at 120 (historical).
- * Dylib: ehdr + PT_LOAD + PT_DYNAMIC + DT_NULL, text at 192.
+ * Dylib (pack_elf_dyn): PT_LOAD + PT_DYNAMIC + DT_NULL, text at 192.
+ * --shared AOT: pack_elf_libc as ET_DYN with RELATIVE relocs + dynsym.
  * p_vaddr / entry use target vaddr + text_off.
  */
 
@@ -125,7 +126,59 @@ let DT_JMPREL = 23
 let DT_FLAGS = 30
 let DF_BIND_NOW = 8
 let DT_RELA = 7
+let DT_RELASZ = 8
+let DT_RELAENT = 9
+let DT_TEXTREL = 22
 let R_JUMP_SLOT = 7
+
+let elf_shared_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let elf_shared_set(on) = box_set(elf_shared_box, on)
+
+let elf_shared(_) =
+  let v = box_get(elf_shared_box) in
+  if v == 0 then false else true
+
+let elf_pic_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let elf_relocs_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let elf_pic_set(on) = box_set(elf_pic_box, on)
+
+let elf_relocs_reset(_) = box_set(elf_relocs_box, list_new())
+
+let elf_relocs_get(_) =
+  let v = box_get(elf_relocs_box) in
+  if v == 0 then list_new() else v
+
+let elf_note_abs64(pos) =
+  if box_get(elf_pic_box) == 0 then 0
+  else
+    let xs = box_get(elf_relocs_box) in
+    if xs == 0 then 0
+    else list_push(xs, pos)
+
+let elf_u64_at(b, i) =
+  let b0 = bytes_ref(b, i) in
+  let b1 = bytes_ref(b, i + 1) in
+  let b2 = bytes_ref(b, i + 2) in
+  let b3 = bytes_ref(b, i + 3) in
+  let b4 = bytes_ref(b, i + 4) in
+  let b5 = bytes_ref(b, i + 5) in
+  let b6 = bytes_ref(b, i + 6) in
+  let b7 = bytes_ref(b, i + 7) in
+  let lo = b0 + bshl(b1, 8) + bshl(b2, 16) + bshl(b3, 24) in
+  let hi = b4 + bshl(b5, 8) + bshl(b6, 16) + bshl(b7, 24) in
+  lo + bshl(hi, 32)
 
 /* ELF BIND_NOW looks up every JMPREL in libc. Win32 ccall names
  * (LoadLibraryA, GetProcAddress, …) are still in the image for PE
@@ -304,14 +357,25 @@ let elf_jump_reloc(machine) =
   else if machine == 183 then 1026
   else 5
 
+let elf_relative_reloc(machine) =
+  if machine == 62 then 8
+  else if machine == 183 then 1027
+  else 3
+
 let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
   let n = len(names) in
+  let shared = elf_shared(0) in
   let out = pack_elf_exec(code, machine, vaddr, text_off) in
+  let _ = if shared then le16(out, 3, 16) else 0 in
   let interp = elf_interp(machine) in
   let rtype = elf_jump_reloc(machine) in
+  let rrel = elf_relative_reloc(machine) in
   let interp_off = bytes_len(out) in
-  let _ = app_str(out, interp, 0, str_len(interp)) in
-  let _ = pad8b(out) in
+  let _ =
+    if shared then 0
+    else
+      let _ = app_str(out, interp, 0, str_len(interp)) in
+      pad8b(out) in
   let dynstr_off = bytes_len(out) in
   let _ = bytes_append(out, 0) in
   let name_off(i, acc) =
@@ -323,6 +387,17 @@ let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
   let offs_rev = name_off(0, []) in
   let libc_off = bytes_len(out) - dynstr_off in
   let _ = app_str(out, "libc.so.6", 0, 9) in
+  let exps = if shared then list_rev(funsym_get(0)) else [] in
+  let nexp = len(exps) in
+  let exp_offs = list_new() in
+  let addexp(i) =
+    if i >= nexp then 0
+    else
+      let s = nth(nth(exps, i), 0) in
+      let _ = list_push(exp_offs, bytes_len(out) - dynstr_off) in
+      let _ = app_str(out, s, 0, str_len(s)) in
+      addexp(i + 1) in
+  let _ = addexp(0) in
   let dynstr_sz = bytes_len(out) - dynstr_off in
   let str_off(i) = nth(offs_rev, n - 1 - i) in
   let _ = pad8b(out) in
@@ -342,15 +417,27 @@ let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
       let _ = app64(out, 0) in
       put_sym(i + 1) in
   let _ = put_sym(0) in
+  let put_exp(i) =
+    if i >= nexp then 0
+    else
+      let e = nth(exps, i) in
+      let _ = app32(out, nth(exp_offs, i)) in
+      let _ = bytes_append(out, 18) in
+      let _ = bytes_append(out, 0) in
+      let _ = app16(out, 1) in
+      let _ = app64(out, vaddr + text_off + nth(e, 1)) in
+      let _ = app64(out, 0) in
+      put_exp(i + 1) in
+  let _ = put_exp(0) in
   let hash_off = bytes_len(out) in
-  let nsyms = n + 1 in
+  let nsyms = n + 1 + nexp in
   let _ = app32(out, 1) in
   let _ = app32(out, nsyms) in
   let _ = app32(out, 1) in
   let chain(i) =
     if i >= nsyms then 0
     else
-      let nxt = if i == 0 then 0 else if i == n then 0 else i + 1 in
+      let nxt = if i == 0 then 0 else if i + 1 >= nsyms then 0 else i + 1 in
       let _ = app32(out, nxt) in
       chain(i + 1) in
   let _ = chain(0) in
@@ -373,32 +460,59 @@ let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
       put_rela(i + 1) in
   let _ = put_rela(0) in
   let nrel = box_get(nrel_box) in
+  let relp = elf_relocs_get(0) in
+  let nrelr = len(relp) in
+  let rel_off = bytes_len(out) in
+  let put_rel(i) =
+    if i >= nrelr then 0
+    else
+      let pos = nth(relp, i) in
+      let _ = app64(out, vaddr + text_off + pos) in
+      let _ = app64(out, rrel) in
+      let _ = app64(out, elf_u64_at(code, pos)) in
+      put_rel(i + 1) in
+  let _ = put_rel(0) in
   let dyn_off = bytes_len(out) in
   let va(off) = vaddr + off in
-  let _ = dyn_pair(out, DT_NEEDED, libc_off) in
+  let _ = if n == 0 then 0 else dyn_pair(out, DT_NEEDED, libc_off) in
   let _ = dyn_pair(out, DT_HASH, va(hash_off)) in
   let _ = dyn_pair(out, DT_STRTAB, va(dynstr_off)) in
   let _ = dyn_pair(out, DT_SYMTAB, va(dynsym_off)) in
   let _ = dyn_pair(out, DT_SYMENT, 24) in
   let _ = dyn_pair(out, 10, dynstr_sz) in
-  let _ = dyn_pair(out, DT_PLTGOT, va(text_off + got_off)) in
-  let _ = dyn_pair(out, DT_PLTRELSZ, nrel * 24) in
-  let _ = dyn_pair(out, DT_PLTREL, DT_RELA) in
-  let _ = dyn_pair(out, DT_JMPREL, va(rela_off)) in
-  let _ = dyn_pair(out, DT_FLAGS, DF_BIND_NOW) in
+  let add_plt(_) =
+    let _ = dyn_pair(out, DT_PLTGOT, va(text_off + got_off)) in
+    let _ = dyn_pair(out, DT_PLTRELSZ, nrel * 24) in
+    let _ = dyn_pair(out, DT_PLTREL, DT_RELA) in
+    dyn_pair(out, DT_JMPREL, va(rela_off)) in
+  let _ = if nrel == 0 then 0 else add_plt(0) in
+  let add_rela(_) =
+    let _ = dyn_pair(out, DT_RELA, va(rel_off)) in
+    let _ = dyn_pair(out, DT_RELASZ, nrelr * 24) in
+    dyn_pair(out, DT_RELAENT, 24) in
+  let _ = if nrelr == 0 then 0 else add_rela(0) in
+  let _ = if nrelr == 0 then 0 else dyn_pair(out, DT_TEXTREL, 0) in
+  let dflags = if nrelr == 0 then DF_BIND_NOW else DF_BIND_NOW + 4 in
+  let _ = dyn_pair(out, DT_FLAGS, dflags) in
   let _ = dyn_pair(out, DT_NULL, 0) in
   let dyn_sz = bytes_len(out) - dyn_off in
   let ph_off = bytes_len(out) in
-  let file_size = ph_off + 168 in
+  let phbytes = if shared then 112 else 168 in
+  let file_size = ph_off + phbytes in
   let _ = bytes_put(out, file_size - 1, 0) in
   let _ = elf_phdr_load(out, ph_off, PH_TYPE_LOAD, PH_FLAGS_RWX, 0, vaddr) in
   let _ = elf_phdr_sizes(out, ph_off, file_size, file_size, PAGE) in
-  let _ = elf_phdr_load(out, ph_off + 56, PH_TYPE_INTERP, PH_FLAGS_R, interp_off, va(interp_off)) in
-  let _ = elf_phdr_sizes(out, ph_off + 56, str_len(interp) + 1, str_len(interp) + 1, 1) in
-  let _ = elf_phdr_load(out, ph_off + 112, PH_TYPE_DYNAMIC, PH_FLAGS_R, dyn_off, va(dyn_off)) in
-  let _ = elf_phdr_sizes(out, ph_off + 112, dyn_sz, dyn_sz, 8) in
+  let _ =
+    if shared then
+      let _ = elf_phdr_load(out, ph_off + 56, PH_TYPE_DYNAMIC, PH_FLAGS_R, dyn_off, va(dyn_off)) in
+      elf_phdr_sizes(out, ph_off + 56, dyn_sz, dyn_sz, 8)
+    else
+      let _ = elf_phdr_load(out, ph_off + 56, PH_TYPE_INTERP, PH_FLAGS_R, interp_off, va(interp_off)) in
+      let _ = elf_phdr_sizes(out, ph_off + 56, str_len(interp) + 1, str_len(interp) + 1, 1) in
+      let _ = elf_phdr_load(out, ph_off + 112, PH_TYPE_DYNAMIC, PH_FLAGS_R, dyn_off, va(dyn_off)) in
+      elf_phdr_sizes(out, ph_off + 112, dyn_sz, dyn_sz, 8) in
   let _ = le64(out, ph_off, 32) in
-  let _ = le16(out, 3, 56) in
-  let _ = le64(out, va(dyn_off), text_off + got_off) in
+  let _ = le16(out, if shared then 2 else 3, 56) in
+  let _ = if n == 0 then 0 else le64(out, va(dyn_off), text_off + got_off) in
   elf_maybe_debug(out, vaddr, text_off, bytes_len(code))
 

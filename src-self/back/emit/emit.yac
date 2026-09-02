@@ -67,6 +67,10 @@ let apply_u64(b, bytePos, val) =
   let _ = apply_abs32(b, bytePos + 4, band(bshr(val, 32), 4294967295)) in
   0
 
+let apply_u64_rel(b, bytePos, val) =
+  let _ = apply_u64(b, bytePos, val) in
+  elf_note_abs64(bytePos)
+
 /* Local labels: cons list of [name, pos]. */
 let lookup_name_at(table, name, i) =
   if i < 0 then 0
@@ -642,25 +646,25 @@ let emit_resolve_patch(st, p) =
   if tag == 1 then
     apply_patch(b, nth(p, 1), nth(offs, nth(p, 2)))
   else if tag == 2 then
-    apply_u64(b, nth(p, 1), codebase + nth(offs, nth(p, 2)))
+    apply_u64_rel(b, nth(p, 1), codebase + nth(offs, nth(p, 2)))
   else if tag == 3 then
-    apply_u64(b, nth(p, 1), globbase)
+    apply_u64_rel(b, nth(p, 1), globbase)
   else if tag == 4 then
-    apply_u64(b, nth(p, 1), globbase + 8)
+    apply_u64_rel(b, nth(p, 1), globbase + 8)
   else if tag == 5 then
-    apply_u64(b, nth(p, 1), globbase + 16)
+    apply_u64_rel(b, nth(p, 1), globbase + 16)
   else if tag == 6 then
-    apply_u64(b, nth(p, 1), globbase + 24)
+    apply_u64_rel(b, nth(p, 1), globbase + 24)
   else if tag == 7 then
-    apply_u64(b, nth(p, 1), globbase + 56)
+    apply_u64_rel(b, nth(p, 1), globbase + 56)
   else if tag == 8 then
-    apply_u64(b, nth(p, 1), globbase + 64)
+    apply_u64_rel(b, nth(p, 1), globbase + 64)
   else if tag == 11 then
-    apply_u64(b, nth(p, 1), nth(st, 4) + nth(p, 2) + 1)
+    apply_u64_rel(b, nth(p, 1), nth(st, 4) + nth(p, 2) + 1)
   else if tag == 12 then
-    apply_u64(b, nth(p, 1), nth(st, 2) + nth(p, 2))
+    apply_u64_rel(b, nth(p, 1), nth(st, 2) + nth(p, 2))
   else if tag == 14 then
-    apply_u64(b, nth(p, 1), nth(st, 2) + nth(st, 5))
+    apply_u64_rel(b, nth(p, 1), nth(st, 2) + nth(st, 5))
   else if tag == 15 then
     apply_patch(b, nth(p, 1), nth(nth(cimport_buf(0), 1), nth(p, 2)))
   else if tag == 16 then

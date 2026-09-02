@@ -25,11 +25,13 @@ let usage(_) =
   let _ = print("  file.yjit|file.jit  load and run a dumped image (no --cps)") in
   let _ = print("  file.yac...      concatenate in order as one program") in
   let _ = print("  --scheme         translate a Scheme subset, then run or compile") in
-  let _ = print("  -o out           write an executable instead of running") in
+  let _ = print("  -o out           write an executable or library instead of running") in
   let _ = print("  --pkg DIR[,DIR]  package roots (before ./pkg and this yc)") in
   let _ = print("  -g, --syms       write ELF function symbols (nm/gdb)") in
   let _ = print("  --arch x86_64|arm64|riscv64") in
-  let _ = print("  --format elf|pe|macho|yjit   (default: host)   --shared   --prof-out file") in
+  let _ = print("  --format elf|pe|macho|yjit   (default: host)") in
+  let _ = print("  --shared         ELF .so / PE .dll / Mach-O .dylib") in
+  let _ = print("  --prof-out file  write profile data to file") in
   let _ = print("  -v, --verbose    compile progress ([yc]/[prof]/[emit])") in
   0
 
@@ -67,6 +69,21 @@ let ends_with_exe(s) =
 
 let pe_out(path) =
   if ends_with_exe(path) then path else str_cat(path, ".exe")
+
+let ends_with_str(s, suf) =
+  let n = str_len(s) in
+  let m = str_len(suf) in
+  if n < m then false
+  else str_slice(s, n - m, m) == suf
+
+let dylib_suffix(fmt) =
+  if fmt == "pe" then ".dll"
+  else if fmt == "macho" then ".dylib"
+  else ".so"
+
+let dylib_out(path, fmt) =
+  let suf = dylib_suffix(fmt) in
+  if ends_with_str(path, suf) then path else str_cat(path, suf)
 
 let has_flag(fs, name, i) =
   if i >= len(fs) then false
@@ -295,7 +312,10 @@ let run_cli(pr) =
             else
               let t = mk_target(an, fn, nth(spec, 2)) in
               let out0 = if out_opt == "" then default_out(inpath) else out_opt in
-              let outpath = if fn == "pe" then pe_out(out0) else out0 in
+              let outpath =
+                if nth(spec, 2) == "dylib" then dylib_out(out0, fn)
+                else if fn == "pe" then pe_out(out0)
+                else out0 in
               let _ = if fl(spec, "syms") then syms_enable(1) else syms_enable(0) in
               compile_src(src, outpath, t, nth(spec, 3))
 

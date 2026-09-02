@@ -111,6 +111,12 @@ let emit_apply_unres(off) =
     emit_unres_set(0)
 
 let emit_by_target(ast, t) =
+  let _ =
+    elf_pic_set(
+      if target_shared(t) then
+        if target_format(t) == "elf" then 1 else 0
+      else 0) in
+  let _ = elf_relocs_reset(0) in
   let a = target_arch(t) in
   let r =
     if a == "x86_64" then
