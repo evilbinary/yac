@@ -296,6 +296,8 @@ let compile_syntax_err(st, yc, src, name) =
 /* Incomplete / junk input must not compile or JIT. */
 let syntax_bads(_) = [
   ["unclosed call", "hi("],
+  ["nested unclosed call", "f(g("],
+  ["call then in", "let x = foo(1 in x"],
   ["bare print", "print"],
   ["bare not", "not"],
   ["bare callcc", "callcc"],

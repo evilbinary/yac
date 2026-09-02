@@ -357,7 +357,11 @@ let make_pipeline(t) =
    mk_pass("pack", pass_pack)]
 
 let dump_ast(src) =
-  let _ = print(pass_parse(pass_lex(src))) in 0
+  let ast = pass_parse(pass_lex(src)) in
+  if prog_has_err(ast, 0) then
+    let _ = report_syntax(ast) in 1
+  else
+    let _ = print(ast) in 0
 
 let dump_anf(src) =
   let ast = pass_parse(pass_lex(src)) in
