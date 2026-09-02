@@ -277,6 +277,54 @@ let emit_rv_iccall(st, insn) =
   let _ = rv_slot(b, nth(insn, 1), true, 10) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
 
+let emit_rv_tcall_other(st, insn, is_entry) =
+  let b = nth(st, 0) in
+  let fn = nth(insn, 2) in
+  let args = nth(insn, 3) in
+  let na = len(args) in
+  if na > 8 then
+    let nstack = na - 8 in
+    let pad = if band(nstack, 1) == 0 then 0 else 8 in
+    let _ = if pad == 0 then 0 else rv_addi(b, 2, 2, 0 - 8) in
+    let _ = rv_apply_push(b, 0, args, na - 1) in
+    let load(j) =
+      if j >= 8 then 0
+      else
+        let _ = rv_slot(b, nth(args, j), false, 10 + j) in
+        load(j + 1) in
+    let _ = load(0) in
+    let pos = bytes_len(b) in
+    let _ = rv_jal(b, 1, 0) in
+    let _ = rv_addi(b, 2, 2, bshl(nstack, 3) + pad) in
+    let _ =
+      if is_entry then rv_jalr(b, 0, 1, 0)
+      else
+        let _ = rv_addi(b, 2, 8, 0) in
+        let _ = rv_ld(b, 1, 2, 8) in
+        let _ = rv_ld(b, 8, 2, 0) in
+        let _ = rv_addi(b, 2, 2, 16) in
+        rv_jalr(b, 0, 1, 0) in
+    emit_st4(st, b, nth(st, 1), nth(st, 2),
+      emit_patch_rel(nth(st, 4), nth(st, 3), pos, fn))
+  else
+    let load(j) =
+      if j >= na then 0
+      else
+        let _ = rv_slot(b, nth(args, j), false, 10 + j) in
+        load(j + 1) in
+    let _ = load(0) in
+    let _ =
+      if is_entry then 0
+      else
+        let _ = rv_addi(b, 2, 8, 0) in
+        let _ = rv_ld(b, 1, 2, 8) in
+        let _ = rv_ld(b, 8, 2, 0) in
+        rv_addi(b, 2, 2, 16) in
+    let pos = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    emit_st4(st, b, nth(st, 1), nth(st, 2),
+      emit_patch_jmpf(nth(st, 4), nth(st, 3), pos, fn))
+
 let emit_rv_tloop(st, args) =
   let b = nth(st, 0) in
   let nargs = len(args) in
@@ -448,27 +496,7 @@ let emit_rv_i_core(st, insn, is_entry) =
     emit_st4(st, b, cur, labels, patches)
   else if k == "tcall" then
     if nth(insn, 2) == emit_self(0) then emit_rv_tloop(st, nth(insn, 3))
-    else
-      let fn = nth(insn, 2) in
-      let args = nth(insn, 3) in
-      let na = len(args) in
-      let load(j) =
-        if j >= na then 0
-        else if j >= 8 then 0
-        else
-          let _ = rv_slot(b, nth(args, j), false, 10 + j) in
-          load(j + 1) in
-      let _ = load(0) in
-      let _ =
-        if is_entry then 0
-        else
-          let _ = rv_addi(b, 2, 8, 0) in
-          let _ = rv_ld(b, 1, 2, 8) in
-          let _ = rv_ld(b, 8, 2, 0) in
-          rv_addi(b, 2, 2, 16) in
-      let pos = bytes_len(b) in
-      let _ = rv_jal(b, 0, 0) in
-      emit_st4(st, b, cur, labels, emit_patch_jmpf(nth(st, 4), patches, pos, fn))
+    else emit_rv_tcall_other(st, insn, is_entry)
   else st
 
 let emit_rv_sysarg(b, args, j) =

@@ -162,6 +162,15 @@ let rv_ecall(b) = rv_u32(b, 115)
 
 let rv_unimp(b) = rv_u32(b, 0)
 
+let rv_slli_at(b, pos, rd, rs1, sh) =
+  rv_u32_at(b, pos, bshl(band(sh, 63), 20) + bshl(rs1, 15) + 4096 + bshl(rd, 7) + 19)
+
+let rv_srli_at(b, pos, rd, rs1, sh) =
+  rv_u32_at(b, pos, bshl(band(sh, 63), 20) + bshl(rs1, 15) + 20480 + bshl(rd, 7) + 19)
+
+let rv_add_at(b, pos, rd, rs1, rs2) =
+  rv_u32_at(b, pos, bshl(rs2, 20) + bshl(rs1, 15) + bshl(rd, 7) + 51)
+
 let rv_li(b, rd, v) =
   let hi = band(bshr(v + 2048, 12), 1048575) in
   let lo = band(v, 4095) in
@@ -171,13 +180,32 @@ let rv_li(b, rd, v) =
     let _ = rv_lui(b, rd, hi) in
     if lo_s == 0 then 0 else rv_addi(b, rd, rd, lo_s)
 
-/* Always LUI+ADDI (8 bytes) so absolute addresses can be patched in place. */
-let rv_li32_pair(b, rd, v) =
-  let hi = band(bshr(v + 2048, 12), 1048575) in
-  let lo = band(v, 4095) in
+let rv_lui_addi(b, rd, v32) =
+  let hi = band(bshr(v32 + 2048, 12), 1048575) in
+  let lo = band(v32, 4095) in
   let lo_s = if lo > 2047 then lo - 4096 else lo in
   let _ = rv_lui(b, rd, hi) in
   rv_addi(b, rd, rd, lo_s)
+
+let rv_lui_addi_at(b, pos, rd, v32) =
+  let hi = band(bshr(v32 + 2048, 12), 1048575) in
+  let lo = band(v32, 4095) in
+  let lo_s = if lo > 2047 then lo - 4096 else lo in
+  let _ = rv_u32_at(b, pos, bshl(band(hi, 1048575), 12) + bshl(rd, 7) + 55) in
+  rv_u32_at(b, pos + 4, bshl(band(lo_s, 4095), 20) + bshl(rd, 15) + bshl(rd, 7) + 19)
+
+/* Scratch: t0, or t1 if rd is t0. */
+let rv_li_tmp(rd) = if rd == 5 then 6 else 5
+
+/* 8 insns (32 bytes), patchable abs64. Name kept: callers used this for VAs. */
+let rv_li32_pair(b, rd, v) =
+  let tmp = rv_li_tmp(rd) in
+  let _ = rv_lui_addi(b, rd, band(v, 4294967295)) in
+  let _ = rv_slli(b, rd, rd, 32) in
+  let _ = rv_srli(b, rd, rd, 32) in
+  let _ = rv_lui_addi(b, tmp, bshr(v, 32)) in
+  let _ = rv_slli(b, tmp, tmp, 32) in
+  rv_add(b, rd, rd, tmp)
 
 /* rd is bits [11:7] of the LUI already at pos; keep it (alloc bump is t0, not t1). */
 let rv_insn_rd(b, pos) =
@@ -185,8 +213,10 @@ let rv_insn_rd(b, pos) =
 
 let rv_li32_at(b, pos, rd0, v) =
   let rd = rv_insn_rd(b, pos) in
-  let hi = band(bshr(v + 2048, 12), 1048575) in
-  let lo = band(v, 4095) in
-  let lo_s = if lo > 2047 then lo - 4096 else lo in
-  let _ = rv_u32_at(b, pos, bshl(band(hi, 1048575), 12) + bshl(rd, 7) + 55) in
-  rv_u32_at(b, pos + 4, bshl(band(lo_s, 4095), 20) + bshl(rd, 15) + bshl(rd, 7) + 19)
+  let tmp = rv_li_tmp(rd) in
+  let _ = rv_lui_addi_at(b, pos, rd, band(v, 4294967295)) in
+  let _ = rv_slli_at(b, pos + 8, rd, rd, 32) in
+  let _ = rv_srli_at(b, pos + 12, rd, rd, 32) in
+  let _ = rv_lui_addi_at(b, pos + 16, tmp, bshr(v, 32)) in
+  let _ = rv_slli_at(b, pos + 24, tmp, tmp, 32) in
+  rv_add_at(b, pos + 28, rd, rd, tmp)

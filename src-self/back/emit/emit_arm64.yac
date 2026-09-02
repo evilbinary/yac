@@ -281,6 +281,50 @@ let emit_a64_iccall(st, insn) =
   let _ = a64_slot(b, nth(insn, 1), true, 0) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
 
+let emit_a64_tcall_other(st, insn, is_entry) =
+  let b = nth(st, 0) in
+  let fn = nth(insn, 2) in
+  let args = nth(insn, 3) in
+  let na = len(args) in
+  if na > 8 then
+    let nstack = na - 8 in
+    let pad = if band(nstack, 1) == 0 then 0 else 8 in
+    let _ = if pad == 0 then 0 else a64_sub_imm(b, 31, 31, 8) in
+    let _ = a64_apply_push(b, 0, args, na - 1) in
+    let load(j) =
+      if j >= 8 then 0
+      else
+        let _ = a64_slot(b, nth(args, j), false, j) in
+        load(j + 1) in
+    let _ = load(0) in
+    let pos = bytes_len(b) in
+    let _ = a64_bl(b, 0) in
+    let _ = a64_add_imm(b, 31, 31, bshl(nstack, 3) + pad) in
+    let _ =
+      if is_entry then a64_ret(b)
+      else
+        let _ = a64_mov_sp(b, 31, 29) in
+        let _ = a64_ldp_fp_lr(b) in
+        a64_ret(b) in
+    emit_st4(st, b, nth(st, 1), nth(st, 2),
+      emit_patch_rel(nth(st, 4), nth(st, 3), pos, fn))
+  else
+    let load(j) =
+      if j >= na then 0
+      else
+        let _ = a64_slot(b, nth(args, j), false, j) in
+        load(j + 1) in
+    let _ = load(0) in
+    let _ =
+      if is_entry then 0
+      else
+        let _ = a64_mov_sp(b, 31, 29) in
+        a64_ldp_fp_lr(b) in
+    let pos = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    emit_st4(st, b, nth(st, 1), nth(st, 2),
+      emit_patch_jmpf(nth(st, 4), nth(st, 3), pos, fn))
+
 let emit_a64_tloop(st, args) =
   let b = nth(st, 0) in
   let nargs = len(args) in
@@ -442,25 +486,7 @@ let emit_a64_i_core(st, insn, is_entry) =
     emit_st4(st, b, cur, labels, patches)
   else if k == "tcall" then
     if nth(insn, 2) == emit_self(0) then emit_a64_tloop(st, nth(insn, 3))
-    else
-      let fn = nth(insn, 2) in
-      let args = nth(insn, 3) in
-      let na = len(args) in
-      let load(j) =
-        if j >= na then 0
-        else if j >= 8 then 0
-        else
-          let _ = a64_slot(b, nth(args, j), false, j) in
-          load(j + 1) in
-      let _ = load(0) in
-      let _ =
-        if is_entry then 0
-        else
-          let _ = a64_mov_sp(b, 31, 29) in
-          a64_ldp_fp_lr(b) in
-      let pos = bytes_len(b) in
-      let _ = a64_b(b, 0) in
-      emit_st4(st, b, cur, labels, emit_patch_jmpf(nth(st, 4), patches, pos, fn))
+    else emit_a64_tcall_other(st, insn, is_entry)
   else st
 
 let emit_a64_sysarg(b, args, j) =
