@@ -11,8 +11,8 @@ let a64_tag(b, rd) =
   a64_orr_reg(b, rd, rd, 9)
 
 let a64_untag_ptr(b, rd) =
-  let _ = a64_mov_imm64(b, 10, 0 - 2) in
-  a64_and_reg(b, rd, rd, 10)
+  let _ = a64_mov_imm64(b, 11, 0 - 2) in
+  a64_and_reg(b, rd, rd, 11)
 
 let a64_apply_b26(b, pos, target) =
   let rel = bshr(target - pos, 2) in
@@ -176,6 +176,323 @@ let a64_cmp_maybe_str(b, op, patches, ids) =
   let _ = a64_cmp_int(b, op) in
   let _ = a64_apply_b26(b, jdone, bytes_len(b)) in
   emit_patch_rel(ids, patches, scall, "yac_str_eq")
+
+let a64_f64_opn(op) =
+  if op == "<" then 0
+  else if op == ">" then 1
+  else if op == "<=" then 2
+  else if op == ">=" then 3
+  else if op == "==" then 4
+  else 5
+
+/* Fall through if src is FLOAT (kind 7); else three b.cond to patch. */
+let a64_skip_unless_f64(b, src) =
+  let _ = a64_movz(b, 9, 1, 0) in
+  let _ = a64_and_reg(b, 10, src, 9) in
+  let _ = a64_cmp_imm(b, 10, 0) in
+  let j0 = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_cmp_imm(b, src, 1) in
+  let j1 = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_mov_reg(b, 10, src) in
+  let _ = a64_untag_ptr(b, 10) in
+  let _ = a64_ldur(b, 9, 10, 16) in
+  let _ = a64_cmp_imm(b, 9, 7) in
+  let j2 = bytes_len(b) in
+  let _ = a64_b_ne(b, 0) in
+  [j0, j1, j2]
+
+let a64_patch3(b, js, t) =
+  let _ = a64_patch_bcond(b, nth(js, 0), t) in
+  let _ = a64_patch_bcond(b, nth(js, 1), t) in
+  a64_patch_bcond(b, nth(js, 2), t)
+
+let emit_a64_blc(b, patches, name) =
+  let pos = bytes_len(b) in
+  let _ = a64_bl(b, 0) in
+  emit_patch_cimport(patches, pos, name)
+
+let emit_a64_f64_blc(b, patches, name) =
+  let _ = a64_mov_sp(b, 19, 31) in
+  let _ = a64_mov_imm64(b, 17, 0 - 16) in
+  let _ = a64_and_reg(b, 17, 19, 17) in
+  let _ = a64_mov_sp(b, 31, 17) in
+  let ps = emit_a64_blc(b, patches, name) in
+  let _ = a64_mov_sp(b, 31, 19) in
+  ps
+
+let emit_a64_f64_strtod(b, patches) =
+  let _ = a64_movz(b, 1, 0, 0) in
+  let ps = emit_a64_f64_blc(b, patches, "strtod") in
+  let _ = a64_fmov_x_d(b, 0, 0) in
+  ps
+
+let emit_a64_f64_unbox(b, patches) =
+  let _ = a64_movz(b, 9, 1, 0) in
+  let _ = a64_and_reg(b, 10, 0, 9) in
+  let _ = a64_cmp_imm(b, 10, 0) in
+  let j_int = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_cmp_imm(b, 0, 1) in
+  let j_nil = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_untag_ptr(b, 0) in
+  let _ = a64_cmp_imm(b, 0, 0) in
+  let j_z = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_ldur(b, 9, 0, 16) in
+  let _ = a64_cmp_imm(b, 9, 7) in
+  let j_nf = bytes_len(b) in
+  let _ = a64_b_ne(b, 0) in
+  let _ = a64_ldur(b, 0, 0, 24) in
+  let j_d1 = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let nf = bytes_len(b) in
+  let _ = a64_patch_bcond(b, j_nf, nf) in
+  let _ = a64_cmp_imm(b, 9, 3) in
+  let j_ns = bytes_len(b) in
+  let _ = a64_b_ne(b, 0) in
+  let _ = a64_add_imm(b, 0, 0, 32) in
+  let ps = emit_a64_f64_strtod(b, patches) in
+  let j_d2 = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let isint = bytes_len(b) in
+  let _ = a64_patch_bcond(b, j_int, isint) in
+  let _ = a64_asr1(b, 0, 0) in
+  let _ = a64_scvtf_d_x(b, 0, 0) in
+  let _ = a64_fmov_x_d(b, 0, 0) in
+  let j_d3 = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let zero = bytes_len(b) in
+  let _ = a64_patch_bcond(b, j_ns, zero) in
+  let _ = a64_patch_bcond(b, j_nil, zero) in
+  let _ = a64_patch_bcond(b, j_z, zero) in
+  let _ = a64_movz(b, 0, 0, 0) in
+  let done = bytes_len(b) in
+  let _ = a64_apply_b26(b, j_d1, done) in
+  let _ = a64_apply_b26(b, j_d2, done) in
+  let _ = a64_apply_b26(b, j_d3, done) in
+  ps
+
+let emit_a64_f64_box(b, patches, ids) =
+  let _ = a64_sub_imm(b, 31, 31, 16) in
+  let _ = a64_stur(b, 0, 31, 0) in
+  let _ = a64_mov_imm64(b, 0, 48) in
+  let acall = bytes_len(b) in
+  let _ = a64_bl(b, 0) in
+  let _ = a64_untag_ptr(b, 0) in
+  let _ = a64_movz(b, 1, 7, 0) in
+  let _ = a64_stur(b, 1, 0, 16) in
+  let _ = a64_ldur(b, 1, 31, 0) in
+  let _ = a64_stur(b, 1, 0, 24) in
+  let _ = a64_add_imm(b, 31, 31, 16) in
+  let _ = a64_tag(b, 0) in
+  emit_patch_rel(ids, patches, acall, "yac_alloc")
+
+let emit_a64_f64_fmt(b) =
+  let j = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let fmt = bytes_len(b) in
+  let _ = bytes_append(b, 37) in
+  let _ = bytes_append(b, 103) in
+  let _ = bytes_append(b, 0) in
+  let rec(p) =
+    if band(bytes_len(b), 3) == 0 then 0
+    else
+      let _ = bytes_append(b, 0) in
+      rec(0) in
+  let _ = rec(0) in
+  let _ = a64_apply_b26(b, j, bytes_len(b)) in
+  fmt
+
+let emit_a64_f64_rel_cset(b, opn) =
+  if opn == 0 then a64_cset(b, 0, 11)
+  else if opn == 1 then a64_cset(b, 0, 12)
+  else if opn == 2 then a64_cset(b, 0, 13)
+  else if opn == 3 then a64_cset(b, 0, 10)
+  else if opn == 4 then a64_cset(b, 0, 0)
+  else a64_cset(b, 0, 1)
+
+let emit_a64_i_f64(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let ids = nth(st, 4) in
+  let k = nth(insn, 0) in
+  if k == "$f64fromstr" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let ps = emit_a64_f64_unbox(b, patches) in
+    let ps2 = emit_a64_f64_box(b, ps, ids) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, ps2)
+  else if k == "$f64binop" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let ps = emit_a64_f64_unbox(b, patches) in
+    let _ = a64_sub_imm(b, 31, 31, 16) in
+    let _ = a64_stur(b, 0, 31, 0) in
+    let _ = a64_slot(b, nth(insn, 3), false, 0) in
+    let ps2 = emit_a64_f64_unbox(b, ps) in
+    let _ = a64_fmov_d_x(b, 1, 0) in
+    let _ = a64_ldur(b, 0, 31, 0) in
+    let _ = a64_add_imm(b, 31, 31, 16) in
+    let _ = a64_fmov_d_x(b, 0, 0) in
+    let _ = a64_slot(b, nth(insn, 4), false, 2) in
+    let _ = a64_asr1(b, 2, 2) in
+    let _ = a64_cmp_imm(b, 2, 0) in
+    let ja = bytes_len(b) in
+    let _ = a64_b_eq(b, 0) in
+    let _ = a64_cmp_imm(b, 2, 1) in
+    let js = bytes_len(b) in
+    let _ = a64_b_eq(b, 0) in
+    let _ = a64_cmp_imm(b, 2, 2) in
+    let jm = bytes_len(b) in
+    let _ = a64_b_eq(b, 0) in
+    let _ = a64_fdiv_d(b, 0, 0, 1) in
+    let jd = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    let pa = bytes_len(b) in
+    let _ = a64_patch_bcond(b, ja, pa) in
+    let _ = a64_fadd_d(b, 0, 0, 1) in
+    let jd2 = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    let psu = bytes_len(b) in
+    let _ = a64_patch_bcond(b, js, psu) in
+    let _ = a64_fsub_d(b, 0, 0, 1) in
+    let jd3 = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    let pm = bytes_len(b) in
+    let _ = a64_patch_bcond(b, jm, pm) in
+    let _ = a64_fmul_d(b, 0, 0, 1) in
+    let join = bytes_len(b) in
+    let _ = a64_apply_b26(b, jd, join) in
+    let _ = a64_apply_b26(b, jd2, join) in
+    let _ = a64_apply_b26(b, jd3, join) in
+    let _ = a64_fmov_x_d(b, 0, 0) in
+    let ps3 = emit_a64_f64_box(b, ps2, ids) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, ps3)
+  else if k == "$f64rel" then
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let ps = emit_a64_f64_unbox(b, patches) in
+    let _ = a64_sub_imm(b, 31, 31, 16) in
+    let _ = a64_stur(b, 0, 31, 0) in
+    let _ = a64_slot(b, nth(insn, 3), false, 0) in
+    let ps2 = emit_a64_f64_unbox(b, ps) in
+    let _ = a64_fmov_d_x(b, 1, 0) in
+    let _ = a64_ldur(b, 0, 31, 0) in
+    let _ = a64_add_imm(b, 31, 31, 16) in
+    let _ = a64_fmov_d_x(b, 0, 0) in
+    let _ = a64_fcmp_d(b, 0, 1) in
+    let _ = a64_slot(b, nth(insn, 4), false, 2) in
+    let _ = a64_asr1(b, 2, 2) in
+    let _ = a64_cmp_imm(b, 2, 0) in
+    let c0 = bytes_len(b) in
+    let _ = a64_b_eq(b, 0) in
+    let _ = a64_cmp_imm(b, 2, 1) in
+    let c1 = bytes_len(b) in
+    let _ = a64_b_eq(b, 0) in
+    let _ = a64_cmp_imm(b, 2, 2) in
+    let c2 = bytes_len(b) in
+    let _ = a64_b_eq(b, 0) in
+    let _ = a64_cmp_imm(b, 2, 3) in
+    let c3 = bytes_len(b) in
+    let _ = a64_b_eq(b, 0) in
+    let _ = a64_cmp_imm(b, 2, 4) in
+    let c4 = bytes_len(b) in
+    let _ = a64_b_eq(b, 0) in
+    let _ = emit_a64_f64_rel_cset(b, 5) in
+    let je = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    let p0 = bytes_len(b) in
+    let _ = a64_patch_bcond(b, c0, p0) in
+    let _ = emit_a64_f64_rel_cset(b, 0) in
+    let je1 = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    let p1 = bytes_len(b) in
+    let _ = a64_patch_bcond(b, c1, p1) in
+    let _ = emit_a64_f64_rel_cset(b, 1) in
+    let je2 = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    let p2 = bytes_len(b) in
+    let _ = a64_patch_bcond(b, c2, p2) in
+    let _ = emit_a64_f64_rel_cset(b, 2) in
+    let je3 = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    let p3 = bytes_len(b) in
+    let _ = a64_patch_bcond(b, c3, p3) in
+    let _ = emit_a64_f64_rel_cset(b, 3) in
+    let je4 = bytes_len(b) in
+    let _ = a64_b(b, 0) in
+    let p4 = bytes_len(b) in
+    let _ = a64_patch_bcond(b, c4, p4) in
+    let _ = emit_a64_f64_rel_cset(b, 4) in
+    let join = bytes_len(b) in
+    let _ = a64_apply_b26(b, je, join) in
+    let _ = a64_apply_b26(b, je1, join) in
+    let _ = a64_apply_b26(b, je2, join) in
+    let _ = a64_apply_b26(b, je3, join) in
+    let _ = a64_apply_b26(b, je4, join) in
+    let _ = a64_lsl1(b, 0, 0) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, ps2)
+  else
+    let _ = a64_slot(b, nth(insn, 2), false, 0) in
+    let ps0 = emit_a64_f64_unbox(b, patches) in
+    let _ = a64_fmov_d_x(b, 0, 0) in
+    let fmt = emit_a64_f64_fmt(b) in
+    let _ = a64_mov_sp(b, 19, 31) in
+    let _ = a64_mov_imm64(b, 17, 0 - 16) in
+    let _ = a64_and_reg(b, 17, 19, 17) in
+    let _ = a64_mov_sp(b, 31, 17) in
+    let _ = a64_sub_imm(b, 31, 31, 80) in
+    let _ = a64_fmov_x_d(b, 2, 0) in
+    let _ = a64_mov_sp(b, 20, 31) in
+    let _ = a64_mov_reg(b, 0, 20) in
+    let apos = bytes_len(b) in
+    let _ = a64_adr(b, 1, fmt - apos) in
+    let ps1 = emit_a64_blc(b, ps0, "sprintf") in
+    let _ = a64_mov_reg(b, 2, 0) in
+    let _ = a64_mov_reg(b, 1, 20) in
+    let _ = a64_movz(b, 0, 1, 0) in
+    let _ = a64_movz(b, 8, 64, 0) in
+    let _ = a64_svc(b) in
+    let _ = a64_mov_sp(b, 31, 19) in
+    let _ = a64_movz(b, 0, 0, 0) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, ps1)
+
+let a64_cmp_val(b, op, patches, ids) =
+  let _ = a64_sub_imm(b, 31, 31, 16) in
+  let _ = a64_stur(b, 0, 31, 0) in
+  let _ = a64_stur(b, 1, 31, 8) in
+  let js0 = a64_skip_unless_f64(b, 0) in
+  let js1 = a64_skip_unless_f64(b, 1) in
+  let _ = a64_ldur(b, 0, 31, 0) in
+  let _ = a64_ldur(b, 1, 31, 8) in
+  let _ = a64_add_imm(b, 31, 31, 16) in
+  let _ = a64_movz(b, 2, a64_f64_opn(op) + a64_f64_opn(op), 0) in
+  let fcall = bytes_len(b) in
+  let _ = a64_bl(b, 0) in
+  let jd = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let other = bytes_len(b) in
+  let _ = a64_patch3(b, js0, other) in
+  let _ = a64_patch3(b, js1, other) in
+  let _ = a64_ldur(b, 0, 31, 0) in
+  let _ = a64_ldur(b, 1, 31, 8) in
+  let _ = a64_add_imm(b, 31, 31, 16) in
+  let ps =
+    if op == "==" or op == "!=" then a64_cmp_maybe_str(b, op, patches, ids)
+    else
+      let _ = a64_asr1(b, 0, 0) in
+      let _ = a64_asr1(b, 1, 1) in
+      let _ = a64_cmp_int(b, op) in
+      patches in
+  let done = bytes_len(b) in
+  let _ = a64_apply_b26(b, jd, done) in
+  emit_patch_rel(ids, ps, fcall, "yac_f64_rel")
 
 /* C ABI ccall/iccall for arm64 and riscv64. Kept out of emit_*_i_core. */
 
@@ -446,13 +763,7 @@ let emit_a64_i_core(st, insn, is_entry) =
     let op = nth(insn, 1) in
     let _ = a64_slot(b, nth(insn, 3), false, 0) in
     let _ = a64_slot(b, nth(insn, 4), false, 1) in
-    let patches2 =
-      if op == "==" or op == "!=" then a64_cmp_maybe_str(b, op, patches, nth(st, 4))
-      else
-        let _ = a64_asr1(b, 0, 0) in
-        let _ = a64_asr1(b, 1, 1) in
-        let _ = a64_cmp_int(b, op) in
-        patches in
+    let patches2 = a64_cmp_val(b, op, patches, nth(st, 4)) in
     let _ = a64_slot(b, nth(insn, 2), true, 0) in
     emit_st4(st, b, cur, labels, patches2)
   else if k == "label" then
@@ -727,9 +1038,7 @@ let emit_a64_i_raw(st, insn) =
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "$f64binop" or k == "$f64fromstr" or k == "$f64print" or k == "$f64rel" then
-    let _ = a64_movz(b, 0, 0, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, patches)
+    emit_a64_i_f64(st, insn)
   else
     let name = nth(insn, 2) in
     let args = nth(insn, 3) in

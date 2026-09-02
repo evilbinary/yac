@@ -158,6 +158,21 @@ let rv_srai(b, rd, rs1, sh) =
   rv_u32(b, 1073741824 + bshl(band(sh, 63), 20) + bshl(rs1, 15) + 20480 +
            bshl(rd, 7) + 19)
 
+let rv_fp(b, funct7, rs2, rs1, funct3, rd) =
+  rv_u32(b, bshl(funct7, 25) + bshl(rs2, 20) + bshl(rs1, 15) +
+           bshl(funct3, 12) + bshl(rd, 7) + 83)
+
+let rv_fadd_d(b, rd, rs1, rs2) = rv_fp(b, 1, rs2, rs1, 0, rd)
+let rv_fsub_d(b, rd, rs1, rs2) = rv_fp(b, 5, rs2, rs1, 0, rd)
+let rv_fmul_d(b, rd, rs1, rs2) = rv_fp(b, 9, rs2, rs1, 0, rd)
+let rv_fdiv_d(b, rd, rs1, rs2) = rv_fp(b, 13, rs2, rs1, 0, rd)
+let rv_fmv_x_d(b, rd, rs1) = rv_fp(b, 113, 0, rs1, 0, rd)
+let rv_fmv_d_x(b, rd, rs1) = rv_fp(b, 121, 0, rs1, 0, rd)
+let rv_fcvt_d_l(b, rd, rs1) = rv_fp(b, 105, 2, rs1, 0, rd)
+let rv_feq_d(b, rd, rs1, rs2) = rv_fp(b, 81, rs2, rs1, 2, rd)
+let rv_flt_d(b, rd, rs1, rs2) = rv_fp(b, 81, rs2, rs1, 1, rd)
+let rv_fle_d(b, rd, rs1, rs2) = rv_fp(b, 81, rs2, rs1, 0, rd)
+
 let rv_ecall(b) = rv_u32(b, 115)
 
 let rv_unimp(b) = rv_u32(b, 0)

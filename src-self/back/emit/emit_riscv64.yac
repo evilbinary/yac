@@ -177,6 +177,318 @@ let rv_cmp_maybe_str(b, op, patches, ids) =
   let _ = rv_apply_jal(b, jdone, bytes_len(b), 0) in
   emit_patch_rel(ids, patches, scall, "yac_str_eq")
 
+let rv_f64_opn(op) =
+  if op == "<" then 0
+  else if op == ">" then 1
+  else if op == "<=" then 2
+  else if op == ">=" then 3
+  else if op == "==" then 4
+  else 5
+
+let rv_skip_unless_f64(b, src) =
+  let _ = rv_andi(b, 6, src, 1) in
+  let j0 = bytes_len(b) in
+  let _ = rv_beq(b, 6, 0, 0) in
+  let _ = rv_addi(b, 6, 0, 1) in
+  let j1 = bytes_len(b) in
+  let _ = rv_beq(b, src, 6, 0) in
+  let _ = rv_addi(b, 6, src, 0) in
+  let _ = rv_untag_ptr(b, 6) in
+  let _ = rv_ld(b, 7, 6, 16) in
+  let _ = rv_addi(b, 6, 0, 7) in
+  let j2 = bytes_len(b) in
+  let _ = rv_bne(b, 7, 6, 0) in
+  [j0, j1, j2]
+
+let rv_patch3(b, js, t) =
+  let _ = rv_patch_b(b, nth(js, 0), t) in
+  let _ = rv_patch_b(b, nth(js, 1), t) in
+  rv_patch_b(b, nth(js, 2), t)
+
+let emit_rv_blc(b, patches, name) =
+  let pos = bytes_len(b) in
+  let _ = rv_jal(b, 1, 0) in
+  emit_patch_cimport(patches, pos, name)
+
+let emit_rv_f64_blc(b, patches, name) =
+  let _ = rv_addi(b, 9, 2, 0) in
+  let _ = rv_andi(b, 2, 2, 0 - 16) in
+  let ps = emit_rv_blc(b, patches, name) in
+  let _ = rv_addi(b, 2, 9, 0) in
+  ps
+
+let emit_rv_f64_strtod(b, patches) =
+  let _ = rv_addi(b, 11, 0, 0) in
+  let ps = emit_rv_f64_blc(b, patches, "strtod") in
+  let _ = rv_fmv_x_d(b, 10, 10) in
+  ps
+
+let emit_rv_f64_unbox(b, patches) =
+  let _ = rv_andi(b, 6, 10, 1) in
+  let j_int = bytes_len(b) in
+  let _ = rv_beq(b, 6, 0, 0) in
+  let _ = rv_addi(b, 6, 0, 1) in
+  let j_nil = bytes_len(b) in
+  let _ = rv_beq(b, 10, 6, 0) in
+  let _ = rv_untag_ptr(b, 10) in
+  let j_z = bytes_len(b) in
+  let _ = rv_beq(b, 10, 0, 0) in
+  let _ = rv_ld(b, 7, 10, 16) in
+  let _ = rv_addi(b, 6, 0, 7) in
+  let j_nf = bytes_len(b) in
+  let _ = rv_bne(b, 7, 6, 0) in
+  let _ = rv_ld(b, 10, 10, 24) in
+  let j_d1 = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let nf = bytes_len(b) in
+  let _ = rv_patch_b(b, j_nf, nf) in
+  let _ = rv_addi(b, 6, 0, 3) in
+  let j_ns = bytes_len(b) in
+  let _ = rv_bne(b, 7, 6, 0) in
+  let _ = rv_addi(b, 10, 10, 32) in
+  let ps = emit_rv_f64_strtod(b, patches) in
+  let j_d2 = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let isint = bytes_len(b) in
+  let _ = rv_patch_b(b, j_int, isint) in
+  let _ = rv_srai(b, 10, 10, 1) in
+  let _ = rv_fcvt_d_l(b, 10, 10) in
+  let _ = rv_fmv_x_d(b, 10, 10) in
+  let j_d3 = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let zero = bytes_len(b) in
+  let _ = rv_patch_b(b, j_ns, zero) in
+  let _ = rv_patch_b(b, j_nil, zero) in
+  let _ = rv_patch_b(b, j_z, zero) in
+  let _ = rv_addi(b, 10, 0, 0) in
+  let done = bytes_len(b) in
+  let _ = rv_apply_jal(b, j_d1, done, 0) in
+  let _ = rv_apply_jal(b, j_d2, done, 0) in
+  let _ = rv_apply_jal(b, j_d3, done, 0) in
+  ps
+
+let emit_rv_f64_box(b, patches, ids) =
+  let _ = rv_addi(b, 2, 2, 0 - 16) in
+  let _ = rv_sd(b, 10, 2, 0) in
+  let _ = rv_li(b, 10, 48) in
+  let acall = bytes_len(b) in
+  let _ = rv_jal(b, 1, 0) in
+  let _ = rv_untag_ptr(b, 10) in
+  let _ = rv_addi(b, 6, 0, 7) in
+  let _ = rv_sd(b, 6, 10, 16) in
+  let _ = rv_ld(b, 6, 2, 0) in
+  let _ = rv_sd(b, 6, 10, 24) in
+  let _ = rv_addi(b, 2, 2, 16) in
+  let _ = rv_tag(b, 10) in
+  emit_patch_rel(ids, patches, acall, "yac_alloc")
+
+let emit_rv_f64_fmt(b) =
+  let j = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let fmt = bytes_len(b) in
+  let _ = bytes_append(b, 37) in
+  let _ = bytes_append(b, 103) in
+  let _ = bytes_append(b, 0) in
+  let rec(p) =
+    if band(bytes_len(b), 3) == 0 then 0
+    else
+      let _ = bytes_append(b, 0) in
+      rec(0) in
+  let _ = rec(0) in
+  let _ = rv_apply_jal(b, j, bytes_len(b), 0) in
+  fmt
+
+let emit_rv_f64_rel_set(b, opn) =
+  if opn == 0 then rv_flt_d(b, 10, 10, 11)
+  else if opn == 1 then rv_flt_d(b, 10, 11, 10)
+  else if opn == 2 then rv_fle_d(b, 10, 10, 11)
+  else if opn == 3 then rv_fle_d(b, 10, 11, 10)
+  else if opn == 4 then rv_feq_d(b, 10, 10, 11)
+  else
+    let _ = rv_feq_d(b, 10, 10, 11) in
+    rv_xori(b, 10, 10, 1)
+
+let emit_rv_i_f64(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let ids = nth(st, 4) in
+  let k = nth(insn, 0) in
+  if k == "$f64fromstr" then
+    let _ = rv_slot(b, nth(insn, 2), false, 10) in
+    let ps = emit_rv_f64_unbox(b, patches) in
+    let ps2 = emit_rv_f64_box(b, ps, ids) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, ps2)
+  else if k == "$f64binop" then
+    let _ = rv_slot(b, nth(insn, 2), false, 10) in
+    let ps = emit_rv_f64_unbox(b, patches) in
+    let _ = rv_addi(b, 2, 2, 0 - 16) in
+    let _ = rv_sd(b, 10, 2, 0) in
+    let _ = rv_slot(b, nth(insn, 3), false, 10) in
+    let ps2 = emit_rv_f64_unbox(b, ps) in
+    let _ = rv_fmv_d_x(b, 11, 10) in
+    let _ = rv_ld(b, 10, 2, 0) in
+    let _ = rv_addi(b, 2, 2, 16) in
+    let _ = rv_fmv_d_x(b, 10, 10) in
+    let _ = rv_slot(b, nth(insn, 4), false, 12) in
+    let _ = rv_srai(b, 12, 12, 1) in
+    let _ = rv_addi(b, 6, 0, 0) in
+    let ja = bytes_len(b) in
+    let _ = rv_beq(b, 12, 6, 0) in
+    let _ = rv_addi(b, 6, 0, 1) in
+    let js = bytes_len(b) in
+    let _ = rv_beq(b, 12, 6, 0) in
+    let _ = rv_addi(b, 6, 0, 2) in
+    let jm = bytes_len(b) in
+    let _ = rv_beq(b, 12, 6, 0) in
+    let _ = rv_fdiv_d(b, 10, 10, 11) in
+    let jd = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let pa = bytes_len(b) in
+    let _ = rv_patch_b(b, ja, pa) in
+    let _ = rv_fadd_d(b, 10, 10, 11) in
+    let jd2 = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let psu = bytes_len(b) in
+    let _ = rv_patch_b(b, js, psu) in
+    let _ = rv_fsub_d(b, 10, 10, 11) in
+    let jd3 = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let pm = bytes_len(b) in
+    let _ = rv_patch_b(b, jm, pm) in
+    let _ = rv_fmul_d(b, 10, 10, 11) in
+    let join = bytes_len(b) in
+    let _ = rv_apply_jal(b, jd, join, 0) in
+    let _ = rv_apply_jal(b, jd2, join, 0) in
+    let _ = rv_apply_jal(b, jd3, join, 0) in
+    let _ = rv_fmv_x_d(b, 10, 10) in
+    let ps3 = emit_rv_f64_box(b, ps2, ids) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, ps3)
+  else if k == "$f64rel" then
+    let _ = rv_slot(b, nth(insn, 2), false, 10) in
+    let ps = emit_rv_f64_unbox(b, patches) in
+    let _ = rv_addi(b, 2, 2, 0 - 16) in
+    let _ = rv_sd(b, 10, 2, 0) in
+    let _ = rv_slot(b, nth(insn, 3), false, 10) in
+    let ps2 = emit_rv_f64_unbox(b, ps) in
+    let _ = rv_fmv_d_x(b, 11, 10) in
+    let _ = rv_ld(b, 10, 2, 0) in
+    let _ = rv_addi(b, 2, 2, 16) in
+    let _ = rv_fmv_d_x(b, 10, 10) in
+    let _ = rv_slot(b, nth(insn, 4), false, 12) in
+    let _ = rv_srai(b, 12, 12, 1) in
+    let _ = rv_addi(b, 6, 0, 0) in
+    let c0 = bytes_len(b) in
+    let _ = rv_beq(b, 12, 6, 0) in
+    let _ = rv_addi(b, 6, 0, 1) in
+    let c1 = bytes_len(b) in
+    let _ = rv_beq(b, 12, 6, 0) in
+    let _ = rv_addi(b, 6, 0, 2) in
+    let c2 = bytes_len(b) in
+    let _ = rv_beq(b, 12, 6, 0) in
+    let _ = rv_addi(b, 6, 0, 3) in
+    let c3 = bytes_len(b) in
+    let _ = rv_beq(b, 12, 6, 0) in
+    let _ = rv_addi(b, 6, 0, 4) in
+    let c4 = bytes_len(b) in
+    let _ = rv_beq(b, 12, 6, 0) in
+    let _ = emit_rv_f64_rel_set(b, 5) in
+    let je = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let p0 = bytes_len(b) in
+    let _ = rv_patch_b(b, c0, p0) in
+    let _ = emit_rv_f64_rel_set(b, 0) in
+    let je1 = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let p1 = bytes_len(b) in
+    let _ = rv_patch_b(b, c1, p1) in
+    let _ = emit_rv_f64_rel_set(b, 1) in
+    let je2 = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let p2 = bytes_len(b) in
+    let _ = rv_patch_b(b, c2, p2) in
+    let _ = emit_rv_f64_rel_set(b, 2) in
+    let je3 = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let p3 = bytes_len(b) in
+    let _ = rv_patch_b(b, c3, p3) in
+    let _ = emit_rv_f64_rel_set(b, 3) in
+    let je4 = bytes_len(b) in
+    let _ = rv_jal(b, 0, 0) in
+    let p4 = bytes_len(b) in
+    let _ = rv_patch_b(b, c4, p4) in
+    let _ = emit_rv_f64_rel_set(b, 4) in
+    let join = bytes_len(b) in
+    let _ = rv_apply_jal(b, je, join, 0) in
+    let _ = rv_apply_jal(b, je1, join, 0) in
+    let _ = rv_apply_jal(b, je2, join, 0) in
+    let _ = rv_apply_jal(b, je3, join, 0) in
+    let _ = rv_apply_jal(b, je4, join, 0) in
+    let _ = rv_addi(b, 7, 0, 1) in
+    let _ = rv_sll(b, 10, 10, 7) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, ps2)
+  else
+    let _ = rv_slot(b, nth(insn, 2), false, 10) in
+    let ps0 = emit_rv_f64_unbox(b, patches) in
+    let _ = rv_addi(b, 12, 10, 0) in
+    let fmt = emit_rv_f64_fmt(b) in
+    let _ = rv_addi(b, 9, 2, 0) in
+    let _ = rv_andi(b, 2, 2, 0 - 16) in
+    let _ = rv_addi(b, 2, 2, 0 - 80) in
+    let _ = rv_addi(b, 18, 2, 0) in
+    let _ = rv_addi(b, 10, 18, 0) in
+    let apos = bytes_len(b) in
+    let _ = rv_auipc(b, 11, 0) in
+    let _ = rv_addi(b, 11, 11, fmt - apos) in
+    let ps1 = emit_rv_blc(b, ps0, "sprintf") in
+    let _ = rv_addi(b, 12, 10, 0) in
+    let _ = rv_addi(b, 11, 18, 0) in
+    let _ = rv_addi(b, 10, 0, 1) in
+    let _ = rv_addi(b, 17, 0, 64) in
+    let _ = rv_ecall(b) in
+    let _ = rv_addi(b, 2, 9, 0) in
+    let _ = rv_addi(b, 10, 0, 0) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, ps1)
+
+let rv_cmp_val(b, op, patches, ids) =
+  let _ = rv_addi(b, 2, 2, 0 - 16) in
+  let _ = rv_sd(b, 10, 2, 0) in
+  let _ = rv_sd(b, 11, 2, 8) in
+  let js0 = rv_skip_unless_f64(b, 10) in
+  let js1 = rv_skip_unless_f64(b, 11) in
+  let _ = rv_ld(b, 10, 2, 0) in
+  let _ = rv_ld(b, 11, 2, 8) in
+  let _ = rv_addi(b, 2, 2, 16) in
+  let opn = rv_f64_opn(op) in
+  let _ = rv_addi(b, 12, 0, opn + opn) in
+  let fcall = bytes_len(b) in
+  let _ = rv_jal(b, 1, 0) in
+  let _ = rv_addi(b, 6, 10, 0) in
+  let jd = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let other = bytes_len(b) in
+  let _ = rv_patch3(b, js0, other) in
+  let _ = rv_patch3(b, js1, other) in
+  let _ = rv_ld(b, 10, 2, 0) in
+  let _ = rv_ld(b, 11, 2, 8) in
+  let _ = rv_addi(b, 2, 2, 16) in
+  let ps =
+    if op == "==" or op == "!=" then rv_cmp_maybe_str(b, op, patches, ids)
+    else
+      let _ = rv_addi(b, 7, 0, 1) in
+      let _ = rv_sra(b, 6, 10, 7) in
+      let _ = rv_sra(b, 28, 11, 7) in
+      let _ = rv_cmp_int(b, op) in
+      patches in
+  let done = bytes_len(b) in
+  let _ = rv_apply_jal(b, jd, done, 0) in
+  emit_patch_rel(ids, ps, fcall, "yac_f64_rel")
+
 /* Untag C arg in rd (not t1). Int → srai 1; heap ptr → +32. */
 let emit_rv_c_untag(b, rd) =
   let _ = rv_andi(b, 6, rd, 1) in
@@ -445,19 +757,9 @@ let emit_rv_i_core(st, insn, is_entry) =
     emit_st4(st, b, cur, labels, patches)
   else if k == "cmp" then
     let op = nth(insn, 1) in
-    let patches2 =
-      if op == "==" or op == "!=" then
-        let _ = rv_slot(b, nth(insn, 3), false, 10) in
-        let _ = rv_slot(b, nth(insn, 4), false, 11) in
-        rv_cmp_maybe_str(b, op, patches, nth(st, 4))
-      else
-        let _ = rv_slot(b, nth(insn, 3), false, 6) in
-        let _ = rv_addi(b, 7, 0, 1) in
-        let _ = rv_sra(b, 6, 6, 7) in
-        let _ = rv_slot(b, nth(insn, 4), false, 28) in
-        let _ = rv_sra(b, 28, 28, 7) in
-        let _ = rv_cmp_int(b, op) in
-        patches in
+    let _ = rv_slot(b, nth(insn, 3), false, 10) in
+    let _ = rv_slot(b, nth(insn, 4), false, 11) in
+    let patches2 = rv_cmp_val(b, op, patches, nth(st, 4)) in
     let _ = rv_slot(b, nth(insn, 2), true, 6) in
     emit_st4(st, b, cur, labels, patches2)
   else if k == "label" then
@@ -743,9 +1045,7 @@ let emit_rv_i_raw(st, insn) =
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "$f64binop" or k == "$f64fromstr" or k == "$f64print" or k == "$f64rel" then
-    let _ = rv_addi(b, 10, 0, 0) in
-    let _ = rv_slot(b, nth(insn, 1), true, 10) in
-    emit_st4(st, b, cur, labels, patches)
+    emit_rv_i_f64(st, insn)
   else
     let name = nth(insn, 2) in
     let args = nth(insn, 3) in

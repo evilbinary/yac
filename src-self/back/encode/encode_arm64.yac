@@ -187,3 +187,36 @@ let a64_svc(b) = a64_u32(b, 3556769793)
 
 /* BRK #0  0xD4200000 */
 let a64_brk(b) = a64_u32(b, 3558866944)
+
+/* FMOV Dd,Xn  0x9E670000 */
+let a64_fmov_d_x(b, dd, xn) =
+  a64_u32(b, 2657550336 + bshl(xn, 5) + dd)
+
+/* FMOV Xd,Dn  0x9E660000 */
+let a64_fmov_x_d(b, xd, dn) =
+  a64_u32(b, 2657484800 + bshl(dn, 5) + xd)
+
+/* SCVTF Dd,Xn  0x9E620000 */
+let a64_scvtf_d_x(b, dd, xn) =
+  a64_u32(b, 2657222656 + bshl(xn, 5) + dd)
+
+/* FADD/FSUB/FMUL/FDIV Dd,Dn,Dm  (type=double). Bases have Rm=Rn=Rd=0. */
+let a64_fadd_d(b, dd, dn, dm) =
+  a64_u32(b, 509618176 + bshl(dm, 16) + bshl(dn, 5) + dd)
+
+let a64_fsub_d(b, dd, dn, dm) =
+  a64_u32(b, 509622272 + bshl(dm, 16) + bshl(dn, 5) + dd)
+
+let a64_fmul_d(b, dd, dn, dm) =
+  a64_u32(b, 509609984 + bshl(dm, 16) + bshl(dn, 5) + dd)
+
+let a64_fdiv_d(b, dd, dn, dm) =
+  a64_u32(b, 509614080 + bshl(dm, 16) + bshl(dn, 5) + dd)
+
+/* FCMP Dd,Dm  0x1E602000 */
+let a64_fcmp_d(b, dn, dm) =
+  a64_u32(b, 509616128 + bshl(dm, 16) + bshl(dn, 5))
+
+/* CSET Xd,cond = CSINC Xd,XZR,XZR,invert(cond)  0x9A9F07E0 */
+let a64_cset(b, rd, cond) =
+  a64_u32(b, 2594113504 + bshl(bxor(cond, 1), 12) + rd)
