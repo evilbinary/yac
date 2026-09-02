@@ -1,10 +1,8 @@
-/* 快照并行训练。
+/* 快照并行训练（MLM 预训练 / MaskGIT generate）。
  *
- *   ./app/llm/snapshot/train [语料] [权重] [epoch] [mode] [new]
- * mode 默认 chat：每条 jsonl 冻用户后缀、只填助手回复。
- * mode=mlm：旧的整库拼接 + 随机挖洞。
- * 权重文件能读就接着训（词表以权重为准）；new 则丢掉旧权重从头建。
- * 每个 epoch 结束写盘。默认语料 app/llm/data.jsonl
+ *   ./app/llm/snapshot/train [语料] [权重] [epoch] [new|chat]
+ * 默认 MLM：拼接 text jsonl，随机挖洞。chat 才走冻用户填回复。
+ * 全量 pretrain_t2t_mini.jsonl 约 1.2GB，默认用切好的 pretrain_head.jsonl。
  */
 
 import snapshot
@@ -55,16 +53,23 @@ let convs_go(arr, i, b) =
     let _ = bytes_append(b, 10) in
     convs_go(arr, i + 1, b)
 
+let jsonl_max(_) = 40
+
 let line_go(line, b) =
   let v = parse(line) in
   if v == 0 then 0
   else
-    let conv = get(v, "conversations") in
-    if conv == 0 then 0
-    else if nth(conv, 0) != "A" then 0
-    else
-      let _ = convs_go(nth(conv, 1), 0, b) in
+    let t = jstr_of(get(v, "text")) in
+    if str_len(t) > 0 then
+      let _ = append_str(b, t, 0) in
       bytes_append(b, 10)
+    else
+      let conv = get(v, "conversations") in
+      if conv == 0 then 0
+      else if nth(conv, 0) != "A" then 0
+      else
+        let _ = convs_go(nth(conv, 1), 0, b) in
+        bytes_append(b, 10)
 
 let lines_go(raw, i, n, b, left) =
   if left <= 0 then bytes_to_str(b)
@@ -74,8 +79,6 @@ let lines_go(raw, i, n, b, left) =
     let _ = if nl > i then line_go(str_slice(raw, i, nl - i), b) else 0 in
     let i2 = if nl < n then nl + 1 else n in
     lines_go(raw, i2, n, b, left - 1)
-
-let jsonl_max(_) = 150
 
 let load_text(path) =
   let raw = read_or_0(path) in
@@ -198,9 +201,8 @@ let run_chat(m, golds, us, st, path) =
     let _ = list_set(st, 2, nth(row, 2)) in
     run_chat(m, golds, us, st, path)
 
-let is_mlm(s) =
-  if s == "mlm" then 1
-  else if s == "0" then 1
+let is_chat(s) =
+  if s == "chat" then 1
   else 0
 
 let is_new(s) =
@@ -223,7 +225,7 @@ let open_or_new(wpath, vocab, force) =
 
 let path =
   if argc() > 1 then argv(1)
-  else "app/llm/data.jsonl"
+  else "app/llm/pretrain_head.jsonl"
 
 let wpath =
   if argc() > 2 then argv(2)
@@ -233,37 +235,17 @@ let epochs =
   if argc() > 3 then parse_int(argv(3), 0, str_len(argv(3)), 0)
   else 3
 
-let mode_mlm =
-  if argc() > 4 then is_mlm(argv(4))
+let mode_chat =
+  if argc() > 4 then is_chat(argv(4))
   else 0
 
-/* argv 末尾 new：丢掉 checkpoint。`... 3 new` 或 `... 3 mlm new`。 */
 let force_new =
   if argc() > 5 then is_new(argv(5))
   else if argc() > 4 then is_new(argv(4))
   else 0
 
 let rc =
-  if mode_mlm == 1 then
-    let text = load_text(path) in
-    let vocab = build_vocab(text, list_new(), 0) in
-    let _ = list_push(vocab, "░") in
-    let m = open_or_new(wpath, vocab, force_new) in
-    let ids = encode(text, vocab_of(m), list_new(), 0) in
-    let n = len(ids) in
-    let tlen = ctx(0) in
-    let nwin = if n >= tlen then n / tlen else 1 in
-    let limit = if n >= tlen then n - tlen + 1 else 1 in
-    if n <= 0 then
-      let _ = print("empty corpus") in 1
-    else
-      let _ = print(format("snapshot  mode=mlm  V=%d  T=%d  tokens=%d  windows=%d",
-        [ntok(m), tlen, n, nwin])) in
-      let _ = run_mlm(m, ids, st5(0, epochs, limit, 1, 0), wpath) in
-      let _ = denoise(m, "怎么办", 8) in
-      let _ = print(str_cat("wrote ", wpath)) in
-      0
-  else
+  if mode_chat == 1 then
     let pairs = load_pairs(path) in
     if len(pairs) <= 0 then
       let _ = print("no chat pairs (need jsonl conversations)") in 1
@@ -283,6 +265,28 @@ let rc =
       let _ = print("--- after train ---") in
       let canvas = denoise(m, q, 8) in
       let _ = print(str_cat("reply  ", show_from(m, canvas, n_freeze(m, q)))) in
+      let _ = print(str_cat("wrote ", wpath)) in
+      0
+  else
+    let text = load_text(path) in
+    let vocab = build_vocab(text, list_new(), 0) in
+    let _ = list_push(vocab, "░") in
+    let m = open_or_new(wpath, vocab, force_new) in
+    let ids = encode(text, vocab_of(m), list_new(), 0) in
+    let n = len(ids) in
+    let tlen = ctx(0) in
+    let nwin = if n >= tlen then n / tlen else 1 in
+    let limit = if n >= tlen then n - tlen + 1 else 1 in
+    if n <= 0 then
+      let _ = print("empty corpus") in 1
+    else
+      let _ = print(format("snapshot  mode=mlm  V=%d  T=%d  tokens=%d  windows=%d",
+        [ntok(m), tlen, n, nwin])) in
+      let _ = print(str_cat("corpus  ", path)) in
+      let _ = print("--- train (random MASK, generate) ---") in
+      let _ = run_mlm(m, ids, st5(0, epochs, limit, 1, 0), wpath) in
+      let _ = print("--- after train ---") in
+      let _ = denoise(m, "秋天", 8) in
       let _ = print(str_cat("wrote ", wpath)) in
       0
 

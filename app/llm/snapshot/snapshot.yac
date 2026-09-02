@@ -119,13 +119,6 @@ let copy_row(dst, src, i) =
     let _ = list_set(dst, i, nth(src, i)) in
     copy_row(dst, src, i + 1)
 
-/* 把一行清零（MASK 的 K/V：别让一排░把提示淹没）。 */
-let zero_row(row, k) =
-  if k >= len(row) then 0
-  else
-    let _ = list_set(row, k, 0) in
-    zero_row(row, k + 1)
-
 /* 扫描 [0, last) 的最大值下标；并列保留更小的 i。 */
 let argmax_go(row, i, last, bi, bv) =
   if i >= last then bi
@@ -256,7 +249,7 @@ let mv_j(W, x, y, j, s) =
     let _ = list_set(y, j, mv_i(W, x, j, 0, 0) / s) in
     mv_j(W, x, y, j + 1, s)
 
-/* 位置 t：X[t] = E[id] + 3t·e_0，再算 Q/K/V。MASK 格 K/V 清零，只当 query。 */
+/* 位置 t：X[t] = E[id] + 3t·e_0，再算 Q/K/V。n 一般为 T。不改 ids。 */
 let embed_t(m, ids, t, n) =
   if t >= n then 0
   else
@@ -265,11 +258,6 @@ let embed_t(m, ids, t, n) =
     let _ = mv_j(nth(m, 1), nth(nth(m, 5), t), nth(nth(m, 6), t), 0, sc(0)) in
     let _ = mv_j(nth(m, 2), nth(nth(m, 5), t), nth(nth(m, 7), t), 0, sc(0)) in
     let _ = mv_j(nth(m, 3), nth(nth(m, 5), t), nth(nth(m, 8), t), 0, sc(0)) in
-    let _ =
-      if nth(ids, t) != mask_id(m) then 0
-      else
-        let _ = zero_row(nth(nth(m, 7), t), 0) in
-        zero_row(nth(nth(m, 8), t), 0) in
     embed_t(m, ids, t + 1, n)
 
 /* 整数 exp 近似：e^{x/S} ≈ 2^{-⌊(-x)/3⌋}（x≤0）。softmax 减 max 之后用。 */

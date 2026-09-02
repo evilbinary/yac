@@ -40,3 +40,7 @@ app/llm/snapshot/infer.exe
 app/llm/snapshot/snapshot.w
 *.jit
 app/llm/data.jsonl
+app/llm/pretrain_t2t_mini.jsonl
+app/llm/pretrain_head.jsonl
+app/llm/chat_data.jsonl
+app/llm/pretrain_t2t_mini.jsonl

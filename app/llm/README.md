@@ -15,13 +15,8 @@ make -C app llm-transformer
 
 ```bash
 make -C app llm-snapshot
-# 默认 chat：冻用户、填回复。已有 snapshot.w 则接着训；每个 epoch 写盘。
-./app/llm/snapshot/train.exe app/llm/data.jsonl
-./app/llm/snapshot/train.exe app/llm/data.jsonl app/llm/snapshot/snapshot.w 3
-# 丢掉旧权重从头来
-./app/llm/snapshot/train.exe app/llm/data.jsonl app/llm/snapshot/snapshot.w 3 new
-./app/llm/snapshot/infer.exe app/llm/snapshot/snapshot.w 怎么办 8
-# 旧整库 MLM
-./app/llm/snapshot/train.exe app/llm/data.jsonl app/llm/snapshot/snapshot.w 3 mlm
-./app/llm/snapshot/infer.exe app/llm/snapshot/snapshot.w 怎么办 8 mlm
+# 默认 MLM 预训练 + generate。语料是 pretrain_t2t_mini.jsonl 切出的前 40 行。
+./app/llm/snapshot/train.exe
+./app/llm/snapshot/train.exe app/llm/pretrain_head.jsonl app/llm/snapshot/snapshot.w 5 new
+./app/llm/snapshot/infer.exe app/llm/snapshot/snapshot.w 秋天 8
 ```
