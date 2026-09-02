@@ -22,7 +22,7 @@ let usage(_) =
   let _ = print("                   empty line ignored; :q / :quit exits") in
   let _ = print("                   :dump FILE.yjit  write live image") in
   let _ = print("                   :load FILE.yjit  map image and run entry") in
-  let _ = print("  file.yjit        load and run a dumped image (no --cps)") in
+  let _ = print("  file.yjit|file.jit  load and run a dumped image (no --cps)") in
   let _ = print("  file.yac...      concatenate in order as one program") in
   let _ = print("  --scheme         translate a Scheme subset, then run or compile") in
   let _ = print("  -o out           write an executable instead of running") in
@@ -37,6 +37,16 @@ let ends_with_yjit(s) =
   let n = str_len(s) in
   if n < 5 then false
   else str_slice(s, n - 5, 5) == ".yjit"
+
+/* `.yjit` does not end with `.jit` (last four are `yjit`). */
+let ends_with_jit(s) =
+  let n = str_len(s) in
+  if n < 4 then false
+  else str_slice(s, n - 4, 4) == ".jit"
+
+let is_jit_file(s) =
+  if ends_with_yjit(s) then true
+  else ends_with_jit(s)
 
 let ends_with_yac(s) =
   let n = str_len(s) in
@@ -144,7 +154,7 @@ let parse_args(i, argc, out, pos, spec) =
 
 let pos_has_yjit(pos, i) =
   if i >= len(pos) then false
-  else if ends_with_yjit(nth(pos, i)) then true
+  else if is_jit_file(nth(pos, i)) then true
   else pos_has_yjit(pos, i + 1)
 
 /* Concatenate sources in argv order. 0 if any path cannot be read. */
@@ -201,7 +211,7 @@ let repl_cmd_arg(s, skip) =
 let repl_preload(pos, spec, an) =
   let npos = len(pos) in
   if npos == 0 then 0
-  else if npos == 1 and ends_with_yjit(nth(pos, 0)) then
+  else if npos == 1 and is_jit_file(nth(pos, 0)) then
     jit_load_yjit(nth(pos, 0), 1)
   else if pos_has_yjit(pos, 0) then
     print("error: .yjit cannot be mixed with other inputs")
@@ -253,7 +263,7 @@ let run_cli(pr) =
         repl_loop(spec)
       else if npos == 0 then
         let _ = usage(0) in 2
-      else if npos == 1 and ends_with_yjit(inpath) then
+      else if npos == 1 and is_jit_file(inpath) then
         jit_load_yjit(inpath, 0)
       else if pos_has_yjit(pos, 0) then
         let _ = print("error: .yjit cannot be mixed with other inputs") in 2

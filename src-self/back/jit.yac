@@ -342,9 +342,10 @@ let jit_dump_live(path, arch) =
   else
     let abi = if emit_abi_win(0) then 1 else 0 in
     let drel = nth(live, 1) - JIT_VADDR in
+    let link = yjit_imp_enc(cimport_got(0), cimport_names(0)) in
+    let _ = bytes_extend(link, yjit_export_enc(nth(live, 2))) in
     let img = pack_yjit_ex(nth(live, 3), yjit_arch_num(arch),
-                           [abi, JIT_VADDR, nth(live, 4), drel,
-                            yjit_export_enc(nth(live, 2))]) in
+                           [abi, JIT_VADDR, nth(live, 4), drel, link, 1]) in
     let _ = write_file(path, img) in
     let _ = print(path) in
     0
@@ -360,17 +361,23 @@ let jit_load_yjit(path, sess) =
     else
       let code = nth(im, 4) in
       let ent = nth(im, 2) in
-      let _ = cimport_jit_bind(code) in
+      let link = nth(im, 5) in
+      let flags = if len(im) > 6 then nth(im, 6) else 0 in
+      let st =
+        if band(flags, 1) == 0 then [0, list_new(), 0]
+        else yjit_imp_parse(link) in
+      let _ = cimport_jit_bind_got(code, nth(st, 0), nth(st, 1)) in
       let _ = jit_run(code, ent, 0) in
       let _ =
         if sess == 0 then 0
         else
           let m =
-            if len(im) > 5 then yjit_export_dec(nth(im, 5))
+            if band(flags, 1) == 0 then yjit_export_dec(link)
             else
-              let m0 = fmap_new(0) in
-              let _ = fmap_init_n(m0, 4096) in
-              m0 in
+              let off = nth(st, 2) in
+              let nrest = bytes_len(link) - off in
+              if nrest <= 0 then yjit_export_dec(bytes_new())
+              else yjit_export_dec(bytes_copy_range(link, off, nrest, 0, bytes_new())) in
           box_set(jit_live_box,
             [bytes_len(code), JIT_VADDR + nth(im, 3), m, code, ent]) in
       0

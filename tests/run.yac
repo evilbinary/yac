@@ -424,9 +424,15 @@ let compiler_all(st, yc) =
     else if str_ref(yb, 2) != 73 then false
     else str_ref(yb, 3) == 84 in
   let st1y = check(st1s, "yjit magic YJIT", "1", if yjit_ok then "1" else "0") in
+  let ryj = run(append(yc, [yj])) in
+  let st1yj = check(st1y, "yc file.yjit", "42", chomp(nth(ryj, 1))) in
+  let jitp = str_cat(TMP, "/c_l4_42.jit") in
+  let _ = run(["cp", "-f", yj, jitp]) in
+  let rjit = run(append(yc, [jitp])) in
+  let st1jt = check(st1yj, "yc file.jit", "42", chomp(nth(rjit, 1))) in
   let yjs = str_cat(TMP, "/sess.yjit") in
   let rdump = repl_feed(yc, str_cat("1+2\n:dump ", str_cat(yjs, "\n:q\n"))) in
-  let st1d = check(st1y, "yjit dump sess", "0", int_to_str(nth(rdump, 0))) in
+  let st1d = check(st1jt, "yjit dump sess", "0", int_to_str(nth(rdump, 0))) in
   let rload = repl_feed(yc, str_cat(":load ", str_cat(yjs, "\nprint(\"hello\")\n:q\n"))) in
   let lblob = str_cat(nth(rload, 1), nth(rload, 2)) in
   let st1l =

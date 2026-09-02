@@ -305,13 +305,13 @@ let pair_locals(xs, i, acc) =
   else pair_locals(xs, i + 1, cons(nth(nth(xs, i), 0), acc))
 
 let pack_yjit_prog(t, code) =
-  let _ = cimport_jit_bind(code) in
   let ent = fun_off(funsym_get(0), "_eval") in
   let abi = if emit_abi_win(0) then 1 else 0 in
   let lay = yjit_layout_get(0) in
   let drel = if lay == 0 then 0 else nth(lay, 2) in
+  let link = yjit_imp_enc(cimport_got(0), cimport_names(0)) in
   pack_yjit_ex(code, yjit_arch_num(target_arch(t)),
-               [abi, target_vaddr(t), ent, drel])
+               [abi, target_vaddr(t), ent, drel, link, 1])
 
 let kernel_names_cache =
   let b = box_new() in

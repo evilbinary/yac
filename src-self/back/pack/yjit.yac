@@ -62,16 +62,18 @@ let yjit_app32(b, v) =
   let _ = yjit_app16(b, v) in
   yjit_app16(b, bshr(v, 16))
 
-/* rest = [abi, base, entry, data_rel] or + link bytes. */
+/* rest = [abi, base, entry, data_rel] or + link + flags.
+ * flags bit0: LINK starts with import table (n, got, names) then exports. */
 let pack_yjit_ex(code, arch, rest) =
   let n = bytes_len(code) in
   let link = if len(rest) > 4 then nth(rest, 4) else bytes_new() in
   let ln = bytes_len(link) in
+  let flags = if len(rest) > 5 then nth(rest, 5) else 0 in
   let loff = 64 + n in
   let out = bytes_new() in
   let _ = yjit_hdr_zeros(out) in
   let _ = yjit_hdr_write(out,
-    [arch, nth(rest, 0), 0, nth(rest, 1), nth(rest, 2),
+    [arch, nth(rest, 0), flags, nth(rest, 1), nth(rest, 2),
      64, n, 64 + n, 0, 64 + n, 0, loff, ln]) in
   let _ = le32(out, nth(rest, 3), 28) in
   let _ = bytes_extend(out, code) in
@@ -155,7 +157,44 @@ let yjit_export_dec(link) =
           rec(i + 1, off + 6 + nl) in
     rec(0, 4)
 
-/* 0 or [arch, abi, entry, data_rel, text, link] */
+/* Import LINK prefix: u32 n, u32 got_off; n × { u16 nlen, name }. */
+let yjit_imp_enc(got, xs) =
+  let b = bytes_new() in
+  let n = len(xs) in
+  let _ = yjit_app32(b, n) in
+  let _ = yjit_app32(b, got) in
+  let rec(i) =
+    if i >= n then 0
+    else
+      let k = nth(xs, i) in
+      let nl = str_len(k) in
+      let _ = yjit_app16(b, nl) in
+      let _ = bytes_from_str(k, 0, nl, b) in
+      rec(i + 1) in
+  let _ = rec(0) in
+  b
+
+/* [got, names, byte_off after names]. */
+let yjit_imp_parse(link) =
+  let ln = bytes_len(link) in
+  let xs = list_new() in
+  if ln < 8 then [0, xs, 0]
+  else
+    let n = ld32(link, 0) in
+    let got = ld32(link, 4) in
+    let rec(i, off) =
+      if i >= n then off
+      else if off + 2 > ln then off
+      else
+        let nl = ld16(link, off) in
+        if off + 2 + nl > ln then off
+        else
+          let k = bytes_to_str(bytes_copy_range(link, off + 2, nl, 0, bytes_new())) in
+          let _ = list_push(xs, k) in
+          rec(i + 1, off + 2 + nl) in
+    [got, xs, rec(0, 8)]
+
+/* 0 or [arch, abi, entry, data_rel, text, link, flags] */
 let yjit_parse(b) =
   if bytes_len(b) < 64 then 0
   else if yjit_magic_ok(b) == false then 0
@@ -171,11 +210,13 @@ let yjit_parse(b) =
       else
         [ld16(b, 6), ld16(b, 8), ld32(b, 24), ld32(b, 28),
          bytes_copy_range(b, toff, tsz, 0, bytes_new()),
-         bytes_copy_range(b, loff, lsz, 0, bytes_new())]
+         bytes_copy_range(b, loff, lsz, 0, bytes_new()),
+         ld16(b, 10)]
     else
       [ld16(b, 6), ld16(b, 8), ld32(b, 24), ld32(b, 28),
        bytes_copy_range(b, toff, tsz, 0, bytes_new()),
-       bytes_new()]
+       bytes_new(),
+       ld16(b, 10)]
 
 let yjit_read(path) =
   let s = read_file(path) in

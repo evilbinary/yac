@@ -486,6 +486,13 @@ let cimport_jit_bind(code) =
   if n == 0 then 0
   else cimport_jit_fill(0, n, cimport_names(0), code, cimport_got(0))
 
+/* Load path: names/GOT come from the image, not this process's emit state. */
+let cimport_jit_bind_got(code, got, xs) =
+  let n = len(xs) in
+  if n == 0 then 0
+  else if got == 0 then 0
+  else cimport_jit_fill(0, n, xs, code, got)
+
 /* Call-site stack maps: [ret_off, nslots]. nslots is the caller's frame. */
 let smap_box =
   let b = box_new() in
