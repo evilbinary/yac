@@ -1,8 +1,8 @@
-/* 加载快照权重，K 步全局曝光 + 按置信度揭 MASK。
+/* 快照推理。
  *
- *   make -C app llm-snapshot-infer
- *   ./app/llm/snapshot/infer [权重] [提示词] [K]
- * 默认：app/llm/snapshot/snapshot.w  你好  8
+ *   ./app/llm/snapshot/infer [权重] [提示] [K] [mode]
+ * mode 默认 chat：冻问句后缀，只显示回复；提示为 - 则 REPL（quit 退出）。
+ * mode=mlm：旧的整张底片逐步打印。
  */
 
 import snapshot
@@ -13,15 +13,36 @@ let wpath =
   if argc() > 1 then argv(1)
   else "app/llm/snapshot/snapshot.w"
 
-let prompt =
+let prompt0 =
   if argc() > 2 then argv(2)
-  else "你好"
+  else "怎么办"
 
 let k0 =
   if argc() > 3 then parse_int(argv(3), 0, str_len(argv(3)), 0)
   else 8
 
 let k = if k0 < 1 then 1 else k0
+
+let mode_mlm =
+  if argc() > 4 then
+    if argv(4) == "mlm" then 1 else if argv(4) == "0" then 1 else 0
+  else 0
+
+let chat_once(m, prompt, k) =
+  let canvas = denoise(m, prompt, k) in
+  let u = n_freeze(m, prompt) in
+  print(str_cat("reply  ", show_from(m, canvas, u)))
+
+let repl(m, k) =
+  let _ = print("you> ") in
+  let line = read_line() in
+  if line == 0 then 0
+  else if str_len(line) == 0 then 0
+  else if line == "quit" then 0
+  else if line == "exit" then 0
+  else
+    let _ = chat_once(m, line, k) in
+    repl(m, k)
 
 let m = load_model(wpath)
 
@@ -31,9 +52,17 @@ let rc =
   else
     let _ = print(format("snapshot  V=%d  d=%d  T=%d  K=%d",
       [ntok(m), dim(0), ctx(0), k])) in
-    let _ = print("--- denoise (one forward per step, then unveil) ---") in
-    let canvas = denoise(m, prompt, k) in
-    let _ = print(str_cat("final  ", show_canvas(m, canvas))) in
-    0
+    if mode_mlm == 1 then
+      let _ = print("--- denoise mlm ---") in
+      let canvas = denoise(m, prompt0, k) in
+      let _ = print(str_cat("final  ", show_canvas(m, canvas))) in
+      0
+    else if prompt0 == "-" then
+      let _ = print("chat  (quit to exit)") in
+      repl(m, k)
+    else
+      let _ = print("--- chat (frozen ask, fill reply) ---") in
+      let _ = chat_once(m, prompt0, k) in
+      0
 
 rc

@@ -1,11 +1,14 @@
-/* 快照并行：随机挖 MASK，双向填空，写出 snapshot.w。
+/* 快照并行训练。
  *
- *   make -C app llm-snapshot
- *   ./app/llm/snapshot/train [语料] [权重] [epoch]
- * 默认：app/llm/corpus.txt  app/llm/snapshot/snapshot.w  3
+ *   ./app/llm/snapshot/train [语料] [权重] [epoch] [mode] [new]
+ * mode 默认 chat：每条 jsonl 冻用户后缀、只填助手回复。
+ * mode=mlm：旧的整库拼接 + 随机挖洞。
+ * 权重文件能读就接着训（词表以权重为准）；new 则丢掉旧权重从头建。
+ * 每个 epoch 结束写盘。默认语料 app/llm/data.jsonl
  */
 
 import snapshot
+import json
 import io
 import fmt
 
@@ -21,35 +24,206 @@ let st5(a, b, c, d, e) =
   let _ = list_push(s, e) in
   s
 
-/* st = [pos, nwin, seed, hit, nmask] */
-let epoch_go(m, ids, st) =
+/* 第 6 槽固定 0，用来累加 nll（arity≤5）。 */
+let st6(a, b, c, d, e) =
+  let s = st5(a, b, c, d, e) in
+  let _ = list_push(s, 0) in
+  s
+
+let find_nl(s, i) =
+  if i >= str_len(s) then i
+  else if str_ref(s, i) == 10 then i
+  else find_nl(s, i + 1)
+
+let append_str(b, s, i) =
+  if i >= str_len(s) then 0
+  else
+    let _ = bytes_append(b, str_ref(s, i)) in
+    append_str(b, s, i + 1)
+
+let jstr_of(v) =
+  if v == 0 then ""
+  else if len(v) < 2 then ""
+  else if nth(v, 0) == "S" then nth(v, 1)
+  else ""
+
+let convs_go(arr, i, b) =
+  if i >= len(arr) then 0
+  else
+    let c = jstr_of(get(nth(arr, i), "content")) in
+    let _ = append_str(b, c, 0) in
+    let _ = bytes_append(b, 10) in
+    convs_go(arr, i + 1, b)
+
+let line_go(line, b) =
+  let v = parse(line) in
+  if v == 0 then 0
+  else
+    let conv = get(v, "conversations") in
+    if conv == 0 then 0
+    else if nth(conv, 0) != "A" then 0
+    else
+      let _ = convs_go(nth(conv, 1), 0, b) in
+      bytes_append(b, 10)
+
+let lines_go(raw, i, n, b, left) =
+  if left <= 0 then bytes_to_str(b)
+  else if i >= n then bytes_to_str(b)
+  else
+    let nl = find_nl(raw, i) in
+    let _ = if nl > i then line_go(str_slice(raw, i, nl - i), b) else 0 in
+    let i2 = if nl < n then nl + 1 else n in
+    lines_go(raw, i2, n, b, left - 1)
+
+let jsonl_max(_) = 150
+
+let load_text(path) =
+  let raw = read_or_0(path) in
+  if raw == 0 then default_text(0)
+  else if str_len(raw) <= 0 then default_text(0)
+  else if str_ref(raw, 0) == 123 then
+    lines_go(raw, 0, str_len(raw), bytes_new(), jsonl_max(0))
+  else raw
+
+let find_role(arr, i, want) =
+  if i >= len(arr) then ""
+  else if jstr_of(get(nth(arr, i), "role")) == want then
+    jstr_of(get(nth(arr, i), "content"))
+  else find_role(arr, i + 1, want)
+
+let line_pair(line, acc) =
+  let v = parse(line) in
+  if v == 0 then 0
+  else
+    let conv = get(v, "conversations") in
+    if conv == 0 then 0
+    else if nth(conv, 0) != "A" then 0
+    else
+      let arr = nth(conv, 1) in
+      let u = find_role(arr, 0, "user") in
+      let a = find_role(arr, 0, "assistant") in
+      if str_len(u) <= 0 then 0
+      else if str_len(a) <= 0 then 0
+      else
+        let p = list_new() in
+        let _ = list_push(p, u) in
+        let _ = list_push(p, a) in
+        list_push(acc, p)
+
+let pairs_go(raw, i, n, acc, left) =
+  if left <= 0 then acc
+  else if i >= n then acc
+  else
+    let nl = find_nl(raw, i) in
+    let _ = if nl > i then line_pair(str_slice(raw, i, nl - i), acc) else 0 in
+    let i2 = if nl < n then nl + 1 else n in
+    pairs_go(raw, i2, n, acc, left - 1)
+
+let load_pairs(path) =
+  let raw = read_or_0(path) in
+  if raw == 0 then list_new()
+  else if str_len(raw) <= 0 then list_new()
+  else pairs_go(raw, 0, str_len(raw), list_new(), jsonl_max(0))
+
+let vocab_pairs(pairs, i, vocab) =
+  if i >= len(pairs) then vocab
+  else
+    let p = nth(pairs, i) in
+    let _ = build_vocab(nth(p, 0), vocab, 0) in
+    let _ = build_vocab(nth(p, 1), vocab, 0) in
+    vocab_pairs(pairs, i + 1, vocab)
+
+let pack_go(m, pairs, i, golds, us) =
+  if i >= len(pairs) then 0
+  else
+    let p = nth(pairs, i) in
+    let g = gold_chat(m, nth(p, 0), nth(p, 1)) in
+    let _ = list_push(golds, nth(g, 0)) in
+    let _ = list_push(us, nth(g, 1)) in
+    pack_go(m, pairs, i + 1, golds, us)
+
+let epoch_mlm(m, ids, st) =
   let pos = nth(st, 0) in
   if pos >= nth(st, 1) then 0
   else
     let r = train_step(m, ids, pos, nth(st, 2), 1) in
-    let _ = list_set(st, 0, pos + 1) in
-    let _ = list_set(st, 2, nth(r, 2)) in
+    let _ = list_set(st, 0, pos + ctx(0)) in
+    let _ = list_set(st, 2, nth(r, 3)) in
     let _ = list_set(st, 3, nth(st, 3) + nth(r, 0)) in
     let _ = list_set(st, 4, nth(st, 4) + nth(r, 1)) in
-    epoch_go(m, ids, st)
+    let _ = list_set(st, 5, nth(st, 5) + nth(r, 2)) in
+    epoch_mlm(m, ids, st)
 
-/* st = [ep, epochs, nwin, seed] */
-let run_ep(m, ids, st) =
+let epoch_chat(m, golds, us, st) =
+  let i = nth(st, 0) in
+  if i >= len(golds) then 0
+  else
+    let r = train_step_chat(m, nth(golds, i), nth(us, i), nth(st, 2), 1) in
+    let _ = list_set(st, 0, i + 1) in
+    let _ = list_set(st, 2, nth(r, 3)) in
+    let _ = list_set(st, 3, nth(st, 3) + nth(r, 0)) in
+    let _ = list_set(st, 4, nth(st, 4) + nth(r, 1)) in
+    let _ = list_set(st, 5, nth(st, 5) + nth(r, 2)) in
+    epoch_chat(m, golds, us, st)
+
+let avg_nll(nll, nm) =
+  if nm < 1 then 0
+  else nll / nm
+
+let run_mlm(m, ids, st, path) =
   let ep = nth(st, 0) in
   if ep >= nth(st, 1) then 0
   else
-    let row = st5(0, nth(st, 2), nth(st, 3), 0, 0) in
-    let _ = epoch_go(m, ids, row) in
+    let row = st6(0, nth(st, 2), nth(st, 3), 0, 0) in
+    let _ = epoch_mlm(m, ids, row) in
     let nm = nth(row, 4) in
-    let hit = nth(row, 3) in
-    let _ = print(format("epoch %d  mask-acc %d / %d", [ep, hit, nm])) in
+    let _ = print(format("epoch %d  nll %d  mask-acc %d / %d",
+      [ep, avg_nll(nth(row, 5), nm), nth(row, 3), nm])) in
+    let _ = save_model(m, path) in
     let _ = list_set(st, 0, ep + 1) in
     let _ = list_set(st, 3, nth(row, 2)) in
-    run_ep(m, ids, st)
+    run_mlm(m, ids, st, path)
+
+let run_chat(m, golds, us, st, path) =
+  let ep = nth(st, 0) in
+  if ep >= nth(st, 1) then 0
+  else
+    let row = st6(0, 0, nth(st, 2), 0, 0) in
+    let _ = epoch_chat(m, golds, us, row) in
+    let nm = nth(row, 4) in
+    let _ = print(format("epoch %d  nll %d  mask-acc %d / %d",
+      [ep, avg_nll(nth(row, 5), nm), nth(row, 3), nm])) in
+    let _ = save_model(m, path) in
+    let _ = list_set(st, 0, ep + 1) in
+    let _ = list_set(st, 2, nth(row, 2)) in
+    run_chat(m, golds, us, st, path)
+
+let is_mlm(s) =
+  if s == "mlm" then 1
+  else if s == "0" then 1
+  else 0
+
+let is_new(s) =
+  if s == "new" then 1
+  else 0
+
+/* 能读到合法权重就接着训；force=1 或坏文件则用 vocab 重建。 */
+let open_or_new(wpath, vocab, force) =
+  if force == 1 then
+    let _ = print("init  new") in
+    model_new(vocab, 1)
+  else
+    let m = load_model(wpath) in
+    if m == 0 then
+      let _ = print("init  scratch") in
+      model_new(vocab, 1)
+    else
+      let _ = print(format("resume  V=%d", [ntok(m)])) in
+      m
 
 let path =
   if argc() > 1 then argv(1)
-  else "app/llm/corpus.txt"
+  else "app/llm/data.jsonl"
 
 let wpath =
   if argc() > 2 then argv(2)
@@ -59,31 +233,57 @@ let epochs =
   if argc() > 3 then parse_int(argv(3), 0, str_len(argv(3)), 0)
   else 3
 
-let text =
-  let t = read_or_0(path) in
-  if t == 0 then default_text(0)
-  else t
+let mode_mlm =
+  if argc() > 4 then is_mlm(argv(4))
+  else 0
 
-let vocab = build_vocab(text, list_new(), 0)
-let _ = list_push(vocab, "░")
-let ids = encode(text, vocab, list_new(), 0)
-let n = len(ids)
-let t = ctx(0)
-let nwin = if n >= t then n - t + 1 else 1
-let m = model_new(vocab, 1)
+/* argv 末尾 new：丢掉 checkpoint。`... 3 new` 或 `... 3 mlm new`。 */
+let force_new =
+  if argc() > 5 then is_new(argv(5))
+  else if argc() > 4 then is_new(argv(4))
+  else 0
 
 let rc =
-  if n <= 0 then
-    let _ = print("empty corpus") in 1
+  if mode_mlm == 1 then
+    let text = load_text(path) in
+    let vocab = build_vocab(text, list_new(), 0) in
+    let _ = list_push(vocab, "░") in
+    let m = open_or_new(wpath, vocab, force_new) in
+    let ids = encode(text, vocab_of(m), list_new(), 0) in
+    let n = len(ids) in
+    let tlen = ctx(0) in
+    let nwin = if n >= tlen then n / tlen else 1 in
+    let limit = if n >= tlen then n - tlen + 1 else 1 in
+    if n <= 0 then
+      let _ = print("empty corpus") in 1
+    else
+      let _ = print(format("snapshot  mode=mlm  V=%d  T=%d  tokens=%d  windows=%d",
+        [ntok(m), tlen, n, nwin])) in
+      let _ = run_mlm(m, ids, st5(0, epochs, limit, 1, 0), wpath) in
+      let _ = denoise(m, "怎么办", 8) in
+      let _ = print(str_cat("wrote ", wpath)) in
+      0
   else
-    let _ = print(format("snapshot  V=%d  d=%d  T=%d  tokens=%d  windows=%d",
-      [ntok(m), dim(0), t, n, nwin])) in
-    let _ = print("--- train (MLM, bidirectional, fixed-point) ---") in
-    let _ = run_ep(m, ids, st5(0, epochs, nwin, 1, 0)) in
-    let _ = print("--- after train, denoise 你好  K=8 ---") in
-    let _ = denoise(m, "你好", 8) in
-    let _ = save_model(m, wpath) in
-    let _ = print(str_cat("wrote ", wpath)) in
-    0
+    let pairs = load_pairs(path) in
+    if len(pairs) <= 0 then
+      let _ = print("no chat pairs (need jsonl conversations)") in 1
+    else
+      let vocab = vocab_pairs(pairs, 0, list_new()) in
+      let _ = list_push(vocab, "░") in
+      let m = open_or_new(wpath, vocab, force_new) in
+      let golds = list_new() in
+      let us = list_new() in
+      let _ = pack_go(m, pairs, 0, golds, us) in
+      let _ = print(format("snapshot  mode=chat  V=%d  T=%d  freeze=%d  pairs=%d",
+        [ntok(m), ctx(0), freeze_n(0), len(golds)])) in
+      let _ = print(str_cat("corpus  ", path)) in
+      let _ = print("--- train (user frozen, assistant MASK) ---") in
+      let _ = run_chat(m, golds, us, st5(0, epochs, 1, 0, 0), wpath) in
+      let q = "怎么办" in
+      let _ = print("--- after train ---") in
+      let canvas = denoise(m, q, 8) in
+      let _ = print(str_cat("reply  ", show_from(m, canvas, n_freeze(m, q)))) in
+      let _ = print(str_cat("wrote ", wpath)) in
+      0
 
 rc

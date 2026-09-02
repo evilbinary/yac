@@ -13,9 +13,9 @@
  */
 
 package snapshot
-export sc, dim, ctx, u8len, ch_at, fill, mat, find_char, add_char, build_vocab,
-  encode, argmax, rng_next, mask_id, model_new, train_step, forward,
-  canvas_from_prompt, show_canvas, denoise, save_model, load_model,
+export sc, dim, ctx, freeze_n, u8len, ch_at, fill, mat, find_char, add_char, build_vocab,
+  encode, argmax, rng_next, mask_id, model_new, train_step, train_step_chat, gold_chat, forward,
+  canvas_from_prompt, show_canvas, show_from, n_freeze, denoise, save_model, load_model,
   vocab_of, ntok, parse_int
 
 import io
@@ -28,6 +28,9 @@ let dim(_) = 8
 
 /* 底片长度 T。一次曝光看完这 T 个位置。 */
 let ctx(_) = 16
+
+/* 对话模式：左侧最多冻这么多字，其余给回复。 */
+let freeze_n(_) = 6
 
 /* UTF-8 首字节 → 字宽。续字节 10xxxxxx 当 1，避免死循环。 */
 let u8len(b) =
@@ -72,10 +75,12 @@ let find_char(vocab, c, i) =
   else if nth(vocab, i) == c then i
   else find_char(vocab, c, i + 1)
 
-/* 未见过的字推进词表。跳过 CR（Windows 语料），避免词表里多一个 \r。 */
+/* 未见过的字推进词表。跳过 CR/LF，避免生成区被换行霸榜。 */
 let add_char(vocab, c) =
   if str_len(c) == 1 then
-    if str_ref(c, 0) == 13 then 0
+    let b = str_ref(c, 0) in
+    if b == 13 then 0
+    else if b == 10 then 0
     else if find_char(vocab, c, 0) < 0 then list_push(vocab, c)
     else 0
   else if find_char(vocab, c, 0) < 0 then list_push(vocab, c)
@@ -124,6 +129,36 @@ let argmax_go(row, i, last, bi, bv) =
 
 /* 不把 MASK（最后一列）当成生成字。 */
 let argmax(row) = argmax_go(row, 1, len(row) - 1, 0, nth(row, 0))
+
+/* 生成用：再跳过单字节换行（旧权重里可能还有 \n）。 */
+let banned_tok(vocab, i) =
+  if i >= len(vocab) - 1 then 1
+  else
+    let c = nth(vocab, i) in
+    if str_len(c) != 1 then 0
+    else
+      let b = str_ref(c, 0) in
+      if b == 10 then 1
+      else if b == 13 then 1
+      else 0
+
+let argmax_gen_go(row, vocab, i, acc) =
+  if i >= len(row) then nth(acc, 0)
+  else if banned_tok(vocab, i) == 1 then argmax_gen_go(row, vocab, i + 1, acc)
+  else
+    let x = nth(row, i) in
+    let _ =
+      if x > nth(acc, 1) then
+        let _ = list_set(acc, 0, i) in
+        list_set(acc, 1, x)
+      else 0 in
+    argmax_gen_go(row, vocab, i + 1, acc)
+
+let argmax_gen(m, row) =
+  let acc = list_new() in
+  let _ = list_push(acc, 0) in
+  let _ = list_push(acc, 0 - 999999) in
+  argmax_gen_go(row, vocab_of(m), 0, acc)
 
 /* LCG: s' = (1103515245 s + 12345) mod (2^31-1)；折成非负。 */
 let rng_next(s) =
@@ -369,6 +404,27 @@ let copy_ids(src, i, dst) =
     let _ = list_push(dst, nth(src, i)) in
     copy_ids(src, i + 1, dst)
 
+/* 从下标 i 起拷到新列表。 */
+let take_from(ids, i, acc) =
+  if i >= len(ids) then acc
+  else
+    let _ = list_push(acc, nth(ids, i)) in
+    take_from(ids, i + 1, acc)
+
+/* 只留末尾 n 个 id（对话冻结区用问句后缀）。 */
+let tail_ids(ids, n) =
+  if len(ids) <= n then ids
+  else take_from(ids, len(ids) - n, list_new())
+
+/* dst[di..] ← src[si..) 共 n 个。 */
+let set_range(dst, di, src, si, n) =
+  if n <= 0 then 0
+  else if si >= len(src) then 0
+  else if di >= len(dst) then 0
+  else
+    let _ = list_set(dst, di, nth(src, si)) in
+    set_range(dst, di + 1, src, si + 1, n - 1)
+
 /* 与画布同长的 0/1：1 = 本步被挖掉、要算损失。 */
 let flags_new(_) = fill(ctx(0), 0)
 
@@ -404,7 +460,18 @@ let triple(a, b, c) =
   let _ = list_push(s, c) in
   s
 
-/* 只在 flags[t]=1 的位置做交叉熵，更新 Wout。acc = [hit, nmask]。 */
+/* ⌊log2(x)⌋，x≥1。用来凑 −log2(w/z) = log2(z)−log2(w)。 */
+let ilog2(x, n) =
+  if x <= 1 then n
+  else ilog2(x / 2, n + 1)
+
+/* 单格交叉熵（bit）。w[y]<1 当成 1，避免除零。 */
+let nll_bits(w, y, z) =
+  let wy = nth(w, y) in
+  let a = if wy < 1 then 1 else wy in
+  ilog2(z, 0) - ilog2(a, 0)
+
+/* 只在 flags[t]=1 的位置做交叉熵，更新 Wout。acc = [hit, nmask, nll]。 */
 let train_at(m, gold, flags, t, acc) =
   if t >= ctx(0) then acc
   else if nth(flags, t) == 0 then train_at(m, gold, flags, t + 1, acc)
@@ -412,17 +479,19 @@ let train_at(m, gold, flags, t, acc) =
     let y = nth(gold, t) in
     let z0 = sm_row(m, t) in
     let z = if z0 < 1 then 1 else z0 in
+    let nll = nll_bits(nth(m, 13), y, z) in
     let hit = if argmax(nth(nth(m, 12), t)) == y then 1 else 0 in
     let _ = g_fill(nth(m, 13), y, z, 0, ntok(m)) in
     let den = z * 32 in
     let _ = outer_w(nth(m, 4), nth(nth(m, 11), t), nth(m, 13), 0, den) in
     let _ = list_set(acc, 0, nth(acc, 0) + hit) in
     let _ = list_set(acc, 1, nth(acc, 1) + 1) in
+    let _ = list_set(acc, 2, nth(acc, 2) + nll) in
     train_at(m, gold, flags, t + 1, acc)
 
 /* 一步 MLM：挖洞 → 一张快门 → 只在 MASK 格更新。
  * lr 占位（Windows 参数 ≤5）；实际步长在 den=z·32。
- * 返回 [hit, nmask, new_seed]。 */
+ * 返回 [hit, nmask, nll, new_seed]。 */
 let train_step(m, ids, pos, seed, lr) =
   let mid = mask_id(m) in
   let gold = win_at(ids, pos, mid, list_new(), 0) in
@@ -432,10 +501,51 @@ let train_step(m, ids, pos, seed, lr) =
   let rate = 25 * (bucket + 1) in
   let seed2 = mask_i(gold, canvas, flags, triple(seed, mid, rate), 0) in
   let _ = forward(m, canvas) in
-  let acc = pair(0, 0) in
+  let acc = triple(0, 0, 0) in
   let _ = train_at(m, gold, flags, 0, acc) in
   let _ = list_push(acc, seed2) in
   acc
+
+/* 对话一步：0..u-1 冻结用户，u.. 全部 MASK，只在回复真字上算损失。 */
+let mask_chat(gold, canvas, flags, st, i) =
+  if i >= ctx(0) then 0
+  else
+    let u = nth(st, 0) in
+    let mid = nth(st, 1) in
+    let g = nth(gold, i) in
+    let _ =
+      if i < u then
+        let _ = list_set(canvas, i, g) in
+        list_set(flags, i, 0)
+      else
+        let _ = list_set(canvas, i, mid) in
+        if g == mid then list_set(flags, i, 0)
+        else list_set(flags, i, 1) in
+    mask_chat(gold, canvas, flags, st, i + 1)
+
+let train_step_chat(m, gold, u, seed, lr) =
+  let mid = mask_id(m) in
+  let canvas = copy_ids(gold, 0, list_new()) in
+  let flags = flags_new(0) in
+  let _ = mask_chat(gold, canvas, flags, pair(u, mid), 0) in
+  let _ = forward(m, canvas) in
+  let acc = triple(0, 0, 0) in
+  let _ = train_at(m, gold, flags, 0, acc) in
+  let _ = list_push(acc, rng_next(seed)) in
+  acc
+
+/* 一张对话底片：问句后缀 + 答句前缀，返回 [gold, u]。 */
+let gold_chat(m, user, asst) =
+  let vocab = vocab_of(m) in
+  let mid = mask_id(m) in
+  let uids = encode(user, vocab, list_new(), 0) in
+  let aids = encode(asst, vocab, list_new(), 0) in
+  let cap = freeze_n(0) in
+  let u = if len(uids) < cap then len(uids) else cap in
+  let gold = fill(ctx(0), mid) in
+  let _ = set_range(gold, 0, tail_ids(uids, u), 0, u) in
+  let _ = set_range(gold, u, aids, 0, ctx(0) - u) in
+  pair(gold, u)
 
 /* 提示词 → id；跳过未知字和 MASK 符本身。 */
 let prompt_ids(prompt, vocab, i, acc) =
@@ -454,11 +564,16 @@ let fill_canvas(pids, canvas, mid, i) =
     let _ = list_set(canvas, i, v) in
     fill_canvas(pids, canvas, mid, i + 1)
 
-/* 推理用底片：提示在左，生成区全雪花。 */
+/* 推理用底片：问句最多 freeze_n 字（取后缀），其余 MASK 给回复。 */
 let canvas_from_prompt(m, prompt) =
   let vocab = vocab_of(m) in
-  let pids = prompt_ids(prompt, vocab, 0, list_new()) in
+  let pids = tail_ids(prompt_ids(prompt, vocab, 0, list_new()), freeze_n(0)) in
   fill_canvas(pids, fill(ctx(0), mask_id(m)), mask_id(m), 0)
+
+/* 实际冻结长度（问句短于 freeze_n 时更短）。 */
+let n_freeze(m, prompt) =
+  let n = len(prompt_ids(prompt, vocab_of(m), 0, list_new())) in
+  if n < freeze_n(0) then n else freeze_n(0)
 
 /* 换行改成可见符，避免 print 把一张底片拆成多行。 */
 let tok_show(c) =
@@ -477,6 +592,9 @@ let show_i(canvas, vocab, i, acc) =
 /* 把当前底片打成一行（MASK 显示为 ░）。 */
 let show_canvas(m, canvas) = show_i(canvas, vocab_of(m), 0, "")
 
+/* 只打冻结区右边的回复。 */
+let show_from(m, canvas, u) = show_i(canvas, vocab_of(m), u, "")
+
 /* 还剩多少格是 MASK。 */
 let count_mask(canvas, mid, i, n) =
   if i >= len(canvas) then n
@@ -493,7 +611,7 @@ let fill_pc(m, canvas, mid, i) =
         let _ = list_set(nth(m, 16), i, 0 - 999999) in 0
       else
         let row = nth(nth(m, 12), i) in
-        let p = argmax(row) in
+        let p = argmax_gen(m, row) in
         let _ = list_set(nth(m, 15), i, p) in
         list_set(nth(m, 16), i, nth(row, p)) in
     fill_pc(m, canvas, mid, i + 1)
@@ -685,6 +803,9 @@ let load_model(path) =
   else
     let xs = parse_ints(raw, 0, str_len(raw), list_new()) in
     if len(xs) < 4 then 0
+    else if nth(xs, 1) != dim(0) then 0
+    else if nth(xs, 2) != ctx(0) then 0
+    else if nth(xs, 3) != sc(0) then 0
     else
       let vt = read_vocab(xs, 4, nth(xs, 0), list_new()) in
       let m = model_new(nth(vt, 0), 1) in

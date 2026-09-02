@@ -39,3 +39,4 @@ app/llm/snapshot/infer
 app/llm/snapshot/infer.exe
 app/llm/snapshot/snapshot.w
 *.jit
+app/llm/data.jsonl
