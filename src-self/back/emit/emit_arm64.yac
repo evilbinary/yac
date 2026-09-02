@@ -307,6 +307,7 @@ let emit_a64_f64_fmt(b) =
   fmt
 
 let emit_a64_f64_rel_cset(b, opn) =
+  let _ = a64_fcmp_d(b, 0, 1) in
   if opn == 0 then a64_cset(b, 0, 11)
   else if opn == 1 then a64_cset(b, 0, 12)
   else if opn == 2 then a64_cset(b, 0, 13)
