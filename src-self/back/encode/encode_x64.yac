@@ -292,6 +292,9 @@ let test_rax_rax(b) =
   let _ = e8(b, 133) in
   e8(b, 192)
 
+let pushfq(b) = e8(b, 156)
+let popfq(b) = e8(b, 157)
+
 /* jcc rel32: 0f 8x id32 (near conditional jump) */
 let jcc_rel32(b, cc, off) =
   let _ = e8(b, 15) in

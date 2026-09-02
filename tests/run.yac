@@ -245,7 +245,7 @@ let pkg_cases(_) = [
   ["log", "rc", "42"], ["test", "rc", "42"], ["net", "rc", "42"],
   ["bytes", "rc", "42"], ["ffi", "rc", "42"], ["json", "rc", "42"],
   ["env", "rc", "42"], ["cli", "rc", "42"], ["http", "rc", "42"], ["yui", "rc", "42"],
-  ["math", "rc", "42"]
+  ["math", "rc", "42"],
   ["import_as", "rc", "42"]
 ]
 
@@ -273,8 +273,9 @@ let compiler_cases(_) = [
   ["not", "rc", "7"], ["shadow_len", "rc", "42"],
   ["foldl_prim", "rc", "10"], ["map_prim", "rc", "4"], ["is_kw", "rc", "1"],
   ["empty_params", "rc", "42"], ["print_int", "out", "123"],
-  ["print_neg", "out", "-1000"], ["print_float", "out", "0.0010-0.002"],
+  ["print_neg", "out", "-1000"],   ["print_float", "out", "0.0010-0.002"],
   ["float_add", "out", "-0.005"],
+  ["float_cmp", "rc", "42"],
   ["print_list", "out", "[1, [2, 3], x]\n[]"],
   ["print_nl", "out", "ab"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],

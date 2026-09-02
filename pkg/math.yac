@@ -1,4 +1,4 @@
-/* math.yac — integers plus IEEE f64 helpers (Newton / Taylor, no libm). */
+/* math.yac — integer plus IEEE f64 (Newton / Taylor). */
 
 package math
 export abs, min, max, clamp, sign, gcd, lcm, even, odd, pow, fact,
@@ -62,6 +62,7 @@ let pi(_) = 3.141592653589793
 
 let e(_) = 2.718281828459045
 
+/* Guess 1; integer countdown. Do not compare x to 0.0 (f64 == is wrong). */
 let sqrt_go(x, g, i) =
   if i <= 0 then g
   else sqrt_go(x, 0.5 * (g + x / g), i - 1)
