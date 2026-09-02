@@ -35,6 +35,12 @@ let mo_uleb(b, v) =
     let _ = bytes_append(b, bor(band(v, 127), 128)) in
     mo_uleb(b, bshr(v, 7))
 
+let mo_app_str(b, s, i, n) =
+  if i >= n then 0
+  else
+    let _ = bytes_append(b, str_ref(s, i)) in
+    mo_app_str(b, s, i + 1, n)
+
 let macho_finish_dylib(out, t, cmdat) =
   let vaddr = target_vaddr(t) in
   let text_off = target_text_off(t) in
@@ -57,7 +63,7 @@ let macho_finish_dylib(out, t, cmdat) =
     else
       let _ = list_push(name_off, bytes_len(out) - str_off) in
       let nm = str_cat("_", nth(nth(exps, i), 0)) in
-      let _ = app_str(out, nm, 0, str_len(nm)) in
+      let _ = mo_app_str(out, nm, 0, str_len(nm)) in
       let _ = bytes_append(out, 0) in
       addn(i + 1) in
   let _ = addn(0) in

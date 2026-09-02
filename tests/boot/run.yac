@@ -271,7 +271,7 @@ let pipe_suite(st) =
     ["letfun f(2)", "let f(x) = x + 1 in f(2)\n", "3"]])
 
 let elf_suite(st) =
-  let _ = cat_files(["src-self/back/pack/elf.yac", "src-self/drivers/driver_elf.yac"], str_cat(TMP, "/elf_run.yac")) in
+  let _ = cat_files(["src-self/back/pack/dlib.yac", "src-self/back/pack/elf.yac", "src-self/drivers/driver_elf.yac"], str_cat(TMP, "/elf_run.yac")) in
   let br = native_build(str_cat(TMP, "/elf_run.yac"), str_cat(TMP, "/elf_run")) in
   if nth(br, 0) != 0 then
     check(st, "ELF magic", "ok", str_cat("yc_a rc=", int_to_str(nth(br, 0))))
@@ -337,12 +337,12 @@ let unit_suite(st) =
     ["lexer tokenize", ["map.yac", "lexer.yac"], "print tokenize(\"let x = 5 in x + 1\");\nprint \"\";\n0;\n", "[[kw, let, 1], [ident, x, 1], [op, =, 1], [num, 5, 1], [kw, in, 1], [ident, x, 1], [op, +, 1], [num, 1, 1], [eof, , 1]]\n\n0"],
     ["lexer eq minus", ["map.yac", "lexer.yac"], "print tokenize(\"a=-1\");\nprint \"\";\n0;\n", "[[ident, a, 1], [op, =, 1], [op, -, 1], [num, 1, 1], [eof, , 1]]\n\n0"],
     ["lexer scientific", ["map.yac", "lexer.yac"], "print tokenize(\"2.5e-3 + 1e10\");\nprint \"\";\n0;\n", "[[num, 2.5e-3, 1], [op, +, 1], [num, 1e10, 1], [eof, , 1]]\n\n0"],
-    ["elf pack_elf size", ["elf.yac"], "let b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet elf = pack_elf(b);\nprint bytes_len(elf);\nprint \"\";\nprint bytes_ref(elf, 0);\nprint \"\";\nprint bytes_ref(elf, 1);\nprint \"\";\nprint bytes_ref(elf, 4);\nprint \"\";\n0;\n", "121\n\n127\n\n69\n\n2\n\n0"],
-    ["pe mz magic", ["target.yac", "pe.yac"], "let t = mk_target(\"x86_64\", \"pe\", \"exec\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet pe = pack_pe_target(t, b);\nprint bytes_ref(pe, 0);\nprint \"\";\nprint bytes_ref(pe, 1);\nprint \"\";\n0;\n", "77\n\n90\n\n0"],
-    ["macho magic", ["target.yac", "macho.yac"], "let t = mk_target(\"x86_64\", \"macho\", \"exec\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet m = pack_macho_target(t, b);\nprint bytes_ref(m, 0);\nprint \"\";\nprint bytes_ref(m, 1);\nprint \"\";\n0;\n", "207\n\n250\n\n0"],
-    ["pe dll chars", ["target.yac", "pe.yac"], "let t = mk_target(\"x86_64\", \"pe\", \"dylib\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet pe = pack_pe_target(t, b);\nprint bytes_ref(pe, 150);\nprint \"\";\nprint bytes_ref(pe, 151);\nprint \"\";\n0;\n", "34\n\n32\n\n0"],
-    ["macho dylib filetype", ["target.yac", "dlib.yac", "elf.yac", "macho.yac"], "let t = mk_target(\"x86_64\", \"macho\", \"dylib\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet m = pack_macho_target(t, b);\nprint bytes_ref(m, 12);\nprint \"\";\n0;\n", "6\n\n0"],
-    ["elf dylib et_dyn", ["target.yac", "elf.yac"], "let t = mk_target(\"x86_64\", \"elf\", \"dylib\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet elf = pack_elf_ex(b, target_emachine(t), target_vaddr(t), target_text_off(t), 1);\nprint bytes_ref(elf, 16);\nprint \"\";\n0;\n", "3\n\n0"],
+    ["elf pack_elf size", ["dlib.yac", "elf.yac"], "let b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet elf = pack_elf(b);\nprint bytes_len(elf);\nprint \"\";\nprint bytes_ref(elf, 0);\nprint \"\";\nprint bytes_ref(elf, 1);\nprint \"\";\nprint bytes_ref(elf, 4);\nprint \"\";\n0;\n", "121\n\n127\n\n69\n\n2\n\n0"],
+    ["pe mz magic", ["target.yac", "dlib.yac", "pe.yac"], "let t = mk_target(\"x86_64\", \"pe\", \"exec\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet pe = pack_pe_target(t, b);\nprint bytes_ref(pe, 0);\nprint \"\";\nprint bytes_ref(pe, 1);\nprint \"\";\n0;\n", "77\n\n90\n\n0"],
+    ["macho magic", ["target.yac", "dlib.yac", "macho.yac"], "let t = mk_target(\"x86_64\", \"macho\", \"exec\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet m = pack_macho_target(t, b);\nprint bytes_ref(m, 0);\nprint \"\";\nprint bytes_ref(m, 1);\nprint \"\";\n0;\n", "207\n\n250\n\n0"],
+    ["pe dll chars", ["target.yac", "dlib.yac", "pe.yac"], "let t = mk_target(\"x86_64\", \"pe\", \"dylib\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet pe = pack_pe_target(t, b);\nprint bytes_ref(pe, 150);\nprint \"\";\nprint bytes_ref(pe, 151);\nprint \"\";\n0;\n", "34\n\n32\n\n0"],
+    ["macho dylib filetype", ["target.yac", "dlib.yac", "macho.yac"], "let t = mk_target(\"x86_64\", \"macho\", \"dylib\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet m = pack_macho_target(t, b);\nprint bytes_ref(m, 12);\nprint \"\";\n0;\n", "6\n\n0"],
+    ["elf dylib et_dyn", ["target.yac", "dlib.yac", "elf.yac"], "let t = mk_target(\"x86_64\", \"elf\", \"dylib\");\nlet b = bytes_new();\nlet _ = bytes_append(b, 144);\nlet elf = pack_elf_ex(b, target_emachine(t), target_vaddr(t), target_text_off(t), 1);\nprint bytes_ref(elf, 16);\nprint \"\";\n0;\n", "3\n\n0"],
     ["target arm64 ids", ["target.yac"], "let t = mk_target(\"arm64\", \"elf\", \"exec\");\nprint target_arch(t);\nprint \"\";\nprint target_emachine(t);\nprint \"\";\n0;\n", "arm64\n\n183\n\n0"],
     ["target riscv64 ids", ["target.yac"], "let t = mk_target(\"riscv64\", \"elf\", \"exec\");\nprint target_arch(t);\nprint \"\";\nprint target_emachine(t);\nprint \"\";\n0;\n", "riscv64\n\n243\n\n0"],
     ["encode arm64 movz", ["encode_arm64.yac"], "let b = bytes_new();\nlet _ = a64_movz(b, 0, 42, 0);\nprint bytes_ref(b, 0);\nprint \"\";\nprint bytes_ref(b, 3);\nprint \"\";\n0;\n", "64\n\n210\n\n0"],
