@@ -112,7 +112,7 @@ let fv_skip_go(xs, name, i, n, acc) =
 let fv_skip(xs, name) = fv_skip_go(xs, name, 0, len(xs), list_new())
 
 /* DESIGN bin(op,s,a,b). User + - * / go through yac_num_* (int fast path
- * or decimal strings). % and bits stay integer insns. */
+ * or IEEE f64 boxes). % and bits stay integer insns. */
 let bin(op, d, a, b) =
   if op == "+" then ["fcall", d, "yac_num_add", [a, b]]
   else if op == "-" then ["fcall", d, "yac_num_sub", [a, b]]
@@ -637,8 +637,10 @@ let lir_atom(atom, st) =
     [insn_push(nth(st, 0), ["mov_imm", nth(st, 2), str_to_int(nth(atom, 1)) + str_to_int(nth(atom, 1))]),
      nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
   else if k == "float" then
-    [insn_push(nth(st, 0), ["strlit", nth(st, 2), nth(atom, 1)]),
-     nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
+    let d = nth(st, 2) in
+    let s1 = insn_push(nth(st, 0), ["strlit", d, nth(atom, 1)]) in
+    [insn_push(s1, ["fcall", d, "yac_f64_from_str", [d]]),
+     d, nth(st, 1), d + 1, nth(st, 3), nth(st, 4)]
   else if k == "nil" then
     [insn_push(nth(st, 0), ["mov_imm", nth(st, 2), 1]),
      nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]

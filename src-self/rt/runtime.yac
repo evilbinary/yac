@@ -7,7 +7,7 @@
  * cap@72. nth is O(1) via ld64; GC marks head@32 and vec@64.
  * BYTES kind=4: len@24 cap@32 dataptr@40 (tagged STR blob, payload at +32).
  * Grow reallocs the blob only; the outer pointer stays (like C realloc).
- * nil is tagged 1. kind 2 = cons, kind 5 = listbuf.
+ * FLOAT kind=7: IEEE f64 bits@24 (leaf). nil is tagged 1. kind 2 = cons, kind 5 = listbuf.
  *
  * Insn lists are thunks (rt_*_ins(_)) so big cons literals are not built
  * inside yc's _start. A 33-element literal in that huge frame is mis-emitted
@@ -774,6 +774,13 @@ let rt_print_val_ins(_) =
    ["mov_imm", 8, 0 + 0],
    ["ret", 8],
    ["label", "pv_ns"],
+   ["mov_imm", 6, 7 + 7],
+   ["icmp", "==", 7, 5, 6],
+   ["cmpjmp", 7, "pv_f64", "pv_n7"],
+   ["label", "pv_f64"],
+   ["fcall", 8, "yac_f64_print", [1]],
+   ["ret", 8],
+   ["label", "pv_n7"],
    ["mov_imm", 6, 2 + 2],
    ["icmp", "==", 7, 5, 6],
    ["cmpjmp", 7, "pv_cons", "pv_nc"],
@@ -928,6 +935,9 @@ let rt_gc_mark_ins(_) =
    ["$jcc", "==", 7, 9, "mk_byt", "mk_k6"],
    ["label", "mk_k6"],
    ["mov_imm", 9, 6],
+   ["$jcc", "==", 7, 9, "mk_ret", "mk_k7"],
+   ["label", "mk_k7"],
+   ["mov_imm", 9, 7],
    ["$jcc", "==", 7, 9, "mk_ret", "mk_clo"],
    ["label", "mk_cons"],
    ["$ld64", 10, 5, 24],
@@ -1858,7 +1868,7 @@ let rt_num_add_ins(_) =
    ["ret", 5],
    ["label", "nadd_s"],
    ["mov_imm", 6, 0 + 0],
-   ["fcall", 5, "yac_num_slow", [1, 2, 6]],
+   ["fcall", 5, "yac_f64_binop", [1, 2, 6]],
    ["ret", 5]]
 
 let rt_num_sub_ins(_) =
@@ -1873,7 +1883,7 @@ let rt_num_sub_ins(_) =
    ["ret", 5],
    ["label", "nsub_s"],
    ["mov_imm", 6, 1 + 1],
-   ["fcall", 5, "yac_num_slow", [1, 2, 6]],
+   ["fcall", 5, "yac_f64_binop", [1, 2, 6]],
    ["ret", 5]]
 
 let rt_num_mul_ins(_) =
@@ -1888,7 +1898,7 @@ let rt_num_mul_ins(_) =
    ["ret", 5],
    ["label", "nmul_s"],
    ["mov_imm", 6, 2 + 2],
-   ["fcall", 5, "yac_num_slow", [1, 2, 6]],
+   ["fcall", 5, "yac_f64_binop", [1, 2, 6]],
    ["ret", 5]]
 
 let rt_num_div_ins(_) =
@@ -1903,8 +1913,28 @@ let rt_num_div_ins(_) =
    ["ret", 5],
    ["label", "ndiv_s"],
    ["mov_imm", 6, 3 + 3],
-   ["fcall", 5, "yac_num_slow", [1, 2, 6]],
+   ["fcall", 5, "yac_f64_binop", [1, 2, 6]],
    ["ret", 5]]
+
+let rt_f64_from_str_ins(_) =
+  [["local", 8, 1],
+   ["$f64fromstr", 2, 1],
+   ["ret", 2]]
+
+let rt_f64_binop_ins(_) =
+  [["local", 8, 3],
+   ["$f64binop", 4, 1, 2, 3],
+   ["ret", 4]]
+
+let rt_f64_rel_ins(_) =
+  [["local", 8, 3],
+   ["$f64rel", 4, 1, 2, 3],
+   ["ret", 4]]
+
+let rt_f64_print_ins(_) =
+  [["local", 8, 1],
+   ["$f64print", 2, 1],
+   ["ret", 2]]
 
 let runtime_funs(_) =
   [["proc", "yac_cons", 2, 0, rt_cons_ins(0), "yac_cons"],
@@ -1965,7 +1995,11 @@ let runtime_funs(_) =
    ["proc", "yac_num_add", 2, 0, rt_num_add_ins(0), "yac_num_add"],
    ["proc", "yac_num_sub", 2, 0, rt_num_sub_ins(0), "yac_num_sub"],
    ["proc", "yac_num_mul", 2, 0, rt_num_mul_ins(0), "yac_num_mul"],
-   ["proc", "yac_num_div", 2, 0, rt_num_div_ins(0), "yac_num_div"]]
+   ["proc", "yac_num_div", 2, 0, rt_num_div_ins(0), "yac_num_div"],
+   ["proc", "yac_f64_from_str", 1, 0, rt_f64_from_str_ins(0), "yac_f64_from_str"],
+   ["proc", "yac_f64_binop", 3, 0, rt_f64_binop_ins(0), "yac_f64_binop"],
+   ["proc", "yac_f64_rel", 3, 0, rt_f64_rel_ins(0), "yac_f64_rel"],
+   ["proc", "yac_f64_print", 1, 0, rt_f64_print_ins(0), "yac_f64_print"]]
 
 let runtime_add(extra) = append(runtime_funs(0), extra)
 

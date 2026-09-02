@@ -726,6 +726,10 @@ let emit_a64_i_raw(st, insn) =
     let _ = a64_blr(b, 16) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$f64binop" or k == "$f64fromstr" or k == "$f64print" or k == "$f64rel" then
+    let _ = a64_movz(b, 0, 0, 0) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, patches)
   else
     let name = nth(insn, 2) in
     let args = nth(insn, 3) in

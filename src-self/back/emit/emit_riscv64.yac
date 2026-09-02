@@ -742,6 +742,10 @@ let emit_rv_i_raw(st, insn) =
     let _ = rv_jalr(b, 1, 6, 0) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "$f64binop" or k == "$f64fromstr" or k == "$f64print" or k == "$f64rel" then
+    let _ = rv_addi(b, 10, 0, 0) in
+    let _ = rv_slot(b, nth(insn, 1), true, 10) in
+    emit_st4(st, b, cur, labels, patches)
   else
     let name = nth(insn, 2) in
     let args = nth(insn, 3) in

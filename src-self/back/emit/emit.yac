@@ -149,7 +149,11 @@ let is_raw_op(k) =
   else if k == "$fp" then true
   else if k == "$smap" then true
   else if k == "$jcc" then true
-  else k == "$memset"
+  else if k == "$memset" then true
+  else if k == "$f64binop" then true
+  else if k == "$f64fromstr" then true
+  else if k == "$f64print" then true
+  else k == "$f64rel"
 
 let is_frame_op(k) =
   if k == "local" then true
@@ -584,6 +588,7 @@ let strlit_off(s) =
     let _ = strlit_u64(buf, 3) in
     let _ = strlit_u64(buf, n) in
     let _ = strlit_put_bytes(buf, s, 0, n) in
+    let _ = bytes_append(buf, 0) in
     let _ = strlit_pad8(buf) in
     let _ = fmap_put(m, key, off + 1) in
     off

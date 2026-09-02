@@ -40,6 +40,14 @@ let emit_chkstk(b, nbytes) =
     let _ = apply_patch(b, jle + 2, done) in
     sub_rsp_rbx(b)
 
+let emit_x86_cmp_opn(op) =
+  if op == "<" then 0
+  else if op == ">" then 1
+  else if op == "<=" then 2
+  else if op == ">=" then 3
+  else if op == "==" then 4
+  else 5
+
 let emit_x86_iccall(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
@@ -170,6 +178,250 @@ let emit_x86_tloop(st, args) =
   let _ = if tco == 0 then 0 else apply_patch(b, jpos + 1, tco) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
 
+let emit_x86_i_cmp_eq(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let op = nth(insn, 1) in
+  let dst = nth(insn, 2) in
+  let a = nth(insn, 3) in
+  let bop = nth(insn, 4) in
+  let _ = emit_load_rax_slot(b, a) in
+  let _ = push_r64(b, 0) in
+  let _ = emit_load_rax_slot(b, bop) in
+  let _ = push_r64(b, 0) in
+  let _ = mov_rax_mem_rsp8(b) in
+  let _ = mov_rbx_mem_rsp(b) in
+  let _ = cmp_rax_rbx(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jptr = bytes_len(b) - 4 in
+  let _ = mov_rax_mem_rsp8(b) in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jnil1 = bytes_len(b) - 4 in
+  let _ = test_rax_1(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jz1 = bytes_len(b) - 4 in
+  let _ = mov_rax_mem_rsp(b) in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jnil2 = bytes_len(b) - 4 in
+  let _ = test_rax_1(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jz2 = bytes_len(b) - 4 in
+  let _ = mov_rax_mem_rsp8(b) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_rax_disp32(b, 16) in
+  let _ = cmp_rax_imm8(b, 3) in
+  let _ = jcc_rel32(b, 5, 0) in
+  let jne1 = bytes_len(b) - 4 in
+  let _ = mov_rax_mem_rsp(b) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_rax_disp32(b, 16) in
+  let _ = cmp_rax_imm8(b, 3) in
+  let _ = jcc_rel32(b, 5, 0) in
+  let jne2 = bytes_len(b) - 4 in
+  let _ = mov_rax_mem_rsp8(b) in
+  let _ = mov_rdi_rax(b) in
+  let _ = mov_rax_mem_rsp(b) in
+  let _ = mov_rsi_rax(b) in
+  let scall = bytes_len(b) in
+  let _ = call_user(b) in
+  let _ = add_rsp_imm32(b, 16) in
+  let _ =
+    if op == "!=" then
+      let _ = sar_rax_1(b) in
+      let _ = e8(b, 72) in let _ = e8(b, 247) in let _ = e8(b, 208) in
+      let _ = e8(b, 36) in let _ = e8(b, 1) in
+      shl_rax_1(b)
+    else 0 in
+  let _ = jmp_rel32(b, 0) in
+  let jdone = bytes_len(b) - 4 in
+  let ptreq = bytes_len(b) in
+  let _ = apply_patch(b, jptr, ptreq) in
+  let _ = add_rsp_imm32(b, 16) in
+  let _ =
+    if op == "==" then mov_r64_imm(b, 0, 2)
+    else xor_rax_rax(b) in
+  let _ = jmp_rel32(b, 0) in
+  let jptrdone = bytes_len(b) - 4 in
+  let intp = bytes_len(b) in
+  let _ = apply_patch(b, jz1, intp) in
+  let _ = apply_patch(b, jz2, intp) in
+  let _ = apply_patch(b, jnil1, intp) in
+  let _ = apply_patch(b, jnil2, intp) in
+  let _ = apply_patch(b, jne1, intp) in
+  let _ = apply_patch(b, jne2, intp) in
+  let _ = mov_rax_mem_rsp8(b) in
+  let _ = test_rax_1(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let ja_int = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let ja_nil = bytes_len(b) - 4 in
+  let _ = and_rax_1(b) in
+  let _ = test_rax_rax(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let ja_z = bytes_len(b) - 4 in
+  let _ = mov_rax_rax_disp32(b, 16) in
+  let _ = cmp_rax_imm8(b, 7) in
+  let _ = jcc_rel32(b, 5, 0) in
+  let ja_nf = bytes_len(b) - 4 in
+  let _ = mov_rax_mem_rsp(b) in
+  let _ = test_rax_1(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let j_f64_bi = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jb_nil1 = bytes_len(b) - 4 in
+  let _ = and_rax_1(b) in
+  let _ = test_rax_rax(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jb_z1 = bytes_len(b) - 4 in
+  let _ = mov_rax_rax_disp32(b, 16) in
+  let _ = cmp_rax_imm8(b, 7) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let j_f64_ff = bytes_len(b) - 4 in
+  let _ = jmp_rel32(b, 0) in
+  let j_intsar = bytes_len(b) - 4 in
+  let aint = bytes_len(b) in
+  let _ = apply_patch(b, ja_int, aint) in
+  let _ = mov_rax_mem_rsp(b) in
+  let _ = test_rax_1(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jb_int = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jb_nil2 = bytes_len(b) - 4 in
+  let _ = and_rax_1(b) in
+  let _ = test_rax_rax(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jb_z2 = bytes_len(b) - 4 in
+  let _ = mov_rax_rax_disp32(b, 16) in
+  let _ = cmp_rax_imm8(b, 7) in
+  let _ = jcc_rel32(b, 5, 0) in
+  let jb_nf = bytes_len(b) - 4 in
+  let _ = jmp_rel32(b, 0) in
+  let j_f64_if = bytes_len(b) - 4 in
+  let intsar = bytes_len(b) in
+  let _ = apply_patch(b, ja_nil, intsar) in
+  let _ = apply_patch(b, ja_z, intsar) in
+  let _ = apply_patch(b, ja_nf, intsar) in
+  let _ = apply_patch(b, jb_nil1, intsar) in
+  let _ = apply_patch(b, jb_z1, intsar) in
+  let _ = apply_patch(b, j_intsar, intsar) in
+  let _ = apply_patch(b, jb_int, intsar) in
+  let _ = apply_patch(b, jb_nil2, intsar) in
+  let _ = apply_patch(b, jb_z2, intsar) in
+  let _ = apply_patch(b, jb_nf, intsar) in
+  let _ = mov_rax_mem_rsp8(b) in
+  let _ = sar_rax_1(b) in
+  let _ = mov_rbx_mem_rsp(b) in
+  let _ = sar_rbx_1(b) in
+  let _ = cmp_rax_rbx(b) in
+  let _ = setcc_r8(b, cc_of(op)) in
+  let _ = movzx_eax_al(b) in
+  let _ = shl_rax_1(b) in
+  let _ = add_rsp_imm32(b, 16) in
+  let _ = jmp_rel32(b, 0) in
+  let jint_done = bytes_len(b) - 4 in
+  let f64p = bytes_len(b) in
+  let _ = apply_patch(b, j_f64_bi, f64p) in
+  let _ = apply_patch(b, j_f64_ff, f64p) in
+  let _ = apply_patch(b, j_f64_if, f64p) in
+  let _ = mov_rax_mem_rsp8(b) in
+  let _ = mov_rdi_rax(b) in
+  let _ = mov_rax_mem_rsp(b) in
+  let _ = mov_rsi_rax(b) in
+  let _ = add_rsp_imm32(b, 16) in
+  let opn = emit_x86_cmp_opn(op) in
+  let _ = mov_r64_imm(b, 2, opn + opn) in
+  let fcall = bytes_len(b) in
+  let _ = call_user(b) in
+  let done = bytes_len(b) in
+  let _ = apply_patch(b, jdone, done) in
+  let _ = apply_patch(b, jptrdone, done) in
+  let _ = apply_patch(b, jint_done, done) in
+  let _ = emit_store_rax_slot(b, dst) in
+  emit_st4(st, b, cur, labels,
+    emit_patch_rel(nth(st, 4),
+      emit_patch_rel(nth(st, 4), patches, scall + 1, "yac_str_eq"),
+      fcall + 1, "yac_f64_rel"))
+
+let emit_x86_i_cmp_rel(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let op = nth(insn, 1) in
+  let dst = nth(insn, 2) in
+  let a = nth(insn, 3) in
+  let bop = nth(insn, 4) in
+  let _ = emit_load_rax_slot(b, a) in
+  let _ = test_rax_1(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let ja_int = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let ja_nil = bytes_len(b) - 4 in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_rax_disp32(b, 16) in
+  let _ = cmp_rax_imm8(b, 7) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let ja_f = bytes_len(b) - 4 in
+  let _ = apply_patch(b, ja_int, bytes_len(b)) in
+  let _ = emit_load_rax_slot(b, bop) in
+  let _ = test_rax_1(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jb_int = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jb_nil = bytes_len(b) - 4 in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_rax_disp32(b, 16) in
+  let _ = cmp_rax_imm8(b, 7) in
+  let _ = jcc_rel32(b, 5, 0) in
+  let jb_nf = bytes_len(b) - 4 in
+  let _ = jmp_rel32(b, 0) in
+  let j_to_f64 = bytes_len(b) - 4 in
+  let intsar = bytes_len(b) in
+  let _ = apply_patch(b, ja_nil, intsar) in
+  let _ = apply_patch(b, jb_int, intsar) in
+  let _ = apply_patch(b, jb_nil, intsar) in
+  let _ = apply_patch(b, jb_nf, intsar) in
+  let _ = emit_load_rax_slot(b, a) in
+  let _ = sar_rax_1(b) in
+  let _ = emit_load_rbx_slot(b, bop) in
+  let _ = sar_rbx_1(b) in
+  let _ = cmp_rax_rbx(b) in
+  let _ = setcc_r8(b, cc_of(op)) in
+  let _ = movzx_eax_al(b) in
+  let _ = shl_rax_1(b) in
+  let _ = jmp_rel32(b, 0) in
+  let jrd = bytes_len(b) - 4 in
+  let mix = bytes_len(b) in
+  let _ = apply_patch(b, ja_f, mix) in
+  let _ = apply_patch(b, j_to_f64, mix) in
+  let _ = emit_load_rax_slot(b, a) in
+  let _ = mov_rdi_rax(b) in
+  let _ = emit_load_rax_slot(b, bop) in
+  let _ = mov_rsi_rax(b) in
+  let opn = emit_x86_cmp_opn(op) in
+  let _ = mov_r64_imm(b, 2, opn + opn) in
+  let fcall = bytes_len(b) in
+  let _ = call_user(b) in
+  let done = bytes_len(b) in
+  let _ = apply_patch(b, jrd, done) in
+  let _ = emit_store_rax_slot(b, dst) in
+  emit_st4(st, b, cur, labels,
+    emit_patch_rel(nth(st, 4), patches, fcall + 1, "yac_f64_rel"))
+
+let emit_x86_i_cmp(st, insn) =
+  let op = nth(insn, 1) in
+  if op == "==" or op == "!=" then emit_x86_i_cmp_eq(st, insn)
+  else emit_x86_i_cmp_rel(st, insn)
+
 let emit_x86_i_core(st, insn, is_entry, is_raw) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
@@ -272,103 +524,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
     let _ = emit_store_rax_slot(b, dst) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "cmp" then
-    let op = nth(insn, 1) in
-    let dst = nth(insn, 2) in
-    let a = nth(insn, 3) in
-    let bop = nth(insn, 4) in
-    if (op == "==" or op == "!=") then
-      let _ = emit_load_rax_slot(b, a) in
-      let _ = push_r64(b, 0) in
-      let _ = emit_load_rax_slot(b, bop) in
-      let _ = push_r64(b, 0) in
-      /* stack: [rsp]=b [rsp+8]=a */
-      let _ = mov_rax_mem_rsp8(b) in
-      let _ = mov_rbx_mem_rsp(b) in
-      let _ = cmp_rax_rbx(b) in
-      let _ = jcc_rel32(b, 4, 0) in
-      let jptr = bytes_len(b) - 4 in
-      let _ = mov_rax_mem_rsp8(b) in
-      let _ = cmp_rax_imm8(b, 1) in
-      let _ = jcc_rel32(b, 4, 0) in
-      let jnil1 = bytes_len(b) - 4 in
-      let _ = test_rax_1(b) in
-      let _ = jcc_rel32(b, 4, 0) in
-      let jz1 = bytes_len(b) - 4 in
-      let _ = mov_rax_mem_rsp(b) in
-      let _ = cmp_rax_imm8(b, 1) in
-      let _ = jcc_rel32(b, 4, 0) in
-      let jnil2 = bytes_len(b) - 4 in
-      let _ = test_rax_1(b) in
-      let _ = jcc_rel32(b, 4, 0) in
-      let jz2 = bytes_len(b) - 4 in
-      let _ = mov_rax_mem_rsp8(b) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rax_rax_disp32(b, 16) in
-      let _ = cmp_rax_imm8(b, 3) in
-      let _ = jcc_rel32(b, 5, 0) in
-      let jne1 = bytes_len(b) - 4 in
-      let _ = mov_rax_mem_rsp(b) in
-      let _ = and_rax_1(b) in
-      let _ = mov_rax_rax_disp32(b, 16) in
-      let _ = cmp_rax_imm8(b, 3) in
-      let _ = jcc_rel32(b, 5, 0) in
-      let jne2 = bytes_len(b) - 4 in
-      let _ = mov_rax_mem_rsp8(b) in
-      let _ = mov_rdi_rax(b) in
-      let _ = mov_rax_mem_rsp(b) in
-      let _ = mov_rsi_rax(b) in
-      let scall = bytes_len(b) in
-      let _ = call_user(b) in
-      let _ = add_rsp_imm32(b, 16) in
-      let _ =
-        if op == "!=" then
-          let _ = sar_rax_1(b) in
-          let _ = e8(b, 72) in let _ = e8(b, 247) in let _ = e8(b, 208) in
-          let _ = e8(b, 36) in let _ = e8(b, 1) in
-          shl_rax_1(b)
-        else 0 in
-      let _ = jmp_rel32(b, 0) in
-      let jdone = bytes_len(b) - 4 in
-      let ptreq = bytes_len(b) in
-      let _ = apply_patch(b, jptr, ptreq) in
-      let _ = add_rsp_imm32(b, 16) in
-      let _ =
-        if op == "==" then mov_r64_imm(b, 0, 2)
-        else xor_rax_rax(b) in
-      let _ = jmp_rel32(b, 0) in
-      let jptrdone = bytes_len(b) - 4 in
-      let intp = bytes_len(b) in
-      let _ = apply_patch(b, jz1, intp) in
-      let _ = apply_patch(b, jz2, intp) in
-      let _ = apply_patch(b, jnil1, intp) in
-      let _ = apply_patch(b, jnil2, intp) in
-      let _ = apply_patch(b, jne1, intp) in
-      let _ = apply_patch(b, jne2, intp) in
-      let _ = mov_rax_mem_rsp8(b) in
-      let _ = sar_rax_1(b) in
-      let _ = mov_rbx_mem_rsp(b) in
-      let _ = sar_rbx_1(b) in
-      let _ = cmp_rax_rbx(b) in
-      let _ = setcc_r8(b, cc_of(op)) in
-      let _ = movzx_eax_al(b) in
-      let _ = shl_rax_1(b) in
-      let _ = add_rsp_imm32(b, 16) in
-      let done = bytes_len(b) in
-      let _ = apply_patch(b, jdone, done) in
-      let _ = apply_patch(b, jptrdone, done) in
-      let _ = emit_store_rax_slot(b, dst) in
-      emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, scall + 1, "yac_str_eq"))
-    else
-      let _ = emit_load_rax_slot(b, a) in
-      let _ = sar_rax_1(b) in
-      let _ = emit_load_rbx_slot(b, bop) in
-      let _ = sar_rbx_1(b) in
-      let _ = cmp_rax_rbx(b) in
-      let _ = setcc_r8(b, cc_of(op)) in
-      let _ = movzx_eax_al(b) in
-      let _ = shl_rax_1(b) in
-      let _ = emit_store_rax_slot(b, dst) in
-      emit_st4(st, b, cur, labels, patches)
+    emit_x86_i_cmp(st, insn)
   else if k == "icmp" then
     let op = nth(insn, 1) in
     let dst = nth(insn, 2) in
@@ -473,13 +629,303 @@ let emit_x86_i_sys(st, insn) =
   else if emit_host_win(0) then win_num_syscall(st, insn)
   else linux_num_syscall(st, insn)
 
+let emit_x86_f64_ccall(b, patches, name) =
+  let win = emit_host_win(0) in
+  let _ = emit_x86_c_align(b) in
+  let _ = if win then sub_rsp_imm32(b, 32) else 0 in
+  let pos = bytes_len(b) in
+  let _ = call_rel32(b, 0) in
+  let _ = smap_note(bytes_len(b)) in
+  let _ = if win then add_rsp_imm32(b, 32) else 0 in
+  let _ = emit_x86_c_unalign(b) in
+  if win then win_ccall_patch(patches, pos + 1, name)
+  else linux_ccall_patch(patches, pos + 1, name)
+
+let emit_x86_f64_strtod(b, patches) =
+  let win = emit_host_win(0) in
+  let _ =
+    if win then
+      let _ = mov_rcx_rax(b) in
+      xor_edx_edx(b)
+    else
+      let _ = mov_rdi_rax(b) in
+      let _ = mov_r64_imm(b, 6, 0) in
+      xor_rax_rax(b) in
+  let ps = emit_x86_f64_ccall(b, patches, "strtod") in
+  let _ = movq_rax_xmm0(b) in
+  ps
+
+let emit_x86_f64_unbox(b, patches) =
+  let _ = test_rax_1(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let j_int = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let j_nil = bytes_len(b) - 4 in
+  let _ = and_rax_1(b) in
+  let _ = test_rax_rax(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let j_z = bytes_len(b) - 4 in
+  let _ = mov_rbx_rax_disp32(b, 16) in
+  let _ = cmp_rbx_imm32(b, 7) in
+  let _ = jcc_rel32(b, 5, 0) in
+  let j_nf = bytes_len(b) - 4 in
+  let _ = mov_rax_rax_disp32(b, 24) in
+  let _ = jmp_rel32(b, 0) in
+  let j_d1 = bytes_len(b) - 4 in
+  let nf = bytes_len(b) in
+  let _ = apply_patch(b, j_nf, nf) in
+  let _ = cmp_rbx_imm32(b, 3) in
+  let _ = jcc_rel32(b, 5, 0) in
+  let j_ns = bytes_len(b) - 4 in
+  let _ = add_rax_imm8(b, 32) in
+  let ps = emit_x86_f64_strtod(b, patches) in
+  let _ = jmp_rel32(b, 0) in
+  let j_d2 = bytes_len(b) - 4 in
+  let isint = bytes_len(b) in
+  let _ = apply_patch(b, j_int, isint) in
+  let _ = sar_rax_1(b) in
+  let _ = cvtsi2sd_xmm0_rax(b) in
+  let _ = movq_rax_xmm0(b) in
+  let _ = jmp_rel32(b, 0) in
+  let j_d3 = bytes_len(b) - 4 in
+  let zero = bytes_len(b) in
+  let _ = apply_patch(b, j_ns, zero) in
+  let _ = apply_patch(b, j_nil, zero) in
+  let _ = apply_patch(b, j_z, zero) in
+  let _ = xor_rax_rax(b) in
+  let done = bytes_len(b) in
+  let _ = apply_patch(b, j_d1, done) in
+  let _ = apply_patch(b, j_d2, done) in
+  let _ = apply_patch(b, j_d3, done) in
+  ps
+
+let emit_x86_f64_box(b, patches, ids) =
+  let _ = push_r64(b, 0) in
+  let _ = mov_rdi_imm(b, 48) in
+  let acall = bytes_len(b) in
+  let _ = call_user(b) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_disp32_imm32(b, 16, 7) in
+  let _ = mov_rax_disp32_imm32(b, 20, 0) in
+  let _ = pop_r64(b, 7) in
+  let _ = mov_rax_disp32_rdi(b, 24) in
+  let _ = or_rax_1(b) in
+  emit_patch_rel(ids, patches, acall + 1, "yac_alloc")
+
+let emit_x86_f64_rel_setcc(b, opn) =
+  if opn == 0 then setcc_r8(b, 2)
+  else if opn == 1 then setcc_r8(b, 7)
+  else if opn == 2 then setcc_r8(b, 6)
+  else if opn == 3 then setcc_r8(b, 3)
+  else if opn == 4 then setcc_r8(b, 4)
+  else setcc_r8(b, 5)
+
+let emit_x86_f64_fmt(b) =
+  let j = bytes_len(b) in
+  let _ = jmp_rel32(b, 0) in
+  let fmt = bytes_len(b) in
+  let _ = e8(b, 37) in
+  let _ = e8(b, 103) in
+  let _ = e8(b, 0) in
+  let _ = apply_patch(b, j + 1, bytes_len(b)) in
+  fmt
+
+let emit_x86_i_f64(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let ids = nth(st, 4) in
+  let k = nth(insn, 0) in
+  if k == "$f64fromstr" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let ps = emit_x86_f64_unbox(b, patches) in
+    let ps2 = emit_x86_f64_box(b, ps, ids) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, ps2)
+  else if k == "$f64binop" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let ps = emit_x86_f64_unbox(b, patches) in
+    let _ = push_r64(b, 0) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let ps2 = emit_x86_f64_unbox(b, ps) in
+    let _ = movq_xmm1_rax(b) in
+    let _ = pop_r64(b, 0) in
+    let _ = movq_xmm0_rax(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 4)) in
+    let _ = sar_rax_1(b) in
+    let _ = cmp_rax_imm8(b, 0) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let ja = bytes_len(b) - 4 in
+    let _ = cmp_rax_imm8(b, 1) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let js = bytes_len(b) - 4 in
+    let _ = cmp_rax_imm8(b, 2) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let jm = bytes_len(b) - 4 in
+    let _ = divsd_xmm0_xmm1(b) in
+    let _ = jmp_rel32(b, 0) in
+    let jd = bytes_len(b) - 4 in
+    let pa = bytes_len(b) in
+    let _ = apply_patch(b, ja, pa) in
+    let _ = addsd_xmm0_xmm1(b) in
+    let _ = jmp_rel32(b, 0) in
+    let jd2 = bytes_len(b) - 4 in
+    let psu = bytes_len(b) in
+    let _ = apply_patch(b, js, psu) in
+    let _ = subsd_xmm0_xmm1(b) in
+    let _ = jmp_rel32(b, 0) in
+    let jd3 = bytes_len(b) - 4 in
+    let pm = bytes_len(b) in
+    let _ = apply_patch(b, jm, pm) in
+    let _ = mulsd_xmm0_xmm1(b) in
+    let join = bytes_len(b) in
+    let _ = apply_patch(b, jd, join) in
+    let _ = apply_patch(b, jd2, join) in
+    let _ = apply_patch(b, jd3, join) in
+    let _ = movq_rax_xmm0(b) in
+    let ps3 = emit_x86_f64_box(b, ps2, ids) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, ps3)
+  else if k == "$f64rel" then
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let ps = emit_x86_f64_unbox(b, patches) in
+    let _ = push_r64(b, 0) in
+    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+    let ps2 = emit_x86_f64_unbox(b, ps) in
+    let _ = movq_xmm1_rax(b) in
+    let _ = pop_r64(b, 0) in
+    let _ = movq_xmm0_rax(b) in
+    let _ = ucomisd_xmm0_xmm1(b) in
+    let _ = emit_load_rax_slot(b, nth(insn, 4)) in
+    let _ = sar_rax_1(b) in
+    let _ = cmp_rax_imm8(b, 0) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let c0 = bytes_len(b) - 4 in
+    let _ = cmp_rax_imm8(b, 1) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let c1 = bytes_len(b) - 4 in
+    let _ = cmp_rax_imm8(b, 2) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let c2 = bytes_len(b) - 4 in
+    let _ = cmp_rax_imm8(b, 3) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let c3 = bytes_len(b) - 4 in
+    let _ = cmp_rax_imm8(b, 4) in
+    let _ = jcc_rel32(b, 4, 0) in
+    let c4 = bytes_len(b) - 4 in
+    let _ = emit_x86_f64_rel_setcc(b, 5) in
+    let _ = jmp_rel32(b, 0) in
+    let je = bytes_len(b) - 4 in
+    let p0 = bytes_len(b) in
+    let _ = apply_patch(b, c0, p0) in
+    let _ = emit_x86_f64_rel_setcc(b, 0) in
+    let _ = jmp_rel32(b, 0) in
+    let je1 = bytes_len(b) - 4 in
+    let p1 = bytes_len(b) in
+    let _ = apply_patch(b, c1, p1) in
+    let _ = emit_x86_f64_rel_setcc(b, 1) in
+    let _ = jmp_rel32(b, 0) in
+    let je2 = bytes_len(b) - 4 in
+    let p2 = bytes_len(b) in
+    let _ = apply_patch(b, c2, p2) in
+    let _ = emit_x86_f64_rel_setcc(b, 2) in
+    let _ = jmp_rel32(b, 0) in
+    let je3 = bytes_len(b) - 4 in
+    let p3 = bytes_len(b) in
+    let _ = apply_patch(b, c3, p3) in
+    let _ = emit_x86_f64_rel_setcc(b, 3) in
+    let _ = jmp_rel32(b, 0) in
+    let je4 = bytes_len(b) - 4 in
+    let p4 = bytes_len(b) in
+    let _ = apply_patch(b, c4, p4) in
+    let _ = emit_x86_f64_rel_setcc(b, 4) in
+    let join = bytes_len(b) in
+    let _ = apply_patch(b, je, join) in
+    let _ = apply_patch(b, je1, join) in
+    let _ = apply_patch(b, je2, join) in
+    let _ = apply_patch(b, je3, join) in
+    let _ = apply_patch(b, je4, join) in
+    let _ = movzx_eax_al(b) in
+    let _ = shl_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, ps2)
+  else
+    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+    let ps0 = emit_x86_f64_unbox(b, patches) in
+    let _ = movq_xmm0_rax(b) in
+    let fmt = emit_x86_f64_fmt(b) in
+    let win = emit_host_win(0) in
+    let _ = emit_x86_c_align(b) in
+    let _ =
+      if win then sub_rsp_imm32(b, 104)
+      else sub_rsp_imm32(b, 64) in
+    let _ =
+      if win then
+        let _ = lea_rcx_rsp_disp32(b, 40) in
+        let _ = lea_rdx_rip(b, 0) in
+        let _ = apply_patch(b, bytes_len(b) - 4, fmt) in
+        let _ = movq_rax_xmm0(b) in
+        let _ = mov_r8_rax(b) in
+        movq_xmm2_rax(b)
+      else
+        let _ = lea_rdi_rsp_disp32(b, 0) in
+        let _ = lea_rsi_rip(b, 0) in
+        let _ = apply_patch(b, bytes_len(b) - 4, fmt) in
+        mov_eax_imm(b, 1) in
+    let pos = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = smap_note(bytes_len(b)) in
+    let _ =
+      if win then lea_rcx_rsp_disp32(b, 40)
+      else lea_rdi_rsp_disp32(b, 0) in
+    let pos2 = bytes_len(b) in
+    let _ = call_rel32(b, 0) in
+    let _ = smap_note(bytes_len(b)) in
+    let ps1 =
+      if win then
+        win_ccall_patch(win_ccall_patch(ps0, pos + 1, "sprintf"), pos2 + 1, "strlen")
+      else
+        linux_ccall_patch(linux_ccall_patch(ps0, pos + 1, "sprintf"), pos2 + 1, "strlen") in
+    let ps3 =
+      if win then
+        let _ = mov_mem_rsp_disp8_rax(b, 8) in
+        let _ = mov_r64_imm(b, 1, 0 - 11) in
+        let g1 = bytes_len(b) in
+        let _ = call_rel32(b, 0) in
+        let _ = mov_rcx_rax(b) in
+        let _ = lea_rdx_rsp_disp32(b, 40) in
+        let _ = mov_rax_mem_rsp8(b) in
+        let _ = mov_r8_rax(b) in
+        let _ = lea_r9_rsp_disp8(b, 24) in
+        let _ = xor_rax_rax(b) in
+        let _ = mov_mem_rsp_disp32_rax(b, 32) in
+        let g2 = bytes_len(b) in
+        let _ = call_rel32(b, 0) in
+        emit_patch_cimport(emit_patch_cimport(ps1, g1 + 1, "GetStdHandle"),
+                           g2 + 1, "WriteFile")
+      else
+        let _ = lea_rsi_rsp(b) in
+        let _ = mov_rdx_rax(b) in
+        let _ = mov_rdi_imm(b, 1) in
+        let _ = mov_r64_imm(b, 0, 1) in
+        let _ = syscall(b) in
+        ps1 in
+    let _ = emit_x86_c_unalign(b) in
+    let _ = xor_rax_rax(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, ps3)
+
 let emit_x86_i_raw(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
   let k = nth(insn, 0) in
-  if k == "$and" then
+  if k == "$f64binop" or k == "$f64fromstr" or k == "$f64print" or k == "$f64rel" then
+    emit_x86_i_f64(st, insn)
+  else if k == "$and" then
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let imm = nth(insn, 3) in
     let _ =
