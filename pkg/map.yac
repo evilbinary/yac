@@ -1,0 +1,146 @@
+/* map.yac — open-addressing map (string or int keys). Mutates; put returns m.
+ * Miss get is 0 (stored 0 looks like a miss; use has). Newest put wins. */
+
+package map
+export new, get, put, has, size
+
+/* [vec, n, cap]. vec is a listbuf of slots; empty slot is 0. */
+let new(_) =
+  let m = list_new() in
+  let _ = list_push(m, list_new()) in
+  let _ = list_push(m, 0) in
+  let _ = list_push(m, 0) in
+  m
+
+/* Int key uses the int; otherwise content hash. */
+let key_hash(k) =
+  if is_int(k) then k else str_hash(k)
+
+let fill(b, i, cap) =
+  if i >= cap then b
+  else
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    fill(b, i + 16, cap)
+
+let cap_ok(cap) =
+  if is_int(cap) then
+    if cap < 1 then false
+    else if cap > 1048576 then false
+    else band(cap, cap - 1) == 0
+  else false
+
+/* First empty or matching slot; 0-1 if the table is full. */
+let probe(vec, k, h, i, mask) =
+  let e = nth(vec, i) in
+  if e == 0 then i
+  else
+    let hit =
+      if nth(e, 2) == h then nth(e, 0) == k
+      else false in
+    if hit then i
+    else
+      let i2 = band(i + 1, mask) in
+      if i2 == band(h, mask) then 0 - 1
+      else probe(vec, k, h, i2, mask)
+
+let slot_val(e) =
+  if e == 0 then 0 else nth(e, 1)
+
+let get_h(m, k, h) =
+  let cap = nth(m, 2) in
+  if cap_ok(cap) then
+    let p = probe(nth(m, 0), k, h, band(h, cap - 1), cap - 1) in
+    if p < 0 then 0 else slot_val(nth(nth(m, 0), p))
+  else 0
+
+/* Value for k, or 0 if absent. */
+let get(m, k) =
+  let cap = nth(m, 2) in
+  if cap == 0 then 0
+  else get_h(m, k, key_hash(k))
+
+let has_h(m, k, h) =
+  let cap = nth(m, 2) in
+  if cap_ok(cap) then
+    let p = probe(nth(m, 0), k, h, band(h, cap - 1), cap - 1) in
+    if p < 0 then false
+    else if nth(nth(m, 0), p) == 0 then false
+    else true
+  else false
+
+/* True if k is present, including when the value is 0. */
+let has(m, k) =
+  let cap = nth(m, 2) in
+  if cap == 0 then false
+  else has_h(m, k, key_hash(k))
+
+/* Occupied slots (not capacity). */
+let size(m) = nth(m, 1)
+
+let put_at(m, k, v, h, i) =
+  let vec = nth(m, 0) in
+  if nth(vec, i) == 0 then
+    let _ = list_set(vec, i, [k, v, h]) in
+    list_set(m, 1, nth(m, 1) + 1)
+  else list_set(vec, i, [k, v, h])
+
+let install_h(m, k, v, h) =
+  let vec = nth(m, 0) in
+  let mask = nth(m, 2) - 1 in
+  let p = probe(vec, k, h, band(h, mask), mask) in
+  if p < 0 then put_at(m, k, v, h, band(h, mask))
+  else put_at(m, k, v, h, p)
+
+let rehash(oldv, m, i, oldc) =
+  if i >= oldc then 0
+  else
+    let e = nth(oldv, i) in
+    if e == 0 then rehash(oldv, m, i + 1, oldc)
+    else
+      let _ = install_h(m, nth(e, 0), nth(e, 1), nth(e, 2)) in
+      rehash(oldv, m, i + 1, oldc)
+
+let grow_prep(m, oldc) =
+  let _ = list_set(m, 0, fill(list_new(), 0, oldc * 2)) in
+  let _ = list_set(m, 1, 0) in
+  list_set(m, 2, oldc * 2)
+
+let init(m) =
+  let _ = list_set(m, 0, fill(list_new(), 0, 64)) in
+  list_set(m, 2, 64)
+
+let grow(m) =
+  let oldc = nth(m, 2) in
+  let oldv = nth(m, 0) in
+  let _ = grow_prep(m, oldc) in
+  rehash(oldv, m, 0, oldc)
+
+let maybe_grow(m) =
+  let cap = nth(m, 2) in
+  if cap_ok(cap) then
+    if nth(m, 1) * 2 >= cap then grow(m) else 0
+  else init(m)
+
+let put_h(m, k, v, h) =
+  let _ = maybe_grow(m) in
+  install_h(m, k, v, h)
+
+/* Insert or overwrite. Returns m. */
+let put(m, k, v) =
+  let _ = put_h(m, k, v, key_hash(k)) in
+  m

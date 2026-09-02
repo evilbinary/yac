@@ -1,0 +1,28 @@
+import map
+let m0 = put(put(new(0), "a", 1), "b", 2) in
+let mi = new(0) in
+let rec(i) =
+  if i >= 40 then 0
+  else
+    let _ = put(mi, i, i + 1) in
+    rec(i + 1) in
+let _ = rec(0) in
+if get(m0, "a") == 1 then
+  if get(m0, "b") == 2 then
+    if get(put(m0, "a", 9), "a") == 9 then
+      if has(put(new(0), "a", 0), "a") then
+        if has(new(0), "a") == false then
+          if get(new(0), "z") == 0 then
+            if size(m0) == 2 then
+              if get(mi, 20) == 21 then
+                if get(put(new(0), 3, 7), 3) == 7 then
+                  if size(mi) == 40 then 42 else 0
+                else 0
+              else 0
+            else 0
+          else 0
+        else 0
+      else 0
+    else 0
+  else 0
+else 0
