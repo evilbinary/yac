@@ -185,7 +185,7 @@ let emit_ids_new(funs) =
   ids2
 
 /* Patch tags: 1=call to fun id (x86 rel32 / a64 bl / rv jal ra),
- * 2=closure fnptr, 3+=globals, 9=tail jmp to fun id (a64 b26 / rv jal).
+ * 2=closure fnptr abs64, 3+=globals, 9=tail jmp to fun id (a64 b26 / rv jal).
  * Local labels stay string kinds (b26/beq/jal) or [pos, name] on x86. */
 let emit_patch_rel(ids, ps, pos, name) =
   cons([1, pos, emit_map_get(ids, name)], ps)
@@ -616,7 +616,7 @@ let emit_resolve_patch(st, p) =
   if tag == 1 then
     apply_patch(b, nth(p, 1), nth(offs, nth(p, 2)))
   else if tag == 2 then
-    apply_abs32(b, nth(p, 1), codebase + nth(offs, nth(p, 2)))
+    apply_u64(b, nth(p, 1), codebase + nth(offs, nth(p, 2)))
   else if tag == 3 then
     apply_u64(b, nth(p, 1), globbase)
   else if tag == 4 then

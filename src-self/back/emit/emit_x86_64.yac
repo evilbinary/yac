@@ -795,11 +795,12 @@ let emit_x86_i_clos(st, insn, is_entry) =
     let _ = call_user(b) in
     let _ = and_rax_1(b) in    /* alloc returns raw ptr; ensure untagged */
     let _ = mov_rax_disp32_imm32(b, 8, 0) in   /* mark = 0 */
-    let _ = mov_rax_disp32_imm32(b, 16, 0) in  /* fnptr placeholder */
-    let fnpos = bytes_len(b) - 4 in
-    let _ = mov_rax_disp32_imm32(b, 20, 0) in  /* high 32 of fnptr (must be 0) */
+    let _ = mov_r64_imm64(b, 3, 0) in          /* rbx = fnptr (abs64) */
+    let fnpos = bytes_len(b) - 8 in
+    let _ = mov_r64_r64(b, 7, 3) in
+    let _ = emit_obj_store_rdi(b, 16) in
     let _ = mov_rax_disp32_imm32(b, 24, nenv) in
-    let _ = mov_rax_disp32_imm32(b, 28, 0) in  /* clear high dword of nenv qword */
+    let _ = mov_rax_disp32_imm32(b, 28, 0) in  /* high dword of nenv qword */
     let storecap(i) =
       if i >= nenv then 0
       else
