@@ -83,6 +83,7 @@ let pack_elf_exec(code, machine, vaddr, text_off) =
   let out = bytes_new() in
   let _ = bytes_put(out, text_off - 1, 0) in
   let _ = elf_header(out, entry, machine, 2, 1, 0) in
+  let _ = if machine == 243 then le32(out, 4, 48) else 0 in
   let _ = elf_phdr_load(out, 64, PH_TYPE_LOAD, PH_FLAGS_RWX, 0, vaddr) in
   let _ = elf_phdr_sizes(out, 64, file_size, file_size, PAGE) in
   let _ = bytes_extend(out, code) in
@@ -482,23 +483,27 @@ let pack_elf_libc(code, machine, vaddr, text_off, names, got_off) =
     else 0 in
   let _ = dyn_pair(out, DT_NULL, 0) in
   let dyn_sz = bytes_len(out) - dyn_off in
-  let ph_off = bytes_len(out) in
-  let phbytes = if shared then 112 else 168 in
-  let file_size = ph_off + phbytes in
-  let _ = bytes_put(out, file_size - 1, 0) in
-  let _ = elf_phdr_load(out, ph_off, PH_TYPE_LOAD, PH_FLAGS_RWX, 0, vaddr) in
-  let _ = elf_phdr_sizes(out, ph_off, file_size, file_size, PAGE) in
+  let file_size = bytes_len(out) in
   let _ =
     if shared then
-      let _ = elf_phdr_load(out, ph_off + 56, PH_TYPE_DYNAMIC, PH_FLAGS_R, dyn_off, va(dyn_off)) in
-      elf_phdr_sizes(out, ph_off + 56, dyn_sz, dyn_sz, 8)
+      let _ = elf_phdr_load(out, 64, PH_TYPE_LOAD, PH_FLAGS_RWX, 0, vaddr) in
+      let _ = elf_phdr_sizes(out, 64, file_size, file_size, PAGE) in
+      let _ = elf_phdr_load(out, 120, PH_TYPE_DYNAMIC, PH_FLAGS_R, dyn_off, va(dyn_off)) in
+      let _ = elf_phdr_sizes(out, 120, dyn_sz, dyn_sz, 8) in
+      let _ = le64(out, 64, 32) in
+      le16(out, 2, 56)
     else
+      let ph_off = bytes_len(out) in
+      let _ = bytes_put(out, ph_off + 168 - 1, 0) in
+      let _ = elf_phdr_load(out, ph_off, PH_TYPE_LOAD, PH_FLAGS_RWX, 0, vaddr) in
+      let _ = elf_phdr_sizes(out, ph_off, ph_off + 168, ph_off + 168, PAGE) in
       let _ = elf_phdr_load(out, ph_off + 56, PH_TYPE_INTERP, PH_FLAGS_R, interp_off, va(interp_off)) in
       let _ = elf_phdr_sizes(out, ph_off + 56, str_len(interp) + 1, str_len(interp) + 1, 1) in
       let _ = elf_phdr_load(out, ph_off + 112, PH_TYPE_DYNAMIC, PH_FLAGS_R, dyn_off, va(dyn_off)) in
-      elf_phdr_sizes(out, ph_off + 112, dyn_sz, dyn_sz, 8) in
-  let _ = le64(out, ph_off, 32) in
-  let _ = le16(out, if shared then 2 else 3, 56) in
+      let _ = elf_phdr_sizes(out, ph_off + 112, dyn_sz, dyn_sz, 8) in
+      let _ = le64(out, ph_off, 32) in
+      le16(out, 3, 56) in
   let _ = if n == 0 then 0 else le64(out, va(dyn_off), text_off + got_off) in
+  let _ = if machine == 243 then le32(out, 4, 48) else 0 in
   elf_maybe_debug(out, vaddr, text_off, bytes_len(code))
 
