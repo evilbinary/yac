@@ -136,6 +136,15 @@ let pe_is_k32(n) =
   else if n == "QueryPerformanceCounter" then true
   else false
 
+/* msvcrt names we actually ccall by string. Unix-only names (socket, dlclose, …)
+ * must not go in the IAT or the PE will not load (exit 127). */
+let pe_is_crt(n) =
+  if n == "putchar" then true
+  else if n == "fflush" then true
+  else if n == "getenv" then true
+  else if n == "strncpy" then true
+  else n == "strlen"
+
 let pe_group_ids(names, want_k32) =
   let out = list_new() in
   let rec(i) =

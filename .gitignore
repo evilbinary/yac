@@ -19,3 +19,4 @@ app/counter/counter
 app/hello/hello
 app/native/libyui_yac.so
 app/lantern/lantern
+*.jit

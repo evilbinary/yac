@@ -262,6 +262,13 @@ let win_put_str(b, s, i) =
     let _ = bytes_append(b, str_ref(s, i)) in
     win_put_str(b, s, i + 1)
 
+/* Unix-only ccall names: return 0 so they are not IAT entries. */
+let win_unimp_stub(b, extra) =
+  let _ = box_set(pe_unimp_off_box, bytes_len(b)) in
+  let _ = xor_rax_rax(b) in
+  let _ = ret(b) in
+  extra
+
 let win_uname_stub(b, extra) =
   let _ = box_set(pe_uname_off_box, bytes_len(b)) in
   let _ = push_r64(b, 3) in
@@ -570,7 +577,9 @@ let win_ccall_patch(ps, pos, fn) =
   else if fn == "dlsym" then emit_patch_pe_dlsym(ps, pos)
   else if fn == "dlopen" then emit_patch_pe_dlopen(ps, pos)
   else if fn == "system" then emit_patch_pe_system(ps, pos)
-  else emit_patch_cimport(ps, pos, fn)
+  else if pe_is_k32(fn) then emit_patch_cimport(ps, pos, fn)
+  else if pe_is_crt(fn) then emit_patch_cimport(ps, pos, fn)
+  else emit_patch_pe_unimp(ps, pos)
 
 let win_begin(_) = win_need(0)
 
@@ -691,4 +700,5 @@ let win_system_stub(b, extra) =
   extra
 
 let win_finish(b, extra) =
-  win_system_stub(b, win_dlsym_stub(b, win_dlopen_stub(b, win_uname_stub(b, extra))))
+  win_system_stub(b, win_dlsym_stub(b, win_dlopen_stub(b,
+    win_uname_stub(b, win_unimp_stub(b, extra)))))

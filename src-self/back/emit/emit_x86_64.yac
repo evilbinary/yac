@@ -1370,6 +1370,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let _ = box_set(pe_dlsym_off_box, 0) in
   let _ = box_set(pe_system_off_box, 0) in
   let _ = box_set(pe_dlopen_off_box, 0) in
+  let _ = box_set(pe_unimp_off_box, 0) in
   let _ = box_set(pe_mods_off_box, 0) in
   let _ =
     emit_abi_win_set(
