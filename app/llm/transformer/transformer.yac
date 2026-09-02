@@ -1,6 +1,6 @@
 /* 1 层 1 头 causal Transformer（GPT 风格，字符级）。
  *
- * 原生 yc 没有 IEEE 浮点，全部用整数定点数，尺度 S = sc() = 64：
+ * IEEE f64（kind 7）已支持；本模型仍用整数定点，尺度 S = sc() = 64：
  *   真实值 x̂ ≈ x / S
  * 乘加后再 / S 把尺度收回到 S。
  *

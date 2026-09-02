@@ -44,7 +44,8 @@ $(BUILD)/%.o: src/%.c $(wildcard src/*.h) | $(BUILD)
 $(YC_BUNDLE): $(YC_SRCS) | $(YC_BUILD)
 	cat $(YC_SRCS) > $@
 
-# First yc_a: L4 via C ./yac (slow GC). Later: native yc_a rebuilds itself.
+# Native yc concatenates every positional .yac; L4 C yac still takes one file,
+# so bootstrap keeps a cat bundle. After yc_a exists, it compiles that bundle.
 # Two native passes: pass 1 updates emit in the compiler; pass 2 re-emits
 # runtime (win_clock / time_str) with that emit. One pass leaves [00:00:00].
 $(YC_A): $(BIN) $(YC_BUNDLE)
