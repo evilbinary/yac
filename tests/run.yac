@@ -413,6 +413,14 @@ let pe_dll_hdr(path) =
   else if str_ref(b, 151) != 32 then false
   else str_ref(b, 264) + str_ref(b, 265) + str_ref(b, 266) + str_ref(b, 267) != 0
 
+let pe_dll_mach(path, mhi) =
+  if pe_dll_hdr(path) == false then false
+  else
+    let b = read_file(path) in
+    if str_len(b) < 134 then false
+    else if str_ref(b, 132) != 100 then false
+    else str_ref(b, 133) == mhi
+
 let macho_dylib_hdr(path) =
   let b = read_file(path) in
   if b == 0 then false
@@ -506,25 +514,10 @@ let compiler_all(st, yc) =
                     if nth(run(["test", "-f", defso]), 0) == 0 then "1" else "0") in
   let dll = str_cat(TMP, "/libdadd.dll") in
   let _ = run(append(yc, [case_src("dylib_add"), "--format", "pe", "--shared", "-o", dll])) in
-  let dllb = read_file(dll) in
-  let pe_ok =
-    if dllb == 0 then false
-    else if str_len(dllb) < 270 then false
-    else if str_ref(dllb, 0) != 77 then false
-    else if str_ref(dllb, 1) != 90 then false
-    else if str_ref(dllb, 150) != 34 then false
-    else if str_ref(dllb, 151) != 32 then false
-    else str_ref(dllb, 264) + str_ref(dllb, 265) + str_ref(dllb, 266) + str_ref(dllb, 267) != 0 in
-  let st1pe = check(st1df, "pe --shared dll", "1", if pe_ok then "1" else "0") in
+  let st1pe = check(st1df, "pe --shared dll", "1", if pe_dll_hdr(dll) then "1" else "0") in
   let dyl = str_cat(TMP, "/libdadd.dylib") in
   let _ = run(append(yc, [case_src("dylib_add"), "--format", "macho", "--shared", "-o", dyl])) in
-  let dylb = read_file(dyl) in
-  let mo_ok =
-    if dylb == 0 then false
-    else if str_len(dylb) < 16 then false
-    else if str_ref(dylb, 0) != 207 then false
-    else str_ref(dylb, 12) == 6 in
-  let st1mo = check(st1pe, "macho --shared dylib", "1", if mo_ok then "1" else "0") in
+  let st1mo = check(st1pe, "macho --shared dylib", "1", if macho_dylib_hdr(dyl) then "1" else "0") in
   let pdefpe = str_cat(TMP, "/dlibpe.yac") in
   let _ = write_file(pdefpe, "42;\n") in
   let _ = run(append(yc, ["--format", "pe", "--shared", pdefpe])) in
@@ -544,10 +537,10 @@ let compiler_all(st, yc) =
                     if elf_so_hdr(shared_out(yc, "riscv64", "elf", ".so"), 243)
                     then "1" else "0") in
   let st1ap = check(st1rs, "arm64 pe --shared", "1",
-                    if pe_dll_hdr(shared_out(yc, "arm64", "pe", ".dll"))
+                    if pe_dll_mach(shared_out(yc, "arm64", "pe", ".dll"), 170)
                     then "1" else "0") in
   let st1rp = check(st1ap, "riscv64 pe --shared", "1",
-                    if pe_dll_hdr(shared_out(yc, "riscv64", "pe", ".dll"))
+                    if pe_dll_mach(shared_out(yc, "riscv64", "pe", ".dll"), 80)
                     then "1" else "0") in
   let st1am = check(st1rp, "arm64 macho --shared", "1",
                     if macho_dylib_hdr(shared_out(yc, "arm64", "macho", ".dylib"))
@@ -683,6 +676,24 @@ let qemu_one(st, yc, qemu, arch, c) =
       else if kind == "rc" then check(st, tag, want, int_to_str(nth(r, 0)))
       else check(st, tag, want, chomp(nth(r, 1)))
 
+let qemu_shared(st, yc, qemu, arch) =
+  let so = shared_out(yc, arch, "elf", ".so") in
+  let pdrv = str_cat(TMP, str_cat("/q_", str_cat(arch, "_dadd.yac"))) in
+  let _ = write_file(pdrv,
+    str_cat("import ffi\nlet h = load(\"",
+      str_cat(so, "\")\nlet f = sym(h, \"add\")\nif ccall(f, 2, 3) == 5 then 42 else 0\n"))) in
+  let bin = str_cat(TMP, str_cat("/q_", str_cat(arch, "_dadd"))) in
+  let tag = str_cat(arch, " elf --shared ccall add") in
+  let cr = run(append(yc, [pdrv, "-o", bin, "--arch", arch])) in
+  if nth(run(["test", "-f", bin]), 0) != 0 then
+    check(st, tag, "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
+  else
+    let _ = run(["chmod", "+x", bin]) in
+    let r = qemu_exec(qemu, arch, bin) in
+    let blob = str_cat(nth(r, 1), nth(r, 2)) in
+    if contains(blob, "ld-linux") then qemu_skip(st, tag, "no sysroot")
+    else check(st, tag, "42", int_to_str(nth(r, 0)))
+
 /* Nested `if` as a str_cat argument inside a let-chain can SIGSEGV. */
 let qemu_skip_sysroot(st, arch) =
   let triple =
@@ -704,7 +715,9 @@ let qemu_arch(st, yc, arch) =
   if q == "" then
     let _ = print(str_cat("SKIP: qemu ", arch)) in st
   else if qemu_root(arch) == "" then qemu_skip_sysroot(st, arch)
-  else foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st, compiler_cases(0))
+  else
+    qemu_shared(foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st,
+                      compiler_cases(0)), yc, q, arch)
 
 let exists_rc(p) = nth(run(["test", "-f", p]), 0)
 
