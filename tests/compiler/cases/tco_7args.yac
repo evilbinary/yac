@@ -1,0 +1,11 @@
+/* Self-tail with 7 params + 1 capture: must loopify (not fcall) or Windows blows the stack. */
+let k = 10 in
+let loop(n, a, b, c, d, e, f) =
+  if n == 0 then k + a + b + c + d + e + f
+  else loop(n - 1, a, b, c, d, e, f) in
+let spin(n, a, b, c, d, e, f) =
+  if n == 0 then a
+  else spin(n - 1, f, a, b, c, d, e) in
+if loop(100000, 5, 6, 7, 8, 9, 10) == 55 then
+  if spin(6, 1, 2, 3, 4, 5, 6) == 1 then 42 else 0
+else 0

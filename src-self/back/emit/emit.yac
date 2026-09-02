@@ -276,6 +276,16 @@ let emit_abi_win(_) = box_get(emit_abi_win_box)
 
 let emit_host_win(_) = emit_abi_win(0)
 
+/* Current proc name while emitting (self-tcall loopify vs cross-fun tcall). */
+let emit_self_box =
+  let b = box_new() in
+  let _ = box_set(b, "") in
+  b
+
+let emit_self_set(n) = box_set(emit_self_box, n)
+
+let emit_self(_) = box_get(emit_self_box)
+
 let pe_uname_off_box =
   let b = box_new() in
   let _ = box_set(b, 0) in

@@ -678,8 +678,7 @@ let maybe_tcall(rest_tail, ins, self) =
   else if not tco_name_ok(self) then ins
   else if nth(ins, 0) == "fcall" then
     if nth(ins, 2) == self then
-      if len(nth(ins, 3)) > 6 then ins
-      else ["tcall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+      ["tcall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
     else ins
   else ins
 
@@ -779,7 +778,7 @@ let lir_rt(g, dst, ss) =
 
 /* callι: Σ then Γ then runtime. Do not turn every ncap>0 into icall.
  * Named self uses fcall/tcall + capture slots 1..n. */
-let calli(g0, dst, ss, env, funs, self) =
+let calli(g0, dst, ss, env, funs, self, tail) =
   let h0 = hash_str(g0) in
   let e = env_rec_h(env, g0, h0) in
   let g = resolve_call(g0) in
@@ -790,8 +789,9 @@ let calli(g0, dst, ss, env, funs, self) =
       let se = sigma_ent_h(funs, g, h) in
       let code = if se == 0 then g else nth(se, 0) in
       if code == self then
-        if ncap + len(ss) > 6 then ["apply", dst, nth(e, 0), ncap, ss]
-        else ["fcall", dst, code, list_ext(cap_slots(ncap, 1, list_new()), ss, 0, len(ss))]
+        if tail or ncap + len(ss) <= 6 then
+          ["fcall", dst, code, list_ext(cap_slots(ncap, 1, list_new()), ss, 0, len(ss))]
+        else ["apply", dst, nth(e, 0), ncap, ss]
       else ["apply", dst, nth(e, 0), ncap, ss]
     else
       let se = sigma_ent_h(funs, g, h) in
@@ -931,9 +931,10 @@ let lir_letcall(b, pack) =
         let k = qvar_key(nth(fn, 1), nth(fn, 2)) in
         if k == 0 then nth(fn, 1) else k
       else nth(fn, 1) in
-    let ins = maybe_tcall(
-      rest_is_tail(nth(s, 5), [nth(pack, 1), nth(pack, 2), nth(pack, 3), nth(b, 1)]),
-      calli(g0, dst, nth(lr, 1), nth(s, 1), nth(s, 3), nth(s, 5)),
+    let tail = rest_is_tail(nth(s, 5),
+                 [nth(pack, 1), nth(pack, 2), nth(pack, 3), nth(b, 1)]) in
+    let ins = maybe_tcall(tail,
+      calli(g0, dst, nth(lr, 1), nth(s, 1), nth(s, 3), nth(s, 5), tail),
       nth(s, 5)) in
     [insn_push(nth(lr, 0), ins),
      env_bind(nth(lr, 2), nth(b, 1), dst, 0), dst + 1,
@@ -1065,7 +1066,8 @@ let lir_letfun_finish(s, p, br) =
     if need_self then
       insn_push(f_insns0, ["closure", nth(p, 8), gname, cap_list(ncap, 0, list_new())])
     else f_insns0 in
-  let f_insns = prof_wrap_insns(nth(p, 2), f_insns1, nth(br, 0), nth(br, 1), nslots) in
+  let f_insns2 = insn_push(f_insns1, ["label", "$tco"]) in
+  let f_insns = prof_wrap_insns(nth(p, 2), f_insns2, nth(br, 0), nth(br, 1), nslots) in
   let f = ["proc", gname, ntot, ncap, f_insns, nth(p, 2)] in
   [insn_push(nth(s, 0),
      ["closure", nth(s, 2), gname, outer_caps(nth(s, 1), nth(p, 6), ncap, 0, list_new())]),

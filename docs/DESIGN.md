@@ -228,8 +228,8 @@ bin(cop,s,a,b)  = ["cmp",  cop, s, a, b]     ; cop ∈ {==,!=,<,<=,>,>=}
          ι   = callι(self, x, f, s, s_f, [s_i])
 
 callι(self, x, ["var", g], s, _, ss) =
-    ["tcall",  s, ĝ, cap·ss] if  tail(x) ∧ ĝ = self ∧ |cap·ss| ≤ 6
-  | ["fcall",  s, ĝ, cap·ss] if  ĝ = self ∧ n > 0 ∧ |cap·ss| ≤ 6
+    ["tcall",  s, ĝ, cap·ss] if  tail(x) ∧ ĝ = self
+  | ["fcall",  s, ĝ, cap·ss] if  ĝ = self ∧ n > 0 ∧ (tail ∨ |cap·ss| ≤ 6)
   | ["fcall",  s, ĝ, ss]     if  g ∈ Σ ∧ n = 0
   | ["fcall",  s, rt(g), ss] if  g 是 runtime 名   ; 在 Σ / env 之后，避免遮蔽 let len
   | ["ccall",  s, name, ss]  if  g = ccall 且首参是字符串字面量
@@ -250,6 +250,7 @@ runtime 名以 yac_* / time_* / gc_collect / argc / argv / print_val 为准。
 
 tail(x)  当且仅当该 letcall 是 body 的最后一条绑定，且尾原子是 ["var", x]。
 只对 self 做 TCO；`ccall`（C）不做 TCO。
+self `tcall` 在 prologue 之后的 `$tco` 回跳（槽搬运，不拆帧）；arity 不限。
 命名 self 走第一条（`fcall`/`tcall` + 捕获槽），不要把所有尾 `icall` 收成 `ticall`（`twice(f,x)=f(f(x))` 会错）。
 
 Γ ⊢ ["letfun", f, ps, body]  ⇒  Γ[f ↦ s]  ▹  I_out  ▹  {proc} ∪ P

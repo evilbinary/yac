@@ -275,7 +275,7 @@ let compiler_cases(_) = [
   ["pkg_os", "rc", "1"],
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
   ["io_rw", "rc", "2"], ["system", "rc", "0"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"],
-  ["tco_cap", "rc", "42"], ["callcc", "rc", "42"], ["callcc2", "rc", "99"],
+  ["tco_cap", "rc", "42"], ["tco_7args", "rc", "42"], ["callcc", "rc", "42"], ["callcc2", "rc", "99"],
   ["callcc3", "rc", "42"], ["callcc4", "rc", "99"]]
 
 let compile_msg_err(st, yc, src, name, needle) =
