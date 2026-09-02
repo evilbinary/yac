@@ -102,6 +102,50 @@ let emit_x86_load_reg_args(b, args, nargs) =
       loadarg(j + 1) in
   loadarg(0)
 
+let emit_x86_tcall_other(st, insn, is_entry) =
+  let b = nth(st, 0) in
+  let fn = nth(insn, 2) in
+  let args = nth(insn, 3) in
+  let nargs = len(args) in
+  if nargs > 6 then
+    /* Cross-fun + stack args: call then return (leave/ret). Not a jmp. */
+    let nstack = nargs - 6 in
+    let _ = emit_x86_push_stack_args(b, args, nargs) in
+    let _ = emit_x86_load_reg_args(b, args, nargs) in
+    let _ = emit_zero_sysv_args(b, nargs) in
+    let callstart = bytes_len(b) in
+    let _ = call_user(b) in
+    let _ = add_rsp_imm32(b, bshl(nstack, 3)) in
+    let _ =
+      if is_entry then ret(b)
+      else
+        let _ = mov_rsp_rbp(b) in
+        let _ = pop_rbp(b) in
+        ret(b) in
+    emit_st4(st, b, nth(st, 1), nth(st, 2),
+      emit_patch_rel(nth(st, 4), nth(st, 3), callstart + 1, fn))
+  else
+    let loadarg(j) =
+      if j >= nargs then 0
+      else
+        let _ = emit_load_rax_slot(b, nth(args, j)) in
+        let _ =
+          if j == 0 then mov_rdi_rax(b)
+          else if j == 1 then mov_rsi_rax(b)
+          else if j == 2 then mov_rdx_rax(b)
+          else if j == 3 then mov_rcx_rax(b)
+          else if j == 4 then mov_r8_rax(b)
+          else mov_r9_rax(b) in
+        loadarg(j + 1) in
+    let _ = loadarg(0) in
+    let _ = emit_zero_sysv_args(b, nargs) in
+    let _ = mov_rsp_rbp(b) in
+    let _ = pop_rbp(b) in
+    let jmpstart = bytes_len(b) in
+    let _ = jmp_rel32(b, 0) in
+    emit_st4(st, b, nth(st, 1), nth(st, 2),
+      emit_patch_rel(nth(st, 4), nth(st, 3), jmpstart + 1, fn))
+
 /* Self tcall: shuffle args into slots 1..n then jmp $tco (no new frame). */
 let emit_x86_tloop(st, args) =
   let b = nth(st, 0) in
@@ -374,30 +418,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
   else if k == "iccall" then emit_x86_iccall(st, insn)
   else if k == "tcall" then
     if nth(insn, 2) == emit_self(0) then emit_x86_tloop(st, nth(insn, 3))
-    else
-      /* Cross-fun TCO: load args, tear down frame, jmp. */
-      let fn = nth(insn, 2) in
-      let args = nth(insn, 3) in
-      let nargs = len(args) in
-      let loadarg(j) =
-        if j >= nargs then 0
-        else
-          let _ = emit_load_rax_slot(b, nth(args, j)) in
-          let _ =
-            if j == 0 then mov_rdi_rax(b)
-            else if j == 1 then mov_rsi_rax(b)
-            else if j == 2 then mov_rdx_rax(b)
-            else if j == 3 then mov_rcx_rax(b)
-            else if j == 4 then mov_r8_rax(b)
-            else mov_r9_rax(b) in
-          loadarg(j + 1) in
-      let _ = loadarg(0) in
-      let _ = emit_zero_sysv_args(b, nargs) in
-      let _ = mov_rsp_rbp(b) in
-      let _ = pop_rbp(b) in
-      let jmpstart = bytes_len(b) in
-      let _ = jmp_rel32(b, 0) in
-      emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, jmpstart + 1, fn))
+    else emit_x86_tcall_other(st, insn, is_entry)
   else if k == "jmp" then
     /* jmp_rel32: e9 + rel32; rel32 field at len0+1 */
     let jpos = bytes_len(b) in

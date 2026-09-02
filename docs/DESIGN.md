@@ -330,7 +330,7 @@ encoded   ::= x86-64 | arm64 | riscv64 字节
 
 - 槽 `s` → 帧上 8 字节格；临时值走返回寄存器（x86 `rax`，arm `x0`，riscv `a0`）
 - `mov_imm`：按立即数原样写入，不再 `<<1`
-- `fcall`：按名 rel32/`bl`/`jal` 到本镜像符号表（yac proc / yac_*）；x86 前 6 个 SysV 寄存器，其余入栈（与 `apply` / prologue `[rbp+16+…]` 一致）
+- `fcall`：按名 rel32/`bl`/`jal` 到本镜像符号表（yac proc / yac_*）。内部 yac ABI：x86 前 6 个 SysV 寄存器其余入栈（callee `[rbp+16+…]`）；arm64/riscv64 前 8 个寄存器其余入栈。与 `apply` / prologue 一致。
 - `ccall`：C ABI PLT（字面量名）；`iccall`：C ABI 间接调用。x86_64/arm64/riscv64 ELF 经 PLT + `DT_NEEDED libc.so.6`。`cload`/`csym` 是 `rt/ffi.yac` 普通函数（`dlopen`/`dlsym`）。JIT 在 `jit_run` 前 `dlsym` 填 GOT。整数去 tag、堆对象传 payload 指针。参数走各 arch 整数 ABI：x86_64 前 6 个寄存器其余压栈；arm64/riscv64 前 8 个寄存器其余压栈；调用前 SP 16 字节对齐。`-g`/`--syms` 时 pack 写 `.symtab`/`.strtab`（gdb/`nm`）；默认不写。无 DWARF 行号
 - `syscall`：x86 `syscall`，arm `svc #0`，riscv `ecall`；`nr` 进 syscall 号寄存器（60 = 退出，见上）
 - `cmpjmp`：测 tagged 条件槽（非 0 为真；`true` 的 tag 为 2）

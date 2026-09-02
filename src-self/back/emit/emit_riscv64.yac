@@ -230,15 +230,22 @@ let emit_rv_fcall(st, insn) =
   let b = nth(st, 0) in
   let args = nth(insn, 3) in
   let na = len(args) in
+  let nstack = if na > 8 then na - 8 else 0 in
+  let nreg = if na < 8 then na else 8 in
+  let pad = if nstack == 0 then 0 else if band(nstack, 1) == 0 then 0 else 8 in
+  let _ = if pad == 0 then 0 else rv_addi(b, 2, 2, 0 - 8) in
+  let _ = if nstack == 0 then 0 else rv_apply_push(b, 0, args, na - 1) in
   let load(j) =
-    if j >= na then 0
-    else if j >= 8 then 0
+    if j >= nreg then 0
     else
       let _ = rv_slot(b, nth(args, j), false, 10 + j) in
       load(j + 1) in
   let _ = load(0) in
   let pos = bytes_len(b) in
   let _ = rv_jal(b, 1, 0) in
+  let _ =
+    if nstack == 0 then 0
+    else rv_addi(b, 2, 2, bshl(nstack, 3) + pad) in
   let _ = rv_slot(b, nth(insn, 1), true, 10) in
   emit_st4(st, b, nth(st, 1), nth(st, 2),
     emit_patch_rel(nth(st, 4), nth(st, 3), pos, nth(insn, 2)))
