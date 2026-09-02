@@ -91,7 +91,7 @@ let emit_ids_hold =
   b
 
 let emit_id_scan(funs, name, i, n) =
-  if i >= n then 0
+  if i >= n then 0 - 1
   else
     let nm = nth(nth(funs, i), 1) in
     if is_int(nm) then emit_id_scan(funs, name, i + 1, n)
@@ -107,7 +107,9 @@ let emit_map_get(m, k) =
     let h = box_get(emit_ids_hold) in
     if h == 0 then 0
     else if is_int(h) then 0
-    else emit_id_scan(nth(h, 0), intern(ik), 0, len(nth(h, 0)))
+    else
+      let idx = emit_id_scan(nth(h, 0), intern(ik), 0, len(nth(h, 0))) in
+      if idx < 0 then 0 else idx
 
 let emit_map_put(m, k, v) =
   let _ = fmap_put(m, intern(k), v) in
@@ -285,6 +287,18 @@ let emit_self_box =
 let emit_self_set(n) = box_set(emit_self_box, n)
 
 let emit_self(_) = box_get(emit_self_box)
+
+/* After-prologue offset of the current fun. 0 = none (e.g. _start). */
+let emit_tco_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let emit_tco_set(p) = box_set(emit_tco_box, p)
+
+let emit_tco_get(_) = box_get(emit_tco_box)
+
+let tco_lab(_) = intern("$tco")
 
 let pe_uname_off_box =
   let b = box_new() in

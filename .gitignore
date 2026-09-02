@@ -21,4 +21,9 @@ app/native/libyui_yac.so
 app/lantern/lantern
 app/llm/llm
 app/llm/llm.exe
+app/llm/train
+app/llm/train.exe
+app/llm/infer
+app/llm/infer.exe
+app/llm/transformer.w
 *.jit

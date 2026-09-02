@@ -35,13 +35,25 @@ let fmap_new(_) =
   let _ = list_push(m, 0) in
   m
 
+let intern_str_eq_at(a, b, i, n) =
+  if i >= n then true
+  else if str_ref(a, i) != str_ref(b, i) then false
+  else intern_str_eq_at(a, b, i + 1, n)
+
+/* Same bytes, even when str_cat made two objects. Pointer == is the fast path. */
+let intern_str_eq(a, b) =
+  if a == b then true
+  else
+    let n = str_len(a) in
+    if n != str_len(b) then false
+    else intern_str_eq_at(a, b, 0, n)
+
 let fmap_probe(vec, k, h, i, mask) =
   let e = nth(vec, i) in
   if e == 0 then i
   else
     let hit =
-      if nth(e, 2) == h then
-        if nth(e, 0) == k then true else false
+      if nth(e, 2) == h then intern_str_eq(nth(e, 0), k)
       else false in
     if hit then i
     else

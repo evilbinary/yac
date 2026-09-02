@@ -344,9 +344,11 @@ let emit_a64_tloop(st, args) =
       popj(j - 1) in
   let _ = pushj(0) in
   let _ = popj(nargs - 1) in
+  let tco = emit_tco_get(0) in
   let pos = bytes_len(b) in
   let _ = a64_b(b, 0) in
-  emit_st4(st, b, nth(st, 1), nth(st, 2), cons(["b26", pos, "$tco"], nth(st, 3)))
+  let _ = if tco == 0 then 0 else a64_apply_b26(b, pos, tco) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
 
 let emit_a64_i_core(st, insn, is_entry) =
   let b = nth(st, 0) in
@@ -394,7 +396,11 @@ let emit_a64_i_core(st, insn, is_entry) =
         let _ = a64_slot(b, j + 1, true, 0) in
         storep(j + 1) in
     let _ = storep(0) in
-    let labs = label_put(labels, "$tco", bytes_len(b)) in
+    let labs =
+      if is_entry then labels
+      else
+        let _ = emit_tco_set(bytes_len(b)) in
+        label_put(labels, tco_lab(0), bytes_len(b)) in
     emit_st4(st, b, cur, labs, patches3)
   else if k == "mov_imm" then
     let _ = a64_mov_imm64(b, 0, nth(insn, 2)) in
@@ -450,7 +456,13 @@ let emit_a64_i_core(st, insn, is_entry) =
     let _ = a64_slot(b, nth(insn, 2), true, 0) in
     emit_st4(st, b, cur, labels, patches2)
   else if k == "label" then
-    emit_st4(st, b, cur, label_put(labels, nth(insn, 1), bytes_len(b)), patches)
+    let nm = nth(insn, 1) in
+    let pos = bytes_len(b) in
+    let _ =
+      if is_entry then 0
+      else if intern(nm) == tco_lab(0) then emit_tco_set(pos)
+      else 0 in
+    emit_st4(st, b, cur, label_put(labels, nm, pos), patches)
   else if k == "jmp" then
     let pos = bytes_len(b) in
     let _ = a64_b(b, 0) in
@@ -485,7 +497,9 @@ let emit_a64_i_core(st, insn, is_entry) =
     let _ = a64_svc(b) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "tcall" then
-    if nth(insn, 2) == emit_self(0) then emit_a64_tloop(st, nth(insn, 3))
+    if nth(insn, 2) == emit_self(0) then
+      if emit_tco_get(0) == 0 then emit_a64_tcall_other(st, insn, is_entry)
+      else emit_a64_tloop(st, nth(insn, 3))
     else emit_a64_tcall_other(st, insn, is_entry)
   else st
 
@@ -1397,6 +1411,7 @@ let emit_program_arm64(prog, load_vaddr, text_off) =
       let f = nth(funs, i) in
       let name = nth(f, 1) in
       let _ = emit_self_set(name) in
+      let _ = emit_tco_set(0) in
       let is_entry = name == entry in
       let fstart = bytes_len(nth(st, 0)) in
       let st0 = [nth(st, 0), 0, [], [], nth(st, 4)] in

@@ -669,8 +669,7 @@ let rest_is_tail(self, info) =
   else false
 
 let tco_name_ok(self) =
-  if self == "parse_program" then false
-  else if self == "parse_expr" then false
+  if self == "parse_expr" then false
   else true
 
 let maybe_tcall(rest_tail, ins, self) =

@@ -50,12 +50,85 @@ let ast_has_err(a) =
     if ast_has_err(nth(a, 1)) then true else ast_has_err(nth(a, 2))
   else if k == "list" then xs_err(nth(a, 1), 0)
   else false
+
+let ast_find_err(a) =
+  let xs_err(xs, i) =
+    if i >= len(xs) then 0
+    else
+      let e = ast_find_err(nth(xs, i)) in
+      if e == 0 then xs_err(xs, i + 1) else e in
+  let k = nth(a, 0) in
+  if k == "error" then a
+  else if k == "call" then
+    let e = ast_find_err(nth(a, 1)) in
+    if e == 0 then xs_err(nth(a, 2), 0) else e
+  else if k == "fun" then ast_find_err(nth(a, 2))
+  else if k == "if" then
+    let e = ast_find_err(nth(a, 1)) in
+    if e != 0 then e
+    else
+      let e2 = ast_find_err(nth(a, 2)) in
+      if e2 != 0 then e2 else ast_find_err(nth(a, 3))
+  else if k == "let" then
+    let e = ast_find_err(nth(a, 2)) in
+    if e == 0 then ast_find_err(nth(a, 3)) else e
+  else if k == "binop" then
+    let e = ast_find_err(nth(a, 2)) in
+    if e == 0 then ast_find_err(nth(a, 3)) else e
+  else if k == "not" then ast_find_err(nth(a, 1))
+  else if k == "callcc" then ast_find_err(nth(a, 1))
+  else if k == "throw" then
+    let e = ast_find_err(nth(a, 1)) in
+    if e == 0 then ast_find_err(nth(a, 2)) else e
+  else if k == "list" then xs_err(nth(a, 1), 0)
+  else 0
+
 let prog_has_err(p, i) =
   if i >= len(p) then false
   else if ast_has_err(nth(p, i)) then true
   else prog_has_err(p, i + 1)
-/* Top-level helper so parse_expr stays ncap=0 (no self-closure alloc). */
-let parse_err(j) = [["error", "parse"], j]
+
+let prog_find_err(p, i) =
+  if i >= len(p) then 0
+  else
+    let e = ast_find_err(nth(p, i)) in
+    if e == 0 then prog_find_err(p, i + 1) else e
+
+let tok_line(toks, j) =
+  if len(toks) == 0 then 1
+  else if j < 0 then 1
+  else if j >= len(toks) then nth(nth(toks, len(toks) - 1), 2)
+  else nth(nth(toks, j), 2)
+
+let tok_near(toks, j) =
+  if j >= len(toks) then "eof"
+  else
+    let t = nth(nth(toks, j), 1) in
+    if t == "" then nth(nth(toks, j), 0) else t
+
+/* Top-level so parse_expr stays ncap=0. AST: ["error", msg, line, near]. */
+let parse_err(toks, j) =
+  [["error", "syntax", tok_line(toks, j), tok_near(toks, j)], j]
+
+let parse_err_msg(toks, j, msg) =
+  [["error", msg, tok_line(toks, j), tok_near(toks, j)], j]
+
+let syntax_msg(e) =
+  let line = if len(e) > 2 then nth(e, 2) else 1 in
+  let raw = nth(e, 1) in
+  let msg =
+    if raw == "syntax" then "syntax error"
+    else if raw == "parse" then "syntax error"
+    else raw in
+  let near = if len(e) > 3 then nth(e, 3) else "" in
+  let loc = str_cat(int_to_str(line), str_cat(": ", msg)) in
+  if near == "" then str_cat("error: syntax: ", loc)
+  else str_cat("error: syntax: ", str_cat(loc, str_cat(" (near ", str_cat(near, ")"))))
+
+let report_syntax(ast) =
+  let e = prog_find_err(ast, 0) in
+  if e == 0 then print("error: syntax")
+  else print(syntax_msg(e))
 
 let tok_k(toks, i) =
   if i >= len(toks) then "eof" else nth(nth(toks, i), 0)
@@ -163,7 +236,7 @@ let parse_expr(toks, i, min_prec) =
         parse_arglist(nth(r, 1) + 1, cons(nth(r, 0), acc))
       else if kk(nth(r, 1)) == "rparen" then
         [true, reverse(cons(nth(r, 0), acc)), nth(r, 1) + 1]
-      else [false, acc, j] in
+      else [false, acc, nth(r, 1)] in
 
   /* ---- parse lambda params: ( ident, ident, ... ) -> ; j is at first ident
    * after '('. Returns [params, indexAfterRparen]. ---- */
@@ -185,7 +258,7 @@ let parse_expr(toks, i, min_prec) =
         parse_listitems(nth(r, 1) + 1, cons(nth(r, 0), acc))
       else if kk(nth(r, 1)) == "rbrk" then
         [true, reverse(cons(nth(r, 0), acc)), nth(r, 1) + 1]
-      else [false, acc, j] in
+      else [false, acc, nth(r, 1)] in
 
   /* ---- primary / atom ---- */
   let parse_primary(j) =
@@ -212,15 +285,15 @@ let parse_expr(toks, i, min_prec) =
     else if kk(j) == "lbrk" then
       let r = parse_listitems(j + 1, []) in
       if nth(r, 0) then [["list", nth(r, 1)], nth(r, 2)]
-      else parse_err(j)
+      else parse_err_msg(toks, nth(r, 2), "expected ']' to close list")
     else if is_kw(j, "not") then
       let r = parse_expr(toks, j + 1, 0) in
-      if is_err(nth(r, 0)) then parse_err(j)
+      if is_err(nth(r, 0)) then parse_err(toks,j)
       else [["not", nth(r, 0)], nth(r, 1)]
     else if is_kw(j, "print") then
       if kk(j + 1) == "lparen" then
         let r = parse_arglist(j + 2, []) in
-        if not nth(r, 0) then parse_err(j)
+        if not nth(r, 0) then parse_err_msg(toks, nth(r, 2), "expected ')' after print arguments")
         else
           let args = nth(r, 1) in
           let na = len(args) in
@@ -228,22 +301,22 @@ let parse_expr(toks, i, min_prec) =
             [["call", ["var", "print"], [nth(args, 0), ["bool", "true"]]], nth(r, 2)]
           else if na == 2 then
             [["call", ["var", "print"], args], nth(r, 2)]
-          else parse_err(j)
+          else parse_err(toks,j)
       else
         let r = parse_expr(toks, j + 1, 0) in
-        if is_err(nth(r, 0)) then parse_err(j)
+        if is_err(nth(r, 0)) then parse_err(toks,j)
         else [["call", ["var", "print"], [nth(r, 0), ["bool", "true"]]], nth(r, 1)]
     else if is_kw(j, "callcc") then
       let r = parse_expr(toks, j + 1, 0) in
-      if is_err(nth(r, 0)) then parse_err(j)
+      if is_err(nth(r, 0)) then parse_err(toks,j)
       else [["callcc", nth(r, 0)], nth(r, 1)]
     else if is_kw(j, "throw") then
       /* Two primaries (not juxta-app): `throw exit 999` is two args, not exit(999). */
       let kr = parse_primary(j + 1) in
-      if is_err(nth(kr, 0)) then parse_err(j)
+      if is_err(nth(kr, 0)) then parse_err(toks,j)
       else
         let vr = parse_primary(nth(kr, 1)) in
-        if is_err(nth(vr, 0)) then parse_err(j)
+        if is_err(nth(vr, 0)) then parse_err(toks,j)
         else [["throw", nth(kr, 0), nth(vr, 0)], nth(vr, 1)]
     else if is_kw(j, "fun") then
       /* fun ( params ) -> body */
@@ -253,8 +326,8 @@ let parse_expr(toks, i, min_prec) =
         if is_op(after, "->") then
           let r = parse_expr(toks, after + 1, 0) in
           [["fun", nth(pr, 0), nth(r, 0)], nth(r, 1)]
-        else parse_err(j)
-      else parse_err(j)
+        else parse_err(toks,j)
+      else parse_err(toks,j)
     else if kk(j) == "lparen" then
       /* () is unit. f() / let f() = stay lparen+rparen via parse_app / params. */
       if kk(j + 1) == "rparen" then [["unit"], j + 2]
@@ -264,13 +337,14 @@ let parse_expr(toks, i, min_prec) =
         if is_op(after, "->") then
           let r = parse_expr(toks, after + 1, 0) in
           [["fun", nth(pr, 0), nth(r, 0)], nth(r, 1)]
-        else parse_err(j)
+        else parse_err(toks,j)
       else
         let r = parse_expr(toks, j + 1, 0) in
-        if is_err(nth(r, 0)) then parse_err(j)
-        else if kk(nth(r, 1)) != "rparen" then parse_err(j)
+        if is_err(nth(r, 0)) then parse_err(toks, j)
+        else if kk(nth(r, 1)) != "rparen" then
+          parse_err_msg(toks, nth(r, 1), "expected ')'")
         else [nth(r, 0), nth(r, 1) + 1]
-    else parse_err(j) in
+    else parse_err(toks,j) in
 
   /* ---- application: head followed by ( args ), chainable: f(a)(b) ---- */
   let parse_app(j, head) =
@@ -278,7 +352,8 @@ let parse_expr(toks, i, min_prec) =
       if nth(nth(toks, j), 2) != nth(nth(toks, j - 1), 2) then [head, j]
       else
         let r = parse_arglist(j + 1, []) in
-        if not nth(r, 0) then parse_err(j)
+        if not nth(r, 0) then
+          parse_err_msg(toks, nth(r, 2), "expected ')' to close argument list")
         else parse_app(nth(r, 2), ["call", head, nth(r, 1)])
     else
       let k = kk(j) in
@@ -308,8 +383,8 @@ let parse_expr(toks, i, min_prec) =
       if is_kw(m, "else") then
         let er = parse_expr(toks, m + 1, 0) in
         [["if", cond, thena, nth(er, 0)], nth(er, 1)]
-      else parse_err(m)
-    else parse_err(k) in
+      else parse_err(toks,m)
+    else parse_err(toks,k) in
 
   /* ---- let (supports both `let x = e` and `let f(ps) = e`) ---- */
   let parse_let(j) =
@@ -331,8 +406,8 @@ let parse_expr(toks, i, min_prec) =
           let bodyr = parse_expr(toks, k + 1, 0) in
           [["let", name, bound1, nth(bodyr, 0)], nth(bodyr, 1)]
         else [["let", name, bound1, ["unit"]], k]
-      else parse_err(j)
-    else parse_err(j) in
+      else parse_err(toks,j)
+    else parse_err(toks,j) in
 
   /* ---- binary operator loop (left-assoc, precedence climbing) ---- */
   let parse_binloop(j, lhs, minp) =
@@ -341,7 +416,7 @@ let parse_expr(toks, i, min_prec) =
       let p = prec_of(op) in
       if p >= minp then
         let rr = parse_expr(toks, j + 1, p + 1) in
-        if is_err(nth(rr, 0)) then parse_err(j)
+        if is_err(nth(rr, 0)) then parse_err(toks,j)
         else parse_binloop(nth(rr, 1), ["binop", op, lhs, nth(rr, 0)], minp)
       else [lhs, j]
     else [lhs, j] in
@@ -353,7 +428,7 @@ let parse_expr(toks, i, min_prec) =
     /* unary minus: -x  ==  (0 - x); operand binds tightest (min_prec high),
      * then continue with trailing binary operators */
     let ur = parse_expr(toks, i + 1, 7) in
-    if is_err(nth(ur, 0)) then parse_err(i)
+    if is_err(nth(ur, 0)) then parse_err(toks,i)
     else
       let u = nth(ur, 0) in
       let un =
@@ -367,10 +442,10 @@ let parse_expr(toks, i, min_prec) =
       parse_binloop(nth(ur, 1), un, min_prec)
   else
     let pr = parse_primary(i) in
-    if is_err(nth(pr, 0)) then parse_err(i)
+    if is_err(nth(pr, 0)) then parse_err(toks,i)
     else
       let appr = parse_app(nth(pr, 1), nth(pr, 0)) in
-      if is_err(nth(appr, 0)) then parse_err(i)
+      if is_err(nth(appr, 0)) then parse_err(toks,i)
       else parse_binloop(nth(appr, 1), nth(appr, 0), min_prec)
 
 /* ---- program: headers then a sequence of top-level exprs ---- */
@@ -408,7 +483,7 @@ let parse_program(toks, i, acc) =
              cons(["import", nth(d, 0)], acc))
   else
     let r = parse_expr(toks, i, 0) in
-    if is_err(nth(r, 0)) then cons(["error", "syntax"], acc)
+    if is_err(nth(r, 0)) then cons(nth(r, 0), acc)
     else
       let rawj = nth(r, 1) in
       let j2 = if rawj < len(toks) then

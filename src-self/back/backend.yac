@@ -161,11 +161,24 @@ let rewrite_imports(ast, i, acc) =
  * files can call earlier ones. Guest always gets rt.num; other packages
  * come from --pkg, ./pkg, then the directory of yc. Do not call
  * runtime_funs() inside a loop. */
-let lir_extend(src, acc) =
+let pkg_fail_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let pkg_fail_set(v) = box_set(pkg_fail_box, v)
+
+let pkg_fail(_) = box_get(pkg_fail_box)
+
+let lir_extend(pkg, src, acc) =
   if src == 0 then acc
   else
     let ast = pass_parse(pass_lex(src)) in
-    if prog_has_err(ast, 0) then acc
+    if prog_has_err(ast, 0) then
+      let _ = print(str_cat("error: syntax in package '", str_cat(pkg, "'"))) in
+      let _ = report_syntax(ast) in
+      let _ = pkg_fail_set(1) in
+      acc
     else
       let saved_i = box_get(imap_box) in
       let saved_m = box_get(malias_box) in
@@ -232,7 +245,7 @@ let rt_cache_num =
 let rt_base(_) =
   let c = box_get(rt_cache_num) in
   if c == 0 then
-    let v = lir_extend(pkg_src("rt.num"), runtime_funs(0)) in
+    let v = lir_extend("rt.num", pkg_src("rt.num"), runtime_funs(0)) in
     let _ = box_set(rt_cache_num, v) in
     v
   else c
@@ -245,7 +258,7 @@ let rt_for_link(_) =
     else
       let p = nth(pkgs, i) in
       if p == "rt.num" then rec(i + 1, acc)
-      else rec(i + 1, lir_extend(pkg_src(p), acc)) in
+      else rec(i + 1, lir_extend(p, pkg_src(p), acc)) in
   rec(0, rt_base(0))
 
 let rt_fun_names(funs) =
@@ -349,7 +362,7 @@ let dump_ast(src) =
 let dump_anf(src) =
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then
-    let _ = print("error: syntax") in 1
+    let _ = report_syntax(ast) in 1
   else if report_unbound(src, ast) != 0 then 1
   else
     let _ = print(pass_anf(ast)) in 0
@@ -357,7 +370,7 @@ let dump_anf(src) =
 let dump_cps(src, do_opt) =
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then
-    let _ = print("error: syntax") in 1
+    let _ = report_syntax(ast) in 1
   else if report_unbound(src, ast) != 0 then 1
   else
     let _ = print(cps_maybe_opt(cps_all(pass_anf(ast)), do_opt)) in 0
@@ -365,7 +378,7 @@ let dump_cps(src, do_opt) =
 let eval_cps_src(src, do_opt) =
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then
-    let _ = print("error: syntax") in 1
+    let _ = report_syntax(ast) in 1
   else if report_unbound(src, ast) != 0 then 1
   else
     let r = eval_cps_all(cps_maybe_opt(cps_all(pass_anf(ast)), do_opt)) in
@@ -377,7 +390,7 @@ let eval_cps_src(src, do_opt) =
 let dump_uncps(src, do_opt) =
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then
-    let _ = print("error: syntax") in 1
+    let _ = report_syntax(ast) in 1
   else if report_unbound(src, ast) != 0 then 1
   else
     let r = uncps_all(cps_maybe_opt(cps_all(pass_anf(ast)), do_opt)) in
@@ -389,22 +402,25 @@ let dump_uncps(src, do_opt) =
 let compile_src(src, outpath, t, profpath) =
   let ast0 = pass_parse(pass_lex(src)) in
   if prog_has_err(ast0, 0) then
-    let _ = print("error: syntax") in 1
+    let _ = report_syntax(ast0) in 1
   else if report_unbound(src, ast0) != 0 then 1
   else
+    let _ = pkg_fail_set(0) in
     let _ = link_from_ast(ast0) in
     let t0 = time_ms() in
     let _ = if profpath == "" then 0 else yac_prof_enable(profpath) in
     let _ = log("yc", "start") in
     let _ = log_i("yc", "src_len", str_len(src)) in
     let bin = run_passes(make_pipeline(t), src) in
-    let _ = log_i("yc", "bin_len", bytes_len(bin)) in
-    let _ = log("yc", "write") in
-    let _ = write_file(outpath, bin) in
-    let _ = log_i("prof", "total", time_ms() - t0) in
-    let _ = log("yc", "done") in
-    let _ = if profpath == "" then 0 else yac_prof_dump(0) in
-    0
+    if pkg_fail(0) != 0 then 1
+    else
+      let _ = log_i("yc", "bin_len", bytes_len(bin)) in
+      let _ = log("yc", "write") in
+      let _ = write_file(outpath, bin) in
+      let _ = log_i("prof", "total", time_ms() - t0) in
+      let _ = log("yc", "done") in
+      let _ = if profpath == "" then 0 else yac_prof_dump(0) in
+      0
 
 let compile_file(inpath, outpath, t, profpath) =
   compile_src(read_file(inpath), outpath, t, profpath)

@@ -164,9 +164,11 @@ let emit_x86_tloop(st, args) =
       popj(j - 1) in
   let _ = pushj(0) in
   let _ = popj(nargs - 1) in
+  let tco = emit_tco_get(0) in
   let jpos = bytes_len(b) in
   let _ = jmp_rel32(b, 0) in
-  emit_st4(st, b, nth(st, 1), nth(st, 2), cons([jpos + 1, "$tco"], nth(st, 3)))
+  let _ = if tco == 0 then 0 else apply_patch(b, jpos + 1, tco) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
 
 let emit_x86_i_core(st, insn, is_entry, is_raw) =
   let b = nth(st, 0) in
@@ -202,8 +204,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let _ = mov_mem_rax_rbp(b) in
       let nbytes = bshl(nlocals + 1, 3) in
       let _ = emit_chkstk(b, nbytes) in
-      let labs = label_put(labels, "$tco", bytes_len(b)) in
-      emit_st4(st, b, cur, labs,
+      emit_st4(st, b, cur, labels,
        cons([6, sh_save],
             cons([5, av_save],
                  cons([4, ac_save], pe_ps))))
@@ -224,7 +225,8 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
           let _ = emit_store_rax_slot(b, j + 1) in
           storeparams(j + 1) in
       let _ = storeparams(0) in
-      let labs = label_put(labels, "$tco", bytes_len(b)) in
+      let _ = emit_tco_set(bytes_len(b)) in
+      let labs = label_put(labels, tco_lab(0), bytes_len(b)) in
       emit_st4(st, b, cur, labs, patches)
   else if k == "mov_imm" then
     /* bit pattern already encoded (tagged int or nil=1) */
@@ -382,7 +384,12 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
     emit_st4(st, b, cur, labels, patches)
   else if k == "label" then
     let nm = nth(insn, 1) in
-    emit_st4(st, b, cur, label_put(labels, nm, cur), patches)
+    let pos = bytes_len(b) in
+    let _ =
+      if is_entry then 0
+      else if intern(nm) == tco_lab(0) then emit_tco_set(pos)
+      else 0 in
+    emit_st4(st, b, cur, label_put(labels, nm, pos), patches)
   else if k == "fcall" then
     /* SysV: 6 regs then stack (7th at callee [rbp+16]). apply already did this. */
     let dst = nth(insn, 1) in
@@ -417,7 +424,9 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
     emit_st4(st, b, cur, labels, ps)
   else if k == "iccall" then emit_x86_iccall(st, insn)
   else if k == "tcall" then
-    if nth(insn, 2) == emit_self(0) then emit_x86_tloop(st, nth(insn, 3))
+    if nth(insn, 2) == emit_self(0) then
+      if emit_tco_get(0) == 0 then emit_x86_tcall_other(st, insn, is_entry)
+      else emit_x86_tloop(st, nth(insn, 3))
     else emit_x86_tcall_other(st, insn, is_entry)
   else if k == "jmp" then
     /* jmp_rel32: e9 + rel32; rel32 field at len0+1 */
@@ -1469,6 +1478,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
        * A JIT callable (_eval) must not be prog[2], or call/ret would break. */
       let is_entry = name == entry in
       let _ = emit_self_set(name) in
+      let _ = emit_tco_set(0) in
       let skipat = if name == "_eval" then 0 - 1 else emit_jsess_skip(name) in
       let fstart = nth(st, 1) in
       let st0 = [nth(st, 0), nth(st, 1), [], [], nth(st, 4)] in
