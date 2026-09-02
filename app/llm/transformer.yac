@@ -501,65 +501,82 @@ let parse_ints(s, i, n, acc) =
       let _ = list_push(acc, nth(r, 0)) in
       parse_ints(s, nth(r, 1), n, acc)
 
-let ints_txt(xs, i, acc) =
-  if i >= len(xs) then acc
-  else if i == 0 then ints_txt(xs, 1, int_to_str(nth(xs, 0)))
-  else ints_txt(xs, i + 1, str_cat(acc, str_cat(" ", int_to_str(nth(xs, i)))))
+/* 用 bytes 写盘，避免 str_cat 把整文件拼到 4KiB 上限后截断。 */
+let put_uint(b, x) =
+  if x < 10 then bytes_append(b, 48 + x)
+  else
+    let _ = put_uint(b, x / 10) in
+    bytes_append(b, 48 + irem(x, 10))
 
-/* 词表：每个 token 写成  len\\n  +  原始字节（可含换行）。 */
-let vocab_blob(vocab, i, acc) =
+let put_int(b, x) =
+  if x < 0 then
+    let _ = bytes_append(b, 45) in
+    put_uint(b, 0 - x)
+  else put_uint(b, x)
+
+let emit_ints(b, xs, i) =
+  if i >= len(xs) then 0
+  else
+    let _ = if i == 0 then 0 else bytes_append(b, 32) in
+    let _ = put_int(b, nth(xs, i)) in
+    emit_ints(b, xs, i + 1)
+
+/* 词表也写成整数（长度 + 各字节），避免 Windows 把 \\n 改成 \\r\\n 后错位。 */
+let bytes_of(s, i, acc) =
+  if i >= str_len(s) then acc
+  else
+    let _ = list_push(acc, str_ref(s, i)) in
+    bytes_of(s, i + 1, acc)
+
+let vocab_ints(vocab, i, acc) =
   if i >= len(vocab) then acc
   else
     let c = nth(vocab, i) in
-    let one = str_cat(int_to_str(str_len(c)), str_cat("\n", c)) in
-    vocab_blob(vocab, i + 1, str_cat(acc, one))
+    let _ = list_push(acc, str_len(c)) in
+    vocab_ints(vocab, i + 1, bytes_of(c, 0, acc))
 
-let read_tok(s, i, n, v, acc) =
-  if v <= 0 then [acc, i]
+let tok_from(xs, p, n, b) =
+  if n <= 0 then [bytes_to_str(b), p]
   else
-    let r = parse_int_at(s, skip_ws(s, i, n), n, 0, 1) in
-    let ln = nth(r, 0) in
-    let i1 = nth(r, 1) in
-    let i2 = if i1 < n then if str_ref(s, i1) == 10 then i1 + 1 else i1 else i1 in
-    let tok = str_slice(s, i2, ln) in
-    let _ = list_push(acc, tok) in
-    read_tok(s, i2 + ln, n, v - 1, acc)
+    let _ = bytes_append(b, nth(xs, p)) in
+    tok_from(xs, p + 1, n - 1, b)
 
-/* 文件：第一行 V d T S nvocab，随后词表块，再空格分隔的 E,Wq,Wk,Wv,Wout。 */
+let read_vocab(xs, p, v, acc) =
+  if v <= 0 then [acc, p]
+  else
+    let r = tok_from(xs, p + 1, nth(xs, p), bytes_new()) in
+    let _ = list_push(acc, nth(r, 0)) in
+    read_vocab(xs, nth(r, 1), v - 1, acc)
+
+/* 全文件空格分隔整数：V d T S，词表字节，再 E,Wq,Wk,Wv,Wout。 */
 let save_model(m, path) =
-  let Wq = flat_mat(nth(m, 1), list_new(), 0) in
-  let Wk = flat_mat(nth(m, 2), list_new(), 0) in
-  let Wv = flat_mat(nth(m, 3), list_new(), 0) in
-  let Wo = flat_mat(nth(m, 4), list_new(), 0) in
-  let sp = " " in
-  let hdr0 = str_cat(int_to_str(ntok(m)), str_cat(sp, int_to_str(dim(0)))) in
-  let hdr1 = str_cat(hdr0, str_cat(sp, int_to_str(ctx(0)))) in
-  let hdr2 = str_cat(hdr1, str_cat(sp, int_to_str(sc(0)))) in
-  let hdr = str_cat(hdr2, str_cat(sp, int_to_str(len(vocab_of(m))))) in
-  let e0 = ints_txt(flat_mat(nth(m, 0), list_new(), 0), 0, "") in
-  let txt = str_cat(e0, str_cat(sp, str_cat(ints_txt(Wq, 0, ""),
-    str_cat(sp, str_cat(ints_txt(Wk, 0, ""),
-      str_cat(sp, str_cat(ints_txt(Wv, 0, ""),
-        str_cat(sp, ints_txt(Wo, 0, ""))))))))) in
-  let body = str_cat(hdr, str_cat("\n",
-    str_cat(vocab_blob(vocab_of(m), 0, ""), str_cat("\n", txt)))) in
-  write(path, body)
+  let acc = list_new() in
+  let _ = list_push(acc, ntok(m)) in
+  let _ = list_push(acc, dim(0)) in
+  let _ = list_push(acc, ctx(0)) in
+  let _ = list_push(acc, sc(0)) in
+  let _ = vocab_ints(vocab_of(m), 0, acc) in
+  let e0 = flat_mat(nth(m, 0), acc, 0) in
+  let _ = flat_mat(nth(m, 1), e0, 0) in
+  let _ = flat_mat(nth(m, 2), e0, 0) in
+  let _ = flat_mat(nth(m, 3), e0, 0) in
+  let _ = flat_mat(nth(m, 4), e0, 0) in
+  let b = bytes_new() in
+  let _ = emit_ints(b, acc, 0) in
+  write(path, b)
 
 let load_model(path) =
   let raw = read_or_0(path) in
   if raw == 0 then 0
   else
-    let n = str_len(raw) in
-    let nl = find_nl(raw, 0) in
-    let hdr = parse_ints(str_slice(raw, 0, nl), 0, nl, list_new()) in
-    let nv = nth(hdr, 4) in
-    let vt = read_tok(raw, nl + 1, n, nv, list_new()) in
-    let vocab = nth(vt, 0) in
-    let xs = parse_ints(raw, nth(vt, 1), n, list_new()) in
-    let m = model_new(vocab, 1) in
-    let p0 = unflat_mat(nth(m, 0), xs, 0, 0) in
-    let p1 = unflat_mat(nth(m, 1), xs, 0, p0) in
-    let p2 = unflat_mat(nth(m, 2), xs, 0, p1) in
-    let p3 = unflat_mat(nth(m, 3), xs, 0, p2) in
-    let _ = unflat_mat(nth(m, 4), xs, 0, p3) in
-    m
+    let xs = parse_ints(raw, 0, str_len(raw), list_new()) in
+    if len(xs) < 4 then 0
+    else
+      let vt = read_vocab(xs, 4, nth(xs, 0), list_new()) in
+      let m = model_new(nth(vt, 0), 1) in
+      let p0 = unflat_mat(nth(m, 0), xs, 0, nth(vt, 1)) in
+      let p1 = unflat_mat(nth(m, 1), xs, 0, p0) in
+      let p2 = unflat_mat(nth(m, 2), xs, 0, p1) in
+      let p3 = unflat_mat(nth(m, 3), xs, 0, p2) in
+      let _ = unflat_mat(nth(m, 4), xs, 0, p3) in
+      m
