@@ -395,7 +395,7 @@ let emit_rv_i_core(st, insn, is_entry) =
         let _ = rv_slot(b, j + 1, true, 10) in
         storep(j + 1) in
     let _ = storep(0) in
-    let labs = if k == "$local" then label_put(labels, "$tco", bytes_len(b)) else labels in
+    let labs = label_put(labels, "$tco", bytes_len(b)) in
     emit_st4(st, b, cur, labs, patches3)
   else if k == "mov_imm" then
     let _ = rv_li(b, 6, nth(insn, 2)) in

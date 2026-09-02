@@ -202,7 +202,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let _ = mov_mem_rax_rbp(b) in
       let nbytes = bshl(nlocals + 1, 3) in
       let _ = emit_chkstk(b, nbytes) in
-      let labs = if k == "$local" then label_put(labels, "$tco", bytes_len(b)) else labels in
+      let labs = label_put(labels, "$tco", bytes_len(b)) in
       emit_st4(st, b, cur, labs,
        cons([6, sh_save],
             cons([5, av_save],
@@ -224,7 +224,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
           let _ = emit_store_rax_slot(b, j + 1) in
           storeparams(j + 1) in
       let _ = storeparams(0) in
-      let labs = if k == "$local" then label_put(labels, "$tco", bytes_len(b)) else labels in
+      let labs = label_put(labels, "$tco", bytes_len(b)) in
       emit_st4(st, b, cur, labs, patches)
   else if k == "mov_imm" then
     /* bit pattern already encoded (tagged int or nil=1) */
