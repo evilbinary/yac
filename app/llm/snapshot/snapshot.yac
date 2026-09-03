@@ -28,8 +28,7 @@ let sc(_) = 64
 
 let file_s(_) = 0
 
-/* 模型宽度：左袋 + 右袋 + 紧邻 one-hot 各 vocab_cap，再加 T 维位置。
- * 位置维让同袋的远洞仍可分；词表 256 才能盖住「悟/空」这类实词。 */
+/* 模型宽度：左近 + 次近 + 右近 各 vocab_cap，再加 T 维位置。不用整袋指纹，避免背窗口。 */
 let dim(_) = 784
 
 /* √d 的整数近似，注意力分数除 S·nsq。 */
@@ -103,19 +102,13 @@ let build_vocab(s, vocab, i) =
     let _ = add_char(vocab, c) in
     build_vocab(s, vocab, i + str_len(c))
 
-/* 字符串 → 词表下标。不在词表的字（含 CR）跳过。 */
-let encode(s, vocab, ids, i) =
-  if i >= str_len(s) then ids
-  else
-    let c = ch_at(s, i) in
-    let k = find_char(vocab, c, 0) in
-    let _ = if k < 0 then 0 else list_push(ids, k) in
-    encode(s, vocab, ids, i + str_len(c))
-
-/* jsonl / 长书只留这么多高频字（+MASK）。256 盖住西游记中段的悟/空/孙；再大 softmax 易平。 */
+/* jsonl / 长书只留这么多槽（含 UNK，不含 MASK）。 */
 let vocab_cap(_) = 256
 
-/* 换行不进词表。 */
+/* 稀有字占位；encode 不再丢掉，避免把「孙悟空」拆成不相邻的高频字。 */
+let unk_tok(_) = "<unk>"
+
+/* 换行不进词表、不编成 UNK。 */
 let skip_tok(c) =
   if str_len(c) != 1 then 0
   else
@@ -123,6 +116,23 @@ let skip_tok(c) =
     if b == 10 then 1
     else if b == 13 then 1
     else 0
+
+/* 字符串 → 词表下标。OOV → UNK（词表倒数第二）；MASK 符本身跳过。 */
+let encode(s, vocab, ids, i) =
+  if i >= str_len(s) then ids
+  else
+    let c = ch_at(s, i) in
+    let _ =
+      if skip_tok(c) == 1 then 0
+      else
+        let k = find_char(vocab, c, 0) in
+        let mid = len(vocab) - 1 in
+        let uid = mid - 1 in
+        if k < 0 then
+          if uid < 0 then 0 else list_push(ids, uid)
+        else if k == mid then 0
+        else list_push(ids, k) in
+    encode(s, vocab, ids, i + str_len(c))
 
 /* 计入 vocab/freq；已有则 +1。 */
 let bump_freq(vocab, freq, c) =
@@ -161,12 +171,15 @@ let take_top(vocab, freq, cap, acc) =
       let _ = list_set(freq, j, 0) in
       take_top(vocab, freq, cap - 1, acc)
 
-/* 大语料：先计数，再只保留 cap 个高频字。MASK 仍由调用方 push。 */
+/* 大语料：先计数，再留 cap-1 个高频字 + UNK。MASK 仍由调用方 push。 */
 let build_vocab_top(s, cap) =
   let vocab = list_new() in
   let freq = list_new() in
   let _ = count_vocab(s, vocab, freq, 0) in
-  take_top(vocab, freq, cap, list_new())
+  let ntop = if cap < 2 then 1 else cap - 1 in
+  let acc = take_top(vocab, freq, ntop, list_new()) in
+  let _ = list_push(acc, unk_tok(0)) in
+  acc
 
 /* m[14] = 词表（末项 MASK）。 */
 let vocab_of(m) = nth(m, 14)
@@ -176,6 +189,18 @@ let ntok(m) = len(nth(m, 0))
 
 /* MASK 固定为词表最后一项，避免和下标 0（常是「你」）撞车。 */
 let mask_id(m) = ntok(m) - 1
+
+/* 倒数第二是 UNK 才认；chat 全字词表没有 UNK 则 -1。 */
+let unk_id(m) =
+  let v = ntok(m) in
+  if v < 2 then 0 - 1
+  else if nth(vocab_of(m), v - 2) == unk_tok(0) then v - 2
+  else 0 - 1
+
+let is_gap(m, id) =
+  if id == mask_id(m) then 1
+  else if id == unk_id(m) then 1
+  else 0
 
 /* dst[i..] ← src[i..]。 */
 let copy_row(dst, src, i) =
@@ -212,7 +237,8 @@ let banned_tok(vocab, i) =
   if i >= len(vocab) - 1 then 1
   else
     let c = nth(vocab, i) in
-    if str_len(c) != 1 then 0
+    if c == unk_tok(0) then 1
+    else if str_len(c) != 1 then 0
     else
       let b = str_ref(c, 0) in
       if b == 10 then 1
@@ -324,7 +350,7 @@ let model_new(vocab, seed) =
   let gw = f64s(nv) in
   let _ = mat_rand(E, 0, seed, 2) in
   let _ = e_spike(E, 0, vocab_cap(0), s) in
-  let _ = fill_rand_all(Wout, 0, nv, seed + 4, 2) in
+  /* Wout 全 0：±2 随机会让第一步 softmax 比均匀更差（invp 上万）。 */
   let m = list_new() in
   let _ = list_push(m, E) in
   let _ = list_push(m, tiny) in
@@ -581,6 +607,12 @@ let mv_nz(W, x, y, i, v) =
     let _ = if xi > 0.0 then add_row_s(W, i * v, y, xi, 0) else 0 in
     mv_nz(W, x, y, i + 1, v)
 
+/* UNK 列打到条带外，避免模型靠「猜 □」刷 acc。 */
+let ban_unk_row(m, y) =
+  let u = unk_id(m) in
+  if u < 0 then 0
+  else list_set(y, u, 0.0 - 1000000.0)
+
 /* logits[t] = H[t] Wout。每个位置一份词表分数。 */
 let write_logits(m, t) =
   if t >= ctx(0) then 0
@@ -588,6 +620,7 @@ let write_logits(m, t) =
     let y = nth(nth(m, 12), t) in
     let _ = zero_row(y, 0) in
     let _ = mv_nz(nth(m, 4), nth(nth(m, 11), t), y, 0, ntok(m)) in
+    let _ = ban_unk_row(m, y) in
     write_logits(m, t + 1)
 
 /* 训练：只给 flags=1 的格子写 logits。 */
@@ -599,7 +632,8 @@ let write_logits_f(m, flags, t) =
       else
         let y = nth(nth(m, 12), t) in
         let _ = zero_row(y, 0) in
-        mv_nz(nth(m, 4), nth(nth(m, 11), t), y, 0, ntok(m)) in
+        let _ = mv_nz(nth(m, 4), nth(nth(m, 11), t), y, 0, ntok(m)) in
+        ban_unk_row(m, y) in
     write_logits_f(m, flags, t + 1)
 
 /* dst[k] += src[k]。 */
@@ -627,7 +661,7 @@ let div_span(row, lo, hi, n) =
 /* 把可见位置的 X 加进 H[t]，返回可见个数。 */
 let vis_acc(m, ids, t, j, n) =
   if j >= ctx(0) then n
-  else if nth(ids, j) == mask_id(m) then vis_acc(m, ids, t, j + 1, n)
+  else if is_gap(m, nth(ids, j)) == 1 then vis_acc(m, ids, t, j + 1, n)
   else
     let _ = add_row(nth(nth(m, 11), t), nth(nth(m, 5), j), 0) in
     vis_acc(m, ids, t, j + 1, n + 1)
@@ -647,24 +681,24 @@ let add_e(dst, src, k, last) =
     let _ = list_set(dst, k, nth(dst, k) + nth(src, k)) in
     add_e(dst, src, k + 1, last)
 
-/* j < t 的可见字 → 左袋 0..cap（one-hot 再平均，避免把整行 E 加稠后 Adam 扫 256 维）。 */
+/* j < t 的可见字 → 左袋 0..cap（出现过则 1，不平均；平均会把单字前缀冲淡）。 */
 let vis_left(m, ids, t, j, n) =
   if j >= t then n
-  else if nth(ids, j) == mask_id(m) then vis_left(m, ids, t, j + 1, n)
+  else if is_gap(m, nth(ids, j)) == 1 then vis_left(m, ids, t, j + 1, n)
   else
     let id = nth(ids, j) in
     let cap = vocab_cap(0) in
     let h = nth(nth(m, 11), t) in
     let _ =
       if id >= cap then 0
-      else list_set(h, id, nth(h, id) + 1.0) in
+      else list_set(h, id, 1.0) in
     vis_left(m, ids, t, j + 1, n + 1)
 
-/* j > t 的可见字 → 右袋 cap..2cap（one-hot 尺度 S）。 */
+/* j > t 的可见字 → 右袋 cap..2cap。 */
 let vis_right(m, ids, t, j, n) =
   if j >= ctx(0) then n
   else if j <= t then vis_right(m, ids, t, j + 1, n)
-  else if nth(ids, j) == mask_id(m) then vis_right(m, ids, t, j + 1, n)
+  else if is_gap(m, nth(ids, j)) == 1 then vis_right(m, ids, t, j + 1, n)
   else
     let id = nth(ids, j) in
     let cap = vocab_cap(0) in
@@ -673,42 +707,57 @@ let vis_right(m, ids, t, j, n) =
       if id >= cap then 0
       else
         let rk = cap + id in
-        list_set(h, rk, nth(h, rk) + 1.0) in
+        list_set(h, rk, 1.0) in
     vis_right(m, ids, t, j + 1, n + 1)
 
-/* 紧邻可见字：写进第三块 one-hot（尺度 S，不参与袋的平均）。
- * 焦内（贴着提示）靠这个拉开和周边「只会的」的差距。 */
-let mark_adj(m, ids, t) =
+/* 沿 step 跳过 MASK/UNK，返回下标（不是字 id）。 */
+let skip_idx(ids, j, step, mid, uid) =
+  if j < 0 then 0 - 1
+  else if j >= ctx(0) then 0 - 1
+  else
+    let id = nth(ids, j) in
+    if id == mid then skip_idx(ids, j + step, step, mid, uid)
+    else if id == uid then skip_idx(ids, j + step, step, mid, uid)
+    else j
+
+/* L1 / L2 / R1 → 三块 one-hot。后缀全洞共享 L，靠位置维区分。 */
+let mark_near(m, ids, t) =
   let cap = vocab_cap(0) in
   let h = nth(nth(m, 11), t) in
-  let L = nearest(m, ids, t - 1, 0 - 1) in
-  let R = nearest(m, ids, t + 1, 1) in
+  let mid = mask_id(m) in
+  let uid = unk_id(m) in
+  let i1 = skip_idx(ids, t - 1, 0 - 1, mid, uid) in
+  let i2 = if i1 < 0 then 0 - 1 else skip_idx(ids, i1 - 1, 0 - 1, mid, uid) in
+  let ir = skip_idx(ids, t + 1, 1, mid, uid) in
   let _ =
-    if L < 0 then 0
-    else if L >= cap then 0
-    else list_set(h, cap + cap + L, 1.0) in
-  if R < 0 then 0
-  else if R >= cap then 0
-  else list_set(h, cap + cap + R, nth(h, cap + cap + R) + 0.5)
+    if i1 < 0 then 0
+    else
+      let L = nth(ids, i1) in
+      if L >= cap then 0 else list_set(h, L, 1.0) in
+  let _ =
+    if i2 < 0 then 0
+    else
+      let L2 = nth(ids, i2) in
+      if L2 >= cap then 0 else list_set(h, cap + L2, 1.0) in
+  if ir < 0 then 0
+  else
+    let R = nth(ids, ir) in
+    if R >= cap then 0 else list_set(h, cap + cap + R, 1.0)
 
-/* 第 t 格专属位置灯：后缀全 MASK 时左右袋相同，靠这一维区分像素。 */
+/* 第 t 格专属位置灯。 */
 let mark_pos(h, t, cap) =
   let k = cap + cap + cap + t in
   if k >= len(h) then 0
   else list_set(h, k, 1.0)
 
-/* H[t] = 左照明 + 右照明 + 紧邻 + 位置。 */
+/* H[t] = 左近 + 次近 + 右近 + 位置（不把整段袋当指纹）。 */
 let bow_t(m, ids, t) =
   if t >= ctx(0) then 0
   else
     let h = nth(nth(m, 11), t) in
     let cap = vocab_cap(0) in
     let _ = zero_row(h, 0) in
-    let nl = vis_left(m, ids, t, 0, 0) in
-    let nr = vis_right(m, ids, t, 0, 0) in
-    let _ = div_span(h, 0, cap, nl) in
-    let _ = div_span(h, cap, cap + cap, nr) in
-    let _ = mark_adj(m, ids, t) in
+    let _ = mark_near(m, ids, t) in
     let _ = mark_pos(h, t, cap) in
     bow_t(m, ids, t + 1)
 
@@ -1133,6 +1182,7 @@ let vis_dist(gold, flags, t, j, best) =
 let train_at(m, gold, flags, t, acc) =
   if t >= ctx(0) then acc
   else if nth(flags, t) == 0 then train_at(m, gold, flags, t + 1, acc)
+  else if is_gap(m, nth(gold, t)) == 1 then train_at(m, gold, flags, t + 1, acc)
   else if vis_dist(gold, flags, t, 0, 99) > fov_r(0) then train_at(m, gold, flags, t + 1, acc)
   else
     let y = nth(gold, t) in
@@ -1159,6 +1209,7 @@ let train_at(m, gold, flags, t, acc) =
 let eval_at(m, gold, flags, t, bun) =
   if t >= ctx(0) then 0
   else if nth(flags, t) == 0 then eval_at(m, gold, flags, t + 1, bun)
+  else if is_gap(m, nth(gold, t)) == 1 then eval_at(m, gold, flags, t + 1, bun)
   else if vis_dist(gold, flags, t, 0, 99) > fov_r(0) then eval_at(m, gold, flags, t + 1, bun)
   else
     let y = nth(gold, t) in
@@ -1191,20 +1242,24 @@ let mask_from(canvas, flags, mid, cut, i) =
         list_set(flags, i, 1) in
     mask_from(canvas, flags, mid, cut, i + 1)
 
-/* 一步：多数样本挖后缀（续写），少数随机挖洞（中间显影仍要 cloze）。
+/* 一步：多数中等挖洞（邻字还在），少数长后缀（对齐推理全 MASK）。
  * lr 占位。返回 [hit, nmask, nll, invp, new_seed]。 */
+let noise_step(gold, canvas, flags, seed, mid) =
+  let k = irem(seed, 5) in
+  if k >= 3 then
+    let span = ctx(0) - 4 in
+    let cut = 4 + irem(seed, if span < 1 then 1 else span) in
+    let _ = mask_from(canvas, flags, mid, cut, 0) in
+    rng_next(seed)
+  else
+    mask_i(gold, canvas, flags, triple(seed, mid, 15 + k * 15), 0)
+
 let train_step(m, ids, pos, seed, lr) =
   let mid = mask_id(m) in
   let gold = win_at(ids, pos, mid, list_new(), 0) in
   let canvas = copy_ids(gold, 0, list_new()) in
   let flags = flags_new(0) in
-  let seed2 =
-    if irem(seed, 2) == 0 then
-      mask_i(gold, canvas, flags, triple(seed, mid, 50), 0)
-    else
-      let cut = 1 + irem(seed, ctx(0) - 1) in
-      let _ = mask_from(canvas, flags, mid, cut, 0) in
-      rng_next(seed) in
+  let seed2 = noise_step(gold, canvas, flags, seed, mid) in
   let _ = bump_gen(m) in
   let _ = forward_train(m, canvas, flags) in
   let acc = acc4(0) in
@@ -1219,13 +1274,7 @@ let eval_step(m, ids, pos, seed, bun) =
   let gold = win_at(ids, pos, mid, list_new(), 0) in
   let canvas = copy_ids(gold, 0, list_new()) in
   let flags = flags_new(0) in
-  let seed2 =
-    if irem(seed, 2) == 0 then
-      mask_i(gold, canvas, flags, triple(seed, mid, 50), 0)
-    else
-      let cut = 1 + irem(seed, ctx(0) - 1) in
-      let _ = mask_from(canvas, flags, mid, cut, 0) in
-      rng_next(seed) in
+  let seed2 = noise_step(gold, canvas, flags, seed, mid) in
   let _ = forward_train(m, canvas, flags) in
   let _ = eval_at(m, gold, flags, 0, bun) in
   seed2
@@ -1270,13 +1319,19 @@ let gold_chat(m, user, asst) =
   let _ = set_range(gold, u, take_from(aids, off, list_new()), 0, need) in
   pair(gold, u)
 
-/* 提示词 → id；跳过未知字和 MASK 符本身。 */
+/* 提示词 → id；未知字落 UNK，跳过 MASK 符本身。 */
 let prompt_ids(prompt, vocab, i, acc) =
   if i >= str_len(prompt) then acc
   else
     let c = ch_at(prompt, i) in
-    let k = find_char(vocab, c, 0) in
-    let _ = if k < 0 then 0 else if k == len(vocab) - 1 then 0 else list_push(acc, k) in
+    let _ =
+      if skip_tok(c) == 1 then 0
+      else
+        let k = find_char(vocab, c, 0) in
+        let mid = len(vocab) - 1 in
+        if k < 0 then 0
+        else if k == mid then 0
+        else list_push(acc, k) in
     prompt_ids(prompt, vocab, i + str_len(c), acc)
 
 /* 左侧写提示（冻结区），其余铺 MASK。 */

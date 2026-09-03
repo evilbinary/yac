@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""Float counterpart of snapshot.yac MLM: same bags/adj/pos, MASK CE, Wout only.
+"""Float counterpart of snapshot.yac MLM: bags + skip-visible + pos, MASK CE, Wout only.
 
   python app/llm/snapshot/train_float.py [corpus] [epochs]
-
-Softmax / NLL / Adam are float64. Features match vis_left/right + mark_adj + mark_pos.
 """
 from __future__ import annotations
 
@@ -16,12 +14,13 @@ import numpy as np
 
 T = 16
 CAP = 256
-D = 784  # Lbag + Rbag + adj + T pos
+D = 784  # L1 + L2 + R1 + T pos
 BOOK_CAP = 80000
-WIN_CAP = 400
+WIN_CAP = 1000
 FOV_R = 16
 FREEZE_N = 6
 MASK_CH = "░"
+UNK_CH = "<unk>"
 ADAM_LR = 0.02
 ADAM_B1 = 0.9
 ADAM_B2 = 0.999
@@ -44,43 +43,60 @@ def chars_of(s: str):
 
 def build_vocab_top(text: str, cap: int) -> list[str]:
     freq = Counter(chars_of(text))
-    top = [c for c, _ in freq.most_common(cap)]
-    return top + [MASK_CH]
+    top = [c for c, _ in freq.most_common(max(1, cap - 1))]
+    return top + [UNK_CH, MASK_CH]
 
 
 def encode(text: str, stoi: dict[str, int]) -> np.ndarray:
-    ids = [stoi[c] for c in chars_of(text) if c in stoi]
+    mid = stoi[MASK_CH]
+    uid = stoi[UNK_CH]
+    ids = []
+    for c in chars_of(text):
+        k = stoi.get(c)
+        if k is None:
+            ids.append(uid)
+        elif k != mid:
+            ids.append(k)
     return np.array(ids, dtype=np.int32)
 
 
 def stride_pos(i: int, n: int, nuse: int) -> int:
     if nuse < 1 or n <= T:
         return 0
-    span = max(n // nuse, T)
+    span = max(n // nuse, 1)
     p = i * span
     return n - T if p + T > n else p
 
 
-def features(canvas: np.ndarray, mid: int) -> np.ndarray:
-    """H[t]: left bag 0..CAP, right CAP..2CAP, adj 2CAP..3CAP, pos 3CAP+t."""
+def skip_idx(ids: np.ndarray, j: int, step: int, mid: int, uid: int) -> int:
+    while 0 <= j < T:
+        v = int(ids[j])
+        if v != mid and v != uid:
+            return j
+        j += step
+    return -1
+
+
+def features(canvas: np.ndarray, mid: int, uid: int) -> np.ndarray:
+    """H[t]: nearest L, second L, nearest R, pos. MASK/UNK transparent."""
     H = np.zeros((T, D), dtype=np.float64)
-    vis = canvas != mid
     ids = canvas
     for t in range(T):
-        left = [int(ids[j]) for j in range(t) if vis[j] and ids[j] < CAP]
-        right = [int(ids[j]) for j in range(t + 1, T) if vis[j] and ids[j] < CAP]
-        if left:
-            for i in left:
-                H[t, i] += 1.0
-            H[t, :CAP] /= len(left)
-        if right:
-            for i in right:
-                H[t, CAP + i] += 1.0
-            H[t, CAP : 2 * CAP] /= len(right)
-        if t > 0 and vis[t - 1] and ids[t - 1] < CAP:
-            H[t, 2 * CAP + int(ids[t - 1])] = 1.0
-        if t + 1 < T and vis[t + 1] and ids[t + 1] < CAP:
-            H[t, 2 * CAP + int(ids[t + 1])] += 0.5
+        i1 = skip_idx(ids, t - 1, -1, mid, uid)
+        i2 = -1 if i1 < 0 else skip_idx(ids, i1 - 1, -1, mid, uid)
+        ir = skip_idx(ids, t + 1, 1, mid, uid)
+        if i1 >= 0:
+            L = int(ids[i1])
+            if 0 <= L < CAP:
+                H[t, L] = 1.0
+        if i2 >= 0:
+            L2 = int(ids[i2])
+            if 0 <= L2 < CAP:
+                H[t, CAP + L2] = 1.0
+        if ir >= 0:
+            R = int(ids[ir])
+            if 0 <= R < CAP:
+                H[t, 2 * CAP + R] = 1.0
         H[t, 3 * CAP + t] = 1.0
     return H
 
@@ -115,10 +131,21 @@ def mask_suffix(gold: np.ndarray, mid: int, rng: np.random.Generator):
     return canvas, flags
 
 
+def mask_suffix_cut(gold: np.ndarray, mid: int, cut: int):
+    canvas = gold.copy()
+    flags = np.zeros(T, dtype=np.bool_)
+    canvas[cut:] = mid
+    flags[cut:] = True
+    return canvas, flags
+
+
 def apply_mask(gold: np.ndarray, mid: int, rng: np.random.Generator):
-    if int(rng.integers(0, 2)) == 0:
-        return mask_random(gold, mid, rng, 50)
-    return mask_suffix(gold, mid, rng)
+    k = int(rng.integers(0, 5))
+    if k >= 3:
+        span = max(1, T - 4)
+        cut = 4 + int(rng.integers(0, span))
+        return mask_suffix_cut(gold, mid, cut)
+    return mask_random(gold, mid, rng, 15 + k * 15)
 
 
 def softmax_rows(logits: np.ndarray) -> np.ndarray:
@@ -133,9 +160,10 @@ class Model:
         self.V = len(vocab)
         self.mid = self.V - 1
         self.Vout = self.V - 1
-        self.W = rng.uniform(-2.0, 2.0, size=(D, self.Vout))
+        self.W = np.zeros((D, self.Vout), dtype=np.float64)
         self.m = np.zeros_like(self.W)
         self.v = np.zeros_like(self.W)
+        self.uid = vocab.index(UNK_CH) if UNK_CH in vocab else -1
         self.tstep = 0
 
     def logits(self, H: np.ndarray) -> np.ndarray:
@@ -161,16 +189,19 @@ class Model:
         return "".join(out)
 
 
-def train_window(m: Model, gold: np.ndarray, rng: np.random.Generator, update: bool):
+def train_window(m: Model, gold: np.ndarray, rng: np.random.Generator, update: bool, freq=None):
     canvas, flags = apply_mask(gold, m.mid, rng)
     holes = []
     for t in range(T):
-        if flags[t] and vis_dist(flags, t) <= FOV_R:
+        if flags[t] and vis_dist(flags, t) <= FOV_R and int(gold[t]) != m.uid:
             holes.append(t)
     if not holes:
         return 0, 0, 0.0, 0.0, 0
-    H = features(canvas, m.mid)
+    H = features(canvas, m.mid, m.uid)
     logits = m.logits(H)
+    if m.uid >= 0:
+        logits = logits.copy()
+        logits[:, m.uid] = -1e6
     P = softmax_rows(logits)
     nll = 0.0
     invp = 0.0
@@ -187,6 +218,8 @@ def train_window(m: Model, gold: np.ndarray, rng: np.random.Generator, update: b
         pred = int(np.argmax(logits[t]))
         if pred == y:
             hit += 1
+        if freq is not None and 0 <= y < len(freq):
+            freq[y] += 1
         if update:
             g = P[t].copy()
             g[y] -= 1.0
@@ -236,8 +269,11 @@ def denoise(m: Model, prompt: str, stoi: dict[str, int], k: int) -> np.ndarray:
         nm = int((canvas == mid).sum())
         if nm <= 0:
             break
-        H = features(canvas, mid)
+        H = features(canvas, mid, stoi[UNK_CH])
         logits = m.logits(H)
+        if m.Vout > 0:
+            logits = logits.copy()
+            logits[:, stoi[UNK_CH]] = -1e30
         pred = np.argmax(logits, axis=1)
         conf = logits[np.arange(T), pred].astype(np.float64)
         conf[canvas != mid] = -1e30
@@ -263,11 +299,11 @@ def probe(m: Model, ids: np.ndarray, rng: np.random.Generator) -> tuple[int, int
     n0 = int((canvas == m.mid).sum())
     if n0 < 1:
         return 0, 0
-    a = np.argmax(m.logits(features(canvas, m.mid)), axis=1)
+    a = np.argmax(m.logits(features(canvas, m.mid, m.uid)), axis=1)
     vis = canvas != m.mid
     canvas = canvas.copy()
     canvas[vis] = rng.integers(0, m.Vout, size=int(vis.sum()))
-    b = np.argmax(m.logits(features(canvas, m.mid)), axis=1)
+    b = np.argmax(m.logits(features(canvas, m.mid, m.uid)), axis=1)
     holes = canvas == m.mid
     changed = int((a[holes] != b[holes]).sum())
     return changed, n0
@@ -285,7 +321,7 @@ def main():
     stoi = {c: i for i, c in enumerate(vocab)}
     ids = encode(text, stoi)
     n = len(ids)
-    nwin = max(1, n // T)
+    nwin = max(1, n - T + 1)
     nuse = min(nwin, WIN_CAP)
     ntr = nuse - nuse // 5
     rng = np.random.default_rng(1)
@@ -293,8 +329,8 @@ def main():
     print(
         f"snapshot-float  V={m.V}  T={T}  tokens={n}  train-win={ntr}  test-win={nuse - ntr}"
     )
-    print(f"vocab  top-{CAP} + MASK  corpus={path}")
-    print(f"opt  float softmax CE  Adam lr={ADAM_LR}  Wout only")
+    print(f"vocab  top-{CAP - 1} + UNK + MASK  corpus={path}")
+    print(f"opt  float softmax CE  Adam lr={ADAM_LR}  L1+L2+R1+pos  Wout=0")
     print("--- train ---")
     t0 = time.perf_counter()
     for ep in range(epochs):
@@ -305,30 +341,13 @@ def main():
             if i % 5 == 4:
                 continue
             gold = win_at(ids, stride_pos(i, n, nuse), m.mid)
-            canvas, flags = apply_mask(gold, m.mid, rng)
-            holes = [t for t in range(T) if flags[t] and vis_dist(flags, t) <= FOV_R]
-            if not holes:
-                continue
-            H = features(canvas, m.mid)
-            logits = m.logits(H)
-            P = softmax_rows(logits)
-            gW = np.zeros_like(m.W)
-            for t in holes:
-                y = int(gold[t])
-                if y >= m.Vout:
-                    continue
-                py = max(float(P[t, y]), 1e-12)
-                nll += -math.log(py)
-                invp += 1.0 / py
-                pred = int(np.argmax(logits[t]))
-                hit += int(pred == y)
-                nm += 1
-                freq[y] += 1
-                g = P[t].copy()
-                g[y] -= 1.0
-                gW += np.outer(H[t], g)
-            if holes:
-                m.adam(gW / len(holes))
+            h, k, nl, inv, _ = train_window(m, gold, rng, True, freq)
+            hit += h
+            nm += k
+            nll += nl
+            invp += inv
+            # maj: train_window doesn't return freq; approximate from a second pass skip
+            _ = k
         maj = int(freq.max()) if nm else 0
         acc = 100 * hit // nm if nm else 0
         mj = 100 * maj // nm if nm else 0

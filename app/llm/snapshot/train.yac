@@ -62,7 +62,7 @@ let convs_go(arr, i, b) =
 let jsonl_max(_) = 250
 
 /* 每个 epoch 最多扫这么多长度为 T 的窗口。 */
-let win_cap(_) = 400
+let win_cap(_) = 1000
 
 /* 每本书最多取这么多字节（从 1/5 处切开，躲开 CIP）。整本进 list 会卡在 encode。 */
 let book_cap(_) = 80000
@@ -121,7 +121,7 @@ let stride_pos(i, n, nuse) =
   else if n <= t then 0
   else
     let span = n / nuse in
-    let sp = if span < t then t else span in
+    let sp = if span < 1 then 1 else span in
     let p = i * sp in
     if p + t > n then n - t
     else p
@@ -431,7 +431,7 @@ let rc =
     let ids = encode(text, vocab_of(m), list_new(), 0) in
     let n = len(ids) in
     let tlen = ctx(0) in
-    let nwin = if n >= tlen then n / tlen else 1 in
+    let nwin = if n >= tlen then n - tlen + 1 else 1 in
     let cap = win_cap(0) in
     let nuse = if nwin <= cap then nwin else cap in
     let ntr = nuse - nuse / 5 in
@@ -440,9 +440,9 @@ let rc =
     else
       let _ = print(format("snapshot  mode=mlm  V=%d  T=%d  tokens=%d  train-win=%d  test-win=%d",
         [ntok(m), tlen, n, ntr, nuse - ntr])) in
-      let _ = print(format("vocab  top-%d + MASK  (rare chars dropped)", [vocab_cap(0)])) in
+      let _ = print(format("vocab  top-%d + UNK + MASK  (OOV kept as UNK)", [vocab_cap(0) - 1])) in
       let _ = print(str_cat("corpus  ", path)) in
-      let _ = print("opt  float softmax CE  Adam lr=0.02  Lbag+Rbag+adj+pos  Vcap=256") in
+      let _ = print("opt  float softmax CE  Adam lr=0.02  L1+L2+R1+pos  Wout=0  UNK=gap") in
       let _ = print("--- train (random MASK, generate) ---") in
       let st = st5(0, epochs, nuse, 1, 0) in
       let _ = run_mlm(m, ids, st, wpath) in
