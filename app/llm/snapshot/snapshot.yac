@@ -769,7 +769,12 @@ let adam_one_j(m, i, invn, j) =
     let _ = fset(nth(m, 19), k, vv) in
     let mh = mm / nth(st, 2) in
     let vh = vv / nth(st, 3) in
-    let _ = fset(nth(m, 4), k, fget(nth(m, 4), k) - 0.02 * mh / (sqrt(vh) + 0.00000001)) in
+    let t = nth(st, 0) in
+    let lr =
+      if t < 200 then 0.02
+      else if t < 600 then 0.01
+      else 0.005 in
+    let _ = fset(nth(m, 4), k, fget(nth(m, 4), k) - lr * mh / (sqrt(vh) + 0.00000001)) in
     adam_one_j(m, i, invn, j + 1)
 
 let adam_act(m, act, k, invn) =
@@ -1155,17 +1160,20 @@ let mask_from(canvas, flags, mid, cut, i) =
         list_set(flags, i, 1) in
     mask_from(canvas, flags, mid, cut, i + 1)
 
-/* 一步：多数中等挖洞（邻字还在），少数长后缀（对齐推理全 MASK）。
+/* 一步：混合轻/中/重挖洞 + 两档后缀（对齐推理全 MASK）。
  * lr 占位。返回 [hit, nmask, nll, invp, new_seed]。 */
 let noise_step(gold, canvas, flags, seed, mid) =
-  let k = irem(seed, 5) in
-  if k >= 3 then
-    let span = ctx(0) - 4 in
-    let cut = 4 + irem(seed, if span < 1 then 1 else span) in
+  let k = irem(seed, 6) in
+  if k == 0 then mask_i(gold, canvas, flags, triple(seed, mid, 10), 0)
+  else if k == 1 then mask_i(gold, canvas, flags, triple(seed, mid, 20), 0)
+  else if k == 2 then mask_i(gold, canvas, flags, triple(seed, mid, 35), 0)
+  else if k == 3 then mask_i(gold, canvas, flags, triple(seed, mid, 50), 0)
+  else
+    let min_cut = if k == 4 then 6 else 4 in
+    let span = ctx(0) - min_cut in
+    let cut = min_cut + irem(seed, if span < 1 then 1 else span) in
     let _ = mask_from(canvas, flags, mid, cut, 0) in
     rng_next(seed)
-  else
-    mask_i(gold, canvas, flags, triple(seed, mid, 15 + k * 15), 0)
 
 let train_step(m, ids, pos, seed, lr) =
   let mid = mask_id(m) in

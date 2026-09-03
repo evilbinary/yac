@@ -189,14 +189,14 @@ let pack_go(m, pairs, i, golds, us) =
     let _ = list_push(us, nth(g, 1)) in
     pack_go(m, pairs, i + 1, golds, us)
 
-/* 一个 epoch：步长窗口。每 5 个窗留 1 个做测试（两本书都会进 train/test）。
+/* 一个 epoch：步长窗口。前 ntr 个做训练，后段做测试。
  * st = [i, nuse, seed, hit, nmask, nll, invp]。 */
-let epoch_mlm(m, ids, st) =
+let epoch_mlm(m, ids, st, ntr) =
   let i = nth(st, 0) in
   if i >= nth(st, 1) then 0
   else
     let _ =
-      if irem(i, 5) == 4 then 0
+      if i >= ntr then 0
       else
         let pos = stride_pos(i, len(ids), nth(st, 1)) in
         let r = train_step(m, ids, pos, nth(st, 2), 1) in
@@ -206,7 +206,7 @@ let epoch_mlm(m, ids, st) =
         let _ = list_set(st, 5, nth(st, 5) + nth(r, 2)) in
         list_set(st, 6, nth(st, 6) + nth(r, 3)) in
     let _ = list_set(st, 0, i + 1) in
-    epoch_mlm(m, ids, st)
+    epoch_mlm(m, ids, st, ntr)
 
 /* 一个 epoch：逐条对话底片。st[0] 是对下标。 */
 let epoch_chat(m, golds, us, st) =
@@ -244,19 +244,19 @@ let maybe_save(m, path, ep, ntot) =
   else if irem(ep + 1, save_every(0)) == 0 then save_model(m, path)
   else 0
 
-/* 验证：i % 5 == 4 的窗。st = [i, nuse, seed]。bun 累加命中。 */
-let epoch_eval(m, ids, st, bun) =
+/* 验证：后段窗口，不更新权重。st = [i, nuse, seed]。bun 累加命中。 */
+let epoch_eval(m, ids, st, bun, ntr) =
   let i = nth(st, 0) in
   if i >= nth(st, 1) then 0
   else
     let _ =
-      if irem(i, 5) != 4 then 0
+      if i < ntr then 0
       else
         let pos = stride_pos(i, len(ids), nth(st, 1)) in
         let seed2 = eval_step(m, ids, pos, nth(st, 2), bun) in
         list_set(st, 2, seed2) in
     let _ = list_set(st, 0, i + 1) in
-    epoch_eval(m, ids, st, bun)
+    epoch_eval(m, ids, st, bun, ntr)
 
 /* 清 F1 计数。 */
 let zero_i(a, i) =
@@ -309,22 +309,30 @@ let run_mlm(m, ids, st, path) =
   if ep >= nth(st, 1) then 0
   else
     let nuse = nth(st, 2) in
+    let ntr = nuse - nuse / 5 in
+    let _ =
+      if ep != 0 then 0
+      else
+        let _ = print("ep  acc  maj  loss(nat)  invp  hit  nmask  maj_hit") in
+        0 in
     let _ = zero_freq(m, 0) in
     let row = epoch_row(nuse, nth(st, 3)) in
-    let _ = epoch_mlm(m, ids, row) in
+    let _ = epoch_mlm(m, ids, row, ntr) in
     let nm = nth(row, 4) in
     let hit = nth(row, 3) in
     let mj = maj_count(m) in
-    let _ = print(format("epoch %d  acc ~%d%%  maj ~%d%%  loss %s nat  invp %s  hit %d / %d  maj-hit %d / %d",
+    let _ = print(format("%d %d  %d  %s  %s  %d  %d  %d",
       [ep, pct(hit, nm), pct(mj, nm), fstr(avg_nll(nth(row, 5), nm)), fstr(avg_nll(nth(row, 6), nm)),
-        hit, nm, mj, nm])) in
+        hit, nm, mj])) in
+    let _ = print("acc  f1  hit  nmask") in
     let bun = bun_new(ntok(m)) in
     let ev = st5(0, nuse, nth(row, 2), 0, 0) in
-    let _ = epoch_eval(m, ids, ev, bun) in
+    let _ = epoch_eval(m, ids, ev, bun, ntr) in
     let te = nth(bun, 1) in
-    let _ = print(format("         test acc ~%d%%  f1 ~%d%%  hit %d / %d",
+    let _ = print(format("%d  %d  %d  %d",
       [pct(nth(bun, 0), te), f1_macro(nth(bun, 2), nth(bun, 3), nth(bun, 4)),
         nth(bun, 0), te])) in
+    let _ = print("") in
     let _ = maybe_save(m, path, ep, nth(st, 1)) in
     let _ = list_set(st, 0, ep + 1) in
     let _ = list_set(st, 3, nth(row, 2)) in
@@ -335,15 +343,19 @@ let run_chat(m, golds, us, st, path) =
   let ep = nth(st, 0) in
   if ep >= nth(st, 1) then 0
   else
+    let _ =
+      if ep != 0 then 0
+      else print("ep  acc  maj  loss(nat)  invp  hit  nmask  maj_hit") in
     let _ = zero_freq(m, 0) in
     let row = epoch_row(0, nth(st, 2)) in
     let _ = epoch_chat(m, golds, us, row) in
     let nm = nth(row, 4) in
     let hit = nth(row, 3) in
     let mj = maj_count(m) in
-    let _ = print(format("epoch %d  acc ~%d%%  maj ~%d%%  loss %s nat  invp %s  hit %d / %d  maj-hit %d / %d",
+    let _ = print(format("%d  %d  %d  %s  %s  %d  %d  %d",
       [ep, pct(hit, nm), pct(mj, nm), fstr(avg_nll(nth(row, 5), nm)), fstr(avg_nll(nth(row, 6), nm)),
-        hit, nm, mj, nm])) in
+        hit, nm, mj])) in
+    let _ = print("") in
     let _ = maybe_save(m, path, ep, nth(st, 1)) in
     let _ = list_set(st, 0, ep + 1) in
     let _ = list_set(st, 2, nth(row, 2)) in

@@ -3,6 +3,7 @@ YUI_ROOT ?= /media/evil/d/dev/yui
 YUI_LIBDIR ?= $(YUI_ROOT)/build/pc/None/None
 # Prefer native yc_a from `make yc` (build/yc_tmp); .exe for PE hosts / Git Bash.
 YC ?= $(firstword $(wildcard \
+	$(YAC_ROOT)/yc \
 	$(YAC_ROOT)/build/yc_tmp/yc_a.exe \
 	$(YAC_ROOT)/build/yc_tmp/yc_a \
 	$(YAC_ROOT)/yc_a.exe \
