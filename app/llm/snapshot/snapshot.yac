@@ -384,14 +384,14 @@ let copy_h_x(m, t) =
     let _ = copy_row(nth(nth(m, 5), t), nth(nth(m, 11), t), 0) in
     copy_h_x(m, t + 1)
 
-/* softmax 分子：峰 32，避免全词表都是 4096 时 Σw 把梯度乘爆（32-bit）。 */
+/* softmax 分子：峰 32。位移 /2（原 /5 时 Δℓ<5 全是 32，邻字 PMI 只有 1–3 格，梯度看不见）。 */
 let exp_w(x) =
   if x >= 0 then 32
   else
     let n = 0 - x in
-    if n >= 40 then 1
+    if n >= 16 then 1
     else
-      let v = bshr(32, n / 5) in
+      let v = bshr(32, n / 2) in
       if v < 1 then 1 else v
 
 /* score[j] = (Q·K)/32。除 512 时分数全是 0，加权退化为均匀 BOW。 */
@@ -498,11 +498,12 @@ let vis_acc(m, ids, t, j, n) =
     let _ = add_row(nth(nth(m, 11), t), nth(nth(m, 5), j), 0) in
     vis_acc(m, ids, t, j + 1, n + 1)
 
-/* 从 j 起沿 step 找最近的可见字 id；没有则 -1。 */
+/* 只看紧挨着的格子；对面是 MASK / 越界则 -1。
+ * 跳过 MASK 找「最近可见」时，后缀全洞会共享同一个左邻，续写变成同一字刷屏。 */
 let nearest(m, ids, j, step) =
   if j < 0 then 0 - 1
   else if j >= ctx(0) then 0 - 1
-  else if nth(ids, j) == mask_id(m) then nearest(m, ids, j + step, step)
+  else if nth(ids, j) == mask_id(m) then 0 - 1
   else nth(ids, j)
 
 /* H[cap + id] = 左邻，H[2cap + id] = 右邻。线性 cloze：logit 含 W_L[left]+W_R[right]。 */
@@ -869,17 +870,31 @@ let acc4(_) =
   let _ = list_push(s, 0) in
   s
 
-/* 一步 MLM：挖洞 → 一张快门 → 只在 MASK 格更新。
- * lr 占位（Windows 参数 ≤5）。
- * 返回 [hit, nmask, nll, invp, new_seed]。 */
+/* 从 cut 起整段挖掉：左侧当提示，右侧当续写（对齐推理）。 */
+let mask_from(canvas, flags, mid, cut, i) =
+  if i >= ctx(0) then 0
+  else
+    let _ =
+      if i < cut then 0
+      else
+        let _ = list_set(canvas, i, mid) in
+        list_set(flags, i, 1) in
+    mask_from(canvas, flags, mid, cut, i + 1)
+
+/* 一步：多数样本挖后缀（续写），少数随机挖洞（中间显影仍要 cloze）。
+ * lr 占位。返回 [hit, nmask, nll, invp, new_seed]。 */
 let train_step(m, ids, pos, seed, lr) =
   let mid = mask_id(m) in
   let gold = win_at(ids, pos, mid, list_new(), 0) in
   let canvas = copy_ids(gold, 0, list_new()) in
   let flags = flags_new(0) in
-  let bucket = irem(seed, 3) in
-  let rate = 25 * (bucket + 1) in
-  let seed2 = mask_i(gold, canvas, flags, triple(seed, mid, rate), 0) in
+  let seed2 =
+    if irem(seed, 3) == 0 then
+      mask_i(gold, canvas, flags, triple(seed, mid, 50), 0)
+    else
+      let cut = 1 + irem(seed, ctx(0) - 1) in
+      let _ = mask_from(canvas, flags, mid, cut, 0) in
+      rng_next(seed) in
   let _ = forward_train(m, canvas, flags) in
   let acc = acc4(0) in
   let _ = train_at(m, gold, flags, 0, acc) in
@@ -1074,7 +1089,7 @@ let denoise_go(m, canvas, left, kmax) =
     else
       let _ = forward(m, canvas) in
       let _ = fill_pc(m, canvas, mid, 0) in
-      let ntake = if left == 1 then nm else (nm + left - 1) / left in
+      let ntake = if left == 1 then nm else 1 in
       let _ = unveil_n(m, canvas, mid, ntake) in
       denoise_go(m, canvas, left - 1, kmax)
 
