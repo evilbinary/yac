@@ -105,7 +105,7 @@ IEEE f64 已经能用，第一版仍然以**整数下标 + 可选定点 logits**
 
 现有 `transformer/` 是 **causal**：位置 t 只看 0..t，最后只读出 t=T-1 的 logits。快照必须改掉这两点。
 
-- 特征：袋用冻结 E（初值近 one-hot，回传会搅乱）+ 相对偏移 hash + 紧邻 one-hot。中段洞也计损失。只训 Wout。
+- 特征：袋用冻结 E + 邻对合取 hash \((L,R)\) / \((L_2,L_1)\) + 紧邻 one-hot。损失只计离可见字 ≤1 格的洞（纯邻格）。只训 Wout。
 - 读出 softmax 用 \(2^{-\lfloor(-\Delta\ell)/2\rfloor}\)（峰 32）。邻字 PMI 只有几个 logit，/5 会整表打平。Wout 用 Adam，梯度 \(S(p-\mathrm{onehot})\)，\(g_1=g_i/4\)。V≤256 扫整表。不训 E / QKV。训练只给 MASK 格写 logits。
 - 读出：**每个位置各自一份 logits**，`logits[i][v]` = 位置 i 填词 v 的分数。一次前向是 T 个分类头，不是 1 个。
 - 结构仍保持玩具级，便于在原生 yc 里跑通：

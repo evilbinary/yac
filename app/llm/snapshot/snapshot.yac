@@ -24,8 +24,8 @@ import io
 /* 定点尺度 S。真实 1.0 ↔ 整数 64。 */
 let sc(_) = 64
 
-/* 模型宽度：词表 one-hot 袋 + 左邻 + 右邻（各 vocab_cap 维）。
- * d=16 hashed BOW 把 120 字压进 15 桶，窗口不可分，线性读出只能退回 unigram。 */
+/* 模型宽度：三块各 vocab_cap 维：冻结袋 E、邻对合取 hash、紧邻 one-hot。
+ * 相对 (id,偏移) hash 碰撞后几乎是噪声，让给 (L,R)/(L2,L1) 合取。 */
 let dim(_) = 360
 
 /* √d 的整数近似，注意力分数除 S·nsq。 */
@@ -536,16 +536,14 @@ let nearest(m, ids, j, step) =
   else if nth(ids, j) == mask_id(m) then 0 - 1
   else nth(ids, j)
 
-/* 可见字写入 H[t]：0..cap-1 袋计数，cap..2cap-1 为 (id, j−t) hash。
- * 每个 MASK 格都能看见整张底片，H 随 t 变，同一快门上分数才能不同。 */
-/* dst[0,last) += src。袋用 E 而不是纯 one-hot。 */
+/* dst[0,last) += src。袋用冻结 E，不反传。 */
 let add_e(dst, src, k, last) =
   if k >= last then 0
   else
     let _ = list_set(dst, k, nth(dst, k) + nth(src, k)) in
     add_e(dst, src, k + 1, last)
 
-/* 可见字写入 H[t]：0..cap-1 为 E[id] 之和，cap..2cap-1 为 (id, j−t) hash。 */
+/* 可见字写入 H[t]：0..cap-1 为冻结 E[id] 之和。邻对在 mark_conj，不在这里。 */
 let vis_add(m, ids, t, j, n) =
   if j >= ctx(0) then n
   else if nth(ids, j) == mask_id(m) then vis_add(m, ids, t, j + 1, n)
@@ -555,11 +553,7 @@ let vis_add(m, ids, t, j, n) =
     let h = nth(nth(m, 11), t) in
     let _ =
       if id >= cap then 0
-      else
-        let _ = add_e(h, nth(nth(m, 0), id), 0, cap) in
-        let off = j - t + ctx(0) in
-        let rk = cap + irem(id * 16 + off, cap) in
-        list_set(h, rk, nth(h, rk) + sc(0)) in
+      else add_e(h, nth(nth(m, 0), id), 0, cap) in
     vis_add(m, ids, t, j + 1, n + 1)
 
 /* 紧邻可见字：写进第三块 one-hot（尺度 S，不参与袋的平均）。
@@ -577,7 +571,28 @@ let mark_adj(m, ids, t) =
   else if R >= cap then 0
   else list_set(h, cap + cap + R, nth(h, cap + cap + R) + sc(0) / 2)
 
-/* H[t] = 可见袋平均 + 相对位置 hash + 紧邻（焦内）。 */
+/* 邻对合取：同一格同时看见两个邻字，Wout 才能学 PMI，加性 L+R 做不到。
+ * 两侧都在用 (L,R)；缺右邻用 (L2,L1)；缺左邻用 (R,R2)。尺度 S，不经袋平均。 */
+let write_conj(h, cap, a, b) =
+  if a < 0 then 0
+  else if b < 0 then 0
+  else if a >= cap then 0
+  else if b >= cap then 0
+  else
+    let rk = cap + irem(a * 17 + b * 13, cap) in
+    list_set(h, rk, nth(h, rk) + sc(0))
+
+let mark_conj(m, ids, t) =
+  let cap = vocab_cap(0) in
+  let h = nth(nth(m, 11), t) in
+  let L = nearest(m, ids, t - 1, 0) in
+  let R = nearest(m, ids, t + 1, 1) in
+  if L >= 0 then
+    if R >= 0 then write_conj(h, cap, L, R)
+    else write_conj(h, cap, nearest(m, ids, t - 2, 0), L)
+  else write_conj(h, cap, R, nearest(m, ids, t + 2, 1))
+
+/* H[t] = 可见袋平均 + 邻对合取 + 紧邻 one-hot（焦内）。 */
 let bow_t(m, ids, t) =
   if t >= ctx(0) then 0
   else
@@ -587,6 +602,7 @@ let bow_t(m, ids, t) =
     let d = if n0 < 1 then 1 else n0 in
     let _ = div_row(h, d, 0) in
     let _ = mark_adj(m, ids, t) in
+    let _ = mark_conj(m, ids, t) in
     bow_t(m, ids, t + 1)
 
 /* X → Q/K/V；MASK 的 K/V 清零。加权平均用 embedding 本身当 key/value。 */
@@ -911,10 +927,24 @@ let h_nz(h, i) =
   else if nth(h, i) != 0 then 1
   else h_nz(h, i + 1)
 
-/* 只在 flags[t]=1 做交叉熵。中段洞也计损失（同一快门上要有分数）。 */
+/* 训练/验证只计焦点附近：离最近可见字超过这么多格的洞不回传。 */
+let fov_r(_) = 1
+
+/* 洞 t 到最近可见字的距离。best 初值用大数。 */
+let vis_dist(gold, flags, t, j, best) =
+  if j >= ctx(0) then best
+  else if nth(flags, j) == 1 then vis_dist(gold, flags, t, j + 1, best)
+  else
+    let d = j - t in
+    let ad = if d < 0 then 0 - d else d in
+    let b2 = if ad < best then ad else best in
+    vis_dist(gold, flags, t, j + 1, b2)
+
+/* 只在 flags[t]=1 且落在焦点半径内做交叉熵（和显影光圈对齐）。 */
 let train_at(m, gold, flags, t, acc) =
   if t >= ctx(0) then acc
   else if nth(flags, t) == 0 then train_at(m, gold, flags, t + 1, acc)
+  else if vis_dist(gold, flags, t, 0, 99) > fov_r(0) then train_at(m, gold, flags, t + 1, acc)
   else
     let y = nth(gold, t) in
     let z0 = sm_row(m, t) in
@@ -941,6 +971,7 @@ let train_at(m, gold, flags, t, acc) =
 let eval_at(m, gold, flags, t, bun) =
   if t >= ctx(0) then 0
   else if nth(flags, t) == 0 then eval_at(m, gold, flags, t + 1, bun)
+  else if vis_dist(gold, flags, t, 0, 99) > fov_r(0) then eval_at(m, gold, flags, t + 1, bun)
   else
     let y = nth(gold, t) in
     let p = argmax(nth(nth(m, 12), t)) in

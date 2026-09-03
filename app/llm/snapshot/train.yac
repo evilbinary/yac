@@ -416,7 +416,7 @@ let rc =
         [ntok(m), tlen, n, ntr, nuse - ntr])) in
       let _ = print(format("vocab  top-%d + MASK  (rare chars dropped)", [vocab_cap(0)])) in
       let _ = print(str_cat("corpus  ", path)) in
-      let _ = print(format("opt  bag=E-frozen  rel+adj  fovea  save every %d ep", [save_every(0)])) in
+      let _ = print(format("opt  fov-loss r=1  bag+conj+adj  save every %d ep", [save_every(0)])) in
       let _ = print("--- train (random MASK, generate) ---") in
       let st = st5(0, epochs, train_lim, 1, train_lim) in
       let _ = list_push(st, test_end) in
