@@ -3,7 +3,7 @@
  * 一次 forward 只读画布 ids[0..T)，写出每个位置的 logits；揭 MASK 在返回后提交。
  * 注意力全双向（无因果遮罩）。词表末项是 MASK（显示为 ░）。
  *
- * m：0 E  1 Wq1  2 Wk1  3 Wv1  4 Wout
+ * m：0 E  1 Wq1  2 Wk1  3 Wv1  4 Wout（d·V 个 f64，bytes + mem_ref）
  *    5 X  6 Q   7 K   8 V   9 score  10 α
  *    11 H(T×d)  12 logits(T×V)  13 w(V)  14 vocab
  *    15 pred(T)  16 conf(T)  17 字频  18 Adam m  19 Adam v
@@ -280,22 +280,35 @@ let mat_rand(W, i, seed, mag) =
     let seed2 = fill_rand(nth(W, i), 0, seed, mag) in
     mat_rand(W, i + 1, seed2, mag)
 
-/* Wout 初值 f64 ∈ [-mag, mag]。 */
-let fill_rand_f(row, i, seed, mag) =
-  if i >= len(row) then seed
+/* n 个 IEEE f64，连续 bytes。k=16。 */
+let f64s(n) =
+  let b = bytes_new() in
+  if n <= 0 then b
+  else
+    let _ = bytes_put(b, n * 8 - 1, 0) in
+    b
+
+let fget(b, i) = mem_ref(b, i * 8, 16)
+
+let fset(b, i, x) = mem_put(b, i * 8, 16, x)
+
+/* 一块最多 256，避免 d·V 一层递归。 */
+let fill_rand_blk(W, i, end, seed, mag) =
+  if i >= end then seed
   else
     let seed2 = rng_next(seed) in
     let r = (irem(seed2, mag + mag + 1) - mag) * 1.0 in
-    let _ = list_set(row, i, r) in
-    fill_rand_f(row, i + 1, seed2, mag)
+    let _ = fset(W, i, r) in
+    fill_rand_blk(W, i + 1, end, seed2, mag)
 
-let mat_rand_f(W, i, seed, mag) =
-  if i >= len(W) then seed
+let fill_rand_all(W, i, n, seed, mag) =
+  if i >= n then seed
   else
-    let seed2 = fill_rand_f(nth(W, i), 0, seed, mag) in
-    mat_rand_f(W, i + 1, seed2, mag)
+    let end0 = i + 256 in
+    let end = if end0 > n then n else end0 in
+    fill_rand_all(W, end, n, fill_rand_blk(W, i, end, seed, mag), mag)
 
-/* 分配权重与前向缓存。前向只用 E+Wout；QKV 占位 1×1，避免 6 张 784² 把 infer 撑爆。 */
+/* 分配权重与前向缓存。前向只用 E+Wout；QKV / 旧 Adam 表占位 1×1。 */
 let model_new(vocab, seed) =
   let v = len(vocab) in
   let d = dim(0) in
@@ -303,10 +316,10 @@ let model_new(vocab, seed) =
   let s = sc(0) in
   let E = mat(v, d) in
   let tiny = mat(1, 1) in
-  let Wout = mat(d, v) in
+  let Wout = f64s(d * v) in
   let _ = mat_rand(E, 0, seed, 2) in
   let _ = e_spike(E, 0, vocab_cap(0), s) in
-  let _ = mat_rand_f(Wout, 0, seed + 4, 2) in
+  let _ = fill_rand_all(Wout, 0, d * v, seed + 4, 2) in
   let m = list_new() in
   let _ = list_push(m, E) in
   let _ = list_push(m, tiny) in
@@ -326,8 +339,8 @@ let model_new(vocab, seed) =
   let _ = list_push(m, fill(t, 0)) in
   let _ = list_push(m, fill(t, 0)) in
   let _ = list_push(m, fill(v, 0)) in
-  let _ = list_push(m, mat(d, v)) in
-  let _ = list_push(m, mat(d, v)) in
+  let _ = list_push(m, tiny) in
+  let _ = list_push(m, tiny) in
   let _ = list_push(m, tiny) in
   let _ = list_push(m, tiny) in
   let _ = list_push(m, tiny) in
@@ -537,28 +550,28 @@ let attn_pos(m, ids, t) =
     let _ = copy_row(nth(nth(m, 23), t), nth(m, 10), 0) in
     attn_pos(m, ids, t + 1)
 
-/* y[j] += src[j] · sca / s。H 稀疏时只对非零行调用。 */
-let add_row_s(src, dst, sca, s, j) =
+/* y[j] += W[base+j] · sca。W 是平坦 f64。 */
+let add_row_s(W, base, dst, sca, j) =
   if j >= len(dst) then 0
   else
-    let _ = list_set(dst, j, nth(dst, j) + nth(src, j) * sca / s) in
-    add_row_s(src, dst, sca, s, j + 1)
+    let _ = list_set(dst, j, nth(dst, j) + fget(W, base + j) * sca) in
+    add_row_s(W, base, dst, sca, j + 1)
 
-/* y = (x W)/S，跳过 x[i]=0 的行。 */
-let mv_nz(W, x, y, i, s) =
+/* y = x W，跳过 x[i]≤0（袋/邻/位置都 ≥0）。int 0 和 0.0 都会跳。 */
+let mv_nz(W, x, y, i, v) =
   if i >= len(x) then 0
   else
     let xi = nth(x, i) in
-    let _ = if xi == 0 then 0 else add_row_s(nth(W, i), y, xi, s, 0) in
-    mv_nz(W, x, y, i + 1, s)
+    let _ = if xi > 0.0 then add_row_s(W, i * v, y, xi, 0) else 0 in
+    mv_nz(W, x, y, i + 1, v)
 
-/* logits[t] = H[t] Wout / S。每个位置一份词表分数。 */
+/* logits[t] = H[t] Wout。每个位置一份词表分数。 */
 let write_logits(m, t) =
   if t >= ctx(0) then 0
   else
     let y = nth(nth(m, 12), t) in
     let _ = zero_row(y, 0) in
-    let _ = mv_nz(nth(m, 4), nth(nth(m, 11), t), y, 0, 1.0) in
+    let _ = mv_nz(nth(m, 4), nth(nth(m, 11), t), y, 0, ntok(m)) in
     write_logits(m, t + 1)
 
 /* 训练：只给 flags=1 的格子写 logits。 */
@@ -570,7 +583,7 @@ let write_logits_f(m, flags, t) =
       else
         let y = nth(nth(m, 12), t) in
         let _ = zero_row(y, 0) in
-        mv_nz(nth(m, 4), nth(nth(m, 11), t), y, 0, 1.0) in
+        mv_nz(nth(m, 4), nth(nth(m, 11), t), y, 0, ntok(m)) in
     write_logits_f(m, flags, t + 1)
 
 /* dst[k] += src[k]。 */
@@ -729,10 +742,11 @@ let clip(x, lo, hi) =
   else if x > hi then hi
   else x
 
-/* 一格 SGD：W[i][j] -= lr · H[i] · g[j]。全表 Adam 的 boxed f64 一步要十几分钟。 */
+/* 一格 SGD：W[i·V+j] -= lr · H[i] · g[j]。 */
 let adam_cell(m, i, j, gi) =
-  let wr = nth(nth(m, 4), i) in
-  list_set(wr, j, nth(wr, j) - 0.05 * gi)
+  let W = nth(m, 4) in
+  let k = i * ntok(m) + j in
+  fset(W, k, fget(W, k) - 0.05 * gi)
 
 /* Wout 外积：g 先 clip 到 ±256，|g|<2 跳过。x 是该位置的 H。 */
 let adam_w(m, x, g, i, j) =
@@ -777,10 +791,10 @@ let outer_w(W, x, g, i, den) =
     let _ = outer_wj(nth(W, i), nth(x, i), g, 0, den) in
     outer_w(W, x, g, i + 1, den)
 
-/* dh[k] = Σ_j Wout[k][j] g[j]（未除 den）。 */
+/* dh[k] = Σ_j Wout[k·V+j] g[j]（未除 den）。 */
 let dh_k(W, g, k, j, acc) =
   if j >= len(g) then acc
-  else dh_k(W, g, k, j + 1, acc + nth(nth(W, k), j) * nth(g, j))
+  else dh_k(W, g, k, j + 1, acc + fget(W, k * len(g) + j) * nth(g, j))
 
 /* 只改袋那一段 E[id][0..cap)。den 要大，否则以前会把 H 搅乱。 */
 let embed_bag(m, id, den, k) =
@@ -1471,34 +1485,36 @@ let emit_mat(b, W, i) =
     let _ = emit_row(b, nth(W, i), 0) in
     emit_mat(b, W, i + 1)
 
-/* Wout：微单位整数（×1e6）。 */
+/* Wout：微单位整数（×1e6），平坦 d×V。 */
 let emit_sp_f(b, x) =
   let _ = bytes_append(b, 32) in
   put_int(b, ftoi(x * 1000000.0))
 
-let emit_row_f(b, row, j) =
-  if j >= len(row) then bytes_append(b, 10)
+let emit_w_row(b, W, base, j, n) =
+  if j >= n then bytes_append(b, 10)
   else
-    let _ = emit_sp_f(b, nth(row, j)) in
-    emit_row_f(b, row, j + 1)
+    let _ = emit_sp_f(b, fget(W, base + j)) in
+    emit_w_row(b, W, base, j + 1, n)
 
-let emit_mat_f(b, W, i) =
-  if i >= len(W) then 0
+let emit_wout(b, W, i, d, v) =
+  if i >= d then 0
   else
-    let _ = emit_row_f(b, nth(W, i), 0) in
-    emit_mat_f(b, W, i + 1)
+    let _ = emit_w_row(b, W, i * v, 0, v) in
+    emit_wout(b, W, i + 1, d, v)
 
-let scale_row(row, j) =
-  if j >= len(row) then 0
+let scale_w_blk(W, i, end) =
+  if i >= end then 0
   else
-    let _ = list_set(row, j, nth(row, j) * 1.0 / 1000000.0) in
-    scale_row(row, j + 1)
+    let _ = fset(W, i, fget(W, i) * 1.0 / 1000000.0) in
+    scale_w_blk(W, i + 1, end)
 
-let scale_mat(W, i) =
-  if i >= len(W) then 0
+let scale_wout(W, i, n) =
+  if i >= n then 0
   else
-    let _ = scale_row(nth(W, i), 0) in
-    scale_mat(W, i + 1)
+    let end0 = i + 256 in
+    let end = if end0 > n then n else end0 in
+    let _ = scale_w_blk(W, i, end) in
+    scale_wout(W, end, n)
 
 let next_int(s, n, i) =
   let i2 = skip_ws(s, i, n) in
@@ -1506,6 +1522,21 @@ let next_int(s, n, i) =
 
 /* src = [文本, 长度]。传 list 避免每层递归拷贝整份 .w。 */
 let next_src(src, i) = next_int(nth(src, 0), nth(src, 1), i)
+
+let fill_w_k(W, src, j, p, k) =
+  if k <= 0 then p
+  else
+    let r = next_src(src, p) in
+    let _ = fset(W, j, nth(r, 0) * 1.0) in
+    fill_w_k(W, src, j + 1, nth(r, 1), k - 1)
+
+let fill_wout(W, src, j, n, p) =
+  if j >= n then p
+  else
+    let left = n - j in
+    let k = if left < 32 then left else 32 in
+    let p2 = fill_w_k(W, src, j, p, k) in
+    fill_wout(W, src, j + k, n, p2)
 
 let fill_row_k(row, src, j, p, k) =
   if k <= 0 then p
@@ -1611,7 +1642,7 @@ let save_model(m, path) =
   let b = bytes_new() in
   let _ = emit_ints(b, acc, 0) in
   let _ = emit_mat(b, nth(m, 0), 0) in
-  let _ = emit_mat_f(b, nth(m, 4), 0) in
+  let _ = emit_wout(b, nth(m, 4), 0, dim(0), ntok(m)) in
   write(path, b)
 
 /* 入参是路径。必须 import fmt：否则 format 变成 ncap，跨包调用会把 path 塞进 capture 槽。 */
@@ -1638,6 +1669,7 @@ let load_model(path) =
       let vt = read_vocab_s(nth(src, 0), n, nth(r3, 1), nth(r0, 0), list_new()) in
       let m = model_new(nth(vt, 0), 1) in
       let p0 = fill_mats(nth(m, 0), src, 0, nth(vt, 1)) in
-      let _ = fill_mats(nth(m, 4), src, 0, p0) in
-      let _ = scale_mat(nth(m, 4), 0) in
+      let nw = dim(0) * nth(r0, 0) in
+      let _ = fill_wout(nth(m, 4), src, 0, nw, p0) in
+      let _ = scale_wout(nth(m, 4), 0, nw) in
       m
