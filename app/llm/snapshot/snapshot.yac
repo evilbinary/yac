@@ -7,7 +7,8 @@
  *    5 X  6 Q   7 K   8 V   9 score  10 α
  *    11 H(T×d)  12 logits(T×V)  13 w(V)  14 vocab
  *    15 pred(T)  16 conf(T)  17 字频  18 Adam m  19 Adam v
- *    20 Wq2  21 Wk2  22 Wv2  23 α全图(T×T)  24 dh(d)
+ *    20 Wq2  21 Wk2  22 Wv2  23 α全图(T×T)  24 gw-mark(d)
+ *    25 gW  26 [tstep, gen, bc1, bc2]
  *
  *   make -C app llm-snapshot
  *   --pkg 含 app/llm/snapshot
@@ -316,10 +317,14 @@ let model_new(vocab, seed) =
   let s = sc(0) in
   let E = mat(v, d) in
   let tiny = mat(1, 1) in
-  let Wout = f64s(d * v) in
+  let nv = d * v in
+  let Wout = f64s(nv) in
+  let am = f64s(nv) in
+  let av = f64s(nv) in
+  let gw = f64s(nv) in
   let _ = mat_rand(E, 0, seed, 2) in
   let _ = e_spike(E, 0, vocab_cap(0), s) in
-  let _ = fill_rand_all(Wout, 0, d * v, seed + 4, 2) in
+  let _ = fill_rand_all(Wout, 0, nv, seed + 4, 2) in
   let m = list_new() in
   let _ = list_push(m, E) in
   let _ = list_push(m, tiny) in
@@ -339,13 +344,15 @@ let model_new(vocab, seed) =
   let _ = list_push(m, fill(t, 0)) in
   let _ = list_push(m, fill(t, 0)) in
   let _ = list_push(m, fill(v, 0)) in
-  let _ = list_push(m, tiny) in
-  let _ = list_push(m, tiny) in
+  let _ = list_push(m, am) in
+  let _ = list_push(m, av) in
   let _ = list_push(m, tiny) in
   let _ = list_push(m, tiny) in
   let _ = list_push(m, tiny) in
   let _ = list_push(m, mat(t, t)) in
   let _ = list_push(m, fill(d, 0)) in
+  let _ = list_push(m, gw) in
+  let _ = list_push(m, fill(4, 0)) in
   m
 
 /* a·b = Σ_i a[i] b[i]（未除 S，调用方再除）。 */
@@ -414,15 +421,24 @@ let copy_h_x(m, t) =
     let _ = copy_row(nth(nth(m, 5), t), nth(nth(m, 11), t), 0) in
     copy_h_x(m, t + 1)
 
-/* (1+x/8)^8 ≈ e^x，softmax 的 x≤0。 */
+/* (1+x/16)^16，比 /8 更接近 e^x。 */
 let fexp(x) =
-  if x < 0.0 - 16.0 then 0.0
+  if x < 0.0 - 20.0 then 0.0
   else if x > 16.0 then fexp(16.0)
   else
-    let y = 1.0 + x / 8.0 in
+    let y = 1.0 + x / 16.0 in
     let y2 = y * y in
     let y4 = y2 * y2 in
-    y4 * y4
+    let y8 = y4 * y4 in
+    y8 * y8
+
+let fpow_go(a, n, acc) =
+  if n <= 0 then acc
+  else fpow_go(a, n - 1, acc * a)
+
+let fpow(a, n) =
+  if n <= 0 then 1.0
+  else fpow_go(a, n, 1.0)
 
 let fsqrt_go(x, g, i) =
   if i <= 0 then g
@@ -550,9 +566,9 @@ let attn_pos(m, ids, t) =
     let _ = copy_row(nth(nth(m, 23), t), nth(m, 10), 0) in
     attn_pos(m, ids, t + 1)
 
-/* y[j] += W[base+j] · sca。W 是平坦 f64。 */
+/* y[j] += W[base+j] · sca。只写到 MASK 前一列。 */
 let add_row_s(W, base, dst, sca, j) =
-  if j >= len(dst) then 0
+  if j >= len(dst) - 1 then 0
   else
     let _ = list_set(dst, j, nth(dst, j) + fget(W, base + j) * sca) in
     add_row_s(W, base, dst, sca, j + 1)
@@ -742,11 +758,80 @@ let clip(x, lo, hi) =
   else if x > hi then hi
   else x
 
-/* 一格 SGD：W[i·V+j] -= lr · H[i] · g[j]。 */
+/* 一格 SGD 已不用；窗口末尾 Adam(mean g)。 */
+let zero_wrow(W, base, j, n) =
+  if j >= n then 0
+  else
+    let _ = fset(W, base + j, 0.0) in
+    zero_wrow(W, base, j + 1, n)
+
+let gw_prep(m, i) =
+  let st = nth(m, 26) in
+  let gen = nth(st, 1) in
+  let mk = nth(m, 24) in
+  if nth(mk, i) == gen then 0
+  else
+    let _ = list_set(mk, i, gen) in
+    zero_wrow(nth(m, 25), i * ntok(m), 0, ntok(m) - 1)
+
+let gw_row_j(m, i, xi, g, j) =
+  if j >= ntok(m) - 1 then 0
+  else
+    let k = i * ntok(m) + j in
+    let gw = nth(m, 25) in
+    let _ = fset(gw, k, fget(gw, k) + xi * nth(g, j)) in
+    gw_row_j(m, i, xi, g, j + 1)
+
+let gw_hi(m, x, g, i) =
+  if i >= len(x) then 0
+  else
+    let xi = nth(x, i) in
+    let _ =
+      if xi > 0.0 then
+        let _ = gw_prep(m, i) in
+        gw_row_j(m, i, xi, g, 0)
+      else 0 in
+    gw_hi(m, x, g, i + 1)
+
+let adam_one_j(m, i, invn, j) =
+  if j >= ntok(m) - 1 then 0
+  else
+    let k = i * ntok(m) + j in
+    let st = nth(m, 26) in
+    let g = fget(nth(m, 25), k) * invn in
+    let mm = 0.9 * fget(nth(m, 18), k) + 0.1 * g in
+    let vv = 0.999 * fget(nth(m, 19), k) + 0.001 * g * g in
+    let _ = fset(nth(m, 18), k, mm) in
+    let _ = fset(nth(m, 19), k, vv) in
+    let mh = mm / nth(st, 2) in
+    let vh = vv / nth(st, 3) in
+    let _ = fset(nth(m, 4), k, fget(nth(m, 4), k) - 0.02 * mh / (fsqrt(vh) + 0.00000001)) in
+    adam_one_j(m, i, invn, j + 1)
+
+let adam_rows(m, i, gen, invn) =
+  if i >= dim(0) then 0
+  else if nth(nth(m, 24), i) != gen then adam_rows(m, i + 1, gen, invn)
+  else
+    let _ = adam_one_j(m, i, invn, 0) in
+    adam_rows(m, i + 1, gen, invn)
+
+let adam_win(m, nh) =
+  if nh < 1 then 0
+  else
+    let st = nth(m, 26) in
+    let t = nth(st, 0) + 1 in
+    let _ = list_set(st, 0, t) in
+    let _ = list_set(st, 2, 1.0 - fpow(0.9, t)) in
+    let _ = list_set(st, 3, 1.0 - fpow(0.999, t)) in
+    adam_rows(m, 0, nth(st, 1), 1.0 / (nh * 1.0))
+
+let bump_gen(m) =
+  let st = nth(m, 26) in
+  list_set(st, 1, nth(st, 1) + 1)
+
 let adam_cell(m, i, j, gi) =
-  let W = nth(m, 4) in
   let k = i * ntok(m) + j in
-  fset(W, k, fget(W, k) - 0.05 * gi)
+  fset(nth(m, 4), k, fget(nth(m, 4), k) - 0.02 * gi)
 
 /* Wout 外积：g 先 clip 到 ±256，|g|<2 跳过。x 是该位置的 H。 */
 let adam_w(m, x, g, i, j) =
@@ -1060,7 +1145,7 @@ let train_at(m, gold, flags, t, acc) =
     let h = nth(nth(m, 11), t) in
     let w = nth(m, 13) in
     let _ = g_fill(w, y, z, 0, ntok(m)) in
-    let _ = adam_hi(m, h, w, 0) in
+    let _ = gw_hi(m, h, w, 0) in
     let fr = nth(m, 17) in
     let _ = list_set(fr, y, nth(fr, y) + 1) in
     let _ = list_set(acc, 0, nth(acc, 0) + hit) in
@@ -1120,9 +1205,11 @@ let train_step(m, ids, pos, seed, lr) =
       let cut = 1 + irem(seed, ctx(0) - 1) in
       let _ = mask_from(canvas, flags, mid, cut, 0) in
       rng_next(seed) in
+  let _ = bump_gen(m) in
   let _ = forward_train(m, canvas, flags) in
   let acc = acc4(0) in
   let _ = train_at(m, gold, flags, 0, acc) in
+  let _ = adam_win(m, nth(acc, 1)) in
   let _ = list_push(acc, seed2) in
   acc
 
@@ -1158,10 +1245,12 @@ let train_step_chat(m, gold, u, seed, lr) =
   let flags = flags_new(0) in
   let rate = 25 * (irem(seed, 3) + 1) in
   let seed2 = mask_i(gold, canvas, flags, triple(seed, mid, rate), 0) in
+  let _ = bump_gen(m) in
   let _ = restore_user(gold, canvas, flags, u, 0) in
   let _ = forward_train(m, canvas, flags) in
   let acc = acc4(0) in
   let _ = train_at(m, gold, flags, 0, acc) in
+  let _ = adam_win(m, nth(acc, 1)) in
   let _ = list_push(acc, seed2) in
   acc
 
