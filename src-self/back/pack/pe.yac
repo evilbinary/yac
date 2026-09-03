@@ -280,7 +280,63 @@ let pe_bump(out, text_off) =
   let _ = pe_le32(out, pad - text_off, 400) in
   pe_le32(out, pad - text_off, 408)
 
-let pe_write_exports(out, text_off, exps) =
+let pe_str_lt(a, b) =
+  let rec(i) =
+    let la = str_len(a) in
+    let lb = str_len(b) in
+    if i >= la then la != lb
+    else if i >= lb then false
+    else
+      let ca = str_ref(a, i) in
+      let cb = str_ref(b, i) in
+      if ca < cb then true
+      else if ca > cb then false
+      else rec(i + 1) in
+  rec(0)
+
+let pe_exp_has(xs, name) =
+  let rec(i) =
+    if i >= len(xs) then false
+    else if nth(nth(xs, i), 0) == name then true
+    else rec(i + 1) in
+  rec(0)
+
+let pe_uniq_exps(xs) =
+  let out = list_new() in
+  let rec(i) =
+    if i >= len(xs) then out
+    else
+      let e = nth(xs, i) in
+      let _ = if pe_exp_has(out, nth(e, 0)) then 0 else list_push(out, e) in
+      rec(i + 1) in
+  rec(0)
+
+let pe_min_exp(xs, i, m) =
+  if i >= len(xs) then m
+  else if pe_str_lt(nth(nth(xs, i), 0), nth(nth(xs, m), 0)) then pe_min_exp(xs, i + 1, i)
+  else pe_min_exp(xs, i + 1, m)
+
+let pe_drop_i(xs, skip) =
+  let out = list_new() in
+  let rec(i) =
+    if i >= len(xs) then out
+    else
+      let _ = if i == skip then 0 else list_push(out, nth(xs, i)) in
+      rec(i + 1) in
+  rec(0)
+
+let pe_sort_exps(xs) =
+  let acc = list_new() in
+  let rec(rest) =
+    if len(rest) == 0 then acc
+    else
+      let m = pe_min_exp(rest, 0, 0) in
+      let _ = list_push(acc, nth(rest, m)) in
+      rec(pe_drop_i(rest, m)) in
+  rec(xs)
+
+let pe_write_exports(out, text_off, exps0) =
+  let exps = pe_sort_exps(pe_uniq_exps(exps0)) in
   let n = len(exps) in
   if n == 0 then 0
   else

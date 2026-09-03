@@ -90,6 +90,25 @@ let cabi_rv_shl(b, j, n) =
     let _ = rv_slli(b, r, r, 1) in
     cabi_rv_shl(b, j + 1, n)
 
+let cabi_win_to_sysv(b, n) =
+  if emit_abi_win(0) == false then 0
+  else if n <= 0 then 0
+  else
+    let _ = mov_r64_r64(b, 7, 1) in
+    if n == 1 then 0
+    else
+      let _ = mov_r64_r64(b, 6, 2) in
+      if n == 2 then 0
+      else
+        let _ = e8(b, 76) in
+        let _ = e8(b, 137) in
+        let _ = e8(b, 194) in
+        if n == 3 then 0
+        else
+          let _ = e8(b, 76) in
+          let _ = e8(b, 137) in
+          e8(b, 201)
+
 let emit_cabi_stub_x86(b, ids, ps, name, nargs) =
   let _ =
     if band(bytes_len(b), 1) == 0 then 0
@@ -98,6 +117,7 @@ let emit_cabi_stub_x86(b, ids, ps, name, nargs) =
   let _ = push_rbp(b) in
   let _ = mov_rbp_rsp(b) in
   let _ = cabi_shl_args(b, 0, nargs) in
+  let _ = cabi_win_to_sysv(b, nargs) in
   let cpos = bytes_len(b) + 1 in
   let _ = call_user(b) in
   let _ = sar_rax_1(b) in
@@ -143,15 +163,15 @@ let emit_yac_init_x86(b, ps) =
   let start = bytes_len(b) in
   let _ = push_rbp(b) in
   let _ = mov_rbp_rsp(b) in
-  let _ = xor_rax_rax(b) in
-  let _ = mov_rdi_rax(b) in
+  let _ = xor_rcx_rcx(b) in
   let _ = mov_rax_imm64(b, 0) in
   let ac = bytes_len(b) - 8 in
-  let _ = mov_mem_rax_rdi(b) in
+  let _ = mov_mem_rax_rcx(b) in
   let _ = mov_rax_imm64(b, 0) in
   let av = bytes_len(b) - 8 in
-  let _ = mov_mem_rax_rdi(b) in
-  let _ = xor_rax_rax(b) in
+  let _ = mov_mem_rax_rcx(b) in
+  /* DllMain must return TRUE; ELF DT_INIT ignores the value. */
+  let _ = mov_r64_imm(b, 0, 1) in
   let _ = pop_rbp(b) in
   let _ = ret(b) in
   let _ = list_push(ps, [4, ac]) in
@@ -171,6 +191,7 @@ let emit_yac_init_a64(b, ps) =
   let _ = a64_mov_imm64(b, 0, 0) in
   let _ = a64_str(b, 2, 0, 0) in
   let _ = a64_ldp_fp_lr(b) in
+  let _ = a64_movz(b, 0, 1, 0) in
   let _ = a64_ret(b) in
   let _ = list_push(ps, [4, ac]) in
   let _ = list_push(ps, [5, av]) in
@@ -190,6 +211,7 @@ let emit_yac_init_rv(b, ps) =
   let _ = rv_sd(b, 10, 6, 0) in
   let _ = rv_ld(b, 1, 2, 8) in
   let _ = rv_addi(b, 2, 2, 16) in
+  let _ = rv_addi(b, 10, 0, 1) in
   let _ = rv_jalr(b, 0, 1, 0) in
   let _ = list_push(ps, [4, ac]) in
   let _ = list_push(ps, [5, av]) in

@@ -883,6 +883,9 @@ let mov_rbx_mem_rax(b) =
 /* mov rax, [rax]  (48 8b 00) */
 let mov_rax_mem_rax(b) =
   let _ = e8(b, 72) in let _ = e8(b, 139) in e8(b, 0)
+/* mov [rax], rcx  (48 89 08) — Win64 DllMain must not clobber rdi. */
+let mov_mem_rax_rcx(b) =
+  let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 8)
 /* mov [rax], rdi  (48 89 38) */
 let mov_mem_rax_rdi(b) =
   let _ = e8(b, 72) in let _ = e8(b, 137) in e8(b, 56)

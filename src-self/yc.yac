@@ -313,7 +313,7 @@ let run_cli(pr) =
               let t = mk_target(an, fn, nth(spec, 2)) in
               let out0 = if out_opt == "" then default_out(inpath) else out_opt in
               let outpath =
-                if nth(spec, 2) == "dylib" then dylib_out(out0, fn)
+                if target_shared(t) then dylib_out(out0, fn)
                 else if fn == "pe" then pe_out(out0)
                 else out0 in
               let _ = if fl(spec, "syms") then syms_enable(1) else syms_enable(0) in

@@ -54,14 +54,17 @@ let native(p) =
   else if host_os(0) == "windows" then str_cat(p, ".exe")
   else p
 
-/* ELF .so can be mmap/dlopen'd on Linux. Windows host --shared is PE .dll. */
-let can_load_elf(_) = host_os(0) == "linux"
+let yc_pkg(bin) = append([bin], PKG)
+let yac_c(_) = append([native("./yac")], PKG)
+
+let on_win(_) = host_os(0) == "windows"
+let on_linux(_) = host_os(0) == "linux"
 
 let yc_elf_so(yc, src, out) =
   run(append(yc, [src, "--format", "elf", "--shared", "-o", out]))
 
-let yc_pkg(bin) = append([bin], PKG)
-let yac_c(_) = append([native("./yac")], PKG)
+let have_python3(_) =
+  nth(run(["sh", "-c", "command -v python3 >/dev/null 2>&1"]), 0) == 0
 
 let strip_cr(s) =
   let b = bytes_new() in
@@ -103,6 +106,36 @@ let check(st, name, want, got) =
     let _ = print(str_cat("  actual:   ", got)) in
     [pass, fail + 1]
 
+let shared_cdll(st, lib, tag) =
+  if have_python3(0) == false then st
+  else
+    let p = str_cat(TMP, "/cdll.py") in
+    let _ = write_file(p,
+      str_cat("import ctypes\nctypes.CDLL(\"", str_cat(lib, "\")\n"))) in
+    check(st, tag, "0", int_to_str(nth(run(["python3", p]), 0)))
+
+let shared_pyadd(st, lib, tag) =
+  if have_python3(0) == false then st
+  else
+    let p = str_cat(TMP, "/dadd.py") in
+    let _ = write_file(p,
+      str_cat("from ctypes import CDLL, c_int64\nl=CDLL(\"",
+        str_cat(lib, "\")\nl.add.argtypes=[c_int64,c_int64]\nl.add.restype=c_int64\nraise SystemExit(0 if l.add(2,3)==5 else 1)\n"))) in
+    check(st, tag, "0", int_to_str(nth(run(["python3", p]), 0)))
+
+let shared_ycadd(st, yc, lib, tag) =
+  let pdrv = str_cat(TMP, "/dadd_drv.yac") in
+  let _ = write_file(pdrv,
+    str_cat("import ffi\nlet h = load(\"",
+      str_cat(lib, "\")\nlet f = sym(h, \"add\")\nif ccall(f, 2, 3) == 5 then 42 else 0\n"))) in
+  let bdrv = native(str_cat(TMP, "/dadd_drv")) in
+  let _ = run(append(yc, [pdrv, "-o", bdrv])) in
+  if nth(run(["test", "-f", bdrv]), 0) != 0 then
+    check(st, tag, "wrote binary", "missing")
+  else
+    let _ = run(["chmod", "+x", bdrv]) in
+    check(st, tag, "42", int_to_str(nth(run([bdrv]), 0)))
+
 let contains(s, sub) =
   let n = str_len(s) in
   let m = str_len(sub) in
@@ -133,8 +166,6 @@ let interp_err(st, name, flags, path, needle) =
     else contains(blob, needle) in
   if ok then check(st, name, "1", "1")
   else check(st, name, needle, blob)
-
-let on_win(_) = host_os(0) == "windows"
 
 let last_slash(s, i, last) =
   if i >= str_len(s) then last
@@ -483,52 +514,36 @@ let compiler_all(st, yc) =
     else if str_len(sob) < 17 then 0
     else str_ref(sob, 16) in
   let st1so = check(st1jt, "elf --shared et_dyn", "3", int_to_str(et)) in
-  let pydl = str_cat(TMP, "/dlopen.py") in
-  let _ = write_file(pydl,
-    str_cat("import ctypes\nctypes.CDLL(\"", str_cat(so, "\")\n"))) in
-  let rdl = run(["python3", pydl]) in
-  let st1dl =
-    if can_load_elf(0) == false then st1so
-    else if nth(run(["sh", "-c", "command -v python3 >/dev/null 2>&1"]), 0) != 0 then st1so
-    else check(st1so, "elf --shared dlopen", "0", int_to_str(nth(rdl, 0))) in
   let soadd = str_cat(TMP, "/libdadd.so") in
   let _ = yc_elf_so(yc, case_src("dylib_add"), soadd) in
-  let pyadd = str_cat(TMP, "/dadd.py") in
-  let _ = write_file(pyadd,
-    str_cat("from ctypes import CDLL, c_int64\nl=CDLL(\"",
-      str_cat(soadd, "\")\nl.add.argtypes=[c_int64,c_int64]\nl.add.restype=c_int64\nraise SystemExit(0 if l.add(2,3)==5 else 1)\n"))) in
-  let radd = run(["python3", pyadd]) in
-  let st1ad =
-    if can_load_elf(0) == false then st1dl
-    else if nth(run(["sh", "-c", "command -v python3 >/dev/null 2>&1"]), 0) != 0 then st1dl
-    else check(st1dl, "elf --shared ccall add", "0", int_to_str(nth(radd, 0))) in
-  let pdrv = str_cat(TMP, "/dadd_drv.yac") in
-  let _ = write_file(pdrv,
-    str_cat("import ffi\nlet h = load(\"",
-      str_cat(soadd, "\")\nlet f = sym(h, \"add\")\nif ccall(f, 2, 3) == 5 then 42 else 0\n"))) in
-  let bdrv = native(str_cat(TMP, "/dadd_drv")) in
-  let st1dv =
-    if can_load_elf(0) == false then st1ad
+  let st1elf =
+    if on_linux(0) == false then st1so
     else
-      let _ = run(append(yc, [pdrv, "-o", bdrv])) in
-      let rdrv =
-        if nth(run(["test", "-f", bdrv]), 0) != 0 then [1, "", ""]
-        else
-          let _ = run(["chmod", "+x", bdrv]) in
-          run([bdrv]) in
-      check(st1ad, "elf --shared yc ccall add", "42", int_to_str(nth(rdrv, 0))) in
+      shared_ycadd(
+        shared_pyadd(
+          shared_cdll(st1so, so, "elf --shared dlopen"),
+          soadd, "elf --shared ccall add"),
+        yc, soadd, "elf --shared yc ccall add") in
   let pdef = str_cat(TMP, "/dlib.yac") in
   let _ = write_file(pdef, "42;\n") in
   let _ = run(append(yc, ["--format", "elf", "--shared", pdef])) in
   let defso = str_cat(TMP, "/dlib.so") in
-  let st1df = check(st1dv, "elf --shared default .so", "1",
+  let st1df = check(st1elf, "elf --shared default .so", "1",
                     if nth(run(["test", "-f", defso]), 0) == 0 then "1" else "0") in
   let dll = str_cat(TMP, "/libdadd.dll") in
   let _ = run(append(yc, [case_src("dylib_add"), "--format", "pe", "--shared", "-o", dll])) in
   let st1pe = check(st1df, "pe --shared dll", "1", if pe_dll_hdr(dll) then "1" else "0") in
+  let st1pe2 =
+    if on_win(0) == false then st1pe
+    else
+      shared_ycadd(
+        shared_pyadd(
+          shared_cdll(st1pe, dll, "pe --shared LoadLibrary"),
+          dll, "pe --shared ccall add"),
+        yc, dll, "pe --shared yc ccall add") in
   let dyl = str_cat(TMP, "/libdadd.dylib") in
   let _ = run(append(yc, [case_src("dylib_add"), "--format", "macho", "--shared", "-o", dyl])) in
-  let st1mo = check(st1pe, "macho --shared dylib", "1", if macho_dylib_hdr(dyl) then "1" else "0") in
+  let st1mo = check(st1pe2, "macho --shared dylib", "1", if macho_dylib_hdr(dyl) then "1" else "0") in
   let pdefpe = str_cat(TMP, "/dlibpe.yac") in
   let _ = write_file(pdefpe, "42;\n") in
   let _ = run(append(yc, ["--format", "pe", "--shared", pdefpe])) in
