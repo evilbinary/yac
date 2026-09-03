@@ -1,66 +1,13 @@
-/* dlib.yac — shared-library emit state (ELF .so / PE .dll / Mach-O .dylib).
- * PIC reloc slots are 8-byte VAs in the image; packers emit RELATIVE / BASE.
- * elf_* names are aliases so pack/emit keep calling the old identifiers.
+/* dlib.yac — aliases for PIC/export state defined in elf.yac.
+ * Keep this file after elf.yac in the compiler cat order.
  */
 
-let dlib_dynexp_box =
-  let b = box_new() in
-  let _ = box_set(b, []) in
-  b
-
-let dlib_dynexp_set(v) = box_set(dlib_dynexp_box, v)
-
-let dlib_dynexp_get(_) =
-  let v = box_get(dlib_dynexp_box) in
-  if v == 0 then [] else v
-
-let dlib_init_off_box =
-  let b = box_new() in
-  let _ = box_set(b, 0) in
-  b
-
-let dlib_init_off_set(n) = box_set(dlib_init_off_box, n)
-
-let dlib_init_off(_) = box_get(dlib_init_off_box)
-
-let dlib_pic_box =
-  let b = box_new() in
-  let _ = box_set(b, 0) in
-  b
-
-let dlib_relocs_box =
-  let b = box_new() in
-  let _ = box_set(b, 0) in
-  b
-
-let dlib_pic_set(on) = box_set(dlib_pic_box, on)
-
-let dlib_pic(_) =
-  let v = box_get(dlib_pic_box) in
-  if v == 0 then false else true
-
-let dlib_relocs_reset(_) =
-  let _ = box_set(dlib_relocs_box, list_new()) in
-  let _ = dlib_init_off_set(0) in
-  dlib_dynexp_set([])
-
-let dlib_relocs_get(_) =
-  let v = box_get(dlib_relocs_box) in
-  if v == 0 then list_new() else v
-
-let dlib_note_abs64(pos) =
-  if box_get(dlib_pic_box) == 0 then 0
-  else
-    let xs = box_get(dlib_relocs_box) in
-    if xs == 0 then 0
-    else list_push(xs, pos)
-
-let elf_dynexp_set(v) = dlib_dynexp_set(v)
-let elf_dynexp_get(_) = dlib_dynexp_get(0)
-let elf_init_off_set(n) = dlib_init_off_set(n)
-let elf_init_off(_) = dlib_init_off(0)
-let elf_pic_set(on) = dlib_pic_set(on)
-let elf_pic(_) = dlib_pic(0)
-let elf_relocs_reset(_) = dlib_relocs_reset(0)
-let elf_relocs_get(_) = dlib_relocs_get(0)
-let elf_note_abs64(pos) = dlib_note_abs64(pos)
+let dlib_dynexp_set(v) = elf_dynexp_set(v)
+let dlib_dynexp_get(_) = elf_dynexp_get(0)
+let dlib_init_off_set(n) = elf_init_off_set(n)
+let dlib_init_off(_) = elf_init_off(0)
+let dlib_pic_set(on) = elf_pic_set(on)
+let dlib_pic(_) = elf_pic(0)
+let dlib_relocs_reset(_) = elf_relocs_reset(0)
+let dlib_relocs_get(_) = elf_relocs_get(0)
+let dlib_note_abs64(pos) = elf_note_abs64(pos)
