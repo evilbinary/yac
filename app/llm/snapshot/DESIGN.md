@@ -105,8 +105,8 @@ IEEE f64 已经能用，第一版仍然以**整数下标 + 可选定点 logits**
 
 现有 `transformer/` 是 **causal**：位置 t 只看 0..t，最后只读出 t=T-1 的 logits。快照必须改掉这两点。
 
-- 注意力：embedding 当 Q/K/V，按 \(Q\cdot K\) 对可见字加权平均（MASK 的 score 打到条带外）。分数除 32，避免除 512 后全是 0。H 不加 \(E_░\) 残差，只加小位置。均匀权重时退化为 BOW。只训 Wout。
-- 读出 softmax 用 \(2^{-\lfloor(-\Delta\ell)/5\rfloor}\)（峰 32）。Wout 用 Adam，**只更新金标列和当前 argmax 列**（V 大时不要扫 2000 列表）。训练只给 MASK 格写 logits。不训 E / QKV。
+- 注意力：可见字均匀 BOW。H 不加位置。E 用 hashed one-hot + 最后一维常数偏置（零均值随机平均后 H≈0，Adam 不动）。只训 Wout。
+- 读出 softmax 用 \(2^{-\lfloor(-\Delta\ell)/5\rfloor}\)（峰 32）。Wout 用 Adam，梯度是 \(S(p-\mathrm{onehot})\)（不要用 \(w-z\cdot 1_y\)，clip 后会把高频字推下去）。V≤256 扫整表。不训 E / QKV。训练只给 MASK 格写 logits。
 - 读出：**每个位置各自一份 logits**，`logits[i][v]` = 位置 i 填词 v 的分数。一次前向是 T 个分类头，不是 1 个。
 - 结构仍保持玩具级，便于在原生 yc 里跑通：
 

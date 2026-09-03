@@ -184,6 +184,12 @@ let add_pos(x, t) =
   let _ = list_set(x, 0, nth(x, 0) + t) in
   list_set(x, 1, nth(x, 1) + t / 2)
 
+/* 把 token id 打进 embedding：前 d-1 维做 hashed one-hot，最后一维留给偏置。
+ * 纯零均值随机 E 平均后 H≈0，Adam 步长全是 0。 */
+let add_id_spike(row, id) =
+  let k = irem(id, dim(0) - 1) in
+  list_set(row, k, nth(row, k) + 24)
+
 /* 把一行清成 0。MASK 的 K/V 用这个，避免 ░ 当 key。 */
 let zero_row(row, k) =
   if k >= len(row) then 0
@@ -334,12 +340,13 @@ let mv_j(W, x, y, j, s) =
     let _ = list_set(y, j, mv_i(W, x, j, 0, 0) / s) in
     mv_j(W, x, y, j + 1, s)
 
-/* 位置 t：X[t] = E[id] + 位置（前 4 维）。QKV 另算。 */
+/* 位置 t：X[t] = E[id] + hashed one-hot。 */
 let embed_t(m, ids, t, n) =
   if t >= n then 0
   else
-    let _ = copy_row(nth(nth(m, 5), t), nth(nth(m, 0), nth(ids, t)), 0) in
-    let _ = add_pos(nth(nth(m, 5), t), t) in
+    let x = nth(nth(m, 5), t) in
+    let _ = copy_row(x, nth(nth(m, 0), nth(ids, t)), 0) in
+    let _ = add_id_spike(x, nth(ids, t)) in
     embed_t(m, ids, t + 1, n)
 
 /* 第 1 层 QKV。MASK 的 K/V 清零，避免一排░淹没可见字。 */
@@ -452,7 +459,6 @@ let attn_pos(m, ids, t) =
     let z = if z0 < 1 then 1 else z0 in
     let _ = attn_a(m, z, 0, sc(0)) in
     let _ = mix_h(m, t, 0, sc(0)) in
-    let _ = add_pos(nth(nth(m, 11), t), t) in
     let _ = copy_row(nth(nth(m, 23), t), nth(m, 10), 0) in
     attn_pos(m, ids, t + 1)
 
@@ -494,7 +500,7 @@ let vis_acc(m, ids, t, j, n) =
     let _ = add_row(nth(nth(m, 11), t), nth(nth(m, 5), j), 0) in
     vis_acc(m, ids, t, j + 1, n + 1)
 
-/* H[t] = 可见字平均 embedding + 小位置。先绕开注意力，确认 Wout 能用上下文。 */
+/* H[t] = 可见字平均 embedding。不加位置：jsonl 上 pos 会盖过 bag，probe 变 0。 */
 let bow_t(m, ids, t) =
   if t >= ctx(0) then 0
   else
@@ -503,7 +509,7 @@ let bow_t(m, ids, t) =
     let n0 = vis_acc(m, ids, t, 0, 0) in
     let d = if n0 < 1 then 1 else n0 in
     let _ = div_row(h, d, 0) in
-    let _ = add_pos(h, t) in
+    let _ = list_set(h, dim(0) - 1, 8) in
     bow_t(m, ids, t + 1)
 
 /* X → Q/K/V；MASK 的 K/V 清零。加权平均用 embedding 本身当 key/value。 */
@@ -521,18 +527,17 @@ let x_to_qkv(m, ids, t) =
         zero_row(nth(nth(m, 8), t), 0) in
     x_to_qkv(m, ids, t + 1)
 
-/* 一张快门：可见字按 Q·K 加权平均 + 小位置 + Wout。 */
+/* 一张快门：可见字均匀平均 + 小位置 + Wout。
+ * Q·K 加权在多样 jsonl 上会塌成「随机盯一个可见字」，比 maj 还差。 */
 let forward(m, ids) =
   let _ = embed_t(m, ids, 0, ctx(0)) in
-  let _ = x_to_qkv(m, ids, 0) in
-  let _ = attn_pos(m, ids, 0) in
+  let _ = bow_t(m, ids, 0) in
   write_logits(m, 0)
 
 /* 训练用快门：只算被挖格子的 logits。 */
 let forward_train(m, ids, flags) =
   let _ = embed_t(m, ids, 0, ctx(0)) in
-  let _ = x_to_qkv(m, ids, 0) in
-  let _ = attn_pos(m, ids, 0) in
+  let _ = bow_t(m, ids, 0) in
   write_logits_f(m, flags, 0)
 
 /* ⌊√n⌋。Newton，x 从 n 收。 */
@@ -676,12 +681,14 @@ let wv_upd(m, t) =
   let _ = fill_dh(m, 0) in
   wv_j(m, t, 0, den)
 
-/* g[i] = w[i] − (i==y ? z : 0)，即 z·(p − onehot)。 */
+/* g[i] = S·w[i]/z − S·1_y。用概率残差，避免 g_gold≈−z 被 clip 成 −256 后期望梯度把高频字推下去。 */
 let g_fill(w, y, z, i, v) =
   if i >= v then 0
   else
-    let t = if i == y then z else 0 in
-    let _ = list_set(w, i, nth(w, i) - t) in
+    let s = sc(0) in
+    let p = nth(w, i) * s / z in
+    let t = if i == y then s else 0 in
+    let _ = list_set(w, i, p - t) in
     g_fill(w, y, z, i + 1, v)
 
 /* w[i] = exp(logit[i]-max)，i 不含 MASK 列；返回 Σ w。 */
@@ -808,8 +815,8 @@ let maj_go(f, i, last, bv) =
 /* 本 epoch 被挖金标里出现最多的那个字的次数（unigram 上限）。 */
 let maj_count(m) = maj_go(nth(m, 17), 0, ntok(m) - 2, 0)
 
-/* 只在 flags[t]=1 的位置做交叉熵。Wout 用 Adam（SGD den=z·8 会贴死 maj，probe 变 0）。
- * acc = [hit, nmask, nll, invp]。不碰 E。 */
+/* 只在 flags[t]=1 的位置做交叉熵。V≤256 时 Adam 扫整张 Wout；更大才只更新金标/argmax。
+ * H 是可见字加权平均（不再加位置，避免读出只背「的」）。不碰 E。 */
 let train_at(m, gold, flags, t, acc) =
   if t >= ctx(0) then acc
   else if nth(flags, t) == 0 then train_at(m, gold, flags, t + 1, acc)
@@ -823,8 +830,12 @@ let train_at(m, gold, flags, t, acc) =
     let hit = if p == y then 1 else 0 in
     let h = nth(nth(m, 11), t) in
     let w = nth(m, 13) in
-    let _ = adam_col(m, h, nth(w, y) - z, y, 0) in
-    let _ = if p == y then 0 else adam_col(m, h, nth(w, p), p, 0) in
+    let _ = g_fill(w, y, z, 0, ntok(m)) in
+    let _ =
+      if ntok(m) > 256 then
+        let _ = adam_col(m, h, nth(w, y), y, 0) in
+        if p == y then 0 else adam_col(m, h, nth(w, p), p, 0)
+      else adam_w(m, h, w, 0, 0) in
     let fr = nth(m, 17) in
     let _ = list_set(fr, y, nth(fr, y) + 1) in
     let _ = list_set(acc, 0, nth(acc, 0) + hit) in
