@@ -15,8 +15,8 @@ make -C app llm-transformer
 
 ```bash
 make -C app llm-snapshot
-# 默认 MLM 预训练 + generate。语料是 pretrain_t2t_mini.jsonl 切出的前 40 行。
+# 默认 corpus.txt（小词表）。jsonl 头仍可手动指定。
 ./app/llm/snapshot/train.exe
-./app/llm/snapshot/train.exe app/llm/pretrain_head.jsonl app/llm/snapshot/snapshot.w 5 new
-./app/llm/snapshot/infer.exe app/llm/snapshot/snapshot.w 秋天 8
+./app/llm/snapshot/train.exe app/llm/corpus.txt app/llm/snapshot/snapshot.w 8 new
+./app/llm/snapshot/infer.exe app/llm/snapshot/snapshot.w 你好 8
 ```

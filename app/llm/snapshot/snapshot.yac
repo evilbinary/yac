@@ -1,12 +1,13 @@
-/* 1 层 1 头双向 Transformer：快照并行（MaskGIT）。
+/* 2 层 1 头双向 Transformer：快照并行（MaskGIT）。
  *
  * 一次 forward 只读画布 ids[0..T)，写出每个位置的 logits；揭 MASK 在返回后提交。
  * 注意力全双向（无因果遮罩）。词表末项是 MASK（显示为 ░）。
  *
- * m：0 E  1 Wq  2 Wk  3 Wv  4 Wout
+ * m：0 E  1 Wq1  2 Wk1  3 Wv1  4 Wout
  *    5 X  6 Q   7 K   8 V   9 score  10 α
  *    11 H(T×d)  12 logits(T×V)  13 w(V)  14 vocab
- *    15 pred(T)  16 conf(T)  17 字频（闲置）  18 Adam m  19 Adam v
+ *    15 pred(T)  16 conf(T)  17 字频  18 Adam m  19 Adam v
+ *    20 Wq2  21 Wk2  22 Wv2  23 α全图(T×T)  24 dh(d)
  *
  *   make -C app llm-snapshot
  *   --pkg 含 app/llm/snapshot
@@ -16,7 +17,7 @@ package snapshot
 export sc, dim, ctx, freeze_n, u8len, ch_at, fill, mat, find_char, add_char, build_vocab,
   encode, argmax, rng_next, mask_id, model_new, train_step, train_step_chat, gold_chat, forward,
   canvas_from_prompt, show_canvas, show_from, n_freeze, denoise, save_model, load_model,
-  vocab_of, ntok, parse_int
+  vocab_of, ntok, parse_int, zero_freq, maj_count, probe_shuffle
 
 import io
 
@@ -24,7 +25,10 @@ import io
 let sc(_) = 64
 
 /* 模型宽度 d_model。 */
-let dim(_) = 8
+let dim(_) = 16
+
+/* √d 的整数近似，注意力分数除 S·nsq。 */
+let nsq(_) = 4
 
 /* 底片长度 T。一次曝光看完这 T 个位置。 */
 let ctx(_) = 16
@@ -119,6 +123,20 @@ let copy_row(dst, src, i) =
     let _ = list_set(dst, i, nth(src, i)) in
     copy_row(dst, src, i + 1)
 
+/* 位置写进前 4 维，避免只靠 dim0 时所有 MASK 的 Q 几乎一样。 */
+let add_pos(x, t) =
+  let _ = list_set(x, 0, nth(x, 0) + t * 3) in
+  let _ = list_set(x, 1, nth(x, 1) + t * 5) in
+  let _ = list_set(x, 2, nth(x, 2) + t * 7) in
+  list_set(x, 3, nth(x, 3) + t)
+
+/* 把一行清成 0。MASK 的 K/V 用这个，避免 ░ 当 key。 */
+let zero_row(row, k) =
+  if k >= len(row) then 0
+  else
+    let _ = list_set(row, k, 0) in
+    zero_row(row, k + 1)
+
 /* 扫描 [0, last) 的最大值下标；并列保留更小的 i。 */
 let argmax_go(row, i, last, bi, bv) =
   if i >= last then bi
@@ -142,6 +160,7 @@ let banned_tok(vocab, i) =
       else if b == 13 then 1
       else 0
 
+/* 推理用 argmax：跳过 MASK 和换行，acc = [bi, bv]。 */
 let argmax_gen_go(row, vocab, i, acc) =
   if i >= len(row) then nth(acc, 0)
   else if banned_tok(vocab, i) == 1 then argmax_gen_go(row, vocab, i + 1, acc)
@@ -154,6 +173,7 @@ let argmax_gen_go(row, vocab, i, acc) =
       else 0 in
     argmax_gen_go(row, vocab, i + 1, acc)
 
+/* 推理：从 logits 里选字，跳过 MASK/换行。 */
 let argmax_gen(m, row) =
   let acc = list_new() in
   let _ = list_push(acc, 0) in
@@ -230,6 +250,17 @@ let model_new(vocab, seed) =
   let _ = list_push(m, fill(v, 0)) in
   let _ = list_push(m, mat(d, v)) in
   let _ = list_push(m, mat(d, v)) in
+  let Wq2 = id_eye(mat(d, d), 0, s) in
+  let Wk2 = id_eye(mat(d, d), 0, s) in
+  let Wv2 = id_eye(mat(d, d), 0, s) in
+  let _ = mat_rand(Wq2, 0, seed + 5, 2) in
+  let _ = mat_rand(Wk2, 0, seed + 6, 2) in
+  let _ = mat_rand(Wv2, 0, seed + 7, 2) in
+  let _ = list_push(m, Wq2) in
+  let _ = list_push(m, Wk2) in
+  let _ = list_push(m, Wv2) in
+  let _ = list_push(m, mat(t, t)) in
+  let _ = list_push(m, fill(d, 0)) in
   m
 
 /* a·b = Σ_i a[i] b[i]（未除 S，调用方再除）。 */
@@ -249,32 +280,67 @@ let mv_j(W, x, y, j, s) =
     let _ = list_set(y, j, mv_i(W, x, j, 0, 0) / s) in
     mv_j(W, x, y, j + 1, s)
 
-/* 位置 t：X[t] = E[id] + 3t·e_0，再算 Q/K/V。n 一般为 T。不改 ids。 */
+/* 位置 t：X[t] = E[id] + 位置（前 4 维）。QKV 另算。 */
 let embed_t(m, ids, t, n) =
   if t >= n then 0
   else
     let _ = copy_row(nth(nth(m, 5), t), nth(nth(m, 0), nth(ids, t)), 0) in
-    let _ = list_set(nth(nth(m, 5), t), 0, nth(nth(nth(m, 5), t), 0) + t * 3) in
-    let _ = mv_j(nth(m, 1), nth(nth(m, 5), t), nth(nth(m, 6), t), 0, sc(0)) in
-    let _ = mv_j(nth(m, 2), nth(nth(m, 5), t), nth(nth(m, 7), t), 0, sc(0)) in
-    let _ = mv_j(nth(m, 3), nth(nth(m, 5), t), nth(nth(m, 8), t), 0, sc(0)) in
+    let _ = add_pos(nth(nth(m, 5), t), t) in
     embed_t(m, ids, t + 1, n)
 
-/* 整数 exp 近似：e^{x/S} ≈ 2^{-⌊(-x)/3⌋}（x≤0）。softmax 减 max 之后用。 */
+/* 第 1 层 QKV。MASK 的 K/V 清零，避免一排░淹没可见字。 */
+let qkv1(m, ids, t, n) =
+  if t >= n then 0
+  else
+    let x = nth(nth(m, 5), t) in
+    let _ = mv_j(nth(m, 1), x, nth(nth(m, 6), t), 0, sc(0)) in
+    let _ = mv_j(nth(m, 2), x, nth(nth(m, 7), t), 0, sc(0)) in
+    let _ = mv_j(nth(m, 3), x, nth(nth(m, 8), t), 0, sc(0)) in
+    let _ =
+      if nth(ids, t) != mask_id(m) then 0
+      else
+        let _ = zero_row(nth(nth(m, 7), t), 0) in
+        zero_row(nth(nth(m, 8), t), 0) in
+    qkv1(m, ids, t + 1, n)
+
+/* 第 2 层 QKV，同样不让 MASK 当 key/value。 */
+let qkv2(m, ids, t, n) =
+  if t >= n then 0
+  else
+    let x = nth(nth(m, 5), t) in
+    let _ = mv_j(nth(m, 20), x, nth(nth(m, 6), t), 0, sc(0)) in
+    let _ = mv_j(nth(m, 21), x, nth(nth(m, 7), t), 0, sc(0)) in
+    let _ = mv_j(nth(m, 22), x, nth(nth(m, 8), t), 0, sc(0)) in
+    let _ =
+      if nth(ids, t) != mask_id(m) then 0
+      else
+        let _ = zero_row(nth(nth(m, 7), t), 0) in
+        zero_row(nth(nth(m, 8), t), 0) in
+    qkv2(m, ids, t + 1, n)
+
+/* 第 2 层输入：H1 拷到 X，再加位置，让各 MASK 的 Q 能分开。 */
+let copy_h_x(m, t) =
+  if t >= ctx(0) then 0
+  else
+    let _ = copy_row(nth(nth(m, 5), t), nth(nth(m, 11), t), 0) in
+    let _ = add_pos(nth(nth(m, 5), t), t) in
+    copy_h_x(m, t + 1)
+
+/* softmax 分子：峰 32，避免全词表都是 4096 时 Σw 把梯度乘爆（32-bit）。 */
 let exp_w(x) =
-  if x >= 0 then 64
+  if x >= 0 then 32
   else
     let n = 0 - x in
-    if n >= 24 then 1
+    if n >= 40 then 1
     else
-      let v = bshr(64, n / 3) in
+      let v = bshr(32, n / 5) in
       if v < 1 then 1 else v
 
-/* score[j] = (Q[t]·K[j]) / (S·3)，j=0..T-1。全双向，无因果遮罩。3 ≈ √d。 */
+/* score[j] = (Q[t]·K[j]) / (S·√d·2)。多除 2 让 α 平一点。全双向，无因果遮罩。 */
 let score_all(m, t, j) =
   if j >= ctx(0) then 0
   else
-    let s = dot(nth(nth(m, 6), t), nth(nth(m, 7), j), 0, 0) / (sc(0) * 3) in
+    let s = dot(nth(nth(m, 6), t), nth(nth(m, 7), j), 0, 0) / (sc(0) * nsq(0) * 2) in
     let _ = list_set(nth(m, 9), j, s) in
     score_all(m, t, j + 1)
 
@@ -314,8 +380,8 @@ let mix_h(m, t, k, s) =
       mix_k(m, k, 0, 0) / s + nth(nth(nth(m, 5), t), k)) in
     mix_h(m, t, k + 1, s)
 
-/* 位置 t 的注意力 + logits[t] = H[t] Wout / S。循环次序不影响结果（只读旧 Q/K/V）。 */
-let fwd_pos(m, t) =
+/* 一层注意力：写 H 与 α[t]，不写 logits。 */
+let attn_pos(m, t) =
   if t >= ctx(0) then 0
   else
     let _ = score_all(m, t, 0) in
@@ -324,13 +390,25 @@ let fwd_pos(m, t) =
     let z = if z0 < 1 then 1 else z0 in
     let _ = attn_a(m, z, 0, sc(0)) in
     let _ = mix_h(m, t, 0, sc(0)) in
-    let _ = mv_j(nth(m, 4), nth(nth(m, 11), t), nth(nth(m, 12), t), 0, sc(0)) in
-    fwd_pos(m, t + 1)
+    let _ = copy_row(nth(nth(m, 23), t), nth(m, 10), 0) in
+    attn_pos(m, t + 1)
 
-/* 一张全局快门：只读 ids，写 H 与 logits[T×V]。揭 MASK 必须在返回之后。 */
+/* logits[t] = H[t] Wout / S。每个位置一份词表分数。 */
+let write_logits(m, t) =
+  if t >= ctx(0) then 0
+  else
+    let _ = mv_j(nth(m, 4), nth(nth(m, 11), t), nth(nth(m, 12), t), 0, sc(0)) in
+    write_logits(m, t + 1)
+
+/* 一张全局快门：两层双向，只读 ids。 */
 let forward(m, ids) =
   let _ = embed_t(m, ids, 0, ctx(0)) in
-  fwd_pos(m, 0)
+  let _ = qkv1(m, ids, 0, ctx(0)) in
+  let _ = attn_pos(m, 0) in
+  let _ = copy_h_x(m, 0) in
+  let _ = qkv2(m, ids, 0, ctx(0)) in
+  let _ = attn_pos(m, 0) in
+  write_logits(m, 0)
 
 /* ⌊√n⌋。Newton，x 从 n 收。 */
 let isqrt_n(n, x) =
@@ -340,6 +418,7 @@ let isqrt_n(n, x) =
     if x2 >= x then x
     else isqrt_n(n, x2)
 
+/* 非负整数平方根，Adam 里除 √v。 */
 let isqrt(n) =
   if n <= 0 then 0
   else if n <= 3 then 1
@@ -351,25 +430,31 @@ let clip(x, lo, hi) =
   else if x > hi then hi
   else x
 
-/* 一格 Adam：β1=7/8，β2=3/4。v 上限 2^20，避免 √v 把整数步长除成 0。 */
+/* 一格 Adam：β1=7/8，β2=3/4。v 上限 16384，√v 太大则整数步长变成 0。 */
 let adam_cell(m, i, j, gi) =
   let mr = nth(nth(m, 18), i) in
   let vr = nth(nth(m, 19), i) in
   let g1 = gi / 16 in
   let mm = nth(mr, j) + (g1 - nth(mr, j)) / 8 in
   let vv0 = nth(vr, j) + (g1 * g1 - nth(vr, j)) / 4 in
-  let vv = if vv0 < 1 then 1 else clip(vv0, 1, 1048576) in
+  let vv = if vv0 < 1 then 1 else clip(vv0, 1, 16384) in
   let _ = list_set(mr, j, clip(mm, 0 - 65536, 65536)) in
   let _ = list_set(vr, j, vv) in
   let step = mm / (isqrt(vv) + 1) in
   let wr = nth(nth(m, 4), i) in
   list_set(wr, j, clip(nth(wr, j) - step, 0 - 512, 512))
 
+/* Wout 外积：g 先 clip 到 ±256，|g|<2 跳过。x 是该位置的 H。 */
 let adam_w(m, x, g, i, j) =
   if i >= len(x) then 0
   else if j >= len(g) then adam_w(m, x, g, i + 1, 0)
   else
-    let _ = adam_cell(m, i, j, nth(x, i) * nth(g, j)) in
+    let gj = clip(nth(g, j), 0 - 256, 256) in
+    let _ =
+      if gj < 2 then
+        if gj > 0 - 2 then 0
+        else adam_cell(m, i, j, nth(x, i) * gj)
+      else adam_cell(m, i, j, nth(x, i) * gj) in
     adam_w(m, x, g, i, j + 1)
 
 /* Wout[i][j] -= h[i] · g[j] / den（旧 SGD，embed 备用）。 */
@@ -387,12 +472,12 @@ let outer_w(W, x, g, i, den) =
     let _ = outer_wj(nth(W, i), nth(x, i), g, 0, den) in
     outer_w(W, x, g, i + 1, den)
 
-/* dh[k] = Σ_j Wout[k][j] g[j]（未除 den）。现训练步不调用 embed_grad，留作备用。 */
+/* dh[k] = Σ_j Wout[k][j] g[j]（未除 den）。 */
 let dh_k(W, g, k, j, acc) =
   if j >= len(g) then acc
   else dh_k(W, g, k, j + 1, acc + nth(nth(W, k), j) * nth(g, j))
 
-/* E[id] -= lr · (Wout g / den)。多 MASK 时更新太猛，train_at 暂不用。 */
+/* E[id] -= lr · (Wout g / den)。被掩位置 id 是 MASK。 */
 let embed_grad(m, id, den, lr, k) =
   let row = nth(nth(m, 0), id) in
   if k >= len(row) then 0
@@ -400,6 +485,59 @@ let embed_grad(m, id, den, lr, k) =
     let dh = dh_k(nth(m, 4), nth(m, 13), k, 0, 0) / den in
     let _ = list_set(row, k, clip(nth(row, k) - lr * dh, 0 - 256, 256)) in
     embed_grad(m, id, den, lr, k + 1)
+
+/* dh[k] = Σ_j Wout[k][j] g[j] / 8，写入 m[24]。 */
+let fill_dh(m, k) =
+  if k >= dim(0) then 0
+  else
+    let _ = list_set(nth(m, 24), k, dh_k(nth(m, 4), nth(m, 13), k, 0, 0) / 8) in
+    fill_dh(m, k + 1)
+
+/* Wq 一行：Wq[p][c] -= x[p] · dh[c] / den。 */
+let wq_c(row, xp, dh, c, den) =
+  if c >= len(dh) then 0
+  else
+    let u = nth(row, c) - xp * nth(dh, c) / den in
+    let _ = list_set(row, c, clip(u, 0 - 256, 256)) in
+    wq_c(row, xp, dh, c + 1, den)
+
+/* 对整个 Wq：每个输入维 p 一行。 */
+let wq_p(Wq, x, dh, p, den) =
+  if p >= len(x) then 0
+  else
+    let _ = wq_c(nth(Wq, p), nth(x, p), dh, 0, den) in
+    wq_p(Wq, x, dh, p + 1, den)
+
+/* Wv 一行，scale = den/α_j，α 大则步长大。 */
+let wv_c(row, xp, dh, c, scale) =
+  if c >= len(dh) then 0
+  else
+    let u = nth(row, c) - xp * nth(dh, c) / scale in
+    let _ = list_set(row, c, clip(u, 0 - 256, 256)) in
+    wv_c(row, xp, dh, c + 1, scale)
+
+/* 用位置 j 的 X 当 value 侧输入，更新整张 Wv。 */
+let wv_p(Wv, x, dh, p, scale) =
+  if p >= len(x) then 0
+  else
+    let _ = wv_c(nth(Wv, p), nth(x, p), dh, 0, scale) in
+    wv_p(Wv, x, dh, p + 1, scale)
+
+/* 按第 2 层 α[t][j] 扫 key 位置；α=0（MASK 的 K）跳过。 */
+let wv_j(m, t, j, den) =
+  if j >= ctx(0) then 0
+  else
+    let aj = nth(nth(nth(m, 23), t), j) in
+    let _ =
+      if aj < 1 then 0
+      else wv_p(nth(m, 22), nth(nth(m, 5), j), nth(m, 24), 0, den / aj) in
+    wv_j(m, t, j + 1, den)
+
+/* 只动第 2 层 Wv，den 很大；Wq 一开容易把 H 打乱。Adam 仍只作用在 Wout。 */
+let wv_upd(m, t) =
+  let den = sc(0) * 64 in
+  let _ = fill_dh(m, 0) in
+  wv_j(m, t, 0, den)
 
 /* g[i] = w[i] − (i==y ? z : 0)，即 z·(p − onehot)。 */
 let g_fill(w, y, z, i, v) =
@@ -491,6 +629,7 @@ let pair(a, b) =
   let _ = list_push(s, b) in
   s
 
+/* 可变三元组，mask_i 的 st = [seed, mid, rate]。 */
 let triple(a, b, c) =
   let s = pair(a, b) in
   let _ = list_push(s, c) in
@@ -507,7 +646,34 @@ let nll_bits(w, y, z) =
   let a = if wy < 1 then 1 else wy in
   ilog2(z, 0) - ilog2(a, 0)
 
-/* 只在 flags[t]=1 的位置做交叉熵，更新 Wout。acc = [hit, nmask, nll]。 */
+/* z/w_y：均匀时约 V，金标越准越小。整数 nll 太粗时看这个。 */
+let invp_of(w, y, z) =
+  let wy = nth(w, y) in
+  let a = if wy < 1 then 1 else wy in
+  z / a
+
+/* 清 m[17] 字频，每个 epoch 开头调用。 */
+let zero_freq(m, i) =
+  let f = nth(m, 17) in
+  if i >= len(f) then 0
+  else
+    let _ = list_set(f, i, 0) in
+    zero_freq(m, i + 1)
+
+/* f[i..last] 的最大值（次数，不是下标）。 */
+let maj_go(f, i, last, bv) =
+  if i > last then bv
+  else
+    let x = nth(f, i) in
+    let bv2 = if x > bv then x else bv in
+    maj_go(f, i + 1, last, bv2)
+
+/* 本 epoch 被挖金标里出现最多的那个字的次数（unigram 上限）。 */
+let maj_count(m) = maj_go(nth(m, 17), 0, ntok(m) - 2, 0)
+
+/* 只在 flags[t]=1 的位置做交叉熵。Wout 用 Adam。
+ * acc = [hit, nmask, nll, invp]。m[17][y]++ 供 maj。
+ * wv_upd 等 mask-acc 高于 maj 再接入。 */
 let train_at(m, gold, flags, t, acc) =
   if t >= ctx(0) then acc
   else if nth(flags, t) == 0 then train_at(m, gold, flags, t + 1, acc)
@@ -516,27 +682,38 @@ let train_at(m, gold, flags, t, acc) =
     let z0 = sm_row(m, t) in
     let z = if z0 < 1 then 1 else z0 in
     let nll = nll_bits(nth(m, 13), y, z) in
+    let inv = invp_of(nth(m, 13), y, z) in
     let hit = if argmax(nth(nth(m, 12), t)) == y then 1 else 0 in
     let _ = g_fill(nth(m, 13), y, z, 0, ntok(m)) in
     let _ = adam_w(m, nth(nth(m, 11), t), nth(m, 13), 0, 0) in
+    /* Wv：等 mask-acc 稳定高于 maj 再开 wv_upd。 */
+    let fr = nth(m, 17) in
+    let _ = list_set(fr, y, nth(fr, y) + 1) in
     let _ = list_set(acc, 0, nth(acc, 0) + hit) in
     let _ = list_set(acc, 1, nth(acc, 1) + 1) in
     let _ = list_set(acc, 2, nth(acc, 2) + nll) in
+    let _ = list_set(acc, 3, nth(acc, 3) + inv) in
     train_at(m, gold, flags, t + 1, acc)
 
+/* [0,0,0,0]，train_at 的累加器。 */
+let acc4(_) =
+  let s = triple(0, 0, 0) in
+  let _ = list_push(s, 0) in
+  s
+
 /* 一步 MLM：挖洞 → 一张快门 → 只在 MASK 格更新。
- * lr 占位（Windows 参数 ≤5）；实际步长在 den=z·32。
- * 返回 [hit, nmask, nll, new_seed]。 */
+ * lr 占位（Windows 参数 ≤5）。
+ * 返回 [hit, nmask, nll, invp, new_seed]。 */
 let train_step(m, ids, pos, seed, lr) =
   let mid = mask_id(m) in
   let gold = win_at(ids, pos, mid, list_new(), 0) in
   let canvas = copy_ids(gold, 0, list_new()) in
   let flags = flags_new(0) in
-  let bucket = irem(seed, 4) in
+  let bucket = irem(seed, 3) in
   let rate = 25 * (bucket + 1) in
   let seed2 = mask_i(gold, canvas, flags, triple(seed, mid, rate), 0) in
   let _ = forward(m, canvas) in
-  let acc = triple(0, 0, 0) in
+  let acc = acc4(0) in
   let _ = train_at(m, gold, flags, 0, acc) in
   let _ = list_push(acc, seed2) in
   acc
@@ -549,16 +726,16 @@ let restore_user(gold, canvas, flags, u, i) =
     let _ = list_set(flags, i, 0) in
     restore_user(gold, canvas, flags, u, i + 1)
 
-/* 对话一步：冻用户，回复区抽 25/50/75/100% MASK。lr 占位。 */
+/* 对话一步：冻用户，回复区抽 25/50/75% MASK。lr 占位。 */
 let train_step_chat(m, gold, u, seed, lr) =
   let mid = mask_id(m) in
   let canvas = copy_ids(gold, 0, list_new()) in
   let flags = flags_new(0) in
-  let rate = 25 * (irem(seed, 4) + 1) in
+  let rate = 25 * (irem(seed, 3) + 1) in
   let seed2 = mask_i(gold, canvas, flags, triple(seed, mid, rate), 0) in
   let _ = restore_user(gold, canvas, flags, u, 0) in
   let _ = forward(m, canvas) in
-  let acc = triple(0, 0, 0) in
+  let acc = acc4(0) in
   let _ = train_at(m, gold, flags, 0, acc) in
   let _ = list_push(acc, seed2) in
   acc
@@ -632,6 +809,54 @@ let count_mask(canvas, mid, i, n) =
   if i >= len(canvas) then n
   else if nth(canvas, i) == mid then count_mask(canvas, mid, i + 1, n + 1)
   else count_mask(canvas, mid, i + 1, n)
+
+/* 每个位置的 logits argmax，probe 对比打乱用。 */
+let snap_arg(m, i, dst) =
+  if i >= ctx(0) then dst
+  else
+    let _ = list_push(dst, argmax(nth(nth(m, 12), i))) in
+    snap_arg(m, i + 1, dst)
+
+/* 交换 list 两格。 */
+let swap_i(a, i, j) =
+  let t = nth(a, i) in
+  let _ = list_set(a, i, nth(a, j)) in
+  list_set(a, j, t)
+
+/* 只交换非 MASK 格，洞的位置不变。 */
+let shuffle_vis(canvas, mid, seed, i) =
+  if i >= ctx(0) then seed
+  else if nth(canvas, i) == mid then shuffle_vis(canvas, mid, seed, i + 1)
+  else
+    let seed2 = rng_next(seed) in
+    let j = irem(seed2, ctx(0)) in
+    let _ = if nth(canvas, j) == mid then 0 else swap_i(canvas, i, j) in
+    shuffle_vis(canvas, mid, seed2, i + 1)
+
+/* ab = [打乱前 argmax, 打乱后]。只数仍为 MASK 的格子变了几格。 */
+let diff_mask(canvas, mid, ab, i, n) =
+  if i >= ctx(0) then n
+  else if nth(canvas, i) != mid then diff_mask(canvas, mid, ab, i + 1, n)
+  else
+    let n2 = if nth(nth(ab, 0), i) != nth(nth(ab, 1), i) then n + 1 else n in
+    diff_mask(canvas, mid, ab, i + 1, n2)
+
+/* 可见字打乱后，MASK 的 argmax 变不变。返回 [changed, nmask]；0 说明 H 没用上下文。 */
+let probe_shuffle(m, ids) =
+  let mid = mask_id(m) in
+  let gold = win_at(ids, 0, mid, list_new(), 0) in
+  let canvas = copy_ids(gold, 0, list_new()) in
+  let flags = flags_new(0) in
+  let _ = mask_i(gold, canvas, flags, triple(7, mid, 50), 0) in
+  let n0 = count_mask(canvas, mid, 0, 0) in
+  if n0 < 1 then pair(0, 0)
+  else
+    let _ = forward(m, canvas) in
+    let a = snap_arg(m, 0, list_new()) in
+    let _ = shuffle_vis(canvas, mid, 99, 0) in
+    let _ = forward(m, canvas) in
+    let b = snap_arg(m, 0, list_new()) in
+    pair(diff_mask(canvas, mid, pair(a, b), 0, 0), n0)
 
 /* 仍为 MASK 的格子：pred[i]=argmax(logits[i])，conf[i]=该 logit。
  * 已揭开的格子 conf 置极小，本步不会再被选。 */
@@ -712,18 +937,21 @@ let flat_row(row, acc, j) =
     let _ = list_push(acc, nth(row, j)) in
     flat_row(row, acc, j + 1)
 
+/* 整张矩阵接到 acc 后面。 */
 let flat_mat(W, acc, i) =
   if i >= len(W) then acc
   else
     let _ = flat_row(nth(W, i), acc, 0) in
     flat_mat(W, acc, i + 1)
 
+/* 从 xs[p..] 填回一行，返回新 p。 */
 let unflat_row(row, xs, j, p) =
   if j >= len(row) then p
   else
     let _ = list_set(row, j, nth(xs, p)) in
     unflat_row(row, xs, j + 1, p + 1)
 
+/* 按行还原矩阵。 */
 let unflat_mat(W, xs, i, p) =
   if i >= len(W) then p
   else unflat_mat(W, xs, i + 1, unflat_row(nth(W, i), xs, 0, p))
@@ -782,13 +1010,14 @@ let emit_ints(b, xs, i) =
     let _ = put_int(b, nth(xs, i)) in
     emit_ints(b, xs, i + 1)
 
-/* 词表写成「长度 + 各字节」，避免 UTF-8 / 换行和数字流搅在一起。 */
+/* 字符串 → 各字节的整数，供 vocab 序列化。 */
 let bytes_of(s, i, acc) =
   if i >= str_len(s) then acc
   else
     let _ = list_push(acc, str_ref(s, i)) in
     bytes_of(s, i + 1, acc)
 
+/* 词表写成「长度 + 各字节」，避免 UTF-8 / 换行和数字流搅在一起。 */
 let vocab_ints(vocab, i, acc) =
   if i >= len(vocab) then acc
   else
@@ -811,7 +1040,7 @@ let read_vocab(xs, p, v, acc) =
     let _ = list_push(acc, nth(r, 0)) in
     read_vocab(xs, nth(r, 1), v - 1, acc)
 
-/* 文件：V d T S，词表字节，再 E,Wq,Wk,Wv,Wout。 */
+/* 文件：V d T S，词表字节，再 E,Wq1,Wk1,Wv1,Wout,Wq2,Wk2,Wv2。 */
 let save_model(m, path) =
   let acc = list_new() in
   let _ = list_push(acc, ntok(m)) in
@@ -824,6 +1053,9 @@ let save_model(m, path) =
   let _ = flat_mat(nth(m, 2), e0, 0) in
   let _ = flat_mat(nth(m, 3), e0, 0) in
   let _ = flat_mat(nth(m, 4), e0, 0) in
+  let _ = flat_mat(nth(m, 20), e0, 0) in
+  let _ = flat_mat(nth(m, 21), e0, 0) in
+  let _ = flat_mat(nth(m, 22), e0, 0) in
   let b = bytes_new() in
   let _ = emit_ints(b, acc, 0) in
   write(path, b)
@@ -845,5 +1077,8 @@ let load_model(path) =
       let p1 = unflat_mat(nth(m, 1), xs, 0, p0) in
       let p2 = unflat_mat(nth(m, 2), xs, 0, p1) in
       let p3 = unflat_mat(nth(m, 3), xs, 0, p2) in
-      let _ = unflat_mat(nth(m, 4), xs, 0, p3) in
+      let p4 = unflat_mat(nth(m, 4), xs, 0, p3) in
+      let p5 = unflat_mat(nth(m, 20), xs, 0, p4) in
+      let p6 = unflat_mat(nth(m, 21), xs, 0, p5) in
+      let _ = unflat_mat(nth(m, 22), xs, 0, p6) in
       m

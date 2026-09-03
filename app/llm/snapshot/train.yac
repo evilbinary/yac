@@ -1,8 +1,7 @@
 /* 快照并行训练（MLM 预训练 / MaskGIT generate）。
  *
  *   ./app/llm/snapshot/train [语料] [权重] [epoch] [new|chat]
- * 默认 MLM：拼接 text jsonl，随机挖洞。chat 才走冻用户填回复。
- * 全量 pretrain_t2t_mini.jsonl 约 1.2GB，默认用切好的 pretrain_head.jsonl。
+ * 默认 MLM：corpus.txt。chat 才走冻用户填回复。
  */
 
 import snapshot
@@ -10,9 +9,11 @@ import json
 import io
 import fmt
 
+/* 读不到语料文件时的兜底短文。 */
 let default_text(_) =
   "你好。\n你好，今天怎么样？\n我很好，你呢？\n我也很好，谢谢。\n再见。\n"
 
+/* 可变五元组。Windows 函数最多 5 个参数，多状态放进 list。 */
 let st5(a, b, c, d, e) =
   let s = list_new() in
   let _ = list_push(s, a) in
@@ -22,29 +23,33 @@ let st5(a, b, c, d, e) =
   let _ = list_push(s, e) in
   s
 
-/* 第 6 槽固定 0，用来累加 nll（arity≤5）。 */
+/* 第 6 槽初值 0（nll）；invp 由 epoch_row 再 push。 */
 let st6(a, b, c, d, e) =
   let s = st5(a, b, c, d, e) in
   let _ = list_push(s, 0) in
   s
 
+/* 从 i 起找下一个 LF；没有则返回 n。 */
 let find_nl(s, i) =
   if i >= str_len(s) then i
   else if str_ref(s, i) == 10 then i
   else find_nl(s, i + 1)
 
+/* 把字符串 s 逐字节追加到 bytes 缓冲。 */
 let append_str(b, s, i) =
   if i >= str_len(s) then 0
   else
     let _ = bytes_append(b, str_ref(s, i)) in
     append_str(b, s, i + 1)
 
+/* json 节点取字符串；不是 "S" 则空。 */
 let jstr_of(v) =
   if v == 0 then ""
   else if len(v) < 2 then ""
   else if nth(v, 0) == "S" then nth(v, 1)
   else ""
 
+/* conversations 数组拼成一段文本，句间换行。 */
 let convs_go(arr, i, b) =
   if i >= len(arr) then 0
   else
@@ -53,8 +58,13 @@ let convs_go(arr, i, b) =
     let _ = bytes_append(b, 10) in
     convs_go(arr, i + 1, b)
 
+/* jsonl 最多读这么多行（整份 pretrain 约 1.2GB，不能 read_file）。 */
 let jsonl_max(_) = 40
 
+/* 每个 epoch 最多扫这么多长度为 T 的窗口。 */
+let win_cap(_) = 80
+
+/* 一行 json：优先 "text"，否则 conversations。 */
 let line_go(line, b) =
   let v = parse(line) in
   if v == 0 then 0
@@ -71,6 +81,7 @@ let line_go(line, b) =
         let _ = convs_go(nth(conv, 1), 0, b) in
         bytes_append(b, 10)
 
+/* 按行切 raw，最多 left 行。 */
 let lines_go(raw, i, n, b, left) =
   if left <= 0 then bytes_to_str(b)
   else if i >= n then bytes_to_str(b)
@@ -80,20 +91,23 @@ let lines_go(raw, i, n, b, left) =
     let i2 = if nl < n then nl + 1 else n in
     lines_go(raw, i2, n, b, left - 1)
 
+/* 读语料：`{` 开头当 jsonl，否则整文件当纯文本。 */
 let load_text(path) =
   let raw = read_or_0(path) in
   if raw == 0 then default_text(0)
   else if str_len(raw) <= 0 then default_text(0)
   else if str_ref(raw, 0) == 123 then
     lines_go(raw, 0, str_len(raw), bytes_new(), jsonl_max(0))
-  else raw
+    else raw
 
+/* 在 conversations 里找 role=want 的 content。 */
 let find_role(arr, i, want) =
   if i >= len(arr) then ""
   else if jstr_of(get(nth(arr, i), "role")) == want then
     jstr_of(get(nth(arr, i), "content"))
-  else find_role(arr, i + 1, want)
+  else     find_role(arr, i + 1, want)
 
+/* 一行 chat jsonl → 推进 [user, assistant]；缺字段则跳过。 */
 let line_pair(line, acc) =
   let v = parse(line) in
   if v == 0 then 0
@@ -113,6 +127,7 @@ let line_pair(line, acc) =
         let _ = list_push(p, a) in
         list_push(acc, p)
 
+/* 按行收集 user/assistant 对。 */
 let pairs_go(raw, i, n, acc, left) =
   if left <= 0 then acc
   else if i >= n then acc
@@ -122,12 +137,14 @@ let pairs_go(raw, i, n, acc, left) =
     let i2 = if nl < n then nl + 1 else n in
     pairs_go(raw, i2, n, acc, left - 1)
 
+/* 读 chat jsonl；失败返回空 list。 */
 let load_pairs(path) =
   let raw = read_or_0(path) in
   if raw == 0 then list_new()
   else if str_len(raw) <= 0 then list_new()
-  else pairs_go(raw, 0, str_len(raw), list_new(), jsonl_max(0))
+    else pairs_go(raw, 0, str_len(raw), list_new(), jsonl_max(0))
 
+/* 从对话对累积词表。 */
 let vocab_pairs(pairs, i, vocab) =
   if i >= len(pairs) then vocab
   else
@@ -136,6 +153,7 @@ let vocab_pairs(pairs, i, vocab) =
     let _ = build_vocab(nth(p, 1), vocab, 0) in
     vocab_pairs(pairs, i + 1, vocab)
 
+/* 每对对话切成一张 gold 底片和冻结长度 u。 */
 let pack_go(m, pairs, i, golds, us) =
   if i >= len(pairs) then 0
   else
@@ -145,66 +163,85 @@ let pack_go(m, pairs, i, golds, us) =
     let _ = list_push(us, nth(g, 1)) in
     pack_go(m, pairs, i + 1, golds, us)
 
+/* 一个 epoch：非重叠窗口。st = [pos, limit, seed, hit, nmask, nll, invp]。 */
 let epoch_mlm(m, ids, st) =
   let pos = nth(st, 0) in
   if pos >= nth(st, 1) then 0
   else
     let r = train_step(m, ids, pos, nth(st, 2), 1) in
     let _ = list_set(st, 0, pos + ctx(0)) in
-    let _ = list_set(st, 2, nth(r, 3)) in
+    let _ = list_set(st, 2, nth(r, 4)) in
     let _ = list_set(st, 3, nth(st, 3) + nth(r, 0)) in
     let _ = list_set(st, 4, nth(st, 4) + nth(r, 1)) in
     let _ = list_set(st, 5, nth(st, 5) + nth(r, 2)) in
+    let _ = list_set(st, 6, nth(st, 6) + nth(r, 3)) in
     epoch_mlm(m, ids, st)
 
+/* 一个 epoch：逐条对话底片。st[0] 是对下标。 */
 let epoch_chat(m, golds, us, st) =
   let i = nth(st, 0) in
   if i >= len(golds) then 0
   else
     let r = train_step_chat(m, nth(golds, i), nth(us, i), nth(st, 2), 1) in
     let _ = list_set(st, 0, i + 1) in
-    let _ = list_set(st, 2, nth(r, 3)) in
+    let _ = list_set(st, 2, nth(r, 4)) in
     let _ = list_set(st, 3, nth(st, 3) + nth(r, 0)) in
     let _ = list_set(st, 4, nth(st, 4) + nth(r, 1)) in
     let _ = list_set(st, 5, nth(st, 5) + nth(r, 2)) in
+    let _ = list_set(st, 6, nth(st, 6) + nth(r, 3)) in
     epoch_chat(m, golds, us, st)
 
+/* 整数均值；nm=0 则 0。nll 和 invp 都用它。 */
 let avg_nll(nll, nm) =
   if nm < 1 then 0
   else nll / nm
 
+/* 一个 epoch 的累加行：在 st6 后再接 invp 槽。 */
+let epoch_row(limit, seed) =
+  let row = st6(0, limit, seed, 0, 0) in
+  let _ = list_push(row, 0) in
+  row
+
+/* 循环 epoch：打印 nll / invp / mask-acc / maj，并写权重。 */
 let run_mlm(m, ids, st, path) =
   let ep = nth(st, 0) in
   if ep >= nth(st, 1) then 0
   else
-    let row = st6(0, nth(st, 2), nth(st, 3), 0, 0) in
+    let _ = zero_freq(m, 0) in
+    let row = epoch_row(nth(st, 2), nth(st, 3)) in
     let _ = epoch_mlm(m, ids, row) in
     let nm = nth(row, 4) in
-    let _ = print(format("epoch %d  nll %d  mask-acc %d / %d",
-      [ep, avg_nll(nth(row, 5), nm), nth(row, 3), nm])) in
+    let _ = print(format("epoch %d  nll %d  invp %d  mask-acc %d / %d  maj %d / %d",
+      [ep, avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm), nth(row, 3), nm,
+        maj_count(m), nm])) in
     let _ = save_model(m, path) in
     let _ = list_set(st, 0, ep + 1) in
     let _ = list_set(st, 3, nth(row, 2)) in
     run_mlm(m, ids, st, path)
 
+/* 对话模式的 epoch 循环，统计字段与 MLM 相同。 */
 let run_chat(m, golds, us, st, path) =
   let ep = nth(st, 0) in
   if ep >= nth(st, 1) then 0
   else
-    let row = st6(0, 0, nth(st, 2), 0, 0) in
+    let _ = zero_freq(m, 0) in
+    let row = epoch_row(0, nth(st, 2)) in
     let _ = epoch_chat(m, golds, us, row) in
     let nm = nth(row, 4) in
-    let _ = print(format("epoch %d  nll %d  mask-acc %d / %d",
-      [ep, avg_nll(nth(row, 5), nm), nth(row, 3), nm])) in
+    let _ = print(format("epoch %d  nll %d  invp %d  mask-acc %d / %d  maj %d / %d",
+      [ep, avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm), nth(row, 3), nm,
+        maj_count(m), nm])) in
     let _ = save_model(m, path) in
     let _ = list_set(st, 0, ep + 1) in
     let _ = list_set(st, 2, nth(row, 2)) in
     run_chat(m, golds, us, st, path)
 
+/* 第 4/5 参数是 chat。 */
 let is_chat(s) =
   if s == "chat" then 1
   else 0
 
+/* 第 4/5 参数是 new 则重建权重。 */
 let is_new(s) =
   if s == "new" then 1
   else 0
@@ -223,27 +260,33 @@ let open_or_new(wpath, vocab, force) =
       let _ = print(format("resume  V=%d", [ntok(m)])) in
       m
 
+/* 语料路径，默认小词表 corpus.txt。 */
 let path =
   if argc() > 1 then argv(1)
-  else "app/llm/pretrain_head.jsonl"
+  else "app/llm/corpus.txt"
 
+/* 权重路径。 */
 let wpath =
   if argc() > 2 then argv(2)
   else "app/llm/snapshot/snapshot.w"
 
+/* epoch 数，缺省 3。 */
 let epochs =
   if argc() > 3 then parse_int(argv(3), 0, str_len(argv(3)), 0)
   else 3
 
+/* 第 4 参数 chat。 */
 let mode_chat =
   if argc() > 4 then is_chat(argv(4))
   else 0
 
+/* new 可写在第 4 或第 5 参数（与 chat 互斥占位）。 */
 let force_new =
   if argc() > 5 then is_new(argv(5))
   else if argc() > 4 then is_new(argv(4))
   else 0
 
+/* 入口：chat 或 MLM；非 0 表示失败。 */
 let rc =
   if mode_chat == 1 then
     let pairs = load_pairs(path) in
@@ -276,17 +319,22 @@ let rc =
     let n = len(ids) in
     let tlen = ctx(0) in
     let nwin = if n >= tlen then n / tlen else 1 in
-    let limit = if n >= tlen then n - tlen + 1 else 1 in
+    let cap = win_cap(0) in
+    let nuse = if nwin <= cap then nwin else cap in
+    let limit = nuse * tlen in
     if n <= 0 then
       let _ = print("empty corpus") in 1
     else
       let _ = print(format("snapshot  mode=mlm  V=%d  T=%d  tokens=%d  windows=%d",
-        [ntok(m), tlen, n, nwin])) in
+        [ntok(m), tlen, n, nuse])) in
       let _ = print(str_cat("corpus  ", path)) in
       let _ = print("--- train (random MASK, generate) ---") in
       let _ = run_mlm(m, ids, st5(0, epochs, limit, 1, 0), wpath) in
       let _ = print("--- after train ---") in
-      let _ = denoise(m, "秋天", 8) in
+      let pr = probe_shuffle(m, ids) in
+      let _ = print(format("probe  shuffle-vis  pred-changed %d / %d  (0 = ignores context)",
+        [nth(pr, 0), nth(pr, 1)])) in
+      let _ = denoise(m, "你好", 8) in
       let _ = print(str_cat("wrote ", wpath)) in
       0
 

@@ -9,30 +9,36 @@ import snapshot
 import io
 import fmt
 
+/* 默认权重路径。 */
 let wpath =
   if argc() > 1 then argv(1)
   else "app/llm/snapshot/snapshot.w"
 
+/* 冻结在画布左侧的提示；默认「秋天」。 */
 let prompt0 =
   if argc() > 2 then argv(2)
   else "秋天"
 
+/* 命令行 K；无效则后面收成 ≥1。 */
 let k0 =
   if argc() > 3 then parse_int(argv(3), 0, str_len(argv(3)), 0)
   else 8
 
 let k = if k0 < 1 then 1 else k0
 
+/* 第 4 参数 chat：只打印冻结区右边。 */
 let mode_chat =
   if argc() > 4 then
     if argv(4) == "chat" then 1 else 0
   else 0
 
+/* 一次 generate，只打回复区。 */
 let chat_once(m, prompt, k) =
   let canvas = denoise(m, prompt, k) in
   let u = n_freeze(m, prompt) in
   print(str_cat("reply  ", show_from(m, canvas, u)))
 
+/* 提示为 - 时的 REPL；空行 / quit / exit 结束。 */
 let repl(m, k) =
   let _ = print("you> ") in
   let line = read_line() in
