@@ -105,7 +105,7 @@ IEEE f64 已经能用，第一版仍然以**整数下标 + 可选定点 logits**
 
 现有 `transformer/` 是 **causal**：位置 t 只看 0..t，最后只读出 t=T-1 的 logits。快照必须改掉这两点。
 
-- 特征：H = 可见字 one-hot 平均 + **紧邻**左 / 右 one-hot（对面是 MASK 则没有邻字）。不能跳过 MASK 去「最近可见」，否则后缀续写所有洞共享同一个左邻，生成同一字刷屏。只训 Wout。
+- 特征：紧邻左一 / 左二×左一 hash / 右邻。无邻字的洞不计入损失。只训 Wout。稀疏 H 只乘非零行。
 - 读出 softmax 用 \(2^{-\lfloor(-\Delta\ell)/2\rfloor}\)（峰 32）。邻字 PMI 只有几个 logit，/5 会整表打平。Wout 用 Adam，梯度 \(S(p-\mathrm{onehot})\)，\(g_1=g_i/4\)。V≤256 扫整表。不训 E / QKV。训练只给 MASK 格写 logits。
 - 读出：**每个位置各自一份 logits**，`logits[i][v]` = 位置 i 填词 v 的分数。一次前向是 T 个分类头，不是 1 个。
 - 结构仍保持玩具级，便于在原生 yc 里跑通：
@@ -144,10 +144,11 @@ IEEE f64 已经能用，第一版仍然以**整数下标 + 可选定点 logits**
 
 `pretrain_head.jsonl` 这类大词表不要全收：只留 **频次最高的 120 字 + MASK**，其余 encode 时丢掉。否则 V≈2000，整数 softmax 近均匀，`acc` 会低于 `maj`。必须 `new` 重建权重。
 
-每个 epoch 终端一行，**准确率看 `acc`**（百分数），不要只看 `hit / nmask` 心算：
+每个 epoch 终端两行：训练集 `acc ~N%`，以及划出的测试窗 `test acc` 与 **宏平均 F1**（只对测试金标出现过的字）。权重每 4 个 epoch 写一次（最后一轮必写）。
 
 ```
-epoch 8  acc 13 pct  maj 9 pct  nll 5  invp 118  hit 25 / 185  maj-hit 17 / 185
+epoch 8  acc ~13%  maj ~9%  nll 5  invp 118  hit 25 / 185  maj-hit 17 / 185
+         test acc ~11%  f1 ~8%  hit 18 / 160
 ```
 
 | 字段 | 含义 | 怎么读 |
@@ -158,7 +159,8 @@ epoch 8  acc 13 pct  maj 9 pct  nll 5  invp 118  hit 25 / 185  maj-hit 17 / 185
 | `maj-hit / nmask` | `maj` 的分子分母 | 同上 |
 | `nll` | 被挖位置交叉熵，单位 bit（\(\lfloor\log_2 z\rfloor-\lfloor\log_2 w_y\rfloor\)） | 整数很粗，常钉在 5–10；下降才有意义 |
 | `invp` | \(z/w_y\)，均匀时约 V | 越小越好；钉在 V 附近 = softmax 几乎均匀 |
-| `probe scramble-vis` | 训完后：可见字换成随机词，MASK 的 argmax 变了几格 | `changed / nmask`。接近 0 = \(H\) 没用上下文（不要只交换同一袋字，均匀平均下 mix 不变） |
+| `test acc` | 后 20% 窗口、不更新权重 | 过拟合时会低于 train acc |
+| `f1` | 宏平均 F1 = 各类 \(2tp/(gold+pred)\) 再平均（只计测试里出现过的字） | 比 acc 更罚「只会的/，」 |
 
 不要看「整张画布含可见字」的 full-acc，会虚高。生成好不好另看 K 步画布，不计入 `acc`。
 

@@ -17,7 +17,7 @@ package snapshot
 export sc, dim, ctx, freeze_n, u8len, ch_at, fill, mat, find_char, add_char, build_vocab,
   build_vocab_top, vocab_cap, encode, argmax, rng_next, mask_id, model_new, train_step, train_step_chat, gold_chat, forward,
   canvas_from_prompt, show_canvas, show_from, n_freeze, denoise, save_model, load_model,
-  vocab_of, ntok, parse_int, zero_freq, maj_count, probe_shuffle
+  vocab_of, ntok, parse_int, zero_freq, maj_count, probe_shuffle, eval_step
 
 import io
 
@@ -460,20 +460,40 @@ let attn_pos(m, ids, t) =
     let _ = copy_row(nth(nth(m, 23), t), nth(m, 10), 0) in
     attn_pos(m, ids, t + 1)
 
+/* y[j] += src[j] · sca / s。H 稀疏时只对非零行调用。 */
+let add_row_s(src, dst, sca, s, j) =
+  if j >= len(dst) then 0
+  else
+    let _ = list_set(dst, j, nth(dst, j) + nth(src, j) * sca / s) in
+    add_row_s(src, dst, sca, s, j + 1)
+
+/* y = (x W)/S，跳过 x[i]=0 的行。 */
+let mv_nz(W, x, y, i, s) =
+  if i >= len(x) then 0
+  else
+    let xi = nth(x, i) in
+    let _ = if xi == 0 then 0 else add_row_s(nth(W, i), y, xi, s, 0) in
+    mv_nz(W, x, y, i + 1, s)
+
 /* logits[t] = H[t] Wout / S。每个位置一份词表分数。 */
 let write_logits(m, t) =
   if t >= ctx(0) then 0
   else
-    let _ = mv_j(nth(m, 4), nth(nth(m, 11), t), nth(nth(m, 12), t), 0, sc(0)) in
+    let y = nth(nth(m, 12), t) in
+    let _ = zero_row(y, 0) in
+    let _ = mv_nz(nth(m, 4), nth(nth(m, 11), t), y, 0, sc(0)) in
     write_logits(m, t + 1)
 
-/* 训练：只给 flags=1 的格子写 logits，少做 (1−掩码率)·T·d·V。 */
+/* 训练：只给 flags=1 的格子写 logits。 */
 let write_logits_f(m, flags, t) =
   if t >= ctx(0) then 0
   else
     let _ =
       if nth(flags, t) == 0 then 0
-      else mv_j(nth(m, 4), nth(nth(m, 11), t), nth(nth(m, 12), t), 0, sc(0)) in
+      else
+        let y = nth(nth(m, 12), t) in
+        let _ = zero_row(y, 0) in
+        mv_nz(nth(m, 4), nth(nth(m, 11), t), y, 0, sc(0)) in
     write_logits_f(m, flags, t + 1)
 
 /* dst[k] += src[k]。 */
@@ -506,29 +526,31 @@ let nearest(m, ids, j, step) =
   else if nth(ids, j) == mask_id(m) then 0 - 1
   else nth(ids, j)
 
-/* H[cap + id] = 左邻，H[2cap + id] = 右邻。线性 cloze：logit 含 W_L[left]+W_R[right]。 */
+/* H：hash(左二,左一) 在 0..cap-1，左一 one-hot 在 cap+id，右邻在 2cap+id。
+ * 无左邻的后缀洞没有特征，不计入损失（否则 acc 被 unigram 洞拉回 maj）。 */
 let mark_nbr(m, ids, t) =
   let cap = vocab_cap(0) in
   let h = nth(nth(m, 11), t) in
-  let L = nearest(m, ids, t - 1, 0 - 1) in
+  let L1 = nearest(m, ids, t - 1, 0 - 1) in
+  let L2 = nearest(m, ids, t - 2, 0 - 1) in
   let R = nearest(m, ids, t + 1, 1) in
   let _ =
-    if L < 0 then 0
-    else if L >= cap then 0
-    else list_set(h, cap + L, sc(0)) in
+    if L1 < 0 then 0
+    else if L1 >= cap then 0
+    else
+      let _ = list_set(h, cap + L1, sc(0)) in
+      if L2 < 0 then 0
+      else if L2 >= cap then 0
+      else list_set(h, irem(L2 * 13 + L1, cap), sc(0)) in
   if R < 0 then 0
   else if R >= cap then 0
   else list_set(h, cap + cap + R, sc(0))
 
-/* H[t] = 可见字 one-hot 平均 + 左右邻 one-hot。不加位置。 */
+/* H[t] 只有邻字特征，不加位置、不做袋平均。 */
 let bow_t(m, ids, t) =
   if t >= ctx(0) then 0
   else
-    let h = nth(nth(m, 11), t) in
-    let _ = zero_row(h, 0) in
-    let n0 = vis_acc(m, ids, t, 0, 0) in
-    let d = if n0 < 1 then 1 else n0 in
-    let _ = div_row(h, d, 0) in
+    let _ = zero_row(nth(nth(m, 11), t), 0) in
     let _ = mark_nbr(m, ids, t) in
     bow_t(m, ids, t + 1)
 
@@ -550,13 +572,11 @@ let x_to_qkv(m, ids, t) =
 /* 一张快门：可见字均匀平均 + 小位置 + Wout。
  * Q·K 加权在多样 jsonl 上会塌成「随机盯一个可见字」，比 maj 还差。 */
 let forward(m, ids) =
-  let _ = embed_t(m, ids, 0, ctx(0)) in
   let _ = bow_t(m, ids, 0) in
   write_logits(m, 0)
 
 /* 训练用快门：只算被挖格子的 logits。 */
 let forward_train(m, ids, flags) =
-  let _ = embed_t(m, ids, 0, ctx(0)) in
   let _ = bow_t(m, ids, 0) in
   write_logits_f(m, flags, 0)
 
@@ -611,12 +631,15 @@ let adam_w(m, x, g, i, j) =
 let adam_col(m, x, gj, j, i) =
   if i >= len(x) then 0
   else
-    let g2 = clip(gj, 0 - 256, 256) in
+    let xi = nth(x, i) in
     let _ =
-      if g2 < 2 then
-        if g2 > 0 - 2 then 0
-        else adam_cell(m, i, j, nth(x, i) * g2)
-      else adam_cell(m, i, j, nth(x, i) * g2) in
+      if xi == 0 then 0
+      else
+        let g2 = clip(gj, 0 - 256, 256) in
+        if g2 < 2 then
+          if g2 > 0 - 2 then 0
+          else adam_cell(m, i, j, xi * g2)
+        else adam_cell(m, i, j, xi * g2) in
     adam_col(m, x, gj, j, i + 1)
 
 /* Wout[i][j] -= h[i] · g[j] / den。快照上 den=z·8 会贴 maj；现用 adam_w。 */
@@ -835,11 +858,17 @@ let maj_go(f, i, last, bv) =
 /* 本 epoch 被挖金标里出现最多的那个字的次数（unigram 上限）。 */
 let maj_count(m) = maj_go(nth(m, 17), 0, ntok(m) - 2, 0)
 
-/* 只在 flags[t]=1 的位置做交叉熵。V≤256 时 Adam 扫整张 Wout；更大才只更新金标/argmax。
- * H 是可见字加权平均（不再加位置，避免读出只背「的」）。不碰 E。 */
+/* H 是否全 0（左右都是 MASK）。 */
+let h_nz(h, i) =
+  if i >= len(h) then 0
+  else if nth(h, i) != 0 then 1
+  else h_nz(h, i + 1)
+
+/* 只在 flags[t]=1 且 H 非空的位置做交叉熵（有邻字才算续写成功）。Adam 只动金标/argmax 列和非零 H 行。 */
 let train_at(m, gold, flags, t, acc) =
   if t >= ctx(0) then acc
   else if nth(flags, t) == 0 then train_at(m, gold, flags, t + 1, acc)
+  else if h_nz(nth(nth(m, 11), t), 0) == 0 then train_at(m, gold, flags, t + 1, acc)
   else
     let y = nth(gold, t) in
     let z0 = sm_row(m, t) in
@@ -851,11 +880,8 @@ let train_at(m, gold, flags, t, acc) =
     let h = nth(nth(m, 11), t) in
     let w = nth(m, 13) in
     let _ = g_fill(w, y, z, 0, ntok(m)) in
-    let _ =
-      if ntok(m) > 256 then
-        let _ = adam_col(m, h, nth(w, y), y, 0) in
-        if p == y then 0 else adam_col(m, h, nth(w, p), p, 0)
-      else adam_w(m, h, w, 0, 0) in
+    let _ = adam_col(m, h, nth(w, y), y, 0) in
+    let _ = if p == y then 0 else adam_col(m, h, nth(w, p), p, 0) in
     let fr = nth(m, 17) in
     let _ = list_set(fr, y, nth(fr, y) + 1) in
     let _ = list_set(acc, 0, nth(acc, 0) + hit) in
@@ -863,6 +889,26 @@ let train_at(m, gold, flags, t, acc) =
     let _ = list_set(acc, 2, nth(acc, 2) + nll) in
     let _ = list_set(acc, 3, nth(acc, 3) + inv) in
     train_at(m, gold, flags, t + 1, acc)
+
+/* 验证：与 train_at 同一套挖洞/邻字，不更新 Wout。
+ * bun = [hit, n, tp, goldn, predn]。 */
+let eval_at(m, gold, flags, t, bun) =
+  if t >= ctx(0) then 0
+  else if nth(flags, t) == 0 then eval_at(m, gold, flags, t + 1, bun)
+  else if h_nz(nth(nth(m, 11), t), 0) == 0 then eval_at(m, gold, flags, t + 1, bun)
+  else
+    let y = nth(gold, t) in
+    let p = argmax(nth(nth(m, 12), t)) in
+    let hit = if p == y then 1 else 0 in
+    let tp = nth(bun, 2) in
+    let gc = nth(bun, 3) in
+    let pc = nth(bun, 4) in
+    let _ = list_set(tp, y, nth(tp, y) + hit) in
+    let _ = list_set(gc, y, nth(gc, y) + 1) in
+    let _ = list_set(pc, p, nth(pc, p) + 1) in
+    let _ = list_set(bun, 0, nth(bun, 0) + hit) in
+    let _ = list_set(bun, 1, nth(bun, 1) + 1) in
+    eval_at(m, gold, flags, t + 1, bun)
 
 /* [0,0,0,0]，train_at 的累加器。 */
 let acc4(_) =
@@ -889,7 +935,7 @@ let train_step(m, ids, pos, seed, lr) =
   let canvas = copy_ids(gold, 0, list_new()) in
   let flags = flags_new(0) in
   let seed2 =
-    if irem(seed, 3) == 0 then
+    if irem(seed, 8) == 0 then
       mask_i(gold, canvas, flags, triple(seed, mid, 50), 0)
     else
       let cut = 1 + irem(seed, ctx(0) - 1) in
@@ -900,6 +946,23 @@ let train_step(m, ids, pos, seed, lr) =
   let _ = train_at(m, gold, flags, 0, acc) in
   let _ = list_push(acc, seed2) in
   acc
+
+/* 与 train_step 相同挖洞，不 Adam。bun = [hit, n, tp, goldn, predn]。返回新种子。 */
+let eval_step(m, ids, pos, seed, bun) =
+  let mid = mask_id(m) in
+  let gold = win_at(ids, pos, mid, list_new(), 0) in
+  let canvas = copy_ids(gold, 0, list_new()) in
+  let flags = flags_new(0) in
+  let seed2 =
+    if irem(seed, 8) == 0 then
+      mask_i(gold, canvas, flags, triple(seed, mid, 50), 0)
+    else
+      let cut = 1 + irem(seed, ctx(0) - 1) in
+      let _ = mask_from(canvas, flags, mid, cut, 0) in
+      rng_next(seed) in
+  let _ = forward_train(m, canvas, flags) in
+  let _ = eval_at(m, gold, flags, 0, bun) in
+  seed2
 
 /* mask_i 也会挖用户区；再把 0..u-1 还原成真字、不算损失。 */
 let restore_user(gold, canvas, flags, u, i) =
