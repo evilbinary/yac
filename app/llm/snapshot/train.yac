@@ -332,7 +332,7 @@ let rc =
       let _ = run_mlm(m, ids, st5(0, epochs, limit, 1, 0), wpath) in
       let _ = print("--- after train ---") in
       let pr = probe_shuffle(m, ids) in
-      let _ = print(format("probe  shuffle-vis  pred-changed %d / %d  (0 = ignores context)",
+      let _ = print(format("probe  scramble-vis  pred-changed %d / %d  (0 = ignores context)",
         [nth(pr, 0), nth(pr, 1)])) in
       let _ = denoise(m, "你好", 8) in
       let _ = print(str_cat("wrote ", wpath)) in

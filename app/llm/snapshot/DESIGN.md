@@ -105,7 +105,7 @@ IEEE f64 已经能用，第一版仍然以**整数下标 + 可选定点 logits**
 
 现有 `transformer/` 是 **causal**：位置 t 只看 0..t，最后只读出 t=T-1 的 logits。快照必须改掉这两点。
 
-- 注意力：**全双向**。位置 i 可以看整张画布（提示 + 已显影的字）。没有因果遮罩。MASK 格仍发 query（带着位置），但 **K/V 清零**，否则一排共享的 ░ 会淹没可见字，整图只拟合 MASK 区的 unigram。
+- 注意力：embedding 当 Q/K/V，按 \(Q\cdot K\) 对可见字加权平均（MASK 的 score 打到条带外）。分数除 32，避免除 512 后全是 0。H 不加 \(E_░\) 残差，只加小位置。均匀权重时退化为 BOW。
 - 读出 softmax 用 \(2^{-\lfloor(-\Delta\ell)/5\rfloor}\)（峰 32，约 40 个 logit 宽）。峰太大时 Σw 会把 32-bit 梯度乘爆；旧版 24 以外分子全是 1 则 NLL 钉死。Adam 对 g 先 clip 再更新 Wout。
 - 读出：**每个位置各自一份 logits**，`logits[i][v]` = 位置 i 填词 v 的分数。一次前向是 T 个分类头，不是 1 个。
 - 结构仍保持玩具级，便于在原生 yc 里跑通：
@@ -147,7 +147,7 @@ IEEE f64 已经能用，第一版仍然以**整数下标 + 可选定点 logits**
 - `mask-acc`：被掩位置上 argmax 是否等于真字
 - `maj`：同一批金标里最高频字出现次数（unigram 下限；acc 应明显高于它）
 - `invp`：\(z/w_y\)，越小越好
-- `probe shuffle-vis`：打乱可见字后 MASK 预测改变的比例（接近 0 说明没用上下文）
+- `probe scramble-vis`：把可见字换成随机词后 MASK 预测改变的比例（接近 0 说明没用上下文；不要只置换同一袋字）
 
 ### 3.6 和现有两个例子怎么并列
 
