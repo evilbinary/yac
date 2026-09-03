@@ -224,7 +224,7 @@ let epoch_chat(m, golds, us, st) =
 
 /* 整数均值；nm=0 则 0。nll 和 invp 都用它。 */
 let avg_nll(nll, nm) =
-  if nm < 1 then 0
+  if nm < 1 then 0.0
   else nll / nm
 
 /* 命中率百分数：hit/nm，nm=0 则 0。这就是终端上的 acc / maj。 */
@@ -315,8 +315,8 @@ let run_mlm(m, ids, st, path) =
     let nm = nth(row, 4) in
     let hit = nth(row, 3) in
     let mj = maj_count(m) in
-    let _ = print(format("epoch %d  acc ~%d%%  maj ~%d%%  nll %d  invp %d  hit %d / %d  maj-hit %d / %d",
-      [ep, pct(hit, nm), pct(mj, nm), avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm),
+    let _ = print(format("epoch %d  acc ~%d%%  maj ~%d%%  loss %s nat  invp %s  hit %d / %d  maj-hit %d / %d",
+      [ep, pct(hit, nm), pct(mj, nm), fstr(avg_nll(nth(row, 5), nm)), fstr(avg_nll(nth(row, 6), nm)),
         hit, nm, mj, nm])) in
     let bun = bun_new(ntok(m)) in
     let ev = st5(0, nuse, nth(row, 2), 0, 0) in
@@ -341,8 +341,8 @@ let run_chat(m, golds, us, st, path) =
     let nm = nth(row, 4) in
     let hit = nth(row, 3) in
     let mj = maj_count(m) in
-    let _ = print(format("epoch %d  acc ~%d%%  maj ~%d%%  nll %d  invp %d  hit %d / %d  maj-hit %d / %d",
-      [ep, pct(hit, nm), pct(mj, nm), avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm),
+    let _ = print(format("epoch %d  acc ~%d%%  maj ~%d%%  loss %s nat  invp %s  hit %d / %d  maj-hit %d / %d",
+      [ep, pct(hit, nm), pct(mj, nm), fstr(avg_nll(nth(row, 5), nm)), fstr(avg_nll(nth(row, 6), nm)),
         hit, nm, mj, nm])) in
     let _ = maybe_save(m, path, ep, nth(st, 1)) in
     let _ = list_set(st, 0, ep + 1) in
@@ -442,7 +442,7 @@ let rc =
         [ntok(m), tlen, n, ntr, nuse - ntr])) in
       let _ = print(format("vocab  top-%d + MASK  (rare chars dropped)", [vocab_cap(0)])) in
       let _ = print(str_cat("corpus  ", path)) in
-      let _ = print(format("opt  full-CE Wout  Lbag+Rbag+adj+pos  Vcap=256  save every %d ep", [save_every(0)])) in
+      let _ = print("opt  float softmax CE  SGD lr=0.05  Lbag+Rbag+adj+pos  Vcap=256") in
       let _ = print("--- train (random MASK, generate) ---") in
       let st = st5(0, epochs, nuse, 1, 0) in
       let _ = run_mlm(m, ids, st, wpath) in
