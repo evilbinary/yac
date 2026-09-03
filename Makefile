@@ -4,6 +4,11 @@ else
 EXEEXT :=
 endif
 
+# Built-in yacc `.y` / `%: %.y` treats a target named `yc` as `yc` <- `yc.y`
+# and then as itself. We compile C with explicit rules only.
+MAKEFLAGS += -r
+.SUFFIXES:
+
 CC ?= gcc
 CFLAGS ?= -std=c11 -Wall -Wextra -O2 -g
 SRCS = src/main.c src/arena.c src/value.c src/bignum.c src/lexer.c src/ast.c src/parser.c src/anf.c src/eval_anf.c src/cps.c src/eval_cps.c src/uncps.c src/gc.c src/rtio.c src/ckpt.c src/scheme.c src/profile.c src/oscompat.c
