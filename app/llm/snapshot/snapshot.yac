@@ -541,7 +541,7 @@ let add_e(dst, src, k, last) =
     let _ = list_set(dst, k, nth(dst, k) + nth(src, k)) in
     add_e(dst, src, k + 1, last)
 
-/* j < t 的可见字 → 左袋 0..cap（冻结 E）。 */
+/* j < t 的可见字 → 左袋 0..cap（one-hot 再平均，避免把整行 E 加稠后 Adam 扫 256 维）。 */
 let vis_left(m, ids, t, j, n) =
   if j >= t then n
   else if nth(ids, j) == mask_id(m) then vis_left(m, ids, t, j + 1, n)
@@ -551,7 +551,7 @@ let vis_left(m, ids, t, j, n) =
     let h = nth(nth(m, 11), t) in
     let _ =
       if id >= cap then 0
-      else add_e(h, nth(nth(m, 0), id), 0, cap) in
+      else list_set(h, id, nth(h, id) + sc(0)) in
     vis_left(m, ids, t, j + 1, n + 1)
 
 /* j > t 的可见字 → 右袋 cap..2cap（one-hot 尺度 S）。 */
@@ -801,18 +801,23 @@ let g_fill(w, y, z, i, v) =
     let _ = list_set(w, i, p - t) in
     g_fill(w, y, z, i + 1, v)
 
-/* 整表 Adam：CE 要对每个非 MASK 词压 p−1_y，不能只动金标和 argmax 两列。 */
-let adam_gk(m, x, g, j, k) =
-  if k <= 0 then j
-  else if j >= ntok(m) - 1 then j
+/* 一行 Wout：固定 hidden 维 i，扫非 MASK 词。H 稀疏时比按列扫 784 维快。 */
+let adam_row_j(m, i, xi, g, j) =
+  if j >= ntok(m) - 1 then 0
   else
     let gj = nth(g, j) in
-    let _ = if gj == 0 then 0 else adam_col(m, x, gj, j, 0) in
-    adam_gk(m, x, g, j + 1, k - 1)
+    let _ =
+      if gj == 0 then 0
+      else adam_cell(m, i, j, xi * clip(gj, 0 - 256, 256)) in
+    adam_row_j(m, i, xi, g, j + 1)
 
-let adam_g(m, x, g, j) =
-  if j >= ntok(m) - 1 then 0
-  else adam_g(m, x, g, adam_gk(m, x, g, j, 32))
+/* 只对 H[i]≠0 的行做整表外积。 */
+let adam_hi(m, x, g, i) =
+  if i >= len(x) then 0
+  else
+    let xi = nth(x, i) in
+    let _ = if xi == 0 then 0 else adam_row_j(m, i, xi, g, 0) in
+    adam_hi(m, x, g, i + 1)
 
 /* w[i] = exp(logit[i]-max)，i 不含 MASK 列；返回 Σ w。 */
 let sm_into(row, w, mx, i, z) =
@@ -973,7 +978,7 @@ let train_at(m, gold, flags, t, acc) =
     let h = nth(nth(m, 11), t) in
     let w = nth(m, 13) in
     let _ = g_fill(w, y, z, 0, ntok(m)) in
-    let _ = adam_g(m, h, w, 0) in
+    let _ = adam_hi(m, h, w, 0) in
     let fr = nth(m, 17) in
     let _ = list_set(fr, y, nth(fr, y) + 1) in
     let _ = list_set(acc, 0, nth(acc, 0) + hit) in
