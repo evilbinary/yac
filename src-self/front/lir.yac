@@ -392,6 +392,8 @@ let is_prim_name(w) =
   else if w == "bytes_extend" then true
   else if w == "bytes_ref" then true
   else if w == "bytes_put" then true
+  else if w == "mem_ref" then true
+  else if w == "mem_put" then true
   else if w == "bytes_to_str" then true
   else if w == "list_new" then true
   else if w == "list_push" then true
@@ -740,6 +742,10 @@ let lir_rt_bytes(g, dst, ss) =
   else if g == "bytes_ref" then ["fcall", dst, "yac_bytes_ref", [nth(ss, 0), nth(ss, 1)]]
   else if g == "bytes_put" then
     ["fcall", dst, "yac_bytes_put", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
+  else if g == "mem_ref" then
+    ["fcall", dst, "yac_mem_ref", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
+  else if g == "mem_put" then
+    ["fcall", dst, "yac_mem_put", [nth(ss, 0), nth(ss, 1), nth(ss, 2), nth(ss, 3)]]
   else if g == "bytes_append" then ["fcall", dst, "yac_bytes_append", [nth(ss, 0), nth(ss, 1)]]
   else if g == "bytes_extend" then ["fcall", dst, "yac_bytes_extend", [nth(ss, 0), nth(ss, 1)]]
   else if g == "read_file" then ["fcall", dst, "yac_read_file", [nth(ss, 0)]]

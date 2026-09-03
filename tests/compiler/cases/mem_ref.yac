@@ -1,0 +1,11 @@
+let b = bytes_new() in
+let _ = bytes_put(b, 15, 0) in
+let _ = bytes_put(b, 0, 255) in
+if mem_ref(b, 0, 1) != (0 - 1) then 0
+else if mem_ref(b, 0, 5) != 255 then 0
+else
+  let _ = mem_put(b, 0, 4, 42) in
+  if mem_ref(b, 0, 4) != 42 then 0
+  else
+    let _ = mem_put(b, 0, 16, 1.0) in
+    if mem_ref(b, 0, 16) == 1.0 then 42 else 0

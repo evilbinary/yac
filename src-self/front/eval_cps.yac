@@ -171,6 +171,11 @@ let ce_prim_plain(op, args) =
     if op == "list_set" then list_set(nth(args, 0), nth(args, 1), nth(args, 2))
     else if op == "str_slice" then str_slice(nth(args, 0), nth(args, 1), nth(args, 2))
     else if op == "bytes_put" then bytes_put(nth(args, 0), nth(args, 1), nth(args, 2))
+    else if op == "mem_ref" then
+      ce_fail("CPS eval: primitive 'mem_ref' not supported")
+    else ce_fail(str_cat("CPS eval: primitive '", str_cat(op, "' not supported")))
+  else if m == 4 then
+    if op == "mem_put" then ce_fail("CPS eval: primitive 'mem_put' not supported")
     else ce_fail(str_cat("CPS eval: primitive '", str_cat(op, "' not supported")))
   else ce_fail(str_cat("CPS eval: primitive '", str_cat(op, "' not supported")))
 

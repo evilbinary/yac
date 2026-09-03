@@ -1,7 +1,10 @@
 import ffi
+let buf = zbuf(8) in
+let _ = mem_put(buf, 0, 4, 42) in
 let h = load(syslib(0)) in
 let p = sym0("strlen") in
-if h != 0 then
+if mem_ref(buf, 0, 4) != 42 then 0
+else if h != 0 then
   if p != 0 then
     if ccall(p, cstr("abc")) == 3 then
       if cstr_at(cstr("xy"), 0) == "xy" then

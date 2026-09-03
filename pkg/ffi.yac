@@ -3,7 +3,18 @@
  * rt.ffi is Unix-shaped cload/csym; this package is the guest API. */
 
 package ffi
-export load, close, sym, sym0, syslib, zbuf, cstr, cstr_at
+export load, close, sym, sym0, syslib, zbuf, cstr, cstr_at,
+  mem_i8, mem_i16, mem_i32, mem_i64, mem_u8, mem_u16, mem_u32, mem_f64
+
+/* mem_ref(p, off, k) / mem_put(p, off, k, v) 是 prim。k 宽度含在码里；8 只当整数/指针，f64 用 16。 */
+let mem_i8 = 1
+let mem_i16 = 2
+let mem_i32 = 4
+let mem_i64 = 8
+let mem_u8 = 5
+let mem_u16 = 6
+let mem_u32 = 7
+let mem_f64 = 16
 
 /* ASCII prefix. */
 let ffi_has(s, p) =
