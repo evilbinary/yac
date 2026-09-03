@@ -50,9 +50,8 @@ let repl(m, k) =
     let _ = chat_once(m, line, k) in
     repl(m, k)
 
-let m = load_model(wpath)
-
 let rc =
+  let m = load_model(wpath) in
   if m == 0 then
     let _ = print("load failed (train first: app/llm/snapshot/train)") in 1
   else

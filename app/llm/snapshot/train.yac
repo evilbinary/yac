@@ -1,7 +1,7 @@
 /* 快照并行训练（MLM 预训练 / MaskGIT generate）。
  *
  *   ./app/llm/snapshot/train [语料] [权重] [epoch] [new|chat]
- * 默认 MLM：pretrain_t2t_mini.jsonl 切出的前 250 行（pretrain_head.jsonl）。
+ * 默认语料 app/llm/xyj.txt（过长只取中段 book_cap 字节）。
  */
 
 import snapshot
@@ -64,6 +64,9 @@ let jsonl_max(_) = 250
 /* 每个 epoch 最多扫这么多长度为 T 的窗口。 */
 let win_cap(_) = 400
 
+/* 每本书最多取这么多字节（从 1/5 处切开，躲开 CIP）。整本进 list 会卡在 encode。 */
+let book_cap(_) = 80000
+
 /* 每这么多 epoch 写一次权重；最后一轮一定写。 */
 let save_every(_) = 4
 
@@ -94,14 +97,34 @@ let lines_go(raw, i, n, b, left) =
     let i2 = if nl < n then nl + 1 else n in
     lines_go(raw, i2, n, b, left - 1)
 
-/* 读语料：`{` 开头当 jsonl，否则整文件当纯文本。 */
+/* 过长则从 1/5 处切 cap 字节。 */
+let take_mid(s, cap) =
+  let n = str_len(s) in
+  if n <= cap then s
+  else
+    let o = n / 5 in
+    str_slice(s, o, cap)
+
+/* 读语料：`{` 开头当 jsonl，否则纯文本（过长只取中段）。 */
 let load_text(path) =
   let raw = read_or_0(path) in
   if raw == 0 then default_text(0)
   else if str_len(raw) <= 0 then default_text(0)
   else if str_ref(raw, 0) == 123 then
     lines_go(raw, 0, str_len(raw), bytes_new(), jsonl_max(0))
-    else raw
+    else take_mid(raw, book_cap(0))
+
+/* 窗口 i 在全书上均匀落点，避免窗全落在封面/CIP。 */
+let stride_pos(i, n, nuse) =
+  let t = ctx(0) in
+  if nuse < 1 then 0
+  else if n <= t then 0
+  else
+    let span = n / nuse in
+    let sp = if span < t then t else span in
+    let p = i * sp in
+    if p + t > n then n - t
+    else p
 
 /* 在 conversations 里找 role=want 的 content。 */
 let find_role(arr, i, want) =
@@ -166,18 +189,23 @@ let pack_go(m, pairs, i, golds, us) =
     let _ = list_push(us, nth(g, 1)) in
     pack_go(m, pairs, i + 1, golds, us)
 
-/* 一个 epoch：非重叠窗口。st = [pos, limit, seed, hit, nmask, nll, invp]。 */
+/* 一个 epoch：步长窗口。每 5 个窗留 1 个做测试（两本书都会进 train/test）。
+ * st = [i, nuse, seed, hit, nmask, nll, invp]。 */
 let epoch_mlm(m, ids, st) =
-  let pos = nth(st, 0) in
-  if pos >= nth(st, 1) then 0
+  let i = nth(st, 0) in
+  if i >= nth(st, 1) then 0
   else
-    let r = train_step(m, ids, pos, nth(st, 2), 1) in
-    let _ = list_set(st, 0, pos + ctx(0)) in
-    let _ = list_set(st, 2, nth(r, 4)) in
-    let _ = list_set(st, 3, nth(st, 3) + nth(r, 0)) in
-    let _ = list_set(st, 4, nth(st, 4) + nth(r, 1)) in
-    let _ = list_set(st, 5, nth(st, 5) + nth(r, 2)) in
-    let _ = list_set(st, 6, nth(st, 6) + nth(r, 3)) in
+    let _ =
+      if irem(i, 5) == 4 then 0
+      else
+        let pos = stride_pos(i, len(ids), nth(st, 1)) in
+        let r = train_step(m, ids, pos, nth(st, 2), 1) in
+        let _ = list_set(st, 2, nth(r, 4)) in
+        let _ = list_set(st, 3, nth(st, 3) + nth(r, 0)) in
+        let _ = list_set(st, 4, nth(st, 4) + nth(r, 1)) in
+        let _ = list_set(st, 5, nth(st, 5) + nth(r, 2)) in
+        list_set(st, 6, nth(st, 6) + nth(r, 3)) in
+    let _ = list_set(st, 0, i + 1) in
     epoch_mlm(m, ids, st)
 
 /* 一个 epoch：逐条对话底片。st[0] 是对下标。 */
@@ -216,14 +244,18 @@ let maybe_save(m, path, ep, ntot) =
   else if irem(ep + 1, save_every(0)) == 0 then save_model(m, path)
   else 0
 
-/* 验证窗从 train_lim 扫到 test_end。st = [pos, test_end, seed]。bun 累加命中。 */
+/* 验证：i % 5 == 4 的窗。st = [i, nuse, seed]。bun 累加命中。 */
 let epoch_eval(m, ids, st, bun) =
-  let pos = nth(st, 0) in
-  if pos >= nth(st, 1) then 0
+  let i = nth(st, 0) in
+  if i >= nth(st, 1) then 0
   else
-    let seed2 = eval_step(m, ids, pos, nth(st, 2), bun) in
-    let _ = list_set(st, 0, pos + ctx(0)) in
-    let _ = list_set(st, 2, seed2) in
+    let _ =
+      if irem(i, 5) != 4 then 0
+      else
+        let pos = stride_pos(i, len(ids), nth(st, 1)) in
+        let seed2 = eval_step(m, ids, pos, nth(st, 2), bun) in
+        list_set(st, 2, seed2) in
+    let _ = list_set(st, 0, i + 1) in
     epoch_eval(m, ids, st, bun)
 
 /* 清 F1 计数。 */
@@ -271,13 +303,14 @@ let bun_zero(bun) =
   let _ = zero_i(nth(bun, 3), 0) in
   zero_i(nth(bun, 4), 0)
 
-/* st = [ep, epochs, train_lim, seed, test_start, test_end]。 */
+/* st = [ep, epochs, nuse, seed]。 */
 let run_mlm(m, ids, st, path) =
   let ep = nth(st, 0) in
   if ep >= nth(st, 1) then 0
   else
+    let nuse = nth(st, 2) in
     let _ = zero_freq(m, 0) in
-    let row = epoch_row(nth(st, 2), nth(st, 3)) in
+    let row = epoch_row(nuse, nth(st, 3)) in
     let _ = epoch_mlm(m, ids, row) in
     let nm = nth(row, 4) in
     let hit = nth(row, 3) in
@@ -286,7 +319,7 @@ let run_mlm(m, ids, st, path) =
       [ep, pct(hit, nm), pct(mj, nm), avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm),
         hit, nm, mj, nm])) in
     let bun = bun_new(ntok(m)) in
-    let ev = st5(nth(st, 4), nth(st, 5), nth(row, 2), 0, 0) in
+    let ev = st5(0, nuse, nth(row, 2), 0, 0) in
     let _ = epoch_eval(m, ids, ev, bun) in
     let te = nth(bun, 1) in
     let _ = print(format("         test acc ~%d%%  f1 ~%d%%  hit %d / %d",
@@ -340,10 +373,10 @@ let open_or_new(wpath, vocab, force) =
       let _ = print(format("resume  V=%d", [ntok(m)])) in
       m
 
-/* 语料路径，默认小词表 corpus.txt。 */
+/* 语料路径，默认西游记中段。 */
 let path =
   if argc() > 1 then argv(1)
-  else "app/llm/pretrain_head.jsonl"
+  else "app/llm/xyj.txt"
 
 /* 权重路径。 */
 let wpath =
@@ -401,14 +434,7 @@ let rc =
     let nwin = if n >= tlen then n / tlen else 1 in
     let cap = win_cap(0) in
     let nuse = if nwin <= cap then nwin else cap in
-    let ntr0 = nuse * 4 / 5 in
-    let ntr =
-      if nuse < 2 then 1
-      else if ntr0 < 1 then 1
-      else if ntr0 >= nuse then nuse - 1
-      else ntr0 in
-    let train_lim = ntr * tlen in
-    let test_end = nuse * tlen in
+    let ntr = nuse - nuse / 5 in
     if n <= 0 then
       let _ = print("empty corpus") in 1
     else
@@ -416,20 +442,20 @@ let rc =
         [ntok(m), tlen, n, ntr, nuse - ntr])) in
       let _ = print(format("vocab  top-%d + MASK  (rare chars dropped)", [vocab_cap(0)])) in
       let _ = print(str_cat("corpus  ", path)) in
-      let _ = print(format("opt  fov-loss r=1  bag+conj+adj  save every %d ep", [save_every(0)])) in
+      let _ = print(format("opt  full-CE Wout  Lbag+Rbag+adj+pos  Vcap=256  save every %d ep", [save_every(0)])) in
       let _ = print("--- train (random MASK, generate) ---") in
-      let st = st5(0, epochs, train_lim, 1, train_lim) in
-      let _ = list_push(st, test_end) in
+      let st = st5(0, epochs, nuse, 1, 0) in
       let _ = run_mlm(m, ids, st, wpath) in
       let _ = print("--- after train ---") in
       let pr = probe_shuffle(m, ids) in
       let _ = print(format("probe  scramble-vis  pred-changed %d / %d  (0 = ignores context)",
         [nth(pr, 0), nth(pr, 1)])) in
       let _ = print("--- K curve (same shutter, more K = more exposures) ---") in
-      let _ = print(str_cat("K=1   ", show_canvas(m, denoise_quiet(m, "你好", 1)))) in
-      let _ = print(str_cat("K=4   ", show_canvas(m, denoise_quiet(m, "你好", 4)))) in
-      let _ = print(str_cat("K=8   ", show_canvas(m, denoise_quiet(m, "你好", 8)))) in
-      let _ = print(str_cat("K=14  ", show_canvas(m, denoise_quiet(m, "你好", 14)))) in
+      let _ = print(str_cat("K=1   ", show_canvas(m, denoise_quiet(m, "悟空", 1)))) in
+      let _ = print(str_cat("K=4   ", show_canvas(m, denoise_quiet(m, "悟空", 4)))) in
+      let _ = print(str_cat("K=8   ", show_canvas(m, denoise_quiet(m, "悟空", 8)))) in
+      let _ = print(str_cat("K=14  ", show_canvas(m, denoise_quiet(m, "悟空", 14)))) in
+      let _ = print(str_cat("K=8 Romeo  ", show_canvas(m, denoise_quiet(m, "Romeo", 8)))) in
       let _ = print(str_cat("wrote ", wpath)) in
       0
 

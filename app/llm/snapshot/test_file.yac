@@ -1,0 +1,76 @@
+/* 复现 / 对照 infer 加载 snapshot.w。
+ *
+ *   ./build/yc_tmp/yc_a.exe --pkg src-self,pkg,app/llm/snapshot app/llm/snapshot/test_file.yac -o app/llm/snapshot/test_file
+ *   ./app/llm/snapshot/test_file.exe              # 只 load_model（和 infer 一样）
+ *   ./app/llm/snapshot/test_file.exe io           # 只 read_file，不建模型
+ *   ./app/llm/snapshot/test_file.exe io app/llm/snapshot/snapshot.w
+ */
+
+import io
+import fmt
+import snapshot
+
+let try_read(tag, path) =
+  let _ = print(str_cat("try  ", tag)) in
+  let r = read_or_0(path) in
+  if r == 0 then print(str_cat("miss ", path))
+  else print(format("ok   len=%d", [str_len(r)]))
+
+let fill_k(b, k) =
+  if k <= 0 then 0
+  else
+    let _ = bytes_append(b, 48 + irem(k, 10)) in
+    fill_k(b, k - 1)
+
+let fill_n(b, n) =
+  if n <= 0 then 0
+  else
+    let k = if n < 64 then n else 64 in
+    let _ = fill_k(b, k) in
+    fill_n(b, n - k)
+
+let write_ascii(path, n) =
+  let b = bytes_new() in
+  let _ = fill_n(b, n) in
+  write(path, b)
+
+let try_own(tag, path, n) =
+  let _ = print(format("write %d", [n])) in
+  let _ = write_ascii(path, n) in
+  try_read(tag, path)
+
+let io_path =
+  if argc() > 2 then argv(2)
+  else "app/llm/snapshot/snapshot.w"
+
+let wpath =
+  if argc() > 1 then
+    if argv(1) == "io" then io_path
+    else argv(1)
+  else "app/llm/snapshot/snapshot.w"
+
+let run_io(_) =
+  let _ = print("test_file  read_file only") in
+  let _ = try_read("readme", "app/llm/README.md") in
+  let _ = try_own("ascii2k", "build/test_tmp/tf_2k.txt", 2000) in
+  let _ = try_own("ascii20k", "build/test_tmp/tf_20k.txt", 20000) in
+  let _ = try_read("snapshot.w", io_path) in
+  let _ = try_read("xyj", "app/llm/xyj.txt") in
+  print("done io")
+
+let run_load(_) =
+  let m = load_model(wpath) in
+  if m == 0 then
+    let _ = print("load_model  0") in 1
+  else
+    let _ = print(format("load_model  V=%d  d=%d", [ntok(m), dim(0)])) in
+    0
+
+let rc =
+  if argc() > 1 then
+    if argv(1) == "io" then
+      let _ = run_io(0) in 0
+    else run_load(0)
+  else run_load(0)
+
+rc

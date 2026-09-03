@@ -20,13 +20,14 @@ export sc, dim, ctx, freeze_n, u8len, ch_at, fill, mat, find_char, add_char, bui
   vocab_of, ntok, parse_int, zero_freq, maj_count, probe_shuffle, eval_step
 
 import io
+import fmt
 
 /* 定点尺度 S。真实 1.0 ↔ 整数 64。 */
 let sc(_) = 64
 
-/* 模型宽度：三块各 vocab_cap 维：冻结袋 E、邻对合取 hash、紧邻 one-hot。
- * 相对 (id,偏移) hash 碰撞后几乎是噪声，让给 (L,R)/(L2,L1) 合取。 */
-let dim(_) = 360
+/* 模型宽度：左袋 + 右袋 + 紧邻 one-hot 各 vocab_cap，再加 T 维位置。
+ * 位置维让同袋的远洞仍可分；词表 256 才能盖住「悟/空」这类实词。 */
+let dim(_) = 784
 
 /* √d 的整数近似，注意力分数除 S·nsq。 */
 let nsq(_) = 4
@@ -108,8 +109,8 @@ let encode(s, vocab, ids, i) =
     let _ = if k < 0 then 0 else list_push(ids, k) in
     encode(s, vocab, ids, i + str_len(c))
 
-/* jsonl 大语料只留这么多高频字（+MASK）。V≈100 时 Adam 才推得动。 */
-let vocab_cap(_) = 120
+/* jsonl / 长书只留这么多高频字（+MASK）。256 盖住西游记中段的悟/空/孙；再大 softmax 易平。 */
+let vocab_cap(_) = 256
 
 /* 换行不进词表。 */
 let skip_tok(c) =
@@ -277,28 +278,23 @@ let mat_rand(W, i, seed, mag) =
     let seed2 = fill_rand(nth(W, i), 0, seed, mag) in
     mat_rand(W, i + 1, seed2, mag)
 
-/* 分配权重与前向缓存。E 小随机；Wq/Wk/Wv = S·I 再加噪声；Wout 小随机。 */
+/* 分配权重与前向缓存。前向只用 E+Wout；QKV 占位 1×1，避免 6 张 784² 把 infer 撑爆。 */
 let model_new(vocab, seed) =
   let v = len(vocab) in
   let d = dim(0) in
   let t = ctx(0) in
   let s = sc(0) in
   let E = mat(v, d) in
-  let Wq = id_eye(mat(d, d), 0, s) in
-  let Wk = id_eye(mat(d, d), 0, s) in
-  let Wv = id_eye(mat(d, d), 0, s) in
+  let tiny = mat(1, 1) in
   let Wout = mat(d, v) in
   let _ = mat_rand(E, 0, seed, 2) in
   let _ = e_spike(E, 0, vocab_cap(0), s) in
-  let _ = mat_rand(Wq, 0, seed + 1, 2) in
-  let _ = mat_rand(Wk, 0, seed + 2, 2) in
-  let _ = mat_rand(Wv, 0, seed + 3, 2) in
   let _ = mat_rand(Wout, 0, seed + 4, 2) in
   let m = list_new() in
   let _ = list_push(m, E) in
-  let _ = list_push(m, Wq) in
-  let _ = list_push(m, Wk) in
-  let _ = list_push(m, Wv) in
+  let _ = list_push(m, tiny) in
+  let _ = list_push(m, tiny) in
+  let _ = list_push(m, tiny) in
   let _ = list_push(m, Wout) in
   let _ = list_push(m, mat(t, d)) in
   let _ = list_push(m, mat(t, d)) in
@@ -315,15 +311,9 @@ let model_new(vocab, seed) =
   let _ = list_push(m, fill(v, 0)) in
   let _ = list_push(m, mat(d, v)) in
   let _ = list_push(m, mat(d, v)) in
-  let Wq2 = id_eye(mat(d, d), 0, s) in
-  let Wk2 = id_eye(mat(d, d), 0, s) in
-  let Wv2 = id_eye(mat(d, d), 0, s) in
-  let _ = mat_rand(Wq2, 0, seed + 5, 2) in
-  let _ = mat_rand(Wk2, 0, seed + 6, 2) in
-  let _ = mat_rand(Wv2, 0, seed + 7, 2) in
-  let _ = list_push(m, Wq2) in
-  let _ = list_push(m, Wk2) in
-  let _ = list_push(m, Wv2) in
+  let _ = list_push(m, tiny) in
+  let _ = list_push(m, tiny) in
+  let _ = list_push(m, tiny) in
   let _ = list_push(m, mat(t, t)) in
   let _ = list_push(m, fill(d, 0)) in
   m
@@ -520,6 +510,14 @@ let div_row(row, n, k) =
     let _ = list_set(row, k, nth(row, k) / n) in
     div_row(row, n, k + 1)
 
+/* [lo, hi) 除 n。左右袋各自平均，不用全图 n 冲掉照明。 */
+let div_span(row, lo, hi, n) =
+  if lo >= hi then 0
+  else if n < 1 then 0
+  else
+    let _ = list_set(row, lo, nth(row, lo) / n) in
+    div_span(row, lo + 1, hi, n)
+
 /* 把可见位置的 X 加进 H[t]，返回可见个数。 */
 let vis_acc(m, ids, t, j, n) =
   if j >= ctx(0) then n
@@ -543,10 +541,10 @@ let add_e(dst, src, k, last) =
     let _ = list_set(dst, k, nth(dst, k) + nth(src, k)) in
     add_e(dst, src, k + 1, last)
 
-/* 可见字写入 H[t]：0..cap-1 为冻结 E[id] 之和。邻对在 mark_conj，不在这里。 */
-let vis_add(m, ids, t, j, n) =
-  if j >= ctx(0) then n
-  else if nth(ids, j) == mask_id(m) then vis_add(m, ids, t, j + 1, n)
+/* j < t 的可见字 → 左袋 0..cap（冻结 E）。 */
+let vis_left(m, ids, t, j, n) =
+  if j >= t then n
+  else if nth(ids, j) == mask_id(m) then vis_left(m, ids, t, j + 1, n)
   else
     let id = nth(ids, j) in
     let cap = vocab_cap(0) in
@@ -554,7 +552,23 @@ let vis_add(m, ids, t, j, n) =
     let _ =
       if id >= cap then 0
       else add_e(h, nth(nth(m, 0), id), 0, cap) in
-    vis_add(m, ids, t, j + 1, n + 1)
+    vis_left(m, ids, t, j + 1, n + 1)
+
+/* j > t 的可见字 → 右袋 cap..2cap（one-hot 尺度 S）。 */
+let vis_right(m, ids, t, j, n) =
+  if j >= ctx(0) then n
+  else if j <= t then vis_right(m, ids, t, j + 1, n)
+  else if nth(ids, j) == mask_id(m) then vis_right(m, ids, t, j + 1, n)
+  else
+    let id = nth(ids, j) in
+    let cap = vocab_cap(0) in
+    let h = nth(nth(m, 11), t) in
+    let _ =
+      if id >= cap then 0
+      else
+        let rk = cap + id in
+        list_set(h, rk, nth(h, rk) + sc(0)) in
+    vis_right(m, ids, t, j + 1, n + 1)
 
 /* 紧邻可见字：写进第三块 one-hot（尺度 S，不参与袋的平均）。
  * 焦内（贴着提示）靠这个拉开和周边「只会的」的差距。 */
@@ -571,38 +585,25 @@ let mark_adj(m, ids, t) =
   else if R >= cap then 0
   else list_set(h, cap + cap + R, nth(h, cap + cap + R) + sc(0) / 2)
 
-/* 邻对合取：同一格同时看见两个邻字，Wout 才能学 PMI，加性 L+R 做不到。
- * 两侧都在用 (L,R)；缺右邻用 (L2,L1)；缺左邻用 (R,R2)。尺度 S，不经袋平均。 */
-let write_conj(h, cap, a, b) =
-  if a < 0 then 0
-  else if b < 0 then 0
-  else if a >= cap then 0
-  else if b >= cap then 0
-  else
-    let rk = cap + irem(a * 17 + b * 13, cap) in
-    list_set(h, rk, nth(h, rk) + sc(0))
+/* 第 t 格专属位置灯：后缀全 MASK 时左右袋相同，靠这一维区分像素。 */
+let mark_pos(h, t, cap) =
+  let k = cap + cap + cap + t in
+  if k >= len(h) then 0
+  else list_set(h, k, sc(0))
 
-let mark_conj(m, ids, t) =
-  let cap = vocab_cap(0) in
-  let h = nth(nth(m, 11), t) in
-  let L = nearest(m, ids, t - 1, 0) in
-  let R = nearest(m, ids, t + 1, 1) in
-  if L >= 0 then
-    if R >= 0 then write_conj(h, cap, L, R)
-    else write_conj(h, cap, nearest(m, ids, t - 2, 0), L)
-  else write_conj(h, cap, R, nearest(m, ids, t + 2, 1))
-
-/* H[t] = 可见袋平均 + 邻对合取 + 紧邻 one-hot（焦内）。 */
+/* H[t] = 左照明 + 右照明 + 紧邻 + 位置。 */
 let bow_t(m, ids, t) =
   if t >= ctx(0) then 0
   else
     let h = nth(nth(m, 11), t) in
+    let cap = vocab_cap(0) in
     let _ = zero_row(h, 0) in
-    let n0 = vis_add(m, ids, t, 0, 0) in
-    let d = if n0 < 1 then 1 else n0 in
-    let _ = div_row(h, d, 0) in
+    let nl = vis_left(m, ids, t, 0, 0) in
+    let nr = vis_right(m, ids, t, 0, 0) in
+    let _ = div_span(h, 0, cap, nl) in
+    let _ = div_span(h, cap, cap + cap, nr) in
     let _ = mark_adj(m, ids, t) in
-    let _ = mark_conj(m, ids, t) in
+    let _ = mark_pos(h, t, cap) in
     bow_t(m, ids, t + 1)
 
 /* X → Q/K/V；MASK 的 K/V 清零。加权平均用 embedding 本身当 key/value。 */
@@ -787,15 +788,31 @@ let wv_upd(m, t) =
   let _ = fill_dh(m, 0) in
   wv_j(m, t, 0, den)
 
-/* g[i] = S·w[i]/z − S·1_y。用概率残差，避免 g_gold≈−z 被 clip 成 −256 后期望梯度把高频字推下去。 */
+/* g[i] = Q·w[i]/z − Q·1_y。Q≥2V 时均匀错字 g≥2；Σg=0，避免只放大错字把金标冲掉。 */
 let g_fill(w, y, z, i, v) =
   if i >= v then 0
+  else if i == v - 1 then
+    let _ = list_set(w, i, 0) in
+    g_fill(w, y, z, i + 1, v)
   else
-    let s = sc(0) in
-    let p = nth(w, i) * s / z in
-    let t = if i == y then s else 0 in
+    let q = 512 in
+    let p = nth(w, i) * q / z in
+    let t = if i == y then q else 0 in
     let _ = list_set(w, i, p - t) in
     g_fill(w, y, z, i + 1, v)
+
+/* 整表 Adam：CE 要对每个非 MASK 词压 p−1_y，不能只动金标和 argmax 两列。 */
+let adam_gk(m, x, g, j, k) =
+  if k <= 0 then j
+  else if j >= ntok(m) - 1 then j
+  else
+    let gj = nth(g, j) in
+    let _ = if gj == 0 then 0 else adam_col(m, x, gj, j, 0) in
+    adam_gk(m, x, g, j + 1, k - 1)
+
+let adam_g(m, x, g, j) =
+  if j >= ntok(m) - 1 then 0
+  else adam_g(m, x, g, adam_gk(m, x, g, j, 32))
 
 /* w[i] = exp(logit[i]-max)，i 不含 MASK 列；返回 Σ w。 */
 let sm_into(row, w, mx, i, z) =
@@ -927,8 +944,8 @@ let h_nz(h, i) =
   else if nth(h, i) != 0 then 1
   else h_nz(h, i + 1)
 
-/* 训练/验证只计焦点附近：离最近可见字超过这么多格的洞不回传。 */
-let fov_r(_) = 1
+/* 远洞只靠左右袋（照明）；邻格另有 adj。全图回传，否则主题头没监督。 */
+let fov_r(_) = 16
 
 /* 洞 t 到最近可见字的距离。best 初值用大数。 */
 let vis_dist(gold, flags, t, j, best) =
@@ -956,8 +973,7 @@ let train_at(m, gold, flags, t, acc) =
     let h = nth(nth(m, 11), t) in
     let w = nth(m, 13) in
     let _ = g_fill(w, y, z, 0, ntok(m)) in
-    let _ = adam_col(m, h, nth(w, y), y, 0) in
-    let _ = if p == y then 0 else adam_col(m, h, nth(w, p), p, 0) in
+    let _ = adam_g(m, h, w, 0) in
     let fr = nth(m, 17) in
     let _ = list_set(fr, y, nth(fr, y) + 1) in
     let _ = list_set(acc, 0, nth(acc, 0) + hit) in
@@ -1329,16 +1345,27 @@ let skip_ws(s, i, n) =
     else if c == 13 then skip_ws(s, i + 1, n)
     else i
 
+/* 一次推进最多 k 个数，避免整文件递归撑爆栈。返回新下标。 */
+let parse_ints_k(s, n, acc, i, k) =
+  if k <= 0 then i
+  else
+    let i2 = skip_ws(s, i, n) in
+    if i2 >= n then i2
+    else
+      let r = parse_int_at(s, i2, n, 0, 1) in
+      if nth(r, 1) == i2 then i2
+      else
+        let _ = list_push(acc, nth(r, 0)) in
+        parse_ints_k(s, n, acc, nth(r, 1), k - 1)
+
 /* 空格 / LF / CR 分隔的整数列表。 */
 let parse_ints(s, i, n, acc) =
   let i2 = skip_ws(s, i, n) in
   if i2 >= n then acc
   else
-    let r = parse_int_at(s, i2, n, 0, 1) in
-    if nth(r, 1) == i2 then acc
-    else
-      let _ = list_push(acc, nth(r, 0)) in
-      parse_ints(s, nth(r, 1), n, acc)
+    let i3 = parse_ints_k(s, n, acc, i2, 256) in
+    if i3 == i2 then acc
+    else parse_ints(s, i3, n, acc)
 
 /* 用 bytes 写盘，避免 str_cat 拼大字符串被截断。 */
 let put_uint(b, x) =
@@ -1354,13 +1381,92 @@ let put_int(b, x) =
     put_uint(b, 0 - x)
   else put_uint(b, x)
 
-/* 空格分隔写入 bytes。 */
-let emit_ints(b, xs, i) =
-  if i >= len(xs) then 0
+/* 流式写一个数（前面空格）。矩阵不再摊进大 list。 */
+let emit_sp(b, x) =
+  let _ = bytes_append(b, 32) in
+  put_int(b, x)
+
+let emit_row(b, row, j) =
+  if j >= len(row) then bytes_append(b, 10)
+  else
+    let _ = emit_sp(b, nth(row, j)) in
+    emit_row(b, row, j + 1)
+
+let emit_mat(b, W, i) =
+  if i >= len(W) then 0
+  else
+    let _ = emit_row(b, nth(W, i), 0) in
+    emit_mat(b, W, i + 1)
+
+let next_int(s, n, i) =
+  let i2 = skip_ws(s, i, n) in
+  parse_int_at(s, i2, n, 0, 1)
+
+/* src = [文本, 长度]。传 list 避免每层递归拷贝整份 .w。 */
+let next_src(src, i) = next_int(nth(src, 0), nth(src, 1), i)
+
+let fill_row_k(row, src, j, p, k) =
+  if k <= 0 then p
+  else if j >= len(row) then p
+  else
+    let r = next_src(src, p) in
+    let _ = list_set(row, j, nth(r, 0)) in
+    fill_row_k(row, src, j + 1, nth(r, 1), k - 1)
+
+let fill_row_s(row, src, j, p) =
+  if j >= len(row) then p
+  else
+    let p2 = fill_row_k(row, src, j, p, 32) in
+    let j2 = j + 32 in
+    fill_row_s(row, src, j2, p2)
+
+let fill_mat_s(W, src, i, p) =
+  if i >= len(W) then p
+  else
+    let p2 = fill_row_s(nth(W, i), src, 0, p) in
+    fill_mat_s(W, src, i + 1, p2)
+
+let fill_mat_k(W, src, i, p, k) =
+  if k <= 0 then p
+  else if i >= len(W) then p
+  else
+    let p2 = fill_row_s(nth(W, i), src, 0, p) in
+    fill_mat_k(W, src, i + 1, p2, k - 1)
+
+let fill_mats(W, src, i, p) =
+  if i >= len(W) then p
+  else
+    let p2 = fill_mat_k(W, src, i, p, 16) in
+    let i2 = i + 16 in
+    fill_mats(W, src, i2, p2)
+
+let read_tok_s(s, n, p, left, b) =
+  if left <= 0 then [bytes_to_str(b), p]
+  else
+    let r = next_int(s, n, p) in
+    let _ = bytes_append(b, nth(r, 0)) in
+    read_tok_s(s, n, nth(r, 1), left - 1, b)
+
+let read_vocab_s(s, n, p, v, acc) =
+  if v <= 0 then [acc, p]
+  else
+    let ln = next_int(s, n, p) in
+    let tok = read_tok_s(s, n, nth(ln, 1), nth(ln, 0), bytes_new()) in
+    let _ = list_push(acc, nth(tok, 0)) in
+    read_vocab_s(s, n, nth(tok, 1), v - 1, acc)
+
+/* 只写文件头 + 词表（很短）。 */
+let emit_ints_k(b, xs, i, k) =
+  if k <= 0 then i
+  else if i >= len(xs) then i
   else
     let _ = if i == 0 then 0 else bytes_append(b, 32) in
     let _ = put_int(b, nth(xs, i)) in
-    emit_ints(b, xs, i + 1)
+    emit_ints_k(b, xs, i + 1, k - 1)
+
+let emit_ints(b, xs, i) =
+  if i >= len(xs) then 0
+  else emit_ints(b, xs, emit_ints_k(b, xs, i, 256))
 
 /* 字符串 → 各字节的整数，供 vocab 序列化。 */
 let bytes_of(s, i, acc) =
@@ -1392,7 +1498,7 @@ let read_vocab(xs, p, v, acc) =
     let _ = list_push(acc, nth(r, 0)) in
     read_vocab(xs, nth(r, 1), v - 1, acc)
 
-/* 文件：V d T S，词表字节，再 E,Wq1,Wk1,Wv1,Wout,Wq2,Wk2,Wv2。 */
+/* 文件：V d T S，词表，再流式 E、Wout。 */
 let save_model(m, path) =
   let acc = list_new() in
   let _ = list_push(acc, ntok(m)) in
@@ -1400,37 +1506,35 @@ let save_model(m, path) =
   let _ = list_push(acc, ctx(0)) in
   let _ = list_push(acc, sc(0)) in
   let _ = vocab_ints(vocab_of(m), 0, acc) in
-  let e0 = flat_mat(nth(m, 0), acc, 0) in
-  let _ = flat_mat(nth(m, 1), e0, 0) in
-  let _ = flat_mat(nth(m, 2), e0, 0) in
-  let _ = flat_mat(nth(m, 3), e0, 0) in
-  let _ = flat_mat(nth(m, 4), e0, 0) in
-  let _ = flat_mat(nth(m, 20), e0, 0) in
-  let _ = flat_mat(nth(m, 21), e0, 0) in
-  let _ = flat_mat(nth(m, 22), e0, 0) in
   let b = bytes_new() in
   let _ = emit_ints(b, acc, 0) in
+  let _ = emit_mat(b, nth(m, 0), 0) in
+  let _ = emit_mat(b, nth(m, 4), 0) in
   write(path, b)
 
-/* 读盘失败返回 0。vocab 必须含末项 MASK。 */
+/* 入参是路径。必须 import fmt：否则 format 变成 ncap，跨包调用会把 path 塞进 capture 槽。 */
 let load_model(path) =
   let raw = read_or_0(path) in
-  if raw == 0 then 0
+  if raw == 0 then
+    let _ = print("load  missing") in 0
   else
-    let xs = parse_ints(raw, 0, str_len(raw), list_new()) in
-    if len(xs) < 4 then 0
-    else if nth(xs, 1) != dim(0) then 0
-    else if nth(xs, 2) != ctx(0) then 0
-    else if nth(xs, 3) != sc(0) then 0
+    let n = str_len(raw) in
+    let src = list_new() in
+    let _ = list_push(src, raw) in
+    let _ = list_push(src, n) in
+    let r0 = next_int(nth(src, 0), n, 0) in
+    let r1 = next_int(nth(src, 0), n, nth(r0, 1)) in
+    let r2 = next_int(nth(src, 0), n, nth(r1, 1)) in
+    let r3 = next_int(nth(src, 0), n, nth(r2, 1)) in
+    if nth(r1, 0) != dim(0) then
+      let _ = print(format("load  d=%d  want %d  (retrain new)", [nth(r1, 0), dim(0)])) in 0
+    else if nth(r2, 0) != ctx(0) then
+      let _ = print(format("load  T=%d  want %d", [nth(r2, 0), ctx(0)])) in 0
+    else if nth(r3, 0) != sc(0) then
+      let _ = print(format("load  S=%d  want %d", [nth(r3, 0), sc(0)])) in 0
     else
-      let vt = read_vocab(xs, 4, nth(xs, 0), list_new()) in
+      let vt = read_vocab_s(nth(src, 0), n, nth(r3, 1), nth(r0, 0), list_new()) in
       let m = model_new(nth(vt, 0), 1) in
-      let p0 = unflat_mat(nth(m, 0), xs, 0, nth(vt, 1)) in
-      let p1 = unflat_mat(nth(m, 1), xs, 0, p0) in
-      let p2 = unflat_mat(nth(m, 2), xs, 0, p1) in
-      let p3 = unflat_mat(nth(m, 3), xs, 0, p2) in
-      let p4 = unflat_mat(nth(m, 4), xs, 0, p3) in
-      let p5 = unflat_mat(nth(m, 20), xs, 0, p4) in
-      let p6 = unflat_mat(nth(m, 21), xs, 0, p5) in
-      let _ = unflat_mat(nth(m, 22), xs, 0, p6) in
+      let p0 = fill_mats(nth(m, 0), src, 0, nth(vt, 1)) in
+      let _ = fill_mats(nth(m, 4), src, 0, p0) in
       m
