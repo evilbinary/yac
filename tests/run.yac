@@ -54,6 +54,12 @@ let native(p) =
   else if host_os(0) == "windows" then str_cat(p, ".exe")
   else p
 
+/* ELF .so can be mmap/dlopen'd on Linux. Windows host --shared is PE .dll. */
+let can_load_elf(_) = host_os(0) == "linux"
+
+let yc_elf_so(yc, src, out) =
+  run(append(yc, [src, "--format", "elf", "--shared", "-o", out]))
+
 let yc_pkg(bin) = append([bin], PKG)
 let yac_c(_) = append([native("./yac")], PKG)
 
@@ -470,7 +476,7 @@ let compiler_all(st, yc) =
   let rjit = run(append(yc, [jitp])) in
   let st1jt = check(st1yj, "yc file.jit", "42", chomp(nth(rjit, 1))) in
   let so = str_cat(TMP, "/libl4_42.so") in
-  let _ = run(append(yc, [case_src("l4_42"), "--shared", "-o", so])) in
+  let _ = yc_elf_so(yc, case_src("l4_42"), so) in
   let sob = read_file(so) in
   let et =
     if sob == 0 then 0
@@ -482,33 +488,38 @@ let compiler_all(st, yc) =
     str_cat("import ctypes\nctypes.CDLL(\"", str_cat(so, "\")\n"))) in
   let rdl = run(["python3", pydl]) in
   let st1dl =
-    if nth(run(["sh", "-c", "command -v python3 >/dev/null 2>&1"]), 0) != 0 then st1so
+    if can_load_elf(0) == false then st1so
+    else if nth(run(["sh", "-c", "command -v python3 >/dev/null 2>&1"]), 0) != 0 then st1so
     else check(st1so, "elf --shared dlopen", "0", int_to_str(nth(rdl, 0))) in
   let soadd = str_cat(TMP, "/libdadd.so") in
-  let _ = run(append(yc, [case_src("dylib_add"), "--shared", "-o", soadd])) in
+  let _ = yc_elf_so(yc, case_src("dylib_add"), soadd) in
   let pyadd = str_cat(TMP, "/dadd.py") in
   let _ = write_file(pyadd,
     str_cat("from ctypes import CDLL, c_int64\nl=CDLL(\"",
       str_cat(soadd, "\")\nl.add.argtypes=[c_int64,c_int64]\nl.add.restype=c_int64\nraise SystemExit(0 if l.add(2,3)==5 else 1)\n"))) in
   let radd = run(["python3", pyadd]) in
   let st1ad =
-    if nth(run(["sh", "-c", "command -v python3 >/dev/null 2>&1"]), 0) != 0 then st1dl
+    if can_load_elf(0) == false then st1dl
+    else if nth(run(["sh", "-c", "command -v python3 >/dev/null 2>&1"]), 0) != 0 then st1dl
     else check(st1dl, "elf --shared ccall add", "0", int_to_str(nth(radd, 0))) in
   let pdrv = str_cat(TMP, "/dadd_drv.yac") in
   let _ = write_file(pdrv,
     str_cat("import ffi\nlet h = load(\"",
       str_cat(soadd, "\")\nlet f = sym(h, \"add\")\nif ccall(f, 2, 3) == 5 then 42 else 0\n"))) in
   let bdrv = native(str_cat(TMP, "/dadd_drv")) in
-  let _ = run(append(yc, [pdrv, "-o", bdrv])) in
-  let rdrv =
-    if nth(run(["test", "-f", bdrv]), 0) != 0 then [1, "", ""]
+  let st1dv =
+    if can_load_elf(0) == false then st1ad
     else
-      let _ = run(["chmod", "+x", bdrv]) in
-      run([bdrv]) in
-  let st1dv = check(st1ad, "elf --shared yc ccall add", "42", int_to_str(nth(rdrv, 0))) in
+      let _ = run(append(yc, [pdrv, "-o", bdrv])) in
+      let rdrv =
+        if nth(run(["test", "-f", bdrv]), 0) != 0 then [1, "", ""]
+        else
+          let _ = run(["chmod", "+x", bdrv]) in
+          run([bdrv]) in
+      check(st1ad, "elf --shared yc ccall add", "42", int_to_str(nth(rdrv, 0))) in
   let pdef = str_cat(TMP, "/dlib.yac") in
   let _ = write_file(pdef, "42;\n") in
-  let _ = run(append(yc, ["--shared", pdef])) in
+  let _ = run(append(yc, ["--format", "elf", "--shared", pdef])) in
   let defso = str_cat(TMP, "/dlib.so") in
   let st1df = check(st1dv, "elf --shared default .so", "1",
                     if nth(run(["test", "-f", defso]), 0) == 0 then "1" else "0") in
