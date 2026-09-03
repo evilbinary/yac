@@ -305,7 +305,7 @@ let rt_for_link(_) =
       let p = nth(pkgs, i) in
       if p == "rt.num" then rec(i + 1, acc)
       else rec(i + 1, lir_extend(p, pkg_src(p), acc)) in
-  rec(0, rt_base(0))
+  runtime_add(rec(0, rt_base(0)))
 
 let pass_lir(anf_list) =
   let rt0 = rt_for_link(0) in

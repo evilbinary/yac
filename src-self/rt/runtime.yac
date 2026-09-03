@@ -2268,7 +2268,52 @@ let runtime_funs(_) =
    ["proc", "yac_f64_rel", 3, 0, rt_f64_rel_ins(0), "yac_f64_rel"],
    ["proc", "yac_f64_print", 1, 0, rt_f64_print_ins(0), "yac_f64_print"]]
 
-let runtime_add(extra) = append(runtime_funs(0), extra)
+/* Rewrite fcall "prof_enter_go"/"prof_leave_go" inside one insn list. */
+let rt_insns_set_go(insns, newn, i, out) =
+  if i >= len(insns) then out
+  else
+    let ins = nth(insns, i) in
+    let _ =
+      if nth(ins, 0) == "fcall" then
+        let callee = intern(nth(ins, 2)) in
+        if callee == intern("prof_enter_go") or callee == intern("prof_leave_go") then
+          list_push(out, ["fcall", nth(ins, 1), newn, nth(ins, 3)])
+        else list_push(out, ins)
+      else list_push(out, ins) in
+    rt_insns_set_go(insns, newn, i + 1, out)
+
+let rt_funs_rename_prof(funs, enter, leave, i, out) =
+  if i >= len(funs) then out
+  else
+    let f = nth(funs, i) in
+    let nm = intern(nth(f, 1)) in
+    let _ =
+      if nm == intern("yac_prof_enter") then
+        list_push(out, ["proc", nth(f, 1), nth(f, 2), nth(f, 3),
+          rt_insns_set_go(nth(f, 4), enter, 0, list_new()), nth(f, 5)])
+      else if nm == intern("yac_prof_leave") then
+        list_push(out, ["proc", nth(f, 1), nth(f, 2), nth(f, 3),
+          rt_insns_set_go(nth(f, 4), leave, 0, list_new()), nth(f, 5)])
+      else list_push(out, f) in
+    rt_funs_rename_prof(funs, enter, leave, i + 1, out)
+
+/* Last-put-wins gname whose source name is src (package profile → profile/…). */
+let rt_gname_by_src(funs, src, i, acc) =
+  if i >= len(funs) then acc
+  else
+    let f = nth(funs, i) in
+    let srcn = if len(f) > 5 then nth(f, 5) else nth(f, 1) in
+    let acc2 =
+      if intern(srcn) == intern(src) then intern(nth(f, 1)) else acc in
+    rt_gname_by_src(funs, src, i + 1, acc2)
+
+/* Bind yac_prof_enter/leave to whatever gname pkg/profile.yac gave prof_*_go. */
+let runtime_add(funs) =
+  let enter = rt_gname_by_src(funs, "prof_enter_go", 0, 0) in
+  if enter == 0 then funs
+  else
+    let leave = rt_gname_by_src(funs, "prof_leave_go", 0, intern("prof_leave_go")) in
+    rt_funs_rename_prof(funs, enter, leave, 0, list_new())
 
 /* Used only when profile.yac is not in the program. Do not put these in
  * runtime_funs: same names would steal calls from profile.yac. */
