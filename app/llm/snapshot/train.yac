@@ -68,7 +68,7 @@ let win_cap(_) = 400
 let book_cap(_) = 80000
 
 /* 每这么多 epoch 写一次权重；最后一轮一定写。 */
-let save_every(_) = 4
+let save_every(_) = 2
 
 /* 一行 json：优先 "text"，否则 conversations。 */
 let line_go(line, b) =
