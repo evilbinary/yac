@@ -167,6 +167,48 @@ let pkg_fail_set(v) = box_set(pkg_fail_box, v)
 
 let pkg_fail(_) = box_get(pkg_fail_box)
 
+let pair_locals(xs, i, acc) =
+  if i >= len(xs) then acc
+  else pair_locals(xs, i + 1, cons(nth(nth(xs, i), 0), acc))
+
+let rt_fun_names(funs) =
+  let rec(i, acc) =
+    if i >= len(funs) then acc
+    else rec(i + 1, cons(intern(nth(nth(funs, i), 1)), acc)) in
+  rec(0, [])
+
+let kernel_names_cache =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let kernel_fun_names(_) =
+  let c = box_get(kernel_names_cache) in
+  if c == 0 then
+    let v = rt_fun_names(runtime_funs(0)) in
+    let _ = box_set(kernel_names_cache, v) in
+    v
+  else c
+
+let report_unbound_ex(src, ast, extra) =
+  let sc0 = pair_locals(box_get(imap_box), 0, kernel_fun_names(0)) in
+  let sc1 = pair_locals(box_get(malias_box), 0, sc0) in
+  let nm = ub_prog(rewrite_imports(ast, 0, []), 0, append(extra, sc1)) in
+  if nm == "" then 0
+  else
+    let toks = tokenize(src) in
+    let line = tok_ident_line(toks, nm, 0, len(toks)) in
+    let pfx = pkg_prefix_get(0) in
+    let loc = str_cat(int_to_str(line), ":1: unbound variable '") in
+    let msg =
+      if pfx == "" then str_cat("error: ", str_cat(loc, str_cat(nm, "'")))
+      else str_cat("error: package ",
+        str_cat(pfx, str_cat(": ", str_cat(loc, str_cat(nm, "'"))))) in
+    let _ = print(msg) in
+    1
+
+let report_unbound(src, ast) = report_unbound_ex(src, ast, [])
+
 let lir_extend(pkg, src, acc) =
   if src == 0 then acc
   else
@@ -183,15 +225,22 @@ let lir_extend(pkg, src, acc) =
       let filled = rewrite_imports(ast, 0, []) in
       let _ = imap_load(filled, 0) in
       let _ = pkg_prefix_set(ast_pkg_name(ast, 0)) in
-      let anf = pass_anf(ast) in
-      let st = lir_all(0, anf,
-        [env_new(0), 1, sigma_of_rt(acc), 0, list_new(), 0],
-        len(anf)) in
-      let out = reverse(sigma_list(nth(st, 2))) in
-      let _ = box_set(imap_box, saved_i) in
-      let _ = box_set(malias_box, saved_m) in
-      let _ = pkg_prefix_set(saved_p) in
-      out
+      if report_unbound(src, ast) != 0 then
+        let _ = pkg_fail_set(1) in
+        let _ = box_set(imap_box, saved_i) in
+        let _ = box_set(malias_box, saved_m) in
+        let _ = pkg_prefix_set(saved_p) in
+        acc
+      else
+        let anf = pass_anf(ast) in
+        let st = lir_all(0, anf,
+          [env_new(0), 1, sigma_of_rt(acc), 0, list_new(), 0],
+          len(anf)) in
+        let out = reverse(sigma_list(nth(st, 2))) in
+        let _ = box_set(imap_box, saved_i) in
+        let _ = box_set(malias_box, saved_m) in
+        let _ = pkg_prefix_set(saved_p) in
+        out
 
 let ast_imports(ast, i, acc) =
   if i >= len(ast) then acc
@@ -258,12 +307,6 @@ let rt_for_link(_) =
       else rec(i + 1, lir_extend(p, pkg_src(p), acc)) in
   rec(0, rt_base(0))
 
-let rt_fun_names(funs) =
-  let rec(i, acc) =
-    if i >= len(funs) then acc
-    else rec(i + 1, cons(intern(nth(nth(funs, i), 1)), acc)) in
-  rec(0, [])
-
 let pass_lir(anf_list) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
@@ -297,10 +340,6 @@ let fun_off(fo, name) =
   else if nth(nth(fo, 0), 0) == name then nth(nth(fo, 0), 1)
   else fun_off(drop(fo, 1), name)
 
-let pair_locals(xs, i, acc) =
-  if i >= len(xs) then acc
-  else pair_locals(xs, i + 1, cons(nth(nth(xs, i), 0), acc))
-
 let pack_yjit_prog(t, code) =
   let ent = fun_off(funsym_get(0), "_eval") in
   let abi = if emit_abi_win(0) then 1 else 0 in
@@ -309,35 +348,6 @@ let pack_yjit_prog(t, code) =
   let link = yjit_imp_enc(cimport_got(0), cimport_names(0)) in
   pack_yjit_ex(code, yjit_arch_num(target_arch(t)),
                [abi, target_vaddr(t), ent, drel, link, 1])
-
-let kernel_names_cache =
-  let b = box_new() in
-  let _ = box_set(b, 0) in
-  b
-
-let kernel_fun_names(_) =
-  let c = box_get(kernel_names_cache) in
-  if c == 0 then
-    let v = rt_fun_names(runtime_funs(0)) in
-    let _ = box_set(kernel_names_cache, v) in
-    v
-  else c
-
-let report_unbound_ex(src, ast, extra) =
-  let sc0 = pair_locals(box_get(imap_box), 0, kernel_fun_names(0)) in
-  let sc1 = pair_locals(box_get(malias_box), 0, sc0) in
-  let nm = ub_prog(rewrite_imports(ast, 0, []), 0, append(extra, sc1)) in
-  if nm == "" then 0
-  else
-    let toks = tokenize(src) in
-    let line = tok_ident_line(toks, nm, 0, len(toks)) in
-    let _ = print(str_cat("error: ",
-      str_cat(int_to_str(line),
-        str_cat(":1: unbound variable '",
-          str_cat(nm, "'"))))) in
-    1
-
-let report_unbound(src, ast) = report_unbound_ex(src, ast, [])
 
 let make_pipeline(t) =
   let pass_lir_t(anf) =

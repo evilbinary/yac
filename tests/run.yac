@@ -235,6 +235,45 @@ let compiler_multi(st, yc) =
     let r2 = run(append(yc, ["--cps", a, b])) in
     check(st1, "cps multi-file", "42", chomp(nth(r2, 1)))
 
+/* Cross-pkg string + format: with `import fmt` args stay in place (exit 42).
+ * Without it, format is unbound and compile must fail (not a silent ncap steal). */
+let compiler_cross_pkg(st, yc) =
+  let lib = str_cat(TMP, "/crossarg.yac") in
+  let main = str_cat(TMP, "/cross_main.yac") in
+  let blob = str_cat(TMP, "/cross_blob.txt") in
+  let bin = native(str_cat(TMP, "/c_crossarg")) in
+  let _ = write_file(lib, str_cat(
+    "package crossarg\nexport echo_len, load_len\nimport io\nimport fmt\n",
+    str_cat(
+      "let echo_len(s) =\n  let n = str_len(s) in\n  let _ = format(\"%d\", [n]) in\n  n\n",
+      "let load_len(path) =\n  let raw = read_or_0(path) in\n  if raw == 0 then 0 else str_len(raw)\n"))) in
+  let _ = write_file(blob, "abcdefghij") in
+  let _ = write_file(main, str_cat(
+    "import crossarg\nimport io\n",
+    "let a = echo_len(\"hello\") in\nlet b = load_len(\"build/test_tmp/cross_blob.txt\") in\nif a != 5 then a else if b != 10 then b else 42\n")) in
+  let yc2 = [nth(yc, 0), "--pkg", str_cat("src-self,", TMP)] in
+  let cr = run(append(yc2, [main, "-o", bin])) in
+  if nth(run(["test", "-f", bin]), 0) != 0 then
+    check(st, "compiler cross-pkg format ncap", "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
+  else
+    let _ = run(["chmod", "+x", bin]) in
+    let st1 = check(st, "compiler cross-pkg format ncap", "42", int_to_str(nth(run([bin]), 0))) in
+    let lib_bad = str_cat(TMP, "/crossarg_bad.yac") in
+    let main_bad = str_cat(TMP, "/cross_main_bad.yac") in
+    let bin_bad = native(str_cat(TMP, "/c_crossarg_bad")) in
+    let _ = write_file(lib_bad, str_cat(
+      "package crossarg_bad\nexport echo_len\n",
+      "let echo_len(s) =\n  let n = str_len(s) in\n  let _ = format(\"%d\", [n]) in\n  n\n")) in
+    let _ = write_file(main_bad, "import crossarg_bad\necho_len(\"hello\")\n") in
+    let crb = run(append(yc2, [main_bad, "-o", bin_bad])) in
+    let blob = str_cat(nth(crb, 1), nth(crb, 2)) in
+    let ok =
+      if nth(crb, 0) == 0 then false
+      else contains(blob, "unbound variable 'format'") in
+    if ok then check(st1, "compiler cross-pkg format ncap missing import", "1", "1")
+    else check(st1, "compiler cross-pkg format ncap missing import",
+      "unbound variable 'format'", blob)
+
 /* `yc --cps`: rc cases print the value; out may also print it. */
 let cps_one(st, yc, c) =
   let name = nth(c, 0) in
@@ -476,14 +515,15 @@ let compiler_all(st, yc) =
   let _ = compiler_prep_libs(0) in
   let st1 = compiler_multi(
     foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)), yc) in
+  let st1c = compiler_cross_pkg(st1, yc) in
   let st1s =
-    if nth(run(["sh", "-c", "command -v nm >/dev/null 2>&1"]), 0) != 0 then st1
+    if nth(run(["sh", "-c", "command -v nm >/dev/null 2>&1"]), 0) != 0 then st1c
     else
       let elf_g = str_cat(TMP, "/c_l4_42_g.elf") in
       let elf_n = str_cat(TMP, "/c_l4_42.elf") in
       let _ = run(append(yc, [case_src("l4_42"), "-g", "--format", "elf", "-o", elf_g])) in
       let with_g = nth(run(["nm", elf_g]), 1) in
-      let stg = check(st1, "elf -g symtab _start", "1",
+      let stg = check(st1c, "elf -g symtab _start", "1",
                       if contains(with_g, "_start") then "1" else with_g) in
       let _ = run(append(yc, [case_src("l4_42"), "--format", "elf", "-o", elf_n])) in
       let no_g = str_cat(nth(run(["nm", elf_n]), 1), nth(run(["nm", elf_n]), 2)) in

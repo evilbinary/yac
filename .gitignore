@@ -47,3 +47,6 @@ app/llm/pretrain_t2t_mini.jsonl
 liba.so
 a.yac
 tests/run
+app/llm/xyj.txt
+app/llm/tinyshakespeare.txt
+app/llm/hlm.txt
