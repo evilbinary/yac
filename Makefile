@@ -12,7 +12,7 @@ OBJS = $(addprefix $(BUILD)/,$(notdir $(SRCS:.c=.o)))
 BIN = yac$(EXEEXT)
 YC_BUILD = $(BUILD)/yc_tmp
 YC_BUNDLE = $(YC_BUILD)/yc_bundle.yac
-YC_BIN = $(YC_BUILD)/yc$(EXEEXT)
+YC_BIN = yc$(EXEEXT)
 YC_A = $(YC_BUILD)/yc_a$(EXEEXT)
 YC_B = $(YC_BUILD)/yc_b$(EXEEXT)
 YC_SRCS = src-self/lib/log.yac src-self/lib/pass.yac src-self/lib/map.yac \
@@ -27,7 +27,7 @@ YC_SRCS = src-self/lib/log.yac src-self/lib/pass.yac src-self/lib/map.yac \
 	src-self/back/jit.yac \
 	src-self/lang/scheme.yac src-self/yc.yac
 
-all: $(BIN)
+all: $(BIN) $(YC_BIN)
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -65,12 +65,10 @@ $(YC_B): $(YC_A) $(YC_BUNDLE)
 	$(YC_A) --pkg src-self $(YC_BUNDLE) -o $@
 	chmod +x $@
 
-# Convenience name used by scripts; same bits as yc_a.
+# Same bits as yc_a, next to ./yac. `make yc` builds this file (not a phony).
 $(YC_BIN): $(YC_A)
 	cp -f $(YC_A) $@
 	chmod +x $@
-
-yc: $(YC_A) $(YC_BIN)
 
 yc_a: $(YC_A)
 
@@ -151,10 +149,10 @@ $(BUILD)/genyac: tools/genyac.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
-	rm -f $(BIN)
+	rm -f $(BIN) $(YC_BIN)
 	rm -rf $(BUILD)
 	rm -f src/*.o
 
 .PHONY: all clean test test-interp test-compiler test-pkg test-boot \
 	test-qemu test-qemu-arm64 test-qemu-riscv64 test-iso test-cps test-repl prop \
-	yc yc_a yc_b bootstrap yc-iso
+	yc_a yc_b bootstrap yc-iso
