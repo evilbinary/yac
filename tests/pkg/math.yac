@@ -16,7 +16,15 @@ if abs(0 - 3) == 3 then
                             if abs(sin(0.0)) < 0.001 then
                               if abs(cos(0.0) - 1.0) < 0.001 then
                                 if abs(sin(pi(0) * 0.5) - 1.0) < 0.01 then
-                                  if abs(exp(1.0) - e(0)) < 0.01 then 42 else 0
+                                  if abs(exp(1.0) - e(0)) < 0.01 then
+                                    if abs(log(e(0)) - 1.0) < 0.02 then
+                                      if abs(exp_fast(0.0) - 1.0) < 0.001 then
+                                        if ftoi(3.7) == 3 then
+                                          if abs(powf(2.0, 10) - 1024.0) < 0.001 then 42 else 0
+                                        else 0
+                                      else 0
+                                    else 0
+                                  else 0
                                 else 0
                               else 0
                             else 0
