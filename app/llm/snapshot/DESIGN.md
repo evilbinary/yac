@@ -105,13 +105,13 @@ IEEE f64 已经能用，第一版仍然以**整数下标 + 可选定点 logits**
 
 现有 `transformer/` 是 **causal**：位置 t 只看 0..t，最后只读出 t=T-1 的 logits。快照必须改掉这两点。
 
-- 注意力：可见字均匀 BOW。H 不加位置。E 用 hashed one-hot + 最后一维常数偏置（零均值随机平均后 H≈0，Adam 不动）。只训 Wout。
+- 特征：H = 可见字 **one-hot 平均**（d 的前 V−1 维，无哈希）+ **左邻 / 右邻 one-hot**。线性模型是 cloze 的充分统计：袋估计 unigram/PMI，邻字估计 bigram。d=16 哈希桶使窗口碰撞，只能退回 maj。不加格子位置。只训 Wout。
 - 读出 softmax 用 \(2^{-\lfloor(-\Delta\ell)/5\rfloor}\)（峰 32）。Wout 用 Adam，梯度是 \(S(p-\mathrm{onehot})\)（不要用 \(w-z\cdot 1_y\)，clip 后会把高频字推下去）。V≤256 扫整表。不训 E / QKV。训练只给 MASK 格写 logits。
 - 读出：**每个位置各自一份 logits**，`logits[i][v]` = 位置 i 填词 v 的分数。一次前向是 T 个分类头，不是 1 个。
 - 结构仍保持玩具级，便于在原生 yc 里跑通：
 
   - 1 层、1 头（第二版可加到 2 层）
-  - d=8 或 16，T=16 或 32
+  - d = 3·(词表容量)（袋 + 左邻 + 右邻 one-hot），T=16
   - 字符级 UTF-8 词表，共用 `app/llm/corpus.txt`
 
 位置编码继续用简易的「第 0 维加 i·c」，不必上正弦表。
