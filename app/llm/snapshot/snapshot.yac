@@ -22,6 +22,7 @@ export sc, dim, ctx, freeze_n, u8len, ch_at, fill, mat, find_char, add_char, bui
 
 import io
 import fmt
+import math
 
 /* 死代码 QKV 仍用整数 S。前向 H/Wout 已是 f64；.w 第 4 个数 file_s=0。 */
 let sc(_) = 64
@@ -307,18 +308,6 @@ let mat_rand(W, i, seed, mag) =
     let seed2 = fill_rand(nth(W, i), 0, seed, mag) in
     mat_rand(W, i + 1, seed2, mag)
 
-/* n 个 IEEE f64，连续 bytes。k=16。 */
-let f64s(n) =
-  let b = bytes_new() in
-  if n <= 0 then b
-  else
-    let _ = bytes_put(b, n * 8 - 1, 0) in
-    b
-
-let fget(b, i) = mem_ref(b, i * 8, 16)
-
-let fset(b, i, x) = mem_put(b, i * 8, 16, x)
-
 /* 一块最多 256，避免 d·V 一层递归。 */
 let fill_rand_blk(W, i, end, seed, mag) =
   if i >= end then seed
@@ -348,9 +337,7 @@ let model_new(vocab, seed) =
   let am = f64s(nv) in
   let av = f64s(nv) in
   let gw = f64s(nv) in
-  let _ = mat_rand(E, 0, seed, 2) in
-  let _ = e_spike(E, 0, vocab_cap(0), s) in
-  /* Wout 全 0：±2 随机会让第一步 softmax 比均匀更差（invp 上万）。 */
+  /* E / QKV 前向已不用；Wout 全 0。 */
   let m = list_new() in
   let _ = list_push(m, E) in
   let _ = list_push(m, tiny) in
@@ -363,7 +350,7 @@ let model_new(vocab, seed) =
   let _ = list_push(m, mat(t, d)) in
   let _ = list_push(m, fill(t, 0)) in
   let _ = list_push(m, fill(t, 0)) in
-  let _ = list_push(m, mat(t, d)) in
+  let _ = list_push(m, mat(t, 4)) in
   let _ = list_push(m, mat(t, v)) in
   let _ = list_push(m, fill(v, 0)) in
   let _ = list_push(m, vocab) in
@@ -378,7 +365,9 @@ let model_new(vocab, seed) =
   let _ = list_push(m, mat(t, t)) in
   let _ = list_push(m, fill(d, 0)) in
   let _ = list_push(m, gw) in
-  let _ = list_push(m, fill(4, 0)) in
+  let st = fill(4, 0) in
+  let _ = list_push(st, list_new()) in
+  let _ = list_push(m, st) in
   m
 
 /* a·b = Σ_i a[i] b[i]（未除 S，调用方再除）。 */
@@ -447,65 +436,6 @@ let copy_h_x(m, t) =
     let _ = copy_row(nth(nth(m, 5), t), nth(nth(m, 11), t), 0) in
     copy_h_x(m, t + 1)
 
-/* (1+x/16)^16，比 /8 更接近 e^x。 */
-let fexp(x) =
-  if x < 0.0 - 20.0 then 0.0
-  else if x > 16.0 then fexp(16.0)
-  else
-    let y = 1.0 + x / 16.0 in
-    let y2 = y * y in
-    let y4 = y2 * y2 in
-    let y8 = y4 * y4 in
-    y8 * y8
-
-let fpow_go(a, n, acc) =
-  if n <= 0 then acc
-  else fpow_go(a, n - 1, acc * a)
-
-let fpow(a, n) =
-  if n <= 0 then 1.0
-  else fpow_go(a, n, 1.0)
-
-let fsqrt_go(x, g, i) =
-  if i <= 0 then g
-  else fsqrt_go(x, 0.5 * (g + x / g), i - 1)
-
-let fsqrt(x) =
-  if x < 0.0 then 0.0
-  else if x == 0.0 then 0.0
-  else fsqrt_go(x, x, 16)
-
-/* ln(1+u) 级数，u∈[0,1)。 */
-let flog_t(u, k, uk, acc) =
-  if k > 16 then acc
-  else flog_t(u, k + 1, uk * u, acc + uk / k)
-
-let flog_at(p) = flog_t(p - 1.0, 1, p - 1.0, 0.0)
-
-let flog_red(p, k) =
-  if p < 0.000000000001 then flog_red(0.000000000001, k)
-  else if p < 1.0 then flog_red(p * 2.0, k - 1)
-  else if p >= 2.0 then flog_red(p / 2.0, k + 1)
-  else flog_at(p) + k * 0.6931471805599453
-
-let flog(p) = flog_red(p, 0)
-
-let ftoi_bin(x, lo, hi) =
-  if hi - lo <= 1 then
-    if hi * 1.0 <= x then hi else lo
-  else
-    let mid = lo + (hi - lo) / 2 in
-    if mid * 1.0 <= x then ftoi_bin(x, mid, hi)
-    else ftoi_bin(x, lo, mid)
-
-let ftoi_pos(x) =
-  if x < 1.0 then 0
-  else ftoi_bin(x, 0, 100000000)
-
-let ftoi(x) =
-  if x < 0.0 then 0 - ftoi_pos(0.0 - x)
-  else ftoi_pos(x)
-
 let pad3(n) =
   if n < 10 then str_cat("00", int_to_str(n))
   else if n < 100 then str_cat("0", int_to_str(n))
@@ -523,8 +453,8 @@ let fstr(x) =
   if x < 0.0 then str_cat("-", fstr_pos(0.0 - x))
   else fstr_pos(x)
 
-/* 注意力死路径仍走这里；词表 softmax 用 fexp。 */
-let exp_w(x) = ftoi(fexp(x * 1.0) * 32.0)
+/* 注意力死路径仍走这里；词表 softmax 用 exp_fast。 */
+let exp_w(x) = ftoi(exp_fast(x * 1.0) * 32.0)
 
 /* score[j] = (Q·K)/32。除 512 时分数全是 0，加权退化为均匀 BOW。 */
 let score_all(m, t, j) =
@@ -613,27 +543,35 @@ let ban_unk_row(m, y) =
   if u < 0 then 0
   else list_set(y, u, 0.0 - 1000000.0)
 
-/* logits[t] = H[t] Wout。每个位置一份词表分数。 */
+/* y += W[fi]（one-hot 行）。 */
+let add_idx_row(W, fi, y, v) =
+  if fi < 0 then 0
+  else add_row_s(W, fi * v, y, 1.0, 0)
+
+let logits_idx(m, t) =
+  let h = nth(nth(m, 11), t) in
+  let y = nth(nth(m, 12), t) in
+  let v = ntok(m) in
+  let W = nth(m, 4) in
+  let _ = zero_row(y, 0) in
+  let _ = add_idx_row(W, nth(h, 0), y, v) in
+  let _ = add_idx_row(W, nth(h, 1), y, v) in
+  let _ = add_idx_row(W, nth(h, 2), y, v) in
+  let _ = add_idx_row(W, nth(h, 3), y, v) in
+  ban_unk_row(m, y)
+
+/* logits[t] = 至多 4 行 Wout 相加。 */
 let write_logits(m, t) =
   if t >= ctx(0) then 0
   else
-    let y = nth(nth(m, 12), t) in
-    let _ = zero_row(y, 0) in
-    let _ = mv_nz(nth(m, 4), nth(nth(m, 11), t), y, 0, ntok(m)) in
-    let _ = ban_unk_row(m, y) in
+    let _ = logits_idx(m, t) in
     write_logits(m, t + 1)
 
 /* 训练：只给 flags=1 的格子写 logits。 */
 let write_logits_f(m, flags, t) =
   if t >= ctx(0) then 0
   else
-    let _ =
-      if nth(flags, t) == 0 then 0
-      else
-        let y = nth(nth(m, 12), t) in
-        let _ = zero_row(y, 0) in
-        let _ = mv_nz(nth(m, 4), nth(nth(m, 11), t), y, 0, ntok(m)) in
-        ban_unk_row(m, y) in
+    let _ = if nth(flags, t) == 0 then 0 else logits_idx(m, t) in
     write_logits_f(m, flags, t + 1)
 
 /* dst[k] += src[k]。 */
@@ -720,7 +658,15 @@ let skip_idx(ids, j, step, mid, uid) =
     else if id == uid then skip_idx(ids, j + step, step, mid, uid)
     else j
 
-/* L1 / L2 / R1 → 三块 one-hot。后缀全洞共享 L，靠位置维区分。 */
+/* ids[i] 作为第 off 块的 Wout 行；缺格 -1。 */
+let feat_or(ids, i, cap, off) =
+  if i < 0 then 0 - 1
+  else
+    let id = nth(ids, i) in
+    if id >= cap then 0 - 1
+    else off + id
+
+/* H[t][0..3] = L1 / L2 / R1 / pos 的 Wout 行下标（不是 one-hot）。 */
 let mark_near(m, ids, t) =
   let cap = vocab_cap(0) in
   let h = nth(nth(m, 11), t) in
@@ -729,36 +675,23 @@ let mark_near(m, ids, t) =
   let i1 = skip_idx(ids, t - 1, 0 - 1, mid, uid) in
   let i2 = if i1 < 0 then 0 - 1 else skip_idx(ids, i1 - 1, 0 - 1, mid, uid) in
   let ir = skip_idx(ids, t + 1, 1, mid, uid) in
-  let _ =
-    if i1 < 0 then 0
-    else
-      let L = nth(ids, i1) in
-      if L >= cap then 0 else list_set(h, L, 1.0) in
-  let _ =
-    if i2 < 0 then 0
-    else
-      let L2 = nth(ids, i2) in
-      if L2 >= cap then 0 else list_set(h, cap + L2, 1.0) in
-  if ir < 0 then 0
+  let _ = list_set(h, 0, feat_or(ids, i1, cap, 0)) in
+  let _ = list_set(h, 1, feat_or(ids, i2, cap, cap)) in
+  let _ = list_set(h, 2, feat_or(ids, ir, cap, cap + cap)) in
+  list_set(h, 3, cap + cap + cap + t)
+
+/* 只给要算 logits 的格填 4 个下标。 */
+let bow_f(m, ids, flags, t) =
+  if t >= ctx(0) then 0
   else
-    let R = nth(ids, ir) in
-    if R >= cap then 0 else list_set(h, cap + cap + R, 1.0)
+    let _ = if nth(flags, t) == 0 then 0 else mark_near(m, ids, t) in
+    bow_f(m, ids, flags, t + 1)
 
-/* 第 t 格专属位置灯。 */
-let mark_pos(h, t, cap) =
-  let k = cap + cap + cap + t in
-  if k >= len(h) then 0
-  else list_set(h, k, 1.0)
-
-/* H[t] = 左近 + 次近 + 右近 + 位置（不把整段袋当指纹）。 */
+/* 推理：每个位置都填。 */
 let bow_t(m, ids, t) =
   if t >= ctx(0) then 0
   else
-    let h = nth(nth(m, 11), t) in
-    let cap = vocab_cap(0) in
-    let _ = zero_row(h, 0) in
     let _ = mark_near(m, ids, t) in
-    let _ = mark_pos(h, t, cap) in
     bow_t(m, ids, t + 1)
 
 /* X → Q/K/V；MASK 的 K/V 清零。加权平均用 embedding 本身当 key/value。 */
@@ -784,30 +717,10 @@ let forward(m, ids) =
 
 /* 训练用快门：只算被挖格子的 logits。 */
 let forward_train(m, ids, flags) =
-  let _ = bow_t(m, ids, 0) in
+  let _ = bow_f(m, ids, flags, 0) in
   write_logits_f(m, flags, 0)
 
-/* ⌊√n⌋。Newton，x 从 n 收。 */
-let isqrt_n(n, x) =
-  if x <= 0 then 0
-  else
-    let x2 = (x + n / x) / 2 in
-    if x2 >= x then x
-    else isqrt_n(n, x2)
-
-/* 非负整数平方根，Adam 里除 √v。 */
-let isqrt(n) =
-  if n <= 0 then 0
-  else if n <= 3 then 1
-  else isqrt_n(n, n)
-
-/* 权重更新裁剪，防止定点爆炸。 */
-let clip(x, lo, hi) =
-  if x < lo then lo
-  else if x > hi then hi
-  else x
-
-/* 一格 SGD 已不用；窗口末尾 Adam(mean g)。 */
+/* 一格 SGD 已不用；窗口末尾动量（mean g）。 */
 let zero_wrow(W, base, j, n) =
   if j >= n then 0
   else
@@ -821,6 +734,7 @@ let gw_prep(m, i) =
   if nth(mk, i) == gen then 0
   else
     let _ = list_set(mk, i, gen) in
+    let _ = list_push(nth(st, 4), i) in
     zero_wrow(nth(m, 25), i * ntok(m), 0, ntok(m) - 1)
 
 let gw_row_j(m, i, xi, g, j) =
@@ -831,16 +745,17 @@ let gw_row_j(m, i, xi, g, j) =
     let _ = fset(gw, k, fget(gw, k) + xi * nth(g, j)) in
     gw_row_j(m, i, xi, g, j + 1)
 
-let gw_hi(m, x, g, i) =
-  if i >= len(x) then 0
+/* 只对外积到的 ≤4 个特征行累加梯度。 */
+let gw_idx(m, h, g, k) =
+  if k >= 4 then 0
   else
-    let xi = nth(x, i) in
+    let i = nth(h, k) in
     let _ =
-      if xi > 0.0 then
+      if i < 0 then 0
+      else
         let _ = gw_prep(m, i) in
-        gw_row_j(m, i, xi, g, 0)
-      else 0 in
-    gw_hi(m, x, g, i + 1)
+        gw_row_j(m, i, 1.0, g, 0) in
+    gw_idx(m, h, g, k + 1)
 
 let adam_one_j(m, i, invn, j) =
   if j >= ntok(m) - 1 then 0
@@ -854,15 +769,14 @@ let adam_one_j(m, i, invn, j) =
     let _ = fset(nth(m, 19), k, vv) in
     let mh = mm / nth(st, 2) in
     let vh = vv / nth(st, 3) in
-    let _ = fset(nth(m, 4), k, fget(nth(m, 4), k) - 0.02 * mh / (fsqrt(vh) + 0.00000001)) in
+    let _ = fset(nth(m, 4), k, fget(nth(m, 4), k) - 0.02 * mh / (sqrt(vh) + 0.00000001)) in
     adam_one_j(m, i, invn, j + 1)
 
-let adam_rows(m, i, gen, invn) =
-  if i >= dim(0) then 0
-  else if nth(nth(m, 24), i) != gen then adam_rows(m, i + 1, gen, invn)
+let adam_act(m, act, k, invn) =
+  if k >= len(act) then 0
   else
-    let _ = adam_one_j(m, i, invn, 0) in
-    adam_rows(m, i + 1, gen, invn)
+    let _ = adam_one_j(m, nth(act, k), invn, 0) in
+    adam_act(m, act, k + 1, invn)
 
 let adam_win(m, nh) =
   if nh < 1 then 0
@@ -870,24 +784,25 @@ let adam_win(m, nh) =
     let st = nth(m, 26) in
     let t = nth(st, 0) + 1 in
     let _ = list_set(st, 0, t) in
-    let _ = list_set(st, 2, 1.0 - fpow(0.9, t)) in
-    let _ = list_set(st, 3, 1.0 - fpow(0.999, t)) in
-    adam_rows(m, 0, nth(st, 1), 1.0 / (nh * 1.0))
+    let _ = list_set(st, 2, 0.1 + 0.9 * nth(st, 2)) in
+    let _ = list_set(st, 3, 0.001 + 0.999 * nth(st, 3)) in
+    adam_act(m, nth(st, 4), 0, 1.0 / (nh * 1.0))
 
 let bump_gen(m) =
   let st = nth(m, 26) in
-  list_set(st, 1, nth(st, 1) + 1)
+  let _ = list_set(st, 1, nth(st, 1) + 1) in
+  list_set(st, 4, list_new())
 
 let adam_cell(m, i, j, gi) =
   let k = i * ntok(m) + j in
   fset(nth(m, 4), k, fget(nth(m, 4), k) - 0.02 * gi)
 
-/* Wout 外积：g 先 clip 到 ±256，|g|<2 跳过。x 是该位置的 H。 */
+/* Wout 外积：g 先 clamp 到 ±256，|g|<2 跳过。x 是该位置的 H。 */
 let adam_w(m, x, g, i, j) =
   if i >= len(x) then 0
   else if j >= len(g) then adam_w(m, x, g, i + 1, 0)
   else
-    let gj = clip(nth(g, j), 0 - 256, 256) in
+    let gj = clamp(nth(g, j), 0 - 256, 256) in
     let _ =
       if gj < 2 then
         if gj > 0 - 2 then 0
@@ -903,7 +818,7 @@ let adam_col(m, x, gj, j, i) =
     let _ =
       if xi == 0 then 0
       else
-        let g2 = clip(gj, 0 - 256, 256) in
+        let g2 = clamp(gj, 0 - 256, 256) in
         if g2 < 2 then
           if g2 > 0 - 2 then 0
           else adam_cell(m, i, j, xi * g2)
@@ -915,7 +830,7 @@ let outer_wj(row, xi, g, j, den) =
   if j >= len(g) then 0
   else
     let u = nth(row, j) - xi * nth(g, j) / den in
-    let _ = list_set(row, j, clip(u, 0 - 512, 512)) in
+    let _ = list_set(row, j, clamp(u, 0 - 512, 512)) in
     outer_wj(row, xi, g, j + 1, den)
 
 /* 对 hidden 向量 x 做一次 Wout 外积更新。 */
@@ -937,7 +852,7 @@ let embed_bag(m, id, den, k) =
   else
     let row = nth(nth(m, 0), id) in
     let dh = dh_k(nth(m, 4), nth(m, 13), k, 0, 0) / den in
-    let _ = list_set(row, k, clip(nth(row, k) - dh, 0 - 256, 256)) in
+    let _ = list_set(row, k, clamp(nth(row, k) - dh, 0 - 256, 256)) in
     embed_bag(m, id, den, k + 1)
 
 let vis_egrad(m, gold, flags, den, j) =
@@ -963,7 +878,7 @@ let wq_c(row, xp, dh, c, den) =
   if c >= len(dh) then 0
   else
     let u = nth(row, c) - xp * nth(dh, c) / den in
-    let _ = list_set(row, c, clip(u, 0 - 256, 256)) in
+    let _ = list_set(row, c, clamp(u, 0 - 256, 256)) in
     wq_c(row, xp, dh, c + 1, den)
 
 /* 对整个 Wq：每个输入维 p 一行。 */
@@ -978,7 +893,7 @@ let wv_c(row, xp, dh, c, scale) =
   if c >= len(dh) then 0
   else
     let u = nth(row, c) - xp * nth(dh, c) / scale in
-    let _ = list_set(row, c, clip(u, 0 - 256, 256)) in
+    let _ = list_set(row, c, clamp(u, 0 - 256, 256)) in
     wv_c(row, xp, dh, c + 1, scale)
 
 /* 用位置 j 的 X 当 value 侧输入，更新整张 Wv。 */
@@ -1038,7 +953,7 @@ let adam_hi(m, x, g, i) =
 let sm_into(row, w, mx, i, z) =
   if i >= len(row) - 1 then z
   else
-    let e = fexp(nth(row, i) - mx) in
+    let e = exp_fast(nth(row, i) - mx) in
     let _ = list_set(w, i, e) in
     sm_into(row, w, mx, i + 1, z + e)
 
@@ -1131,7 +1046,7 @@ let ilog2(x, n) =
 let nll_nat(w, y, z) =
   let wy = nth(w, y) in
   let a = if wy < 0.000000000001 then 0.000000000001 else wy in
-  0.0 - flog(a / z)
+  0.0 - log(a / z)
 
 /* z/w_y；均匀时约 V。累加时夹 1e6，避免个别洞把均值拉爆。 */
 let invp_of(w, y, z) =
@@ -1183,7 +1098,6 @@ let train_at(m, gold, flags, t, acc) =
   if t >= ctx(0) then acc
   else if nth(flags, t) == 0 then train_at(m, gold, flags, t + 1, acc)
   else if is_gap(m, nth(gold, t)) == 1 then train_at(m, gold, flags, t + 1, acc)
-  else if vis_dist(gold, flags, t, 0, 99) > fov_r(0) then train_at(m, gold, flags, t + 1, acc)
   else
     let y = nth(gold, t) in
     let z0 = sm_row(m, t) in
@@ -1195,7 +1109,7 @@ let train_at(m, gold, flags, t, acc) =
     let h = nth(nth(m, 11), t) in
     let w = nth(m, 13) in
     let _ = g_fill(w, y, z, 0, ntok(m)) in
-    let _ = gw_hi(m, h, w, 0) in
+    let _ = gw_idx(m, h, w, 0) in
     let fr = nth(m, 17) in
     let _ = list_set(fr, y, nth(fr, y) + 1) in
     let _ = list_set(acc, 0, nth(acc, 0) + hit) in
@@ -1210,7 +1124,6 @@ let eval_at(m, gold, flags, t, bun) =
   if t >= ctx(0) then 0
   else if nth(flags, t) == 0 then eval_at(m, gold, flags, t + 1, bun)
   else if is_gap(m, nth(gold, t)) == 1 then eval_at(m, gold, flags, t + 1, bun)
-  else if vis_dist(gold, flags, t, 0, 99) > fov_r(0) then eval_at(m, gold, flags, t + 1, bun)
   else
     let y = nth(gold, t) in
     let p = argmax(nth(nth(m, 12), t)) in
@@ -1319,7 +1232,7 @@ let gold_chat(m, user, asst) =
   let _ = set_range(gold, u, take_from(aids, off, list_new()), 0, need) in
   pair(gold, u)
 
-/* 提示词 → id；未知字落 UNK，跳过 MASK 符本身。 */
+/* 提示词 → id；跳过未知字和 MASK 符本身。 */
 let prompt_ids(prompt, vocab, i, acc) =
   if i >= str_len(prompt) then acc
   else

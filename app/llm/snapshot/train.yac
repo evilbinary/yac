@@ -442,7 +442,7 @@ let rc =
         [ntok(m), tlen, n, ntr, nuse - ntr])) in
       let _ = print(format("vocab  top-%d + UNK + MASK  (OOV kept as UNK)", [vocab_cap(0) - 1])) in
       let _ = print(str_cat("corpus  ", path)) in
-      let _ = print("opt  float softmax CE  Adam lr=0.02  L1+L2+R1+pos  Wout=0  UNK=gap") in
+      let _ = print("opt  float softmax CE  Adam lr=0.02  L1+L2+R1+pos  sparse Wout") in
       let _ = print("--- train (random MASK, generate) ---") in
       let st = st5(0, epochs, nuse, 1, 0) in
       let _ = run_mlm(m, ids, st, wpath) in
