@@ -16,7 +16,7 @@
 package snapshot
 export sc, dim, ctx, freeze_n, u8len, ch_at, fill, mat, find_char, add_char, build_vocab,
   build_vocab_top, vocab_cap, encode, argmax, rng_next, mask_id, model_new, train_step, train_step_chat, gold_chat, forward,
-  canvas_from_prompt, show_canvas, show_from, n_freeze, denoise, save_model, load_model,
+  canvas_from_prompt, show_canvas, show_from, n_freeze, denoise, denoise_quiet, save_model, load_model,
   vocab_of, ntok, parse_int, zero_freq, maj_count, probe_shuffle, eval_step
 
 import io
@@ -252,6 +252,15 @@ let id_eye(W, i, s) =
     let _ = list_set(nth(W, i), i, s) in
     id_eye(W, i + 1, s)
 
+/* E[i][i] += S，袋平均初值接近 one-hot。 */
+let e_spike(E, i, cap, s) =
+  if i >= len(E) then 0
+  else if i >= cap then 0
+  else
+    let row = nth(E, i) in
+    let _ = list_set(row, i, nth(row, i) + s) in
+    e_spike(E, i + 1, cap, s)
+
 /* 一行均匀随机 ∈ [-mag, mag]。 */
 let fill_rand(row, i, seed, mag) =
   if i >= len(row) then seed
@@ -279,7 +288,8 @@ let model_new(vocab, seed) =
   let Wk = id_eye(mat(d, d), 0, s) in
   let Wv = id_eye(mat(d, d), 0, s) in
   let Wout = mat(d, v) in
-  let _ = mat_rand(E, 0, seed, 8) in
+  let _ = mat_rand(E, 0, seed, 2) in
+  let _ = e_spike(E, 0, vocab_cap(0), s) in
   let _ = mat_rand(Wq, 0, seed + 1, 2) in
   let _ = mat_rand(Wk, 0, seed + 2, 2) in
   let _ = mat_rand(Wv, 0, seed + 3, 2) in
@@ -526,32 +536,57 @@ let nearest(m, ids, j, step) =
   else if nth(ids, j) == mask_id(m) then 0 - 1
   else nth(ids, j)
 
-/* H：hash(左二,左一) 在 0..cap-1，左一 one-hot 在 cap+id，右邻在 2cap+id。
- * 无左邻的后缀洞没有特征，不计入损失（否则 acc 被 unigram 洞拉回 maj）。 */
-let mark_nbr(m, ids, t) =
+/* 可见字写入 H[t]：0..cap-1 袋计数，cap..2cap-1 为 (id, j−t) hash。
+ * 每个 MASK 格都能看见整张底片，H 随 t 变，同一快门上分数才能不同。 */
+/* dst[0,last) += src。袋用 E 而不是纯 one-hot。 */
+let add_e(dst, src, k, last) =
+  if k >= last then 0
+  else
+    let _ = list_set(dst, k, nth(dst, k) + nth(src, k)) in
+    add_e(dst, src, k + 1, last)
+
+/* 可见字写入 H[t]：0..cap-1 为 E[id] 之和，cap..2cap-1 为 (id, j−t) hash。 */
+let vis_add(m, ids, t, j, n) =
+  if j >= ctx(0) then n
+  else if nth(ids, j) == mask_id(m) then vis_add(m, ids, t, j + 1, n)
+  else
+    let id = nth(ids, j) in
+    let cap = vocab_cap(0) in
+    let h = nth(nth(m, 11), t) in
+    let _ =
+      if id >= cap then 0
+      else
+        let _ = add_e(h, nth(nth(m, 0), id), 0, cap) in
+        let off = j - t + ctx(0) in
+        let rk = cap + irem(id * 16 + off, cap) in
+        list_set(h, rk, nth(h, rk) + sc(0)) in
+    vis_add(m, ids, t, j + 1, n + 1)
+
+/* 紧邻可见字：写进第三块 one-hot（尺度 S，不参与袋的平均）。
+ * 焦内（贴着提示）靠这个拉开和周边「只会的」的差距。 */
+let mark_adj(m, ids, t) =
   let cap = vocab_cap(0) in
   let h = nth(nth(m, 11), t) in
-  let L1 = nearest(m, ids, t - 1, 0 - 1) in
-  let L2 = nearest(m, ids, t - 2, 0 - 1) in
+  let L = nearest(m, ids, t - 1, 0 - 1) in
   let R = nearest(m, ids, t + 1, 1) in
   let _ =
-    if L1 < 0 then 0
-    else if L1 >= cap then 0
-    else
-      let _ = list_set(h, cap + L1, sc(0)) in
-      if L2 < 0 then 0
-      else if L2 >= cap then 0
-      else list_set(h, irem(L2 * 13 + L1, cap), sc(0)) in
+    if L < 0 then 0
+    else if L >= cap then 0
+    else list_set(h, cap + cap + L, sc(0)) in
   if R < 0 then 0
   else if R >= cap then 0
-  else list_set(h, cap + cap + R, sc(0))
+  else list_set(h, cap + cap + R, nth(h, cap + cap + R) + sc(0) / 2)
 
-/* H[t] 只有邻字特征，不加位置、不做袋平均。 */
+/* H[t] = 可见袋平均 + 相对位置 hash + 紧邻（焦内）。 */
 let bow_t(m, ids, t) =
   if t >= ctx(0) then 0
   else
-    let _ = zero_row(nth(nth(m, 11), t), 0) in
-    let _ = mark_nbr(m, ids, t) in
+    let h = nth(nth(m, 11), t) in
+    let _ = zero_row(h, 0) in
+    let n0 = vis_add(m, ids, t, 0, 0) in
+    let d = if n0 < 1 then 1 else n0 in
+    let _ = div_row(h, d, 0) in
+    let _ = mark_adj(m, ids, t) in
     bow_t(m, ids, t + 1)
 
 /* X → Q/K/V；MASK 的 K/V 清零。加权平均用 embedding 本身当 key/value。 */
@@ -662,14 +697,26 @@ let dh_k(W, g, k, j, acc) =
   if j >= len(g) then acc
   else dh_k(W, g, k, j + 1, acc + nth(nth(W, k), j) * nth(g, j))
 
-/* E[id] -= lr · (Wout g / den)。备用于可见字；目前 train_at 不调用。 */
-let embed_grad(m, id, den, lr, k) =
-  let row = nth(nth(m, 0), id) in
-  if k >= len(row) then 0
+/* 只改袋那一段 E[id][0..cap)。den 要大，否则以前会把 H 搅乱。 */
+let embed_bag(m, id, den, k) =
+  let cap = vocab_cap(0) in
+  if k >= cap then 0
   else
+    let row = nth(nth(m, 0), id) in
     let dh = dh_k(nth(m, 4), nth(m, 13), k, 0, 0) / den in
-    let _ = list_set(row, k, clip(nth(row, k) - lr * dh, 0 - 256, 256)) in
-    embed_grad(m, id, den, lr, k + 1)
+    let _ = list_set(row, k, clip(nth(row, k) - dh, 0 - 256, 256)) in
+    embed_bag(m, id, den, k + 1)
+
+let vis_egrad(m, gold, flags, den, j) =
+  if j >= ctx(0) then 0
+  else if nth(flags, j) == 1 then vis_egrad(m, gold, flags, den, j + 1)
+  else
+    let id = nth(gold, j) in
+    let _ =
+      if id < 0 then 0
+      else if id >= ntok(m) - 1 then 0
+      else embed_bag(m, id, den, 0) in
+    vis_egrad(m, gold, flags, den, j + 1)
 
 /* dh[k] = Σ_j Wout[k][j] g[j] / 8，写入 m[24]。 */
 let fill_dh(m, k) =
@@ -864,11 +911,10 @@ let h_nz(h, i) =
   else if nth(h, i) != 0 then 1
   else h_nz(h, i + 1)
 
-/* 只在 flags[t]=1 且 H 非空的位置做交叉熵（有邻字才算续写成功）。Adam 只动金标/argmax 列和非零 H 行。 */
+/* 只在 flags[t]=1 做交叉熵。中段洞也计损失（同一快门上要有分数）。 */
 let train_at(m, gold, flags, t, acc) =
   if t >= ctx(0) then acc
   else if nth(flags, t) == 0 then train_at(m, gold, flags, t + 1, acc)
-  else if h_nz(nth(nth(m, 11), t), 0) == 0 then train_at(m, gold, flags, t + 1, acc)
   else
     let y = nth(gold, t) in
     let z0 = sm_row(m, t) in
@@ -895,7 +941,6 @@ let train_at(m, gold, flags, t, acc) =
 let eval_at(m, gold, flags, t, bun) =
   if t >= ctx(0) then 0
   else if nth(flags, t) == 0 then eval_at(m, gold, flags, t + 1, bun)
-  else if h_nz(nth(nth(m, 11), t), 0) == 0 then eval_at(m, gold, flags, t + 1, bun)
   else
     let y = nth(gold, t) in
     let p = argmax(nth(nth(m, 12), t)) in
@@ -935,7 +980,7 @@ let train_step(m, ids, pos, seed, lr) =
   let canvas = copy_ids(gold, 0, list_new()) in
   let flags = flags_new(0) in
   let seed2 =
-    if irem(seed, 8) == 0 then
+    if irem(seed, 2) == 0 then
       mask_i(gold, canvas, flags, triple(seed, mid, 50), 0)
     else
       let cut = 1 + irem(seed, ctx(0) - 1) in
@@ -954,7 +999,7 @@ let eval_step(m, ids, pos, seed, bun) =
   let canvas = copy_ids(gold, 0, list_new()) in
   let flags = flags_new(0) in
   let seed2 =
-    if irem(seed, 8) == 0 then
+    if irem(seed, 2) == 0 then
       mask_i(gold, canvas, flags, triple(seed, mid, 50), 0)
     else
       let cut = 1 + irem(seed, ctx(0) - 1) in
@@ -1114,6 +1159,27 @@ let fill_pc(m, canvas, mid, i) =
         list_set(nth(m, 16), i, nth(row, p)) in
     fill_pc(m, canvas, mid, i + 1)
 
+/* 第一个 MASK：取景后焦平面落在提示右缘。 */
+let first_mask(canvas, mid, i) =
+  if i >= len(canvas) then 0
+  else if nth(canvas, i) == mid then i
+  else first_mask(canvas, mid, i + 1)
+
+/* 光圈外的 MASK 置信度打掉：本张快门只揭焦点附近。st = [mid, focus, rad]。 */
+let fov_dim(conf, canvas, st, i) =
+  if i >= len(conf) then 0
+  else
+    let mid = nth(st, 0) in
+    let focus = nth(st, 1) in
+    let rad = nth(st, 2) in
+    let d = i - focus in
+    let ad = if d < 0 then 0 - d else d in
+    let _ =
+      if nth(canvas, i) != mid then 0
+      else if ad <= rad then 0
+      else list_set(conf, i, 0 - 999999) in
+    fov_dim(conf, canvas, st, i + 1)
+
 /* 在仍为 MASK 的格子里找置信度最高的下标。acc = [bi, bv]。
  * 不按阅读顺序；并列时留下标更小的（稳定，不是扫行策略）。 */
 let best_mask(canvas, conf, mid, i, acc) =
@@ -1139,12 +1205,15 @@ let unveil_n(m, canvas, mid, n) =
       let _ = list_set(nth(m, 16), i, 0 - 999999) in
       unveil_n(m, canvas, mid, n - 1)
 
-/* 先打印当前底片，再曝光、揭开。ntake = ceil(剩余 MASK / 剩余步数)。 */
+/* kmax<0 表示安静模式（|kmax| 仍是 K），训完扫 K 曲线用。 */
 let denoise_go(m, canvas, left, kmax) =
+  let km = if kmax < 0 then 0 - kmax else kmax in
   let mid = mask_id(m) in
-  let step = kmax - left in
-  let _ = print(str_cat(str_cat("step ", int_to_str(step)),
-    str_cat("  ", show_canvas(m, canvas)))) in
+  let step = km - left in
+  let _ =
+    if kmax < 0 then 0
+    else print(str_cat(str_cat("step ", int_to_str(step)),
+      str_cat("  ", show_canvas(m, canvas)))) in
   if left <= 0 then canvas
   else
     let nm = count_mask(canvas, mid, 0, 0) in
@@ -1152,7 +1221,13 @@ let denoise_go(m, canvas, left, kmax) =
     else
       let _ = forward(m, canvas) in
       let _ = fill_pc(m, canvas, mid, 0) in
-      let ntake = if left == 1 then nm else 1 in
+      let focus = first_mask(canvas, mid, 0) in
+      let rad0 = (step + 1) * ctx(0) / km in
+      let rad = if rad0 < 1 then 1 else rad0 in
+      let _ =
+        if left == 1 then 0
+        else fov_dim(nth(m, 16), canvas, triple(mid, focus, rad), 0) in
+      let ntake = if left == 1 then nm else (nm + left - 1) / left in
       let _ = unveil_n(m, canvas, mid, ntake) in
       denoise_go(m, canvas, left - 1, kmax)
 
@@ -1160,6 +1235,11 @@ let denoise_go(m, canvas, left, kmax) =
 let denoise(m, prompt, k) =
   let canvas = canvas_from_prompt(m, prompt) in
   denoise_go(m, canvas, k, k)
+
+/* 只返回成片，不打每步。 */
+let denoise_quiet(m, prompt, k) =
+  let canvas = canvas_from_prompt(m, prompt) in
+  denoise_go(m, canvas, k, 0 - k)
 
 /* 命令行无符号十进制。 */
 let parse_int(s, i, n, acc) =

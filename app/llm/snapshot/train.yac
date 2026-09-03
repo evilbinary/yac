@@ -416,7 +416,7 @@ let rc =
         [ntok(m), tlen, n, ntr, nuse - ntr])) in
       let _ = print(format("vocab  top-%d + MASK  (rare chars dropped)", [vocab_cap(0)])) in
       let _ = print(str_cat("corpus  ", path)) in
-      let _ = print(format("opt  L2hash+L1+R  skip-empty-H  save every %d ep", [save_every(0)])) in
+      let _ = print(format("opt  bag=E-frozen  rel+adj  fovea  save every %d ep", [save_every(0)])) in
       let _ = print("--- train (random MASK, generate) ---") in
       let st = st5(0, epochs, train_lim, 1, train_lim) in
       let _ = list_push(st, test_end) in
@@ -425,7 +425,11 @@ let rc =
       let pr = probe_shuffle(m, ids) in
       let _ = print(format("probe  scramble-vis  pred-changed %d / %d  (0 = ignores context)",
         [nth(pr, 0), nth(pr, 1)])) in
-      let _ = denoise(m, "你好", 12) in
+      let _ = print("--- K curve (same shutter, more K = more exposures) ---") in
+      let _ = print(str_cat("K=1   ", show_canvas(m, denoise_quiet(m, "你好", 1)))) in
+      let _ = print(str_cat("K=4   ", show_canvas(m, denoise_quiet(m, "你好", 4)))) in
+      let _ = print(str_cat("K=8   ", show_canvas(m, denoise_quiet(m, "你好", 8)))) in
+      let _ = print(str_cat("K=14  ", show_canvas(m, denoise_quiet(m, "你好", 14)))) in
       let _ = print(str_cat("wrote ", wpath)) in
       0
 
