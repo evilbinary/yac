@@ -105,8 +105,8 @@ IEEE f64 已经能用，第一版仍然以**整数下标 + 可选定点 logits**
 
 现有 `transformer/` 是 **causal**：位置 t 只看 0..t，最后只读出 t=T-1 的 logits。快照必须改掉这两点。
 
-- 注意力：embedding 当 Q/K/V，按 \(Q\cdot K\) 对可见字加权平均（MASK 的 score 打到条带外）。分数除 32，避免除 512 后全是 0。H 不加 \(E_░\) 残差，只加小位置。均匀权重时退化为 BOW。
-- 读出 softmax 用 \(2^{-\lfloor(-\Delta\ell)/5\rfloor}\)（峰 32，约 40 个 logit 宽）。峰太大时 Σw 会把 32-bit 梯度乘爆；旧版 24 以外分子全是 1 则 NLL 钉死。Adam 对 g 先 clip 再更新 Wout。
+- 注意力：embedding 当 Q/K/V，按 \(Q\cdot K\) 对可见字加权平均（MASK 的 score 打到条带外）。分数除 32，避免除 512 后全是 0。H 不加 \(E_░\) 残差，只加小位置。均匀权重时退化为 BOW。只训 Wout。
+- 读出 softmax 用 \(2^{-\lfloor(-\Delta\ell)/5\rfloor}\)（峰 32）。Wout 用 Adam，**只更新金标列和当前 argmax 列**（V 大时不要扫 2000 列表）。训练只给 MASK 格写 logits。不训 E / QKV。
 - 读出：**每个位置各自一份 logits**，`logits[i][v]` = 位置 i 填词 v 的分数。一次前向是 T 个分类头，不是 1 个。
 - 结构仍保持玩具级，便于在原生 yc 里跑通：
 
@@ -142,12 +142,25 @@ IEEE f64 已经能用，第一版仍然以**整数下标 + 可选定点 logits**
 
 一个 epoch 扫语料时，用滑动窗口切 T 字（不够就 MASK 垫到 T）。不要用因果「用前 T 字预测第 T+1 字」那套 `train_step`。
 
-准确率打印建议：
+`pretrain_head.jsonl` 这类大词表不要全收：只留 **频次最高的 120 字 + MASK**，其余 encode 时丢掉。否则 V≈2000，整数 softmax 近均匀，`acc` 会低于 `maj`。必须 `new` 重建权重。
 
-- `mask-acc`：被掩位置上 argmax 是否等于真字
-- `maj`：同一批金标里最高频字出现次数（unigram 下限；acc 应明显高于它）
-- `invp`：\(z/w_y\)，越小越好
-- `probe scramble-vis`：把可见字换成随机词后 MASK 预测改变的比例（接近 0 说明没用上下文；不要只置换同一袋字）
+每个 epoch 终端一行，**准确率看 `acc`**（百分数），不要只看 `hit / nmask` 心算：
+
+```
+epoch 8  acc 13 pct  maj 9 pct  nll 5  invp 118  hit 25 / 185  maj-hit 17 / 185
+```
+
+| 字段 | 含义 | 怎么读 |
+| --- | --- | --- |
+| `acc` | **MASK 填空准确率** = 猜对的洞 / 本 epoch 挖的洞 × 100 | 主指标。随机乱猜约 \(100/V\)（V=98 约 1，V=2000 约 0） |
+| `maj` | 若每个洞都填本 epoch 金标里出现最多的那个字，能对百分之几 | **下限**。`acc` 必须明显高于 `maj`，才算用了上下文，否则只是在背高频字 |
+| `hit / nmask` | `acc` 的分子分母（猜对次数 / 挖洞次数） | 和 `acc` 同一回事，方便对账 |
+| `maj-hit / nmask` | `maj` 的分子分母 | 同上 |
+| `nll` | 被挖位置交叉熵，单位 bit（\(\lfloor\log_2 z\rfloor-\lfloor\log_2 w_y\rfloor\)） | 整数很粗，常钉在 5–10；下降才有意义 |
+| `invp` | \(z/w_y\)，均匀时约 V | 越小越好；钉在 V 附近 = softmax 几乎均匀 |
+| `probe scramble-vis` | 训完后：可见字换成随机词，MASK 的 argmax 变了几格 | `changed / nmask`。接近 0 = \(H\) 没用上下文（不要只交换同一袋字，均匀平均下 mix 不变） |
+
+不要看「整张画布含可见字」的 full-acc，会虚高。生成好不好另看 K 步画布，不计入 `acc`。
 
 ### 3.6 和现有两个例子怎么并列
 

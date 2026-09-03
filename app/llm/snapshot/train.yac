@@ -1,7 +1,7 @@
 /* 快照并行训练（MLM 预训练 / MaskGIT generate）。
  *
  *   ./app/llm/snapshot/train [语料] [权重] [epoch] [new|chat]
- * 默认 MLM：corpus.txt。chat 才走冻用户填回复。
+ * 默认 MLM：pretrain_t2t_mini.jsonl 切出的前 250 行（pretrain_head.jsonl）。
  */
 
 import snapshot
@@ -59,10 +59,10 @@ let convs_go(arr, i, b) =
     convs_go(arr, i + 1, b)
 
 /* jsonl 最多读这么多行（整份 pretrain 约 1.2GB，不能 read_file）。 */
-let jsonl_max(_) = 40
+let jsonl_max(_) = 250
 
 /* 每个 epoch 最多扫这么多长度为 T 的窗口。 */
-let win_cap(_) = 80
+let win_cap(_) = 400
 
 /* 一行 json：优先 "text"，否则 conversations。 */
 let line_go(line, b) =
@@ -196,13 +196,18 @@ let avg_nll(nll, nm) =
   if nm < 1 then 0
   else nll / nm
 
+/* 命中率百分数：hit/nm，nm=0 则 0。这就是终端上的 acc / maj。 */
+let pct(hit, nm) =
+  if nm < 1 then 0
+  else hit * 100 / nm
+
 /* 一个 epoch 的累加行：在 st6 后再接 invp 槽。 */
 let epoch_row(limit, seed) =
   let row = st6(0, limit, seed, 0, 0) in
   let _ = list_push(row, 0) in
   row
 
-/* 循环 epoch：打印 nll / invp / mask-acc / maj，并写权重。 */
+/* 循环 epoch：打印 acc/maj 百分数，并写权重。 */
 let run_mlm(m, ids, st, path) =
   let ep = nth(st, 0) in
   if ep >= nth(st, 1) then 0
@@ -211,9 +216,11 @@ let run_mlm(m, ids, st, path) =
     let row = epoch_row(nth(st, 2), nth(st, 3)) in
     let _ = epoch_mlm(m, ids, row) in
     let nm = nth(row, 4) in
-    let _ = print(format("epoch %d  nll %d  invp %d  mask-acc %d / %d  maj %d / %d",
-      [ep, avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm), nth(row, 3), nm,
-        maj_count(m), nm])) in
+    let hit = nth(row, 3) in
+    let mj = maj_count(m) in
+    let _ = print(format("epoch %d  acc %d pct  maj %d pct  nll %d  invp %d  hit %d / %d  maj-hit %d / %d",
+      [ep, pct(hit, nm), pct(mj, nm), avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm),
+        hit, nm, mj, nm])) in
     let _ = save_model(m, path) in
     let _ = list_set(st, 0, ep + 1) in
     let _ = list_set(st, 3, nth(row, 2)) in
@@ -228,9 +235,11 @@ let run_chat(m, golds, us, st, path) =
     let row = epoch_row(0, nth(st, 2)) in
     let _ = epoch_chat(m, golds, us, row) in
     let nm = nth(row, 4) in
-    let _ = print(format("epoch %d  nll %d  invp %d  mask-acc %d / %d  maj %d / %d",
-      [ep, avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm), nth(row, 3), nm,
-        maj_count(m), nm])) in
+    let hit = nth(row, 3) in
+    let mj = maj_count(m) in
+    let _ = print(format("epoch %d  acc %d pct  maj %d pct  nll %d  invp %d  hit %d / %d  maj-hit %d / %d",
+      [ep, pct(hit, nm), pct(mj, nm), avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm),
+        hit, nm, mj, nm])) in
     let _ = save_model(m, path) in
     let _ = list_set(st, 0, ep + 1) in
     let _ = list_set(st, 2, nth(row, 2)) in
@@ -263,7 +272,7 @@ let open_or_new(wpath, vocab, force) =
 /* 语料路径，默认小词表 corpus.txt。 */
 let path =
   if argc() > 1 then argv(1)
-  else "app/llm/corpus.txt"
+  else "app/llm/pretrain_head.jsonl"
 
 /* 权重路径。 */
 let wpath =
@@ -312,7 +321,7 @@ let rc =
       0
   else
     let text = load_text(path) in
-    let vocab = build_vocab(text, list_new(), 0) in
+    let vocab = build_vocab_top(text, vocab_cap(0)) in
     let _ = list_push(vocab, "░") in
     let m = open_or_new(wpath, vocab, force_new) in
     let ids = encode(text, vocab_of(m), list_new(), 0) in
@@ -327,7 +336,9 @@ let rc =
     else
       let _ = print(format("snapshot  mode=mlm  V=%d  T=%d  tokens=%d  windows=%d",
         [ntok(m), tlen, n, nuse])) in
+      let _ = print(format("vocab  top-%d + MASK  (rare chars dropped)", [vocab_cap(0)])) in
       let _ = print(str_cat("corpus  ", path)) in
+      let _ = print("opt  Wout=Adam  (no E / QKV)") in
       let _ = print("--- train (random MASK, generate) ---") in
       let _ = run_mlm(m, ids, st5(0, epochs, limit, 1, 0), wpath) in
       let _ = print("--- after train ---") in

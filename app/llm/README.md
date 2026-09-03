@@ -15,8 +15,7 @@ make -C app llm-transformer
 
 ```bash
 make -C app llm-snapshot
-# 默认 corpus.txt（小词表）。jsonl 头仍可手动指定。
-./app/llm/snapshot/train.exe
-./app/llm/snapshot/train.exe app/llm/corpus.txt app/llm/snapshot/snapshot.w 8 new
+# 默认 pretrain_head.jsonl；词表只留 120 个高频字 + MASK，必须 new。
+./app/llm/snapshot/train.exe app/llm/pretrain_head.jsonl app/llm/snapshot/snapshot.w 12 new
 ./app/llm/snapshot/infer.exe app/llm/snapshot/snapshot.w 你好 8
 ```

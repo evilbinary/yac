@@ -15,7 +15,7 @@
 
 package snapshot
 export sc, dim, ctx, freeze_n, u8len, ch_at, fill, mat, find_char, add_char, build_vocab,
-  encode, argmax, rng_next, mask_id, model_new, train_step, train_step_chat, gold_chat, forward,
+  build_vocab_top, vocab_cap, encode, argmax, rng_next, mask_id, model_new, train_step, train_step_chat, gold_chat, forward,
   canvas_from_prompt, show_canvas, show_from, n_freeze, denoise, save_model, load_model,
   vocab_of, ntok, parse_int, zero_freq, maj_count, probe_shuffle
 
@@ -106,6 +106,62 @@ let encode(s, vocab, ids, i) =
     let k = find_char(vocab, c, 0) in
     let _ = if k < 0 then 0 else list_push(ids, k) in
     encode(s, vocab, ids, i + str_len(c))
+
+/* jsonl 大语料只留这么多高频字（+MASK）。V≈100 时 Adam 才推得动。 */
+let vocab_cap(_) = 120
+
+/* 换行不进词表。 */
+let skip_tok(c) =
+  if str_len(c) != 1 then 0
+  else
+    let b = str_ref(c, 0) in
+    if b == 10 then 1
+    else if b == 13 then 1
+    else 0
+
+/* 计入 vocab/freq；已有则 +1。 */
+let bump_freq(vocab, freq, c) =
+  if skip_tok(c) == 1 then 0
+  else
+    let k = find_char(vocab, c, 0) in
+    if k < 0 then
+      let _ = list_push(vocab, c) in
+      list_push(freq, 1)
+    else list_set(freq, k, nth(freq, k) + 1)
+
+let count_vocab(s, vocab, freq, i) =
+  if i >= str_len(s) then 0
+  else
+    let c = ch_at(s, i) in
+    let _ = bump_freq(vocab, freq, c) in
+    count_vocab(s, vocab, freq, i + str_len(c))
+
+/* freq[i..last] 最大值下标。 */
+let maxf_go(freq, i, last, bi, bv) =
+  if i > last then bi
+  else
+    let x = nth(freq, i) in
+    if x > bv then maxf_go(freq, i + 1, last, i, x)
+    else maxf_go(freq, i + 1, last, bi, bv)
+
+/* 反复取出当前频次最高的字，最多 cap 个。 */
+let take_top(vocab, freq, cap, acc) =
+  if cap <= 0 then acc
+  else if len(freq) < 1 then acc
+  else
+    let j = maxf_go(freq, 1, len(freq) - 1, 0, nth(freq, 0)) in
+    if nth(freq, j) < 1 then acc
+    else
+      let _ = list_push(acc, nth(vocab, j)) in
+      let _ = list_set(freq, j, 0) in
+      take_top(vocab, freq, cap - 1, acc)
+
+/* 大语料：先计数，再只保留 cap 个高频字。MASK 仍由调用方 push。 */
+let build_vocab_top(s, cap) =
+  let vocab = list_new() in
+  let freq = list_new() in
+  let _ = count_vocab(s, vocab, freq, 0) in
+  take_top(vocab, freq, cap, list_new())
 
 /* m[14] = 词表（末项 MASK）。 */
 let vocab_of(m) = nth(m, 14)
@@ -407,6 +463,15 @@ let write_logits(m, t) =
     let _ = mv_j(nth(m, 4), nth(nth(m, 11), t), nth(nth(m, 12), t), 0, sc(0)) in
     write_logits(m, t + 1)
 
+/* 训练：只给 flags=1 的格子写 logits，少做 (1−掩码率)·T·d·V。 */
+let write_logits_f(m, flags, t) =
+  if t >= ctx(0) then 0
+  else
+    let _ =
+      if nth(flags, t) == 0 then 0
+      else mv_j(nth(m, 4), nth(nth(m, 11), t), nth(nth(m, 12), t), 0, sc(0)) in
+    write_logits_f(m, flags, t + 1)
+
 /* dst[k] += src[k]。 */
 let add_row(dst, src, k) =
   if k >= len(dst) then 0
@@ -463,6 +528,13 @@ let forward(m, ids) =
   let _ = attn_pos(m, ids, 0) in
   write_logits(m, 0)
 
+/* 训练用快门：只算被挖格子的 logits。 */
+let forward_train(m, ids, flags) =
+  let _ = embed_t(m, ids, 0, ctx(0)) in
+  let _ = x_to_qkv(m, ids, 0) in
+  let _ = attn_pos(m, ids, 0) in
+  write_logits_f(m, flags, 0)
+
 /* ⌊√n⌋。Newton，x 从 n 收。 */
 let isqrt_n(n, x) =
   if x <= 0 then 0
@@ -510,7 +582,19 @@ let adam_w(m, x, g, i, j) =
       else adam_cell(m, i, j, nth(x, i) * gj) in
     adam_w(m, x, g, i, j + 1)
 
-/* Wout[i][j] -= h[i] · g[j] / den（旧 SGD，embed 备用）。 */
+/* 只更新 Wout 的第 j 列（金标或当前 argmax）。V 大时比扫整表快一两个数量级。 */
+let adam_col(m, x, gj, j, i) =
+  if i >= len(x) then 0
+  else
+    let g2 = clip(gj, 0 - 256, 256) in
+    let _ =
+      if g2 < 2 then
+        if g2 > 0 - 2 then 0
+        else adam_cell(m, i, j, nth(x, i) * g2)
+      else adam_cell(m, i, j, nth(x, i) * g2) in
+    adam_col(m, x, gj, j, i + 1)
+
+/* Wout[i][j] -= h[i] · g[j] / den。快照上 den=z·8 会贴 maj；现用 adam_w。 */
 let outer_wj(row, xi, g, j, den) =
   if j >= len(g) then 0
   else
@@ -530,7 +614,7 @@ let dh_k(W, g, k, j, acc) =
   if j >= len(g) then acc
   else dh_k(W, g, k, j + 1, acc + nth(nth(W, k), j) * nth(g, j))
 
-/* E[id] -= lr · (Wout g / den)。被掩位置 id 是 MASK。 */
+/* E[id] -= lr · (Wout g / den)。备用于可见字；目前 train_at 不调用。 */
 let embed_grad(m, id, den, lr, k) =
   let row = nth(nth(m, 0), id) in
   if k >= len(row) then 0
@@ -538,17 +622,6 @@ let embed_grad(m, id, den, lr, k) =
     let dh = dh_k(nth(m, 4), nth(m, 13), k, 0, 0) / den in
     let _ = list_set(row, k, clip(nth(row, k) - lr * dh, 0 - 256, 256)) in
     embed_grad(m, id, den, lr, k + 1)
-
-/* 按 α[t][j] 把 ∂L/∂H 传给可见字的 E。den = S²/α，步长很小。 */
-let vis_egrad(m, ids, t, j) =
-  if j >= ctx(0) then 0
-  else if nth(ids, j) == mask_id(m) then vis_egrad(m, ids, t, j + 1)
-  else
-    let aj = nth(nth(nth(m, 23), t), j) in
-    let _ =
-      if aj < 2 then 0
-      else embed_grad(m, nth(ids, j), (sc(0) * sc(0)) / aj, 1, 0) in
-    vis_egrad(m, ids, t, j + 1)
 
 /* dh[k] = Σ_j Wout[k][j] g[j] / 8，写入 m[24]。 */
 let fill_dh(m, k) =
@@ -735,9 +808,8 @@ let maj_go(f, i, last, bv) =
 /* 本 epoch 被挖金标里出现最多的那个字的次数（unigram 上限）。 */
 let maj_count(m) = maj_go(nth(m, 17), 0, ntok(m) - 2, 0)
 
-/* 只在 flags[t]=1 的位置做交叉熵。Wout 用 Adam。
- * acc = [hit, nmask, nll, invp]。m[17][y]++ 供 maj。
- * wv_upd 等 mask-acc 高于 maj 再接入。 */
+/* 只在 flags[t]=1 的位置做交叉熵。Wout 用 Adam（SGD den=z·8 会贴死 maj，probe 变 0）。
+ * acc = [hit, nmask, nll, invp]。不碰 E。 */
 let train_at(m, gold, flags, t, acc) =
   if t >= ctx(0) then acc
   else if nth(flags, t) == 0 then train_at(m, gold, flags, t + 1, acc)
@@ -747,10 +819,12 @@ let train_at(m, gold, flags, t, acc) =
     let z = if z0 < 1 then 1 else z0 in
     let nll = nll_bits(nth(m, 13), y, z) in
     let inv = invp_of(nth(m, 13), y, z) in
-    let hit = if argmax(nth(nth(m, 12), t)) == y then 1 else 0 in
-    let _ = g_fill(nth(m, 13), y, z, 0, ntok(m)) in
-    let _ = adam_w(m, nth(nth(m, 11), t), nth(m, 13), 0, 0) in
-    /* Wv：等 mask-acc 稳定高于 maj 再开 wv_upd。 */
+    let p = argmax(nth(nth(m, 12), t)) in
+    let hit = if p == y then 1 else 0 in
+    let h = nth(nth(m, 11), t) in
+    let w = nth(m, 13) in
+    let _ = adam_col(m, h, nth(w, y) - z, y, 0) in
+    let _ = if p == y then 0 else adam_col(m, h, nth(w, p), p, 0) in
     let fr = nth(m, 17) in
     let _ = list_set(fr, y, nth(fr, y) + 1) in
     let _ = list_set(acc, 0, nth(acc, 0) + hit) in
@@ -776,7 +850,7 @@ let train_step(m, ids, pos, seed, lr) =
   let bucket = irem(seed, 3) in
   let rate = 25 * (bucket + 1) in
   let seed2 = mask_i(gold, canvas, flags, triple(seed, mid, rate), 0) in
-  let _ = forward(m, canvas) in
+  let _ = forward_train(m, canvas, flags) in
   let acc = acc4(0) in
   let _ = train_at(m, gold, flags, 0, acc) in
   let _ = list_push(acc, seed2) in
@@ -798,7 +872,7 @@ let train_step_chat(m, gold, u, seed, lr) =
   let rate = 25 * (irem(seed, 3) + 1) in
   let seed2 = mask_i(gold, canvas, flags, triple(seed, mid, rate), 0) in
   let _ = restore_user(gold, canvas, flags, u, 0) in
-  let _ = forward(m, canvas) in
+  let _ = forward_train(m, canvas, flags) in
   let acc = acc4(0) in
   let _ = train_at(m, gold, flags, 0, acc) in
   let _ = list_push(acc, seed2) in
