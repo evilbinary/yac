@@ -1,0 +1,116 @@
+/* fmap.yac — open-addressing string map. Mutates in place. */
+
+package fmap
+export fmap_new, fmap_init_n, fmap_get, fmap_put
+
+let fmap_fill(b, i, cap) =
+  if i >= cap then b
+  else
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    let _ = list_push(b, 0) in
+    fmap_fill(b, i + 16, cap)
+
+let fmap_new(_) =
+  let m = list_new() in
+  let _ = list_push(m, list_new()) in
+  let _ = list_push(m, 0) in
+  let _ = list_push(m, 0) in
+  m
+
+let fmap_cap_ok(cap) =
+  if is_int(cap) then
+    if cap < 1 then false
+    else if cap > 1048576 then false
+    else band(cap, cap - 1) == 0
+  else false
+
+let fmap_probe(vec, k, h, i, mask) =
+  let e = nth(vec, i) in
+  if e == 0 then i
+  else
+    let hit =
+      if nth(e, 2) == h then nth(e, 0) == k
+      else false in
+    if hit then i
+    else
+      let i2 = band(i + 1, mask) in
+      if i2 == band(h, mask) then 0 - 1
+      else fmap_probe(vec, k, h, i2, mask)
+
+let fmap_get_h(m, k, h) =
+  let cap = nth(m, 2) in
+  if fmap_cap_ok(cap) then
+    let p = fmap_probe(nth(m, 0), k, h, band(h, cap - 1), cap - 1) in
+    if p < 0 then 0
+    else
+      let e = nth(nth(m, 0), p) in
+      if e == 0 then 0 else nth(e, 1)
+  else 0
+
+let fmap_get(m, k) =
+  let cap = nth(m, 2) in
+  if cap == 0 then 0
+  else fmap_get_h(m, k, str_hash(k))
+
+let fmap_put_at(m, k, v, h, i) =
+  let vec = nth(m, 0) in
+  if nth(vec, i) == 0 then
+    let _ = list_set(vec, i, [k, v, h]) in
+    list_set(m, 1, nth(m, 1) + 1)
+  else list_set(vec, i, [k, v, h])
+
+let fmap_install_hash(m, k, v, h) =
+  let vec = nth(m, 0) in
+  let mask = nth(m, 2) - 1 in
+  let p = fmap_probe(vec, k, h, band(h, mask), mask) in
+  if p < 0 then fmap_put_at(m, k, v, h, band(h, mask))
+  else fmap_put_at(m, k, v, h, p)
+
+let fmap_rehash(oldv, m, i, oldc) =
+  if i >= oldc then 0
+  else
+    let e = nth(oldv, i) in
+    if e == 0 then fmap_rehash(oldv, m, i + 1, oldc)
+    else
+      let _ = fmap_install_hash(m, nth(e, 0), nth(e, 1), nth(e, 2)) in
+      fmap_rehash(oldv, m, i + 1, oldc)
+
+let fmap_grow_prep(m, oldc) =
+  let _ = list_set(m, 0, fmap_fill(list_new(), 0, oldc * 2)) in
+  let _ = list_set(m, 1, 0) in
+  list_set(m, 2, oldc * 2)
+
+let fmap_init_n(m, cap) =
+  let _ = list_set(m, 0, fmap_fill(list_new(), 0, cap)) in
+  list_set(m, 2, cap)
+
+let fmap_grow(m) =
+  let oldv = nth(m, 0) in
+  let _ = fmap_grow_prep(m, nth(m, 2)) in
+  fmap_rehash(oldv, m, 0, nth(m, 2))
+
+let fmap_maybe_grow(m) =
+  let cap = nth(m, 2) in
+  if fmap_cap_ok(cap) then
+    if nth(m, 1) * 2 >= cap then fmap_grow(m) else 0
+  else fmap_init_n(m, 64)
+
+let fmap_put_h(m, k, v, h) =
+  let _ = fmap_maybe_grow(m) in
+  fmap_install_hash(m, k, v, h)
+
+let fmap_put(m, k, v) = fmap_put_h(m, k, v, str_hash(k))

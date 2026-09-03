@@ -1,0 +1,224 @@
+/* profile.yac — runtime function profiler for native yc programs.
+ *
+ *   import profile
+ *   let _ = prof_enable("/tmp/app.prof") in  /* wraps yac_prof_enable */
+ *   ...
+ *   let _ = prof_dump(0) in                 /* wraps yac_prof_dump */
+ *
+ * Compile: yc_a --pkg src-self,pkg -o app app.yac
+ * (src-self needed so the compiler can find back/profile.yac deps if any.)
+ */
+
+package profile
+export prof_enable, prof_dump, yac_prof_enable, yac_prof_dump
+import fmap
+
+let prof_stk_fill(stk, i, n) =
+  if i >= n then stk
+  else
+    let f = list_new() in
+    let _ = list_push(f, 0) in
+    let _ = list_push(f, 0) in
+    let _ = list_push(f, 0) in
+    let _ = list_push(stk, f) in
+    prof_stk_fill(stk, i + 1, n)
+
+let prof_stk_need(stk, n) =
+  let cap = len(stk) in
+  if n < cap then 0
+  else if n >= 4096 then 0
+  else prof_stk_fill(stk, cap, n + 256)
+
+let prof_rec_get(recs, name) =
+  let v = fmap_get(recs, name) in
+  if v == 0 then
+    let r = list_new() in
+    let _ = list_push(r, name) in
+    let _ = list_push(r, 0) in
+    let _ = list_push(r, 0) in
+    let _ = list_push(r, 0) in
+    let _ = fmap_put(recs, name, r) in
+    r
+  else v
+
+let yac_prof_enable(path) =
+  let c = yac_prof_cell() in
+  if len(c) != 0 then 0
+  else
+    let recs = fmap_new(0) in
+    let _ = fmap_init_n(recs, 1024) in
+    let stk = list_new() in
+    let _ = prof_stk_fill(stk, 0, 256) in
+    let nstk = box_new() in
+    let _ = box_set(nstk, 0) in
+    let b = box_new() in
+    let _ = box_set(b, [path, stk, recs, nstk]) in
+    list_push(c, b)
+
+let prof_enable(path) = yac_prof_enable(path)
+
+/* Called by runtime yac_prof_enter. Source name prof_enter_go is what
+ * runtime_add looks up; gname is package/prof_enter_go. */
+let prof_enter_go(name) =
+  let c = yac_prof_cell() in
+  if len(c) == 0 then 0
+  else
+    let t = box_get(nth(c, 0)) in
+    let stk = nth(t, 1) in
+    let recs = nth(t, 2) in
+    let nstk = nth(t, 3) in
+    let n = box_get(nstk) in
+    if n >= 4096 then 0
+    else
+      let _ = prof_stk_need(stk, n) in
+      let rb = prof_rec_get(recs, name) in
+      let _ = list_set(rb, 1, nth(rb, 1) + 1) in
+      let fr = nth(stk, n) in
+      let _ = list_set(fr, 0, name) in
+      let _ = list_set(fr, 1, time_ns()) in
+      let _ = list_set(fr, 2, 0) in
+      box_set(nstk, n + 1)
+
+/* Called by runtime yac_prof_leave — gname profile/prof_leave_go. */
+let prof_leave_go(_) =
+  let c = yac_prof_cell() in
+  if len(c) == 0 then 0
+  else
+    let t = box_get(nth(c, 0)) in
+    let stk = nth(t, 1) in
+    let recs = nth(t, 2) in
+    let nstk = nth(t, 3) in
+    let n = box_get(nstk) in
+    if n == 0 then 0
+    else
+      let n1 = n - 1 in
+      let fr = nth(stk, n1) in
+      let elapsed = time_ns() - nth(fr, 1) in
+      let rb = prof_rec_get(recs, nth(fr, 0)) in
+      let excl = elapsed - nth(fr, 2) in
+      let _ = list_set(rb, 2, nth(rb, 2) + elapsed) in
+      let _ = list_set(rb, 3, nth(rb, 3) + excl) in
+      let _ = box_set(nstk, n1) in
+      if n1 == 0 then 0
+      else
+        let p = nth(stk, n1 - 1) in
+        list_set(p, 2, nth(p, 2) + elapsed)
+
+let prof_unwind(_) =
+  let c = yac_prof_cell() in
+  if len(c) == 0 then 0
+  else
+    let n = box_get(nth(box_get(nth(c, 0)), 3)) in
+    if n == 0 then 0
+    else
+      let _ = prof_leave_go(0) in
+      prof_unwind(0)
+
+let prof_collect_go(vec, j, cap, out) =
+  if j >= cap then out
+  else
+    let e = nth(vec, j) in
+    let _ =
+      if e == 0 then 0
+      else list_push(out, nth(e, 1)) in
+    prof_collect_go(vec, j + 1, cap, out)
+
+let prof_collect(recs) =
+  let cap = nth(recs, 2) in
+  if cap == 0 then list_new()
+  else prof_collect_go(nth(recs, 0), 0, cap, list_new())
+
+let prof_ins(sorted, rec) =
+  if sorted == [] then cons(rec, [])
+  else if nth(rec, 3) >= nth(nth(sorted, 0), 3) then cons(rec, sorted)
+  else cons(nth(sorted, 0), prof_ins(drop(sorted, 1), rec))
+
+let prof_sort(xs, i, acc) =
+  if i >= len(xs) then acc
+  else prof_sort(xs, i + 1, prof_ins(acc, nth(xs, i)))
+
+let prof_puts(b, s) =
+  let n = str_len(s) in
+  let loop(i) =
+    if i >= n then b
+    else
+      let _ = bytes_append(b, str_ref(s, i)) in
+      loop(i + 1) in
+  loop(0)
+
+let prof_nl(b) =
+  let _ = bytes_append(b, 10) in
+  b
+
+let prof_putn(b, n) = prof_puts(b, int_to_str(n))
+
+let prof_spaces(n, acc) =
+  if n <= 0 then acc
+  else prof_spaces(n - 1, str_cat(acc, " "))
+
+let prof_pad_right(s, w) =
+  let n = str_len(s) in
+  if n >= w then s else str_cat(s, prof_spaces(w - n, ""))
+
+let prof_pad_left(s, w) =
+  let n = str_len(s) in
+  if n >= w then s else str_cat(prof_spaces(w - n, ""), s)
+
+let prof_pct(excl, tot) =
+  if tot == 0 then "0.00"
+  else
+    let x = (excl * 10000) / tot in
+    let f = x % 100 in
+    let fs = if f < 10 then str_cat("0", int_to_str(f)) else int_to_str(f) in
+    str_cat(str_cat(int_to_str(x / 100), "."), fs)
+
+let prof_col(b, s, w) = prof_puts(b, str_cat(prof_pad_left(s, w), "  "))
+let prof_namecol(b, s) = prof_puts(b, str_cat(prof_pad_right(s, 24), "  "))
+
+let prof_line(b, rec, tot) =
+  let excl = nth(rec, 3) in
+  let incl = nth(rec, 2) in
+  let b1 = prof_namecol(b, nth(rec, 0)) in
+  let b2 = prof_col(b1, int_to_str(nth(rec, 1)), 10) in
+  let b3 = prof_col(b2, int_to_str(incl), 16) in
+  let b4 = prof_col(b3, int_to_str(excl), 16) in
+  let b5 = prof_col(b4, int_to_str(incl / 1000000), 8) in
+  let b6 = prof_col(b5, int_to_str(excl / 1000000), 8) in
+  prof_nl(prof_puts(b6, prof_pad_left(prof_pct(excl, tot), 6)))
+
+let prof_tot(xs, i, acc) =
+  if i >= len(xs) then acc
+  else prof_tot(xs, i + 1, acc + nth(nth(xs, i), 3))
+
+let prof_lines(b, xs, tot, i) =
+  if i >= len(xs) then b
+  else prof_lines(prof_line(b, nth(xs, i), tot), xs, tot, i + 1)
+
+let yac_prof_dump(_) =
+  let c = yac_prof_cell() in
+  if len(c) == 0 then 0
+  else
+    let t0 = box_get(nth(c, 0)) in
+    let path = nth(t0, 0) in
+    let _ = prof_unwind(0) in
+    let t = box_get(nth(c, 0)) in
+    let raw = prof_collect(nth(t, 2)) in
+    let xs = prof_sort(raw, 0, []) in
+    let tot = prof_tot(xs, 0, 0) in
+    let b0 = bytes_new() in
+    let b1 = prof_nl(prof_puts(b0, "# yc-prof 1 native")) in
+    let b2 = prof_nl(prof_puts(prof_puts(b1, "# file="), path)) in
+    let b3 = prof_puts(b2, "# nfuncs=") in
+    let b4 = prof_puts(prof_putn(b3, len(xs)), " total_excl_ns=") in
+    let b5 = prof_nl(prof_putn(b4, tot)) in
+    let h0 = prof_namecol(b5, "# name") in
+    let h1 = prof_col(h0, "calls", 10) in
+    let h2 = prof_col(h1, "incl_ns", 16) in
+    let h3 = prof_col(h2, "excl_ns", 16) in
+    let h4 = prof_col(h3, "incl_ms", 8) in
+    let h5 = prof_col(h4, "excl_ms", 8) in
+    let h6 = prof_nl(prof_puts(h5, "   pct")) in
+    let b6 = prof_lines(h6, xs, tot, 0) in
+    write_file(path, bytes_to_str(b6))
+
+let prof_dump(_) = yac_prof_dump(0)

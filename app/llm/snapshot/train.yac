@@ -5,6 +5,7 @@
  */
 
 import snapshot
+import profile
 import json
 import io
 import fmt
@@ -385,6 +386,13 @@ let open_or_new(wpath, vocab, force) =
       let _ = print(format("resume  V=%d", [ntok(m)])) in
       m
 
+/* prof-out 路径：第 6 参数，或 "" 表示不 profile。 */
+let prof_path =
+  if argc() > 6 then argv(6)
+  else ""
+
+let _ = if str_len(prof_path) > 0 then prof_enable(prof_path) else 0
+
 /* 语料路径，默认西游记中段。 */
 let path =
   if argc() > 1 then argv(1)
@@ -471,4 +479,5 @@ let rc =
       let _ = print(str_cat("wrote ", wpath)) in
       0
 
+let _ = prof_dump(0) in
 rc
