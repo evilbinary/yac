@@ -410,6 +410,17 @@ let dump_uncps(src, do_opt) =
     else
       let _ = print(r) in 0
 
+let compile_bytes(src, t) =
+  let ast0 = pass_parse(pass_lex(src)) in
+  if prog_has_err(ast0, 0) then
+    let _ = report_syntax(ast0) in 0
+  else if report_unbound(src, ast0) != 0 then 0
+  else
+    let _ = pkg_fail_set(0) in
+    let _ = link_from_ast(ast0) in
+    let bin = run_passes(make_pipeline(t), src) in
+    if pkg_fail(0) != 0 then 0 else bin
+
 let compile_src(src, outpath, t, profpath) =
   let ast0 = pass_parse(pass_lex(src)) in
   if prog_has_err(ast0, 0) then
