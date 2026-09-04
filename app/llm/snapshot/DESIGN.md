@@ -182,16 +182,16 @@ PAD 出现时，注意力对 PAD **键**加 `-inf`（不看垫字）。训练窗
    \mathrm{score} = p(\mathrm{char}\mid\mathrm{canvas})\cdot \mathrm{info}^{\beta}
    \]
 3. 前 **1/3** 步（主干）：\(\beta=\) `GEN_BETA1`。少填、过阈才落。主干步结束后这些格**锁定**，后面不得改写。
-4. 后 **2/3** 步（细节）：只填仍为 MASK 的格，按 cosine 控制每步数量。夹在两个已有字之间且最不稳的格可重涂。禁止整页 `pred` 覆盖主干。
-5. 最后一步不再重涂。提示冻结格全程不改。硬过滤：不写 PAD/UNK/MASK、`[]` 与 ASCII 数字；换行降权。
+4. 后 **2/3** 步（细节）：只填仍为 MASK 的格，**优先左邻已是真字**的续写洞。句号/问号后的格不填。已有「道/叫」则不再开第二轮说话动词。夹心且不稳的格重涂。禁止整页覆盖主干。
+5. 最后一步**不强制填满**；置信度不够或句号后的洞保持 MASK。提示冻结格全程不改。硬过滤：不写 PAD/UNK/MASK、`[]` 与 ASCII 数字；换行降权。
 
-K=1 没有时间片，等于一次揭完全图，更容易整页高频虚词。K 够用时应先看到主语/谓语/宾语一类主干，再看到「的了是在」和标点把句子接上。
+默认 K=`GEN_K`（24）。K=8 主干窗口太短，锁不住「牛魔王」一类短语。
 
 `infer` 必须 dump **每一步**画布：step 0（提示 + ░）到 step K（final）。只打首尾看不见主干怎么长成细节。
 
 ```text
-python -u app/llm/snapshot/train_float.py infer app/llm/snapshot/snapshot_bert.pt 悟空 8
-python -u app/llm/snapshot/train_float.py infer app/llm/snapshot/snapshot_bert.pt 孙悟空打妖怪 8
+python -u app/llm/snapshot/train_float.py infer app/llm/snapshot/snapshot_bert.pt 悟空
+python -u app/llm/snapshot/train_float.py infer app/llm/snapshot/snapshot_bert.pt 孙悟空打妖怪 24
 ```
 
 ### 3.5 训练与指标
@@ -261,7 +261,7 @@ python -u app/llm/snapshot/train_float.py infer app/llm/snapshot/snapshot_bert.p
 | d | 192 | 宽 |
 | layers / heads / FF | 4 / 6 / 768 | 双向块 |
 | V | ≤4096 | 字符 cap |
-| K | 8 | 推理显影次数 |
+| K | 24 | 推理显影次数（可用 argv 覆盖） |
 | r | cosine 动态 ∈[0.10,0.90] | 独立随机洞；eval 另报 15/50/90% |
 | stride | 64 | 滑动窗步长 |
 | drop | 0.05 | 残差 MLP / embed |

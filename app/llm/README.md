@@ -15,8 +15,8 @@ make -C app llm-transformer
 
 ```bash
 python -u app/llm/snapshot/train_float.py app/llm/xyj.txt 16
-python -u app/llm/snapshot/train_float.py infer app/llm/snapshot/snapshot_bert.pt 猴 8
-python -u app/llm/snapshot/train_float.py infer app/llm/snapshot/snapshot_bert.pt 孙悟空打妖怪 8
+python -u app/llm/snapshot/train_float.py infer app/llm/snapshot/snapshot_bert.pt 猴
+python -u app/llm/snapshot/train_float.py infer app/llm/snapshot/snapshot_bert.pt 孙悟空打妖怪
 ```
 
 ```bash

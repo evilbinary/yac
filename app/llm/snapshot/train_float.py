@@ -38,7 +38,8 @@ GEN_REP = 2.5  # 已可见字的重复惩罚
 GEN_NEAR = 4.0  # 禁止与左邻同一字（挡「你你」）
 GEN_BETA1 = 1.2  # 主干：信息量指数（稀有字优先）
 GEN_BETA2 = 0.2  # 细节：接近模型原概率
-GEN_CONF = 0.08  # 主干：原概率过低则不占 keep 名额
+GEN_CONF = 0.08  # 主干 / 细节：原概率过低则不落笔
+GEN_K = 24  # 默认显影步数；K=8 锁不住主干
 MASK_CH = "[MASK]"  # 未曝光格
 UNK_CH = "[UNK]"  # 词表外
 PAD_CH = "[PAD]"  # 短窗垫字
@@ -227,13 +228,6 @@ def mask_tokens(gold: torch.Tensor, pad: int, mask_id: int, p: float | None):
     return canvas, pick
 
 
-def cosine_n_remask(step: int, k: int, n0: int) -> int:
-    """Mask-Predict: how many non-freeze slots stay MASK after this step."""
-    if n0 <= 0 or step >= k - 1:
-        return 0
-    return int(math.ceil(n0 * math.cos(math.pi * 0.5 * (step + 1) / k)))
-
-
 def run_epoch(model, opts, wins: torch.Tensor, train: bool, sched=None):
     model.train(train)
     nwin = wins.size(0)
@@ -400,6 +394,34 @@ def _info_weight(model) -> torch.Tensor:
     return w
 
 
+_TALK = set("道叫喝问曰云")
+_STOP = set("。！？")
+_PUNCT_RUN = set("，。！？：；、\"'“”")
+
+
+def _vocab_ids(model, chars: set[str]) -> torch.Tensor:
+    ids = [i for i, c in enumerate(model.vocab) if c in chars]
+    if not ids:
+        return torch.zeros(0, device=model.tok.weight.device, dtype=torch.long)
+    return torch.tensor(ids, device=model.tok.weight.device, dtype=torch.long)
+
+
+def _is_in(ids: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
+    if table.numel() == 0:
+        return torch.zeros(ids.shape, dtype=torch.bool, device=ids.device)
+    return (ids.unsqueeze(-1) == table).any(-1)
+
+
+def _prefix_end(ids: torch.Tensor, mask: int, pad: int) -> int:
+    """Left-to-right visible run length; first MASK after the written prefix."""
+    vis = (ids != mask) & (ids != pad)
+    t = int(ids.numel())
+    i = 0
+    while i < t and bool(vis[i]):
+        i += 1
+    return i
+
+
 def _ban_ids(model) -> torch.Tensor:
     """工程防护：UNK/PAD/MASK、脚注括号与 ASCII 数字不进正文。"""
     ids = [model.pad, model.unk, model.mask]
@@ -451,58 +473,53 @@ def denoise_ids(
     orig = canvas[0].clone()
     locked = frozen.clone()
     k = max(1, k)
-    n0 = int((~frozen).sum().item())
     info = _info_weight(model)
+    talk_ids = _vocab_ids(model, _TALK)
+    stop_ids = _vocab_ids(model, _STOP)
+    punct_ids = _vocab_ids(model, _PUNCT_RUN)
     trunk_end = max(1, k // 3)
     snaps = [canvas[0].clone()] if frames else None
     for step in range(k):
-        logits = _gen_logits(model, canvas)
-        probs = F.softmax(logits, dim=-1)
         trunk = step < trunk_end
-        beta = GEN_BETA1 if trunk else GEN_BETA2
-        score = probs * info.unsqueeze(0).pow(beta)
-        top2 = score.topk(2, dim=-1)
-        pred = top2.indices[:, 0].clone()
-        alt = top2.indices[:, 1]
-        run = pred[1:] == pred[:-1]
-        pred[1:] = torch.where(run, alt[1:], pred[1:])
-        pred = torch.where(frozen, orig, pred)
-        conf = probs[torch.arange(T, device=device), pred]
-        hole = (~locked) & (canvas[0] == model.mask)
-        if trunk:
-            keep_sc = conf * info[pred].pow(beta)
-            keep_sc[~hole | (conf < GEN_CONF)] = -1.0
-            n_ok = int((keep_sc >= 0).sum().item())
-            m = min(n_ok, max(1, (step + 1) * max(2, n0 // (3 * k))))
-            if m > 0 and n_ok > 0:
-                top = torch.topk(keep_sc, k=m).indices
-                canvas[0, top] = pred[top]
-            if step == trunk_end - 1:
-                locked = canvas[0] != model.mask
-        else:
-            nh = int(hole.sum().item())
-            n_stay = cosine_n_remask(step, k, n0)
-            n_fill = nh if n_stay == 0 else max(0, min(nh, nh - min(n_stay, nh)))
-            if n_fill > 0 and nh > 0:
-                sc = conf.clone()
-                sc[~hole] = -1.0
-                top = torch.topk(sc, k=n_fill).indices
-                take = torch.zeros(T, dtype=torch.bool, device=device)
-                take[top] = sc[top] >= 0
-                canvas[0, take] = pred[take]
-                # 邻格都已有字、这一格又最不稳：重涂，下一拍再填（不碰 locked）
-                left = torch.zeros(T, dtype=torch.bool, device=device)
-                right = torch.zeros(T, dtype=torch.bool, device=device)
-                vis = canvas[0] != model.mask
-                left[1:] = vis[:-1]
-                right[:-1] = vis[1:]
-                sandwiched = take & left & right
-                if bool(sandwiched.any()) and step < k - 1:
-                    sc2 = conf.clone()
-                    sc2[~sandwiched] = 1e9
-                    n_bad = max(1, int(sandwiched.sum().item()) // 3)
-                    low = torch.topk(sc2, k=n_bad, largest=False).indices
-                    canvas[0, low] = model.mask
+        n_inner = 1 if trunk else 2
+        for _ in range(n_inner):
+            logits = _gen_logits(model, canvas)
+            probs = F.softmax(logits, dim=-1)
+            beta = GEN_BETA1 if trunk else GEN_BETA2
+            score = probs * info.unsqueeze(0).pow(beta)
+            top2 = score.topk(2, dim=-1)
+            pred = top2.indices[:, 0].clone()
+            alt = top2.indices[:, 1]
+            run = pred[1:] == pred[:-1]
+            pred[1:] = torch.where(run, alt[1:], pred[1:])
+            pred = torch.where(frozen, orig, pred)
+            end = _prefix_end(canvas[0], model.mask, model.pad)
+            if end >= T:
+                break
+            hole = (not bool(locked[end])) and int(canvas[0, end].item()) == model.mask
+            if not hole:
+                break
+            vis = (canvas[0] != model.mask) & (canvas[0] != model.pad)
+            allow_stop = (not trunk) and (step >= (2 * k) // 3)
+            tok = int(pred[end].item())
+            if not allow_stop and bool((stop_ids == tok).any()):
+                tok = int(alt[end].item())
+            n_talk = int((_is_in(canvas[0], talk_ids) & vis).sum().item())
+            if (not trunk) and n_talk >= 1 and bool((talk_ids == tok).any()):
+                tok = int(alt[end].item())
+            if end > 0 and bool(_is_in(canvas[0, end - 1 : end], punct_ids)):
+                if bool((punct_ids == tok).any()):
+                    tok = int(alt[end].item())
+                if bool((punct_ids == tok).any()):
+                    continue
+            if not allow_stop and bool((stop_ids == tok).any()):
+                continue
+            conf = float(probs[end, tok].item())
+            if trunk and conf < GEN_CONF:
+                continue
+            canvas[0, end] = tok
+        if trunk and step == trunk_end - 1:
+            locked = canvas[0] != model.mask
         if snaps is not None:
             snaps.append(canvas[0].clone())
     out = canvas[0]
@@ -528,11 +545,11 @@ def print_frames(model, prompt: str, stoi: dict[str, int], k: int, device):
 def print_k_curve(model, stoi: dict[str, int], device):
     print("--- generate (trunk then detail) ---", flush=True)
     torch.manual_seed(1)
-    print(f"K=8 悟空            {denoise(model, '悟空', stoi, 8, device)}", flush=True)
+    print(f"K={GEN_K} 悟空            {denoise(model, '悟空', stoi, GEN_K, device)}", flush=True)
     torch.manual_seed(1)
-    print(f"K=8 美猴王          {denoise(model, '美猴王', stoi, 8, device)}", flush=True)
+    print(f"K={GEN_K} 美猴王          {denoise(model, '美猴王', stoi, GEN_K, device)}", flush=True)
     torch.manual_seed(1)
-    print(f"K=8 孙悟空打妖怪    {denoise(model, '孙悟空打妖怪', stoi, 8, device)}", flush=True)
+    print(f"K={GEN_K} 孙悟空打妖怪    {denoise(model, '孙悟空打妖怪', stoi, GEN_K, device)}", flush=True)
 
 
 def save_ckpt(path: str, model, vocab: list[str], opts=None, sched=None, ep=0):
@@ -601,7 +618,7 @@ def infer_repl(model, stoi: dict[str, int], k: int, device, chat: bool):
 def cmd_infer(argv: list[str]) -> int:
     ckpt = argv[1] if len(argv) > 1 else CKPT
     prompt = argv[2] if len(argv) > 2 else "悟空"
-    k = int(argv[3]) if len(argv) > 3 and argv[3].lstrip("-").isdigit() else 8
+    k = int(argv[3]) if len(argv) > 3 and argv[3].lstrip("-").isdigit() else GEN_K
     chat = "chat" in argv
     if not os.path.isfile(ckpt):
         print(f"load failed (train first): {ckpt}", flush=True)
