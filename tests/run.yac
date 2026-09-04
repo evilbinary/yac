@@ -341,6 +341,7 @@ let pkg_cases(_) = [
   ["bytes", "rc", "42"], ["ffi", "rc", "42"], ["json", "rc", "42"],
   ["env", "rc", "42"], ["cli", "rc", "42"], ["http", "rc", "42"], ["yui", "rc", "42"],
   ["math", "rc", "42"],
+  ["profile", "rc", "42"],
   ["import_as", "rc", "42"]
 ]
 

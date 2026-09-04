@@ -1,0 +1,40 @@
+/* Profiler dump must survive GC. glob 3 used to overlap the GC bitmap and
+ * was not a root, so enable + collect left dump empty (train .prof missing). */
+import profile
+import io
+import str
+
+let bump(x) = x + 1
+
+let work(n, acc) =
+  if n <= 0 then acc
+  else
+    let a = bump(acc) in
+    work(n - 1, a)
+
+let junk(k) =
+  if k <= 0 then 0
+  else
+    let _ = cons(k, []) in
+    junk(k - 1)
+
+let churn(i) =
+  if i <= 0 then 0
+  else
+    let _ = junk(64) in
+    let _ = gc_collect() in
+    churn(i - 1)
+
+let path = "build/test_tmp/pkg_profile.prof"
+let _ = prof_enable(path) in
+let _ = work(32, 0) in
+let _ = churn(8) in
+let _ = work(32, 0) in
+let _ = prof_dump(0) in
+if exists(path) == false then 0
+else
+  let s = read_or_0(path) in
+  if s == 0 then 0
+  else if contains(s, "# yc-prof") == false then 0
+  else if contains(s, "bump") == false then 0
+  else 42
