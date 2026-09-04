@@ -312,23 +312,24 @@ let run_mlm(m, ids, st, path) =
   else
     let nuse = nth(st, 2) in
     let ntr = nuse - nuse / 5 in
-    let _ = print(" ep  acc  maj  loss(nat)     invp     hit  nmask  maj_hit") in
+    let _ = print(format("%2s  %4s  %4s  %9s  %8s  %6s  %6s  %7s",
+      ["ep", "acc", "maj", "loss(nat)", "invp", "hit", "nmask", "maj_hit"])) in
     let _ = zero_freq(m, 0) in
     let row = epoch_row(nuse, nth(st, 3)) in
     let _ = epoch_mlm(m, ids, row, ntr) in
     let nm = nth(row, 4) in
     let hit = nth(row, 3) in
     let mj = maj_count(m) in
-    let _ = print(format("%2d  %3d%%  %3d%%  %9.3f  %8.3f  %6d  %6d  %7d",
-      [ep, pct(hit, nm), pct(mj, nm), avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm),
-        hit, nm, mj])) in
-    let _ = print(" acc   f1     hit  nmask") in
+    let _ = print(format("%2d  %4s  %4s  %9.3f  %8.3f  %6d  %6d  %7d",
+      [ep, format("%d%%", [pct(hit, nm)]), format("%d%%", [pct(mj, nm)]),
+        avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm), hit, nm, mj])) in
+    let _ = print(format("%4s  %3s  %6s  %6s", ["acc", "f1", "hit", "nmask"])) in
     let bun = bun_new(ntok(m)) in
     let ev = st5(0, nuse, nth(row, 2), 0, 0) in
     let _ = epoch_eval(m, ids, ev, bun, ntr) in
     let te = nth(bun, 1) in
-    let _ = print(format("%3d%%  %3d  %6d  %6d",
-      [pct(nth(bun, 0), te), f1_macro(nth(bun, 2), nth(bun, 3), nth(bun, 4)),
+    let _ = print(format("%4s  %3d  %6d  %6d",
+      [format("%d%%", [pct(nth(bun, 0), te)]), f1_macro(nth(bun, 2), nth(bun, 3), nth(bun, 4)),
         nth(bun, 0), te])) in
     let _ = print("") in
     let _ = maybe_save(m, path, ep, nth(st, 1)) in
@@ -343,16 +344,17 @@ let run_chat(m, golds, us, st, path) =
   else
     let _ =
       if ep != 0 then 0
-      else print(" ep  acc  maj  loss(nat)     invp     hit  nmask  maj_hit") in
+      else print(format("%2s  %4s  %4s  %9s  %8s  %6s  %6s  %7s",
+        ["ep", "acc", "maj", "loss(nat)", "invp", "hit", "nmask", "maj_hit"])) in
     let _ = zero_freq(m, 0) in
     let row = epoch_row(0, nth(st, 2)) in
     let _ = epoch_chat(m, golds, us, row) in
     let nm = nth(row, 4) in
     let hit = nth(row, 3) in
     let mj = maj_count(m) in
-    let _ = print(format("%2d  %3d%%  %3d%%  %9.3f  %8.3f  %6d  %6d  %7d",
-      [ep, pct(hit, nm), pct(mj, nm), avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm),
-        hit, nm, mj])) in
+    let _ = print(format("%2d  %4s  %4s  %9.3f  %8.3f  %6d  %6d  %7d",
+      [ep, format("%d%%", [pct(hit, nm)]), format("%d%%", [pct(mj, nm)]),
+        avg_nll(nth(row, 5), nm), avg_nll(nth(row, 6), nm), hit, nm, mj])) in
     let _ = print("") in
     let _ = maybe_save(m, path, ep, nth(st, 1)) in
     let _ = list_set(st, 0, ep + 1) in

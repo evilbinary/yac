@@ -31,6 +31,14 @@ ln -sfn "$(pwd)/tools/vscode-yac" \
 # 若仍无高亮：打开 ~/.cursor/extensions/.obsolete，删掉 yac-lang.yac-* 后再重载
 ```
 
+后者本地打包
+```sh
+cd yac/tools/vscode-yac
+vsce package
+# 就会看到 yac-0.1.1.vsix
+```
+
+
 ## 开发
 
 改 `syntaxes/yac.tmLanguage.json` 或 `language-configuration.json` 后重载窗口即可。
