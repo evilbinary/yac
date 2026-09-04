@@ -420,6 +420,8 @@ def _gen_logits(model, canvas: torch.Tensor) -> torch.Tensor:
     if vis.numel():
         counts = torch.bincount(vis, minlength=model.V).to(logits.dtype)
         logits = logits - GEN_REP * counts
+    if "\n" in model.vocab:
+        logits[:, model.vocab.index("\n")] = logits[:, model.vocab.index("\n")] - 3.0
     left = canvas[0, :-1]
     ok = (left != model.mask) & (left != model.pad)
     if bool(ok.any()):
@@ -442,19 +444,21 @@ def blank_canvas(prompt: str, stoi: dict[str, int], model, device):
 def denoise_ids(
     model, prompt: str, stoi: dict[str, int], k: int, device, frames: bool = False,
 ):
-    """主干（高信息量先占格）→ 细节（按 cosine 逐渐填满）；冻结提示不改。"""
+    """主干只加格；细节只填剩余 MASK，不改已落主干。提示冻结。"""
     model.eval()
     canvas, at = blank_canvas(prompt, stoi, model, device)
     frozen = canvas[0] != model.mask
     orig = canvas[0].clone()
+    locked = frozen.clone()
     k = max(1, k)
     n0 = int((~frozen).sum().item())
     info = _info_weight(model)
+    trunk_end = max(1, k // 3)
     snaps = [canvas[0].clone()] if frames else None
     for step in range(k):
         logits = _gen_logits(model, canvas)
         probs = F.softmax(logits, dim=-1)
-        trunk = step < max(1, k // 3)
+        trunk = step < trunk_end
         beta = GEN_BETA1 if trunk else GEN_BETA2
         score = probs * info.unsqueeze(0).pow(beta)
         top2 = score.topk(2, dim=-1)
@@ -464,8 +468,8 @@ def denoise_ids(
         pred[1:] = torch.where(run, alt[1:], pred[1:])
         pred = torch.where(frozen, orig, pred)
         conf = probs[torch.arange(T, device=device), pred]
+        hole = (~locked) & (canvas[0] == model.mask)
         if trunk:
-            hole = (~frozen) & (canvas[0] == model.mask)
             keep_sc = conf * info[pred].pow(beta)
             keep_sc[~hole | (conf < GEN_CONF)] = -1.0
             n_ok = int((keep_sc >= 0).sum().item())
@@ -473,17 +477,32 @@ def denoise_ids(
             if m > 0 and n_ok > 0:
                 top = torch.topk(keep_sc, k=m).indices
                 canvas[0, top] = pred[top]
+            if step == trunk_end - 1:
+                locked = canvas[0] != model.mask
         else:
-            canvas[0] = torch.where(frozen, orig, pred)
-            n_remask = cosine_n_remask(step, k, n0)
-            filled = (~frozen) & (canvas[0] != model.mask)
-            nf = int(filled.sum().item())
-            n_remask = min(n_remask, nf)
-            if n_remask > 0 and nf > 0:
+            nh = int(hole.sum().item())
+            n_stay = cosine_n_remask(step, k, n0)
+            n_fill = nh if n_stay == 0 else max(0, min(nh, nh - min(n_stay, nh)))
+            if n_fill > 0 and nh > 0:
                 sc = conf.clone()
-                sc[~filled] = 1e9
-                low = torch.topk(sc, k=n_remask, largest=False).indices
-                canvas[0, low] = model.mask
+                sc[~hole] = -1.0
+                top = torch.topk(sc, k=n_fill).indices
+                take = torch.zeros(T, dtype=torch.bool, device=device)
+                take[top] = sc[top] >= 0
+                canvas[0, take] = pred[take]
+                # 邻格都已有字、这一格又最不稳：重涂，下一拍再填（不碰 locked）
+                left = torch.zeros(T, dtype=torch.bool, device=device)
+                right = torch.zeros(T, dtype=torch.bool, device=device)
+                vis = canvas[0] != model.mask
+                left[1:] = vis[:-1]
+                right[:-1] = vis[1:]
+                sandwiched = take & left & right
+                if bool(sandwiched.any()) and step < k - 1:
+                    sc2 = conf.clone()
+                    sc2[~sandwiched] = 1e9
+                    n_bad = max(1, int(sandwiched.sum().item()) // 3)
+                    low = torch.topk(sc2, k=n_bad, largest=False).indices
+                    canvas[0, low] = model.mask
         if snaps is not None:
             snaps.append(canvas[0].clone())
     out = canvas[0]
