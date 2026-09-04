@@ -212,12 +212,9 @@ def mask_tokens(gold: torch.Tensor, pad: int, mask_id: int, p: float | None):
         return canvas, pick
 
     device = gold.device
-    # MaskGIT cosine：u=0 → r≈0.90（第一帧），u=1 → r≈0.10
     u = torch.rand(b, 1, device=device)
     ratio = 0.10 + 0.80 * torch.cos(u * math.pi / 2)
     pick = (torch.rand(b, t, device=device) < ratio) & valid
-    # 生成同族：可见字留在书页真实下标，其余全 MASK。
-    # 不要「左金标 / 居中主题 / 左右夹洞」几何模板，也不要把字搬到别的格。
     is_gen = torch.rand(b, 1, device=device) < 0.35
     keep_sc = _keep_scatter(valid, 2, FREEZE_N)
     keep_ph = _keep_phrases(valid, 2, FREEZE_N)
@@ -432,7 +429,7 @@ def _gen_logits(model, canvas: torch.Tensor) -> torch.Tensor:
 
 
 def blank_canvas(prompt: str, stoi: dict[str, int], model, device):
-    """提示按原词序写在下标 0..n，不搬格。"""
+    """提示按原词序写在下标 0..n，其余 MASK，不搬格。"""
     ids = encode_prompt(prompt, stoi)
     canvas = torch.full((1, T), model.mask, dtype=torch.long, device=device)
     n = min(len(ids), T - 2)
