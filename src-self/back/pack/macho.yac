@@ -2,10 +2,10 @@
  * Headers padded to text_off (4096); __text follows. vmaddr = vaddr.
  */
 
-package pack
+package back.pack.macho
 export pack_macho_target
-import back.pack.target {target_vaddr, target_text_off, target_shared, target_macho_cputype, target_macho_cpusub}
-import back.pack.elf {elf_init_off, elf_dynexp_get, elf_relocs_get}
+import back.pack.target {target_macho_cpusub, target_macho_cputype, target_shared, target_text_off, target_vaddr}
+import back.pack.elf {elf_dynexp_get, elf_init_off, elf_relocs_get}
 
 let mo_le16(b, v, i) =
   let _ = bytes_put(b, i + 0, band(v, 255)) in

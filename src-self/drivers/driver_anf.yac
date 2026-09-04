@@ -1,3 +1,7 @@
+import front.anf {anf_expr}
+import front.lexer {tokenize}
+import front.parser {parse_program}
+
 /* driver_anf.yac — parse + normalize to ANF, dump (M2).
  * Reads build/anf_tmp/in.yac, prints the full [bindings, tailExpr] result
  * for each top-level item. Used by tests/boot/run.yac.

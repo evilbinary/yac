@@ -1,7 +1,15 @@
-package emit
+package back.emit.emit_x86_64
 export emit_program, emit_program_x86_64
 import rt.os
-import back.emit.emit {emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set}
+import back.emit.emit {apply_args, apply_ncap, apply_patch, cimport_buf, cimport_reset, clos_bytes, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jsess, emit_jsess_skip, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, fun_is_raw, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit_cabi {emit_cabi_all}
+import back.emit.linux_x86_64 {call_rbx_user, call_user, cc_of, emit_lea_rax_slot, emit_load_rax_slot, emit_load_rbx_slot, emit_load_rdi_slot, emit_obj_load_argreg, emit_obj_load_rax, emit_obj_store_rdi, emit_store_param, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_unalign, emit_x86_c_untag, linux_begin, linux_cc_marshal, linux_ccall_patch, linux_clock, linux_entry, linux_exit, linux_finish, linux_num_syscall, linux_syscall, linux_write1}
+import back.emit.win_x86_64 {win_begin, win_cc_marshal, win_ccall_patch, win_clock, win_entry, win_exit, win_finish, win_num_syscall, win_syscall, win_write1}
+import back.encode.encode_x64 {add_rax_imm32, add_rax_imm8, add_rax_rbx, add_rdi_rax, add_rsi_rax, add_rsp_imm32, addsd_xmm0_xmm1, and_eax_imm32, and_rax_1, and_rax_imm8, and_rax_rbx, bt_mem_rdx_rcx, bts_mem_rdx_rcx, call_r11, call_rel32, cld, cmp_r11_imm8, cmp_rax_imm8, cmp_rax_rbx, cmp_rbx_imm32, cqo, cvtsi2sd_xmm0_rax, divsd_xmm0_xmm1, e8, idiv_rbx, imul_rax_rbx, jcc_rel32, jmp_mem_rbx_disp32, jmp_rbx, jmp_rel32, lea_r9_rsp_disp8, lea_rax_rip, lea_rcx_rsp_disp32, lea_rdi_rsp_disp32, lea_rdx_rip, lea_rdx_rsp_disp32, lea_rsi_rip, lea_rsi_rsp, mov_eax_imm, mov_mem_rax_rbp, mov_mem_rax_rdi, mov_mem_rax_rsi, mov_mem_rbp32_r64, mov_mem_rbx_disp32_rax, mov_mem_rbx_rdx_rax, mov_mem_rsp_disp32_rax, mov_mem_rsp_disp8_rax, mov_r11_rax, mov_r11d_rax_disp32, mov_r64_imm, mov_r64_imm64, mov_r64_mem_rbp32, mov_r64_r64, mov_r8_rax, mov_r9_rax, mov_rax_disp32_imm32, mov_rax_disp32_imm8, mov_rax_disp32_rdi, mov_rax_imm64, mov_rax_mem_rax, mov_rax_mem_rax_rdx, mov_rax_mem_rsp, mov_rax_mem_rsp8, mov_rax_rax_disp32, mov_rax_rbp, mov_rax_rbx, mov_rax_rdx_dil, mov_rax_rsp, mov_rax_to_argreg, mov_rbp_rbx_disp32, mov_rbp_rsp, mov_rbx_mem_rsp, mov_rbx_rax, mov_rbx_rax_disp32, mov_rcx_rax, mov_rcx_rbx, mov_rdi_imm, mov_rdi_rax, mov_rdx_rax, mov_rsi_rax, mov_rsp_rbp, mov_rsp_rbx_disp32, movq_rax_xmm0, movq_xmm0_rax, movq_xmm1_rax, movq_xmm2_rax, movzx_eax_al, movzx_eax_rax_disp32, movzx_eax_rax_rdx, mulsd_xmm0_xmm1, not_rax, or_rax_1, or_rax_rbx, pop_argreg, pop_r64, pop_rbp, popfq, push_r64, push_rbp, pushfq, rep_movsb, rep_stosb, ret, sar_rax_1, sar_rbx_1, sar_rdi_1, sar_rdx_1, setcc_r8, shl_rax_1, shl_rax_cl, shr_rax_cl, shr_rax_imm8, sub_rax_rbx, sub_rbx_imm32, sub_rsp_imm32, sub_rsp_rbx, subsd_xmm0_xmm1, syscall, test_rax_1, test_rax_rax, ucomisd_xmm0_xmm1, xor_edx_edx, xor_rax_rax, xor_rax_rbx}
+import back.pack.elf {elf_pic, funsym_set}
+import back.pack.target {JIT_VADDR}
+import lib.log {log, log_i}
+import lib.map {intern}
 
 /* emit_x86_64.yac — x86-64 emit of LIR.
  *

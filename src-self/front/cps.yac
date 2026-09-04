@@ -10,7 +10,7 @@
  * No mutual top-level recursion: cps_expr nests the bind walker.
  */
 
-package front
+package front.cps
 export cps_all, cps_expr, cps_maybe_opt, cps_opt_all, cps_atoi
 import lib.map {intern}
 

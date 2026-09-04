@@ -1,3 +1,5 @@
+import front.lexer {token_kind, token_text, tokenize}
+
 /* self-hosted lexer test driver (M2)
  *
  * Usage: concat(lexer.yac, this) -> run with ./yac. Reads the input file,

@@ -1,3 +1,6 @@
+import front.lexer {tokenize}
+import front.parser {parse_program}
+
 /* driver_parse.yac — tokenize + parse a file, dump the AST (M2).
  * Reads build/parse_tmp/in.yac, prints the parsed AST (a nested List, which
  * value_to_string renders recursively). Used by tests/boot/run.yac.

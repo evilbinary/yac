@@ -7,9 +7,9 @@
  * Later ANF opts go between "anf" and "lower". pack is the container.
  */
 
-package lib
+package lib.pass
 export mk_pass, run_pass, run_passes, pass_name, pass_fn
-import lib.log {log}
+import lib.log {log, log_i}
 
 let mk_pass(name, fn) = ["pass", name, fn]
 

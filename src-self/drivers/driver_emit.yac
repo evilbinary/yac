@@ -1,3 +1,12 @@
+import back.emit.emit {cimport_got, cimport_names}
+import back.lower {lower_expr}
+import back.pack.elf {pack_elf}
+import back.pack.pe {pack_pe_target, pe_finish_imports}
+import back.pack.target {mk_target, target_format}
+import front.lexer {tokenize}
+import front.parser {parse_program}
+import rt.os {host_format}
+
 /* driver_emit.yac — read a LIR list from emitin.yac, emit+pack host image.
  * Used by tests/boot/run.yac (native emit_run, compiled once).
  * pack_*(lower_expr(...)) — no backend.yac (avoids runtime_funs / pack_image).

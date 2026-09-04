@@ -11,7 +11,7 @@
  * in .text. ELF exec keeps the historical 0x400000+120 layout.
  */
 
-package pack
+package back.pack.target
 export JIT_VADDR, mk_target, mk_jit_target, target_by_name, parse_arch_name, parse_format_name, target_arch, target_format, target_kind, target_emachine, target_pe_machine, target_macho_cputype, target_macho_cpusub, target_vaddr, target_text_off, target_shared, target_live
 
 let T_VADDR = 4194304

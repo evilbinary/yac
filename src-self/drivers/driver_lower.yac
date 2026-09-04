@@ -1,3 +1,11 @@
+import back.lower {lower_program}
+import back.pack.elf {pack_elf}
+import front.anf {anf_expr}
+import front.lexer {tokenize}
+import front.lir {env_new, lir_expr, sigma_list, sigma_new, st_no, start_proc, tco_prog}
+import front.parser {parse_program}
+import lib.log {log, log_i}
+
 /* driver_lower.yac — ANF → LIR → emit → ELF. */
 let _ = log("lower", "start")
 let src = read_file("build/lower_tmp/in.yac");

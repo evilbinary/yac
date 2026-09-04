@@ -3,7 +3,7 @@
  * (a single huge function overflows the compiler frame).
  */
 
-package front
+package front.uncps
 export uncps_all, uncps_is_err
 import lib.map {intern}
 

@@ -1,7 +1,12 @@
 /* win_x86_64.yac — x86-64 Windows host: Win64 ccall, PE _start, kernel32.
  */
 
-package emit
+package back.emit.win_x86_64
+export win_begin, win_cc_marshal, win_ccall_patch, win_clock, win_entry, win_exit, win_finish, win_num_syscall, win_syscall, win_write1
+import back.emit.emit {apply_i32, apply_patch, cimport_id, emit_patch_cimport, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_st4, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box}
+import back.emit.linux_x86_64 {emit_load_rax_slot, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_untag}
+import back.encode.encode_x64 {add_rbx_imm8, add_rdi_imm32, add_rsi_imm8, add_rsp_imm32, call_rel32, cld, cmp_ecx_imm8, cmp_rax_imm8, cmp_rbx_imm32, dec_rcx, dec_rdi, div_rbx, div_rcx, imul_rax_rdi, inc_r8, inc_rbx, inc_rdi, inc_rsi, jcc_rel32, jmp_rel32, lea_r9_rsp_disp8, lea_rax_rsp_disp32, lea_rax_rsp_disp8, lea_rbx_rip, lea_rcx_rbx_disp8, lea_rcx_rip, lea_rcx_rsp_disp32, lea_rdi_rsp_disp32, lea_rdi_rsp_disp8, lea_rdx_rbx_disp32, lea_rdx_rsp_disp32, lea_rdx_rsp_disp8, lea_rsi_rip, mov_eax_mem_rsp_disp32, mov_eax_mem_rsp_disp8, mov_mem_rbx_rax, mov_mem_rdi_al, mov_mem_rdi_cl, mov_mem_rdi_imm8, mov_mem_rsi_r8_rax, mov_mem_rsi_r8_rdi, mov_mem_rsp_disp32_rax, mov_mem_rsp_disp8_al, mov_mem_rsp_disp8_imm32, mov_mem_rsp_disp8_rax, mov_r64_imm, mov_r64_imm64, mov_r64_r64, mov_r8_rax, mov_r9_rax, mov_rax_mem_rbx, mov_rax_mem_rsp_disp32, mov_rax_r8, mov_rax_rbx, mov_rax_rcx, mov_rax_rdi, mov_rax_rdx, mov_rax_rsi, mov_rbx_rax, mov_rbx_rcx, mov_rbx_rdx, mov_rcx_imm, mov_rcx_mem_rsi, mov_rcx_mem_rsp_disp32, mov_rcx_rax, mov_rdi_rax, mov_rdx_rax, mov_rdx_rbx, mov_rsi_rax, movzx_eax_mem_rsi, movzx_ecx_mem_rbx, pop_r64, push_r64, rep_movsb, rep_stosb, ret, sar_rax_1, shl_rax_1, stosb0, sub_rax_rbx, sub_rsp_imm32, test_eax_eax, test_ecx_ecx, test_rax_rax, test_rcx_rcx, xor_r8_r8, xor_rax_rax, xor_rdx_rdx}
+import back.pack.pe {pe_is_crt, pe_is_k32}
 
 let win_cc_regarg(b, args, j, nargs) =
   if j >= nargs then 0

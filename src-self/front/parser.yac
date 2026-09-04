@@ -23,7 +23,7 @@
  *   ["error", msg, line, near]
  */
 
-package front
+package front.parser
 export parse_program, prog_has_err, prog_find_err, report_syntax, syntax_msg
 
 let reverse(xs) = list_rev(xs)

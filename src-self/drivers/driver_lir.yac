@@ -1,3 +1,8 @@
+import front.anf {anf_expr}
+import front.lexer {tokenize}
+import front.lir {env_new, lir_expr, sigma_new, st_no}
+import front.parser {parse_program}
+
 /* driver_lir.yac — parse + ANF + lir_expr, dump insn lists.
  * Reads build/test_tmp/lirin.yac. Used by tests/boot/run.yac.
  */

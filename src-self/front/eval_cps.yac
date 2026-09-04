@@ -3,7 +3,7 @@
  * HO prims (map/filter/fold) use a nested trampoline; they must not re-enter ce_run.
  */
 
-package front
+package front.eval_cps
 export eval_cps_all
 import lib.map
 import front.cps {cps_atoi}

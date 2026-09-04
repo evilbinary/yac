@@ -2,9 +2,9 @@
  * Keep this file after elf.yac in the compiler cat order.
  */
 
-package pack
+package back.pack.dlib
 export dlib_dynexp_set, dlib_dynexp_get, dlib_init_off_set, dlib_init_off, dlib_pic_set, dlib_pic, dlib_relocs_reset, dlib_relocs_get, dlib_note_abs64
-import back.pack.elf {elf_dynexp_set, elf_dynexp_get, elf_init_off_set, elf_init_off, elf_pic_set, elf_pic, elf_relocs_reset, elf_relocs_get, elf_note_abs64}
+import back.pack.elf {elf_dynexp_get, elf_dynexp_set, elf_init_off, elf_init_off_set, elf_note_abs64, elf_pic, elf_pic_set, elf_relocs_get, elf_relocs_reset}
 
 let dlib_dynexp_set(v) = elf_dynexp_set(v)
 let dlib_dynexp_get(_) = elf_dynexp_get(0)

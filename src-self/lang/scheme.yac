@@ -2,7 +2,7 @@
  * Identifiers use Scheme spelling (read-file, str-len, eq?); '-' '?' '!'
  * mangle to yac '_' '_p' '_b'. */
 
-package scheme
+package lang.scheme
 export scheme_to_yac
 
 let scm_sp(c) = c == 32 or c == 9 or c == 10 or c == 13

@@ -1,3 +1,5 @@
+import back.pack.elf {pack_elf}
+
 /* driver_elf.yac — test the ELF packer with a hardcoded exit(42) program.
  * Builds the code bytes, packs an ELF, writes build/elf_tmp/out, and prints
  * the file length. Used by tests/boot/run.yac.

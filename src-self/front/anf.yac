@@ -20,7 +20,7 @@
  * anf_expr) is a nested local closure inside it.
  */
 
-package front
+package front.anf
 export anf_all, anf_expr
 import lib.map {intern}
 

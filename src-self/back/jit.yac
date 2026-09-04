@@ -5,11 +5,20 @@
  * Session names are rewritten to calls before ANF so lir.yac stays generic.
  */
 
-package backend
+package back.jit
 export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live
-import lib.map {intern, fmap_new, fmap_init_n, fmap_put, fmap_get}
-import back.emit.emit {cimport_names, cimport_got, cimport_jit_bind, cimport_jit_bind_got}
-import front.lir {in_list, is_prim_name, import_alias, import_locals, lir_all, env_new, sigma_of_rt, tco_prog, sigma_list}
+import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
+import back.emit.emit {cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, yjit_layout_get}
+import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog}
+import back.backend {ast_imports, fun_off, link_from_ast, link_need_box, pass_anf, pass_lex, pass_parse, report_unbound, rewrite_imports, rt_for_link}
+import back.lower {emit_apply_unres, lower_expr}
+import back.pack.target {JIT_VADDR, target_arch}
+import back.pack.yjit {bytes_copy_range, pack_yjit_ex, yjit_arch_name, yjit_arch_num, yjit_export_dec, yjit_export_enc, yjit_imp_enc, yjit_imp_parse, yjit_read}
+import front.cps {cps_all, cps_maybe_opt}
+import front.parser {prog_has_err, report_syntax}
+import front.uncps {uncps_all, uncps_is_err}
+import lib.log {log_get_hush, log_set_hush}
+import rt.os {host_arch}
 
 let reverse(xs) = list_rev(xs)
 

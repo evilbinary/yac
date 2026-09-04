@@ -1,28 +1,25 @@
 /* backend.yac — pipeline + image. lir_expr = ANF→LIR；lower_expr = LIR→emit. */
 
-package backend
-export compile_native, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit
+package back.backend
+export compile_native, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, fun_off, link_need_box, rewrite_imports, rt_for_link
 import back.lower
-import back.pack.elf {elf_shared_set}
-import back.pack.target {target_shared,target_format}
-import back.pack.pe {pack_pe_target, pe_finish_imports, pe_finish_dll}
-import back.pack.elf {pack_elf_libc}
+import back.pack.elf {elf_shared_set, funsym_get, pack_elf, pack_elf_libc}
+import back.pack.target {target_arch, target_emachine, target_format, target_shared, target_text_off, target_vaddr}
+import back.pack.pe {pack_pe_target, pe_finish_dll, pe_finish_imports}
 import back.pack.pack {pack_image}
-import back.pack.elf {pack_elf}
-import back.pack.target {target_emachine, target_vaddr, target_text_off}
-import back.pack.target {target_arch, target_format, target_shared, target_emachine, target_vaddr, target_text_off}
 import lib.map
-import back.emit.emit {cimport_names, cimport_got, cimport_n}
-
-let reverse(xs) = list_rev(xs)
-import front.lir {in_list, imap_box, malias_box, imap_load, pkg_prefix_get, pkg_prefix_set, lir_all, env_new, sigma_of_rt, start_proc, tco_prog, sigma_list, import_alias}
-import front.lexer {tokenize, tok_ident_line}
+import back.emit.emit {cimport_got, cimport_n, cimport_names, emit_abi_win, yjit_layout_get}
+import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, malias_box, pkg_prefix_get, pkg_prefix_set, sigma_list, sigma_of_rt, start_proc, tco_prog, ub_prog}
+import front.lexer {tok_ident_line, tokenize}
 import front.parser {parse_program, prog_has_err, report_syntax}
 import front.anf {anf_all}
 import front.cps {cps_all, cps_maybe_opt}
 import front.eval_cps {eval_cps_all}
 import front.uncps {uncps_all, uncps_is_err}
 import lib.pass {mk_pass, run_passes}
+import back.pack.yjit {pack_yjit_ex, yjit_arch_num, yjit_imp_enc}
+
+let reverse(xs) = list_rev(xs)
 
 
 let backend_emit(t, ast) = nth(lower_expr(ast, t), 0)

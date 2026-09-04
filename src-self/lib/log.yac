@@ -21,7 +21,7 @@
  * Bundle this file first so drivers / stages can call it.
  */
 
-package lib
+package lib.log
 export log, log_i, log_set_hush, log_get_hush
 
 let log_hush =

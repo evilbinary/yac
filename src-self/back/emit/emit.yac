@@ -8,11 +8,14 @@
  * patch-list extend. Instruction emit stays in emit_<arch>.yac.
  */
 
-package emit
-export cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set
+package back.emit.emit
+export cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, apply_args, apply_i32, apply_ncap, apply_patch, apply_u64_rel, cabi_should, cimport_buf, cimport_id, cimport_reset, clos_bytes, emit_arch, emit_cplt_a64, emit_cplt_rv, emit_glob_data, emit_ids_new, emit_jsess, emit_jsess_set, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, fun_is_raw, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_get, yjit_layout_set
 import back.pack.elf {elf_note_abs64}
-import back.pack.pe {pe_iat_qwords, pe_iat_off}
-import lib.map {intern, fmap_get, fmap_put, fmap_new, fmap_init_n}
+import back.pack.pe {pe_iat_off, pe_iat_qwords}
+import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
+import back.encode.encode_arm64 {a64_adr, a64_br, a64_ldr}
+import back.encode.encode_riscv64 {rv_auipc, rv_jalr, rv_ld}
+import back.encode.encode_x64 {jmp_mem_rip}
 
 let reverse(xs) = list_rev(xs)
 

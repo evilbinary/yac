@@ -1,4 +1,13 @@
 import rt.os
+import back.emit.emit {cimport_got, cimport_names}
+import back.lower {lower_expr}
+import back.pack.elf {pack_elf}
+import back.pack.pe {pack_pe_target, pe_finish_imports}
+import back.pack.target {mk_target, target_format}
+import front.anf {anf_expr}
+import front.lexer {tokenize}
+import front.lir {env_new, lir_expr, sigma_list, sigma_new, st_no, start_proc, tco_prog}
+import front.parser {parse_program}
 
 /* driver_pipe.yac — source → ANF → LIR dump, then emit+pack host image.
  * Reads build/test_tmp/pipein.yac, writes build/test_tmp/pipe.bin.

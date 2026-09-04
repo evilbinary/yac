@@ -2,10 +2,10 @@
  * ImageBase = vaddr so emit absolute patches match.
  */
 
-package pack
-export pack_pe_target, pe_finish_imports, pe_finish_dll, pe_iat_qwords, pe_iat_off
-import back.pack.target {target_pe_machine, target_vaddr, target_text_off, target_shared}
-import back.pack.elf {elf_init_off, elf_dynexp_get, elf_relocs_get}
+package back.pack.pe
+export pack_pe_target, pe_finish_imports, pe_finish_dll, pe_iat_qwords, pe_iat_off, pe_is_crt, pe_is_k32
+import back.pack.target {target_pe_machine, target_shared, target_text_off, target_vaddr}
+import back.pack.elf {elf_dynexp_get, elf_init_off, elf_relocs_get}
 
 let pe_le16(b, v, i) =
   let _ = bytes_put(b, i + 0, band(v, 255)) in

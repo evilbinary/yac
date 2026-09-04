@@ -1,4 +1,11 @@
 import rt.os
+import back.backend {compile_native, dump_anf, dump_ast, dump_cps, dump_uncps, eval_cps_src, pkg_set}
+import back.jit {compile_jit, compile_uncps, jit_dump_live, jit_load_yjit}
+import back.pack.elf {syms_enable}
+import back.pack.target {mk_jit_target, mk_target, parse_arch_name, parse_format_name, target_shared}
+import lang.scheme {scheme_to_yac}
+import lib.log {log, log_i, log_set_hush}
+import back.profile {yac_prof_dump, yac_prof_enable}
 
 /* yc.yac — CLI: compile to ELF by default; yac-compatible run/dump flags JIT. */
 

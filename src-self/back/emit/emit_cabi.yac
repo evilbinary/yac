@@ -2,7 +2,14 @@
  * PIC abs64: x86 patches an imm64 in-place; ARM/RISC-V load a pooled u64.
  */
 
-package emit
+package back.emit.emit_cabi
+export dlib_a64_va, dlib_rv_va, emit_cabi_all
+import back.emit.emit {apply_u64_rel, cabi_should, emit_abi_win, emit_arch, emit_map_get}
+import back.emit.linux_x86_64 {call_user}
+import back.encode.encode_arm64 {a64_adrp_at, a64_asr1, a64_bl, a64_ldp_fp_lr, a64_ldr_at, a64_lsl1, a64_mov_imm64, a64_mov_imm64_at, a64_mov_sp, a64_movz, a64_nop_at, a64_ret, a64_stp_fp_lr, a64_str}
+import back.encode.encode_riscv64 {rv_addi, rv_auipc_at, rv_jal, rv_jalr, rv_ld, rv_ld_at, rv_li32_at, rv_li32_pair, rv_nop_at, rv_sd, rv_slli, rv_srai}
+import back.encode.encode_x64 {e8, mov_mem_rax_rcx, mov_r64_imm, mov_r64_r64, mov_rax_imm64, mov_rbp_rsp, pop_rbp, push_rbp, ret, sar_rax_1, shl_r8_1, shl_r9_1, shl_rcx_1, shl_rdi_1, shl_rdx_1, shl_rsi_1, xor_rcx_rcx}
+import back.pack.elf {elf_dynexp_set, elf_init_off_set, elf_pic}
 
 let dlib_pool_put(b, val) =
   let pad(_) =

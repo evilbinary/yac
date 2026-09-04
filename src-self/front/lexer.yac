@@ -12,7 +12,7 @@
  *   token_kind(t), token_text(t), token_line(t)
  */
 
-package front
+package front.lexer
 export tokenize, token_kind, token_text, token_line, tok_ident_line
 import lib.map {intern}
 

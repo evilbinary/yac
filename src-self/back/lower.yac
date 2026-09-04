@@ -7,15 +7,15 @@
  */
 
 /* vreg s 的 home。现在 = 自己（emit 映 [rbp-8*(s+1)] / FP 帧）。 */
-package backend
-export lower_expr, drop_unreachable, alloc_prog, lower_program
-import lib.map {intern, fmap_new, fmap_init_n, fmap_put, fmap_get}
+package back.lower
+export lower_expr, drop_unreachable, alloc_prog, lower_program, emit_apply_unres
+import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
 import front.lir {imap_box}
-import back.pack.target {mk_target, target_arch, target_vaddr, target_text_off, target_format, target_shared, target_live}
+import back.pack.target {mk_target, target_arch, target_format, target_live, target_shared, target_text_off, target_vaddr}
 import back.pack.elf {elf_pic_set, elf_relocs_reset}
-import back.emit.emit {emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop}
+import back.emit.emit {emit_arch_set, emit_resolve_loop, emit_unres, emit_unres_set}
 import back.emit.emit_x86_64 {emit_program_x86_64}
-import back.emit.emit_arm64 {emit_program_arm64, a64_resolve_loop}
+import back.emit.emit_arm64 {a64_resolve_loop, emit_program_arm64}
 import back.emit.emit_riscv64 {emit_program_riscv64, rv_resolve_loop}
 import lib.log {log}
 
