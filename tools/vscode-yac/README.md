@@ -1,6 +1,7 @@
 # Yac Language Support
 
 VS Code / Cursor 扩展：为 `.yac` 提供语法高亮、括号配对与注释切换。
+https://github.com/evilbinary/yac.git
 
 ## 高亮内容
 
@@ -13,6 +14,9 @@ VS Code / Cursor 扩展：为 `.yac` 提供语法高亮、括号配对与注释�
 
 ## 安装（本仓库）
 
+```sh
+git clone https://github.com/evilbinary/yac.git
+```
 在仓库根目录执行其一：
 
 ```sh
@@ -35,7 +39,7 @@ ln -sfn "$(pwd)/tools/vscode-yac" \
 ```sh
 cd yac/tools/vscode-yac
 vsce package
-# 就会看到 yac-0.1.1.vsix
+# 就会看到 yac-lang-0.1.1.vsix
 ```
 
 

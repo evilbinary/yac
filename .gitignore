@@ -52,3 +52,4 @@ app/llm/xyj.txt
 app/llm/tinyshakespeare.txt
 app/llm/hlm.txt
 tools/vscode-yac/yac-0.1.1.vsix
+tools/vscode-yac/yac-lang-0.1.1.vsix
