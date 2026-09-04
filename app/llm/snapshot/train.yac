@@ -1,7 +1,8 @@
 /* 快照并行训练（MLM 预训练 / MaskGIT generate）。
  *
- *   ./app/llm/snapshot/train [语料] [权重] [epoch] [new|chat]
+ *   ./train [语料] [权重] [epoch] [new|chat] [prof]
  * 默认语料 app/llm/xyj.txt（过长只取中段 book_cap 字节）。
+ * prof 可写在第 5 或第 6 参数（.prof / 非 new|chat 的路径）。
  */
 
 import snapshot
@@ -386,12 +387,28 @@ let open_or_new(wpath, vocab, force) =
       let _ = print(format("resume  V=%d", [ntok(m)])) in
       m
 
-/* prof-out 路径：第 6 参数，或 "" 表示不 profile。 */
+/* 空或 new/chat 不当成 prof 路径。 */
+let looks_prof(s) =
+  if str_len(s) <= 0 then 0
+  else if s == "new" then 0
+  else if s == "chat" then 0
+  else 1
+
+/* prof-out：argv(6)，或 argv(5) 若不是 new/chat。 */
 let prof_path =
-  if argc() > 6 then argv(6)
+  if argc() > 6 then
+    if looks_prof(argv(6)) == 1 then argv(6)
+    else if looks_prof(argv(5)) == 1 then argv(5)
+    else ""
+  else if argc() > 5 then
+    if looks_prof(argv(5)) == 1 then argv(5)
+    else ""
   else ""
 
-let _ = if str_len(prof_path) > 0 then prof_enable(prof_path) else 0
+let _ = if str_len(prof_path) > 0 then
+          let _ = print(str_cat("prof  ", prof_path)) in
+          prof_enable(prof_path)
+        else 0
 
 /* 语料路径，默认西游记中段。 */
 let path =
@@ -415,7 +432,10 @@ let mode_chat =
 
 /* new 可写在第 4 或第 5 参数（与 chat 互斥占位）。 */
 let force_new =
-  if argc() > 5 then is_new(argv(5))
+  if argc() > 5 then
+    if is_new(argv(5)) == 1 then 1
+    else if argc() > 4 then is_new(argv(4))
+    else 0
   else if argc() > 4 then is_new(argv(4))
   else 0
 
