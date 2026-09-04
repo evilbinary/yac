@@ -1,383 +1,483 @@
 #!/usr/bin/env python3
-"""Float counterpart of snapshot.yac MLM: bags + skip-visible + pos, MASK CE, Wout only.
+"""Bidirectional Transformer MLM (BERT-style) + MaskGIT generate.
 
-  python app/llm/snapshot/train_float.py [corpus] [epochs]
+No causal mask. Loss only on chosen MASK positions.
+Primary metric: 15% random-cloze acc (not high-mask generate).
+
+  python app/llm/snapshot/train_float.py [corpus] [epochs] [new]
+  python app/llm/snapshot/train_float.py infer [ckpt] [prompt] [K] [chat]
 """
 from __future__ import annotations
 
 import math
+import os
+import random
 import sys
 import time
 from collections import Counter
 
 import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-T = 16
-CAP = 256
-D = 784  # L1 + L2 + R1 + T pos
-BOOK_CAP = 80000
-WIN_CAP = 1000
-FOV_R = 16
-FREEZE_N = 6
-MASK_CH = "░"
-UNK_CH = "<unk>"
-ADAM_LR = 0.02
-ADAM_B1 = 0.9
-ADAM_B2 = 0.999
-ADAM_EPS = 1e-8
-
-
-def take_mid(raw: bytes, cap: int) -> bytes:
-    n = len(raw)
-    if n <= cap:
-        return raw
-    return raw[n // 5 : n // 5 + cap]
+T = 64
+D = 192
+N_LAYER = 4
+N_HEAD = 6
+FF = 768
+DROP = 0.1
+BATCH = 64
+STRIDE = 64
+VOCAB_MAX = 4096
+MASK_P = 0.15
+LR = 3e-4
+WD = 0.01
+FREEZE_N = 8
+GEN_TEMP = 1.0
+GEN_REP = 1.5
+GEN_TOP = 0
+MASK_CH = "[MASK]"
+UNK_CH = "[UNK]"
+PAD_CH = "[PAD]"
+CKPT = "app/llm/snapshot/snapshot_bert.pt"
 
 
 def chars_of(s: str):
     for c in s:
-        if c in "\n\r":
+        if c == "\r":
             continue
         yield c
 
 
-def build_vocab_top(text: str, cap: int) -> list[str]:
+def build_vocab(text: str, cap: int) -> list[str]:
     freq = Counter(chars_of(text))
-    top = [c for c, _ in freq.most_common(max(1, cap - 1))]
-    return top + [UNK_CH, MASK_CH]
+    # reserve PAD UNK MASK
+    n = max(8, cap - 3)
+    top = [c for c, k in freq.most_common(n) if k >= 2]
+    return [PAD_CH, UNK_CH, MASK_CH] + top
 
 
 def encode(text: str, stoi: dict[str, int]) -> np.ndarray:
-    mid = stoi[MASK_CH]
-    uid = stoi[UNK_CH]
+    unk = stoi[UNK_CH]
     ids = []
     for c in chars_of(text):
-        k = stoi.get(c)
-        if k is None:
-            ids.append(uid)
-        elif k != mid:
-            ids.append(k)
+        ids.append(stoi.get(c, unk))
     return np.array(ids, dtype=np.int32)
 
 
-def stride_pos(i: int, n: int, nuse: int) -> int:
-    if nuse < 1 or n <= T:
-        return 0
-    span = max(n // nuse, 1)
-    p = i * span
-    return n - T if p + T > n else p
+def windows(ids: np.ndarray, t: int, stride: int) -> np.ndarray:
+    n = len(ids)
+    if n < t:
+        pad = np.full(t - n, 0, dtype=np.int32)
+        return np.stack([np.concatenate([ids, pad])])
+    pos = list(range(0, n - t + 1, stride))
+    if pos[-1] != n - t:
+        pos.append(n - t)
+    return np.stack([ids[p : p + t] for p in pos])
 
 
-def skip_idx(ids: np.ndarray, j: int, step: int, mid: int, uid: int) -> int:
-    while 0 <= j < T:
-        v = int(ids[j])
-        if v != mid and v != uid:
-            return j
-        j += step
-    return -1
+class Block(nn.Module):
+    def __init__(self, d: int, n_head: int, ff: int, drop: float):
+        super().__init__()
+        self.n_head = n_head
+        self.dh = d // n_head
+        self.drop_p = drop
+        self.ln1 = nn.LayerNorm(d)
+        self.qkv = nn.Linear(d, 3 * d)
+        self.wo = nn.Linear(d, d)
+        self.ln2 = nn.LayerNorm(d)
+        self.mlp = nn.Sequential(
+            nn.Linear(d, ff),
+            nn.GELU(),
+            nn.Dropout(drop),
+            nn.Linear(ff, d),
+            nn.Dropout(drop),
+        )
+        # bidirectional ALiBi: nearer keys preferred, so two MASK slots
+        # see different neighbors even when token embeddings are identical
+        slopes = 2 ** (-8.0 * torch.arange(1, n_head + 1) / n_head)
+        self.register_buffer("slopes", slopes, persistent=False)
+
+    def _bias(self, t: int, key_pad: torch.Tensor | None, dtype: torch.dtype):
+        i = torch.arange(t, device=self.slopes.device)
+        dist = (i[:, None] - i[None, :]).abs().to(dtype)
+        bias = -(self.slopes.to(dtype)[:, None, None] * dist)
+        if key_pad is None:
+            return bias
+        return bias.unsqueeze(0).masked_fill(key_pad[:, None, None, :], torch.finfo(dtype).min)
+
+    def forward(self, x: torch.Tensor, key_pad: torch.Tensor | None):
+        b, t, d = x.shape
+        h = self.ln1(x)
+        qkv = self.qkv(h).view(b, t, 3, self.n_head, self.dh).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)
+        a = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=self._bias(t, key_pad, q.dtype),
+            dropout_p=self.drop_p if self.training else 0.0,
+        )
+        a = self.wo(a.transpose(1, 2).contiguous().view(b, t, d))
+        x = x + a
+        x = x + self.mlp(self.ln2(x))
+        return x
 
 
-def features(canvas: np.ndarray, mid: int, uid: int) -> np.ndarray:
-    """H[t]: nearest L, second L, nearest R, pos. MASK/UNK transparent."""
-    H = np.zeros((T, D), dtype=np.float64)
-    ids = canvas
-    for t in range(T):
-        i1 = skip_idx(ids, t - 1, -1, mid, uid)
-        i2 = -1 if i1 < 0 else skip_idx(ids, i1 - 1, -1, mid, uid)
-        ir = skip_idx(ids, t + 1, 1, mid, uid)
-        if i1 >= 0:
-            L = int(ids[i1])
-            if 0 <= L < CAP:
-                H[t, L] = 1.0
-        if i2 >= 0:
-            L2 = int(ids[i2])
-            if 0 <= L2 < CAP:
-                H[t, CAP + L2] = 1.0
-        if ir >= 0:
-            R = int(ids[ir])
-            if 0 <= R < CAP:
-                H[t, 2 * CAP + R] = 1.0
-        H[t, 3 * CAP + t] = 1.0
-    return H
-
-
-def vis_dist(flags: np.ndarray, t: int) -> int:
-    best = 99
-    for j in range(T):
-        if flags[j]:
-            continue
-        best = min(best, abs(j - t))
-    return best
-
-
-def mask_random(gold: np.ndarray, mid: int, rng: np.random.Generator, rate: int):
-    canvas = gold.copy()
-    flags = np.zeros(T, dtype=np.bool_)
-    for i in range(T):
-        if gold[i] == mid:
-            continue
-        if int(rng.integers(0, 100)) < rate:
-            canvas[i] = mid
-            flags[i] = True
-    return canvas, flags
-
-
-def mask_suffix(gold: np.ndarray, mid: int, rng: np.random.Generator):
-    canvas = gold.copy()
-    flags = np.zeros(T, dtype=np.bool_)
-    cut = 1 + int(rng.integers(0, T - 1))
-    canvas[cut:] = mid
-    flags[cut:] = True
-    return canvas, flags
-
-
-def mask_suffix_cut(gold: np.ndarray, mid: int, cut: int):
-    canvas = gold.copy()
-    flags = np.zeros(T, dtype=np.bool_)
-    canvas[cut:] = mid
-    flags[cut:] = True
-    return canvas, flags
-
-
-def apply_mask(gold: np.ndarray, mid: int, rng: np.random.Generator):
-    k = int(rng.integers(0, 5))
-    if k >= 3:
-        span = max(1, T - 4)
-        cut = 4 + int(rng.integers(0, span))
-        return mask_suffix_cut(gold, mid, cut)
-    return mask_random(gold, mid, rng, 15 + k * 15)
-
-
-def softmax_rows(logits: np.ndarray) -> np.ndarray:
-    x = logits - logits.max(axis=-1, keepdims=True)
-    e = np.exp(x)
-    return e / e.sum(axis=-1, keepdims=True)
-
-
-class Model:
-    def __init__(self, vocab: list[str], rng: np.random.Generator):
+class SnapshotLM(nn.Module):
+    def __init__(self, vocab: list[str]):
+        super().__init__()
         self.vocab = vocab
         self.V = len(vocab)
-        self.mid = self.V - 1
-        self.Vout = self.V - 1
-        self.W = np.zeros((D, self.Vout), dtype=np.float64)
-        self.m = np.zeros_like(self.W)
-        self.v = np.zeros_like(self.W)
-        self.uid = vocab.index(UNK_CH) if UNK_CH in vocab else -1
-        self.tstep = 0
+        self.pad = vocab.index(PAD_CH)
+        self.unk = vocab.index(UNK_CH)
+        self.mask = vocab.index(MASK_CH)
+        self.tok = nn.Embedding(self.V, D, padding_idx=self.pad)
+        self.pos = nn.Embedding(T, D)
+        self.drop = nn.Dropout(DROP)
+        self.blocks = nn.ModuleList([Block(D, N_HEAD, FF, DROP) for _ in range(N_LAYER)])
+        self.ln = nn.LayerNorm(D)
+        self.register_buffer("pos_ids", torch.arange(T), persistent=False)
+        self._init_w()
 
-    def logits(self, H: np.ndarray) -> np.ndarray:
-        return H @ self.W
+    def _init_w(self):
+        nn.init.normal_(self.tok.weight, std=0.02)
+        self.tok.weight.data[self.pad].zero_()
+        nn.init.normal_(self.pos.weight, std=0.02)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, std=0.02)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
-    def adam(self, gW: np.ndarray):
-        self.tstep += 1
-        self.m = ADAM_B1 * self.m + (1.0 - ADAM_B1) * gW
-        self.v = ADAM_B2 * self.v + (1.0 - ADAM_B2) * (gW * gW)
-        mhat = self.m / (1.0 - ADAM_B1 ** self.tstep)
-        vhat = self.v / (1.0 - ADAM_B2 ** self.tstep)
-        self.W -= ADAM_LR * mhat / (np.sqrt(vhat) + ADAM_EPS)
+    def encode(self, ids: torch.Tensor) -> torch.Tensor:
+        b, t = ids.shape
+        x = self.drop(self.tok(ids) + self.pos(self.pos_ids[:t].unsqueeze(0).expand(b, t)))
+        key_pad = ids == self.pad
+        if not bool(key_pad.any()):
+            key_pad = None
+        for blk in self.blocks:
+            x = blk(x, key_pad)
+        return self.ln(x)
 
-    def show(self, canvas: np.ndarray) -> str:
-        out = []
-        for i in canvas:
-            c = self.vocab[int(i)]
-            if c == "\n":
-                c = "↵"
-            elif c == "\r":
-                c = "␍"
-            out.append(c)
-        return "".join(out)
+    def logits_pick(self, ids: torch.Tensor, pick: torch.Tensor) -> torch.Tensor:
+        return F.linear(self.encode(ids)[pick], self.tok.weight)
 
-
-def train_window(m: Model, gold: np.ndarray, rng: np.random.Generator, update: bool, freq=None):
-    canvas, flags = apply_mask(gold, m.mid, rng)
-    holes = []
-    for t in range(T):
-        if flags[t] and vis_dist(flags, t) <= FOV_R and int(gold[t]) != m.uid:
-            holes.append(t)
-    if not holes:
-        return 0, 0, 0.0, 0.0, 0
-    H = features(canvas, m.mid, m.uid)
-    logits = m.logits(H)
-    if m.uid >= 0:
-        logits = logits.copy()
-        logits[:, m.uid] = -1e6
-    P = softmax_rows(logits)
-    nll = 0.0
-    invp = 0.0
-    hit = 0
-    gW = np.zeros_like(m.W) if update else None
-    for t in holes:
-        y = int(gold[t])
-        if y >= m.Vout:
-            continue
-        py = float(P[t, y])
-        py = max(py, 1e-12)
-        nll += -math.log(py)
-        invp += 1.0 / py
-        pred = int(np.argmax(logits[t]))
-        if pred == y:
-            hit += 1
-        if freq is not None and 0 <= y < len(freq):
-            freq[y] += 1
-        if update:
-            g = P[t].copy()
-            g[y] -= 1.0
-            gW += np.outer(H[t], g)
-    n = len(holes)
-    if update and n:
-        m.adam(gW / n)
-    return hit, n, nll, invp, 1
+    def forward(self, ids: torch.Tensor) -> torch.Tensor:
+        return F.linear(self.encode(ids), self.tok.weight)
 
 
-def eval_window(m: Model, gold: np.ndarray, rng: np.random.Generator):
-    return train_window(m, gold, rng, update=False)
+def mask_tokens(gold: torch.Tensor, pad: int, mask_id: int, p: float | None):
+    """Replace picked tokens with MASK. Loss only on those holes.
+
+    Train: mostly 12–35% holes (syntax); 25% of rows 45–75% (generate).
+    Eval: fixed p (BERT cloze).
+    """
+    b, t = gold.shape
+    valid = gold != pad
+    if p is None:
+        light = torch.rand(b, 1, device=gold.device) < 0.75
+        lo = torch.rand(b, 1, device=gold.device) * 0.23 + 0.12
+        hi = torch.rand(b, 1, device=gold.device) * 0.30 + 0.45
+        ratio = torch.where(light, lo, hi)
+        pick = (torch.rand(b, t, device=gold.device) < ratio) & valid
+    else:
+        pick = (torch.rand(b, t, device=gold.device) < p) & valid
+    canvas = gold.clone()
+    canvas[pick] = mask_id
+    return canvas, pick
 
 
-def win_at(ids: np.ndarray, pos: int, mid: int) -> np.ndarray:
-    out = np.full(T, mid, dtype=np.int32)
-    sl = ids[pos : pos + T]
-    out[: len(sl)] = sl
-    return out
+def run_epoch(model, opts, wins: torch.Tensor, train: bool):
+    model.train(train)
+    nwin = wins.size(0)
+    order = torch.randperm(nwin) if train else torch.arange(nwin)
+    n_batch = max(1, (nwin + BATCH - 1) // BATCH)
+    hit = n = 0
+    nll_sum = 0.0
+    n_steps = 0
+    ctx = torch.enable_grad() if train else torch.inference_mode()
+    with ctx:
+        for i0 in range(0, nwin, BATCH):
+            gold = wins[order[i0 : i0 + BATCH]]
+            p = None if train else MASK_P
+            canvas, pick = mask_tokens(gold, model.pad, model.mask, p)
+            if not pick.any():
+                continue
+            logits = model.logits_pick(canvas, pick)
+            y = gold[pick]
+            loss = F.cross_entropy(logits, y)
+            if train:
+                opts.zero_grad(set_to_none=True)
+                loss.backward()
+                opts.step()
+            pred = logits.argmax(-1)
+            hit += int((pred == y).sum())
+            n += int(y.numel())
+            nll_sum += float(loss.detach())
+            n_steps += 1
+            if train and n_steps % 50 == 0:
+                print(
+                    f"  step {n_steps}/{n_batch}  "
+                    f"mask-acc ~{100 * hit // max(n, 1)}%  nll {nll_sum / n_steps:.3f}",
+                    flush=True,
+                )
+    acc = 100 * hit // n if n else 0
+    nll = nll_sum / max(n_steps, 1)
+    return acc, nll, hit, n
 
 
-def prompt_ids(prompt: str, stoi: dict[str, int], mid: int) -> list[int]:
-    ids = []
-    for c in prompt:
-        k = stoi.get(c)
-        if k is None or k == mid:
-            continue
-        ids.append(k)
-    if len(ids) > FREEZE_N:
-        ids = ids[-FREEZE_N:]
-    return ids
+@torch.no_grad()
+def probe(model, wins, device) -> tuple[int, int]:
+    model.eval()
+    gold = wins[: min(32, len(wins))]
+    canvas, pick = mask_tokens(gold, model.pad, model.mask, 0.5)
+    a = model(canvas).argmax(-1)
+    vis = (canvas != model.mask) & (canvas != model.pad)
+    scramble = canvas.clone()
+    nvis = int(vis.sum().item())
+    if nvis:
+        scramble[vis] = torch.randint(3, model.V, (nvis,), device=device)
+    b = model(scramble).argmax(-1)
+    holes = canvas == model.mask
+    changed = int(((a != b) & holes).sum().item())
+    nh = int(holes.sum().item())
+    return changed, nh
 
 
-def canvas_from_prompt(m: Model, prompt: str, stoi: dict[str, int]) -> np.ndarray:
-    pids = prompt_ids(prompt, stoi, m.mid)
-    c = np.full(T, m.mid, dtype=np.int32)
-    n = min(len(pids), T)
-    c[:n] = pids[:n]
+def prompt_glyphs(prompt: str) -> list[str]:
+    return [c for c in prompt if c != "\r"][-FREEZE_N:]
+
+
+def encode_prompt(prompt: str, stoi: dict[str, int]) -> list[int]:
+    unk = stoi[UNK_CH]
+    ids = [stoi.get(c, unk) for c in prompt if c != "\r"]
+    return ids[-FREEZE_N:]
+
+
+def n_freeze(prompt: str) -> int:
+    n = len(prompt_glyphs(prompt))
+    return min(n, T - 1)
+
+
+def show_tok(model, tok: int) -> str:
+    c = model.vocab[tok]
+    if c == MASK_CH:
+        return "░"
+    if c == PAD_CH:
+        return " "
+    if c == "\n":
+        return "↵"
     return c
 
 
-def denoise(m: Model, prompt: str, stoi: dict[str, int], k: int) -> np.ndarray:
-    canvas = canvas_from_prompt(m, prompt, stoi)
-    mid = m.mid
+def show_canvas(model, ids: list[int], glyphs: list[str] | None = None, start: int = 0) -> str:
+    out = []
+    for i, tok in enumerate(ids[start:]):
+        pos = start + i
+        if glyphs is not None and pos < len(glyphs):
+            out.append(glyphs[pos])
+        else:
+            out.append(show_tok(model, tok))
+    return "".join(out)
+
+
+def _gen_logits(model, canvas: torch.Tensor) -> torch.Tensor:
+    logits = model(canvas)[0] / GEN_TEMP
+    logits[:, model.pad] = -1e9
+    logits[:, model.mask] = -1e9
+    vis = canvas[0]
+    vis = vis[(vis != model.mask) & (vis != model.pad)]
+    if vis.numel():
+        counts = torch.bincount(vis, minlength=model.V).to(logits.dtype)
+        logits = logits - GEN_REP * counts
+    return logits
+
+
+def _pick_tok(logits_i: torch.Tensor) -> int:
+    if GEN_TOP and GEN_TOP < logits_i.numel():
+        val, idx = torch.topk(logits_i, GEN_TOP)
+        dist = F.softmax(val, dim=-1)
+        return int(idx[torch.multinomial(dist, 1)].item())
+    return int(logits_i.argmax().item())
+
+
+@torch.no_grad()
+def denoise_ids(model, prompt: str, stoi: dict[str, int], k: int, device) -> torch.Tensor:
+    model.eval()
+    ids = encode_prompt(prompt, stoi)
+    canvas = torch.full((1, T), model.mask, dtype=torch.long, device=device)
+    n = min(len(ids), T - 1)
+    if n:
+        canvas[0, :n] = torch.tensor(ids[:n], device=device)
+    k = max(1, k)
     for step in range(k):
         left = k - step
-        nm = int((canvas == mid).sum())
+        holes = (canvas == model.mask)[0]
+        nm = int(holes.sum().item())
         if nm <= 0:
             break
-        H = features(canvas, mid, stoi[UNK_CH])
-        logits = m.logits(H)
-        if m.Vout > 0:
-            logits = logits.copy()
-            logits[:, stoi[UNK_CH]] = -1e30
-        pred = np.argmax(logits, axis=1)
-        conf = logits[np.arange(T), pred].astype(np.float64)
-        conf[canvas != mid] = -1e30
-        focus = int(np.argmax(canvas == mid)) if nm else 0
-        rad = max(1, (step + 1) * T // k)
-        if left != 1:
-            for i in range(T):
-                if canvas[i] == mid and abs(i - focus) > rad:
-                    conf[i] = -1e30
-        ntake = nm if left == 1 else (nm + left - 1) // left
-        for _ in range(ntake):
-            i = int(np.argmax(conf))
-            if conf[i] < -1e20:
-                break
-            canvas[i] = int(pred[i])
-            conf[i] = -1e30
-    return canvas
+        logits = _gen_logits(model, canvas)
+        pred = logits.argmax(-1)
+        conf = F.softmax(logits, dim=-1)[torch.arange(T, device=device), pred]
+        conf = torch.where(holes, conf, torch.zeros_like(conf))
+        ntake = nm if left == 1 else max(1, (nm + left - 1) // left)
+        order = torch.topk(conf, k=min(ntake, nm)).indices.tolist()
+        for pos in order:
+            if canvas[0, pos] != model.mask:
+                continue
+            tok = _pick_tok(logits[pos])
+            canvas[0, pos] = tok
+            logits[:, tok] -= GEN_REP
+    return canvas[0]
 
 
-def probe(m: Model, ids: np.ndarray, rng: np.random.Generator) -> tuple[int, int]:
-    gold = win_at(ids, 0, m.mid)
-    canvas, _ = mask_random(gold, m.mid, rng, 50)
-    n0 = int((canvas == m.mid).sum())
-    if n0 < 1:
-        return 0, 0
-    a = np.argmax(m.logits(features(canvas, m.mid, m.uid)), axis=1)
-    vis = canvas != m.mid
-    canvas = canvas.copy()
-    canvas[vis] = rng.integers(0, m.Vout, size=int(vis.sum()))
-    b = np.argmax(m.logits(features(canvas, m.mid, m.uid)), axis=1)
-    holes = canvas == m.mid
-    changed = int((a[holes] != b[holes]).sum())
-    return changed, n0
+def denoise(model, prompt: str, stoi: dict[str, int], k: int, device) -> str:
+    ids = denoise_ids(model, prompt, stoi, k, device).tolist()
+    return show_canvas(model, ids, prompt_glyphs(prompt))
+
+
+def print_k_curve(model, stoi: dict[str, int], device):
+    print("--- generate (prefix frozen, fill MASK) ---", flush=True)
+    print(f"K=8 悟空  {denoise(model, '悟空', stoi, 8, device)}", flush=True)
+    print(f"K=8 猴    {denoise(model, '猴', stoi, 8, device)}", flush=True)
+
+
+def save_ckpt(path: str, model, vocab: list[str]):
+    torch.save(
+        {"model": model.state_dict(), "vocab": vocab, "cfg": {"T": T, "D": D}},
+        path,
+    )
+
+
+def load_ckpt(path: str, device):
+    blob = torch.load(path, map_location=device)
+    vocab = blob["vocab"]
+    model = SnapshotLM(vocab).to(device)
+    model.load_state_dict(blob["model"])
+    model.eval()
+    return model, {c: i for i, c in enumerate(vocab)}
+
+
+def setup_threads():
+    nt = os.cpu_count() or 4
+    torch.set_num_threads(nt)
+    torch.set_num_interop_threads(min(4, nt))
+    return torch.device("cpu")
+
+
+def chat_once(model, prompt: str, stoi: dict[str, int], k: int, device):
+    ids = denoise_ids(model, prompt, stoi, k, device).tolist()
+    u = n_freeze(prompt)
+    print(f"reply  {show_canvas(model, ids, start=u)}", flush=True)
+
+
+def infer_repl(model, stoi: dict[str, int], k: int, device, chat: bool):
+    print("you> ", end="", flush=True)
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            break
+        line = line.rstrip("\n\r")
+        if line == "" or line in ("quit", "exit"):
+            break
+        if chat:
+            chat_once(model, line, stoi, k, device)
+        else:
+            print(f"final  {denoise(model, line, stoi, k, device)}", flush=True)
+        print("you> ", end="", flush=True)
+
+
+def cmd_infer(argv: list[str]) -> int:
+    ckpt = argv[1] if len(argv) > 1 else CKPT
+    prompt = argv[2] if len(argv) > 2 else "悟空"
+    k = int(argv[3]) if len(argv) > 3 else 8
+    chat = len(argv) > 4 and argv[4] == "chat"
+    if not os.path.isfile(ckpt):
+        print(f"load failed (train first): {ckpt}", flush=True)
+        return 1
+    device = setup_threads()
+    torch.manual_seed(1)
+    model, stoi = load_ckpt(ckpt, device)
+    print(f"snapshot  V={model.V}  d={D}  T={T}  K={k}  {ckpt}", flush=True)
+    if chat:
+        if prompt == "-":
+            print("chat  (quit to exit)", flush=True)
+            infer_repl(model, stoi, k, device, True)
+        else:
+            print("--- chat (frozen ask, fill reply) ---", flush=True)
+            chat_once(model, prompt, stoi, k, device)
+    elif prompt == "-":
+        print("generate  (quit to exit)", flush=True)
+        infer_repl(model, stoi, k, device, False)
+    else:
+        print("--- generate (prefix frozen, fill MASK) ---", flush=True)
+        print(f"final  {denoise(model, prompt, stoi, k, device)}", flush=True)
+    return 0
 
 
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else "app/llm/xyj.txt"
-    epochs = int(sys.argv[2]) if len(sys.argv) > 2 else 8
+    argv = sys.argv[1:]
+    if argv and argv[0] in ("infer", "chat"):
+        if argv[0] == "chat" and (len(argv) < 5 or argv[-1] != "chat"):
+            argv = ["infer"] + argv[1:] + ["chat"]
+        return cmd_infer(argv)
+    path = argv[0] if argv else "app/llm/xyj.txt"
+    epochs = int(argv[1]) if len(argv) > 1 else 16
+    fresh = any(a == "new" for a in argv[2:])
     raw = open(path, "rb").read()
     if raw[:1] == b"{":
-        print("jsonl not supported in float probe; pass a plain text book")
+        print("jsonl not supported; pass a plain text book", flush=True)
         return 1
-    text = take_mid(raw, BOOK_CAP).decode("utf-8", errors="replace")
-    vocab = build_vocab_top(text, CAP)
+    text = raw.decode("utf-8", errors="replace")
+    vocab = build_vocab(text, VOCAB_MAX)
     stoi = {c: i for i, c in enumerate(vocab)}
     ids = encode(text, stoi)
-    n = len(ids)
-    nwin = max(1, n - T + 1)
-    nuse = min(nwin, WIN_CAP)
-    ntr = nuse - nuse // 5
-    rng = np.random.default_rng(1)
-    m = Model(vocab, rng)
+    wins = torch.from_numpy(windows(ids, T, STRIDE)).long()
+    ntr = int(len(wins) * 0.9)
+    train_w, test_w = wins[:ntr], wins[ntr:]
+    device = setup_threads()
+    torch.manual_seed(1)
+    random.seed(1)
+    np.random.seed(1)
+    model = SnapshotLM(vocab).to(device)
+    resume = (not fresh) and os.path.isfile(CKPT)
+    if resume:
+        blob = torch.load(CKPT, map_location=device)
+        model.load_state_dict(blob["model"])
+        print(f"resume  {CKPT}", flush=True)
+    opts = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
+    nparam = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(
-        f"snapshot-float  V={m.V}  T={T}  tokens={n}  train-win={ntr}  test-win={nuse - ntr}"
+        f"snapshot-bert  V={model.V}  d={D}  L={N_LAYER}  H={N_HEAD}  T={T}  "
+        f"params={nparam}  tokens={len(ids)}  train-win={len(train_w)}  test-win={len(test_w)}",
+        flush=True,
     )
-    print(f"vocab  top-{CAP - 1} + UNK + MASK  corpus={path}")
-    print(f"opt  float softmax CE  Adam lr={ADAM_LR}  L1+L2+R1+pos  Wout=0")
-    print("--- train ---")
+    print(f"mask  train 75%×12-35% + 25%×45-75%  eval {MASK_P:.0%}  corpus={path}", flush=True)
+    print(f"opt  AdamW lr={LR}  wd={WD}  bidir SDPA+ALiBi  tied head  B={BATCH} stride={STRIDE}", flush=True)
+    print("--- train ---", flush=True)
     t0 = time.perf_counter()
+    best = 0
     for ep in range(epochs):
-        hit = nm = 0
-        nll = invp = 0.0
-        freq = np.zeros(m.Vout, dtype=np.int64)
-        for i in range(nuse):
-            if i % 5 == 4:
-                continue
-            gold = win_at(ids, stride_pos(i, n, nuse), m.mid)
-            h, k, nl, inv, _ = train_window(m, gold, rng, True, freq)
-            hit += h
-            nm += k
-            nll += nl
-            invp += inv
-            # maj: train_window doesn't return freq; approximate from a second pass skip
-            _ = k
-        maj = int(freq.max()) if nm else 0
-        acc = 100 * hit // nm if nm else 0
-        mj = 100 * maj // nm if nm else 0
-        mean_nll = nll / nm if nm else 0.0
-        mean_inv = invp / nm if nm else 0.0
-        mean_bits = mean_nll / math.log(2)
-        # test
-        th = tn = 0
-        for i in range(nuse):
-            if i % 5 != 4:
-                continue
-            gold = win_at(ids, stride_pos(i, n, nuse), m.mid)
-            h, k, _, _, _ = eval_window(m, gold, rng)
-            th += h
-            tn += k
-        tacc = 100 * th // tn if tn else 0
+        acc, nll, hit, n = run_epoch(model, opts, train_w, True)
+        tacc, tnll, th, tn = run_epoch(model, opts, test_w, False)
         print(
-            f"epoch {ep}  acc ~{acc}%  maj ~{mj}%  nll {mean_nll:.3f} nat "
-            f"({mean_bits:.2f} bit)  invp {mean_inv:.1f}  hit {hit} / {nm}  maj-hit {maj} / {nm}"
+            f"epoch {ep}  mask-acc ~{acc}%  nll {nll:.3f} nat  hit {hit} / {n}",
+            flush=True,
         )
-        print(f"         test acc ~{tacc}%  hit {th} / {tn}")
+        print(
+            f"         test mask-acc ~{tacc}%  nll {tnll:.3f}  hit {th} / {tn}",
+            flush=True,
+        )
+        save_ckpt(CKPT, model, vocab)
+        if tacc >= best:
+            best = tacc
+        print_k_curve(model, stoi, device)
     dt = time.perf_counter() - t0
-    print(f"--- after train  {dt:.1f}s ---")
-    pr_rng = np.random.default_rng(7)
-    ch, nmask = probe(m, ids, pr_rng)
-    print(f"probe  scramble-vis  pred-changed {ch} / {nmask}  (0 = ignores context)")
-    print("--- K curve ---")
-    for k in (1, 4, 8, 14):
-        print(f"K={k:<3} {m.show(denoise(m, '悟空', stoi, k))}")
-    print(f"K=8 Romeo  {m.show(denoise(m, 'Romeo', stoi, 8))}")
+    print(f"--- after train  {dt:.1f}s  best-test {best}%  {CKPT} ---", flush=True)
+    ch, nh = probe(model, test_w, device)
+    print(
+        f"probe  scramble-vis  pred-changed {ch} / {nh}  (0 = ignores context)",
+        flush=True,
+    )
     return 0
 
 

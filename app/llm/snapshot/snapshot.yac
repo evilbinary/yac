@@ -31,7 +31,7 @@ let sc(_) = 64
 
 let file_s(_) = 0
 
-/* 模型宽度：左近 + 次近 + 右近 各 vocab_cap，再加 T 维位置。不用整袋指纹，避免背窗口。 */
+/* 模型宽度：紧邻左 + 其余可见袋 + 紧邻右 各 vocab_cap，再加 T 维位置。MASK 不透明。 */
 let dim(_) = 784
 
 /* √d 的整数近似，注意力分数除 S·nsq。 */
@@ -648,31 +648,49 @@ let add_idx_row(W, fi, y, v) =
   if fi < 0 then 0
   else add_row_s(W, fi * v, y, 1.0, 0)
 
-let logits_idx(m, t) =
+/* 非紧邻的可见字 → 中间袋（第 cap 段）。MASK 不透明。 */
+let logits_far(m, ids, t, y, j) =
+  let cap = vocab_cap(0) in
+  let mid = mask_id(m) in
+  let v = ntok(m) in
+  if j >= ctx(0) then 0
+  else
+    let _ =
+      if j == t then 0
+      else if j == t - 1 then 0
+      else if j == t + 1 then 0
+      else
+        let id = nth(ids, j) in
+        if id == mid then 0
+        else if id >= cap then 0
+        else add_idx_row(nth(m, 4), cap + id, y, v) in
+    logits_far(m, ids, t, y, j + 1)
+
+let logits_idx(m, ids, t) =
   let h = nth(nth(m, 11), t) in
   let y = nth(nth(m, 12), t) in
   let v = ntok(m) in
   let W = nth(m, 4) in
   let _ = zero_row(y, 0) in
   let _ = add_idx_row(W, nth(h, 0), y, v) in
-  let _ = add_idx_row(W, nth(h, 1), y, v) in
   let _ = add_idx_row(W, nth(h, 2), y, v) in
   let _ = add_idx_row(W, nth(h, 3), y, v) in
+  let _ = logits_far(m, ids, t, y, 0) in
   ban_unk_row(m, y)
 
-/* logits[t] = 至多 4 行 Wout 相加。 */
-let write_logits(m, t) =
+/* logits[t] = 紧邻 + 远可见袋 + pos。 */
+let write_logits(m, ids, t) =
   if t >= ctx(0) then 0
   else
-    let _ = logits_idx(m, t) in
-    write_logits(m, t + 1)
+    let _ = logits_idx(m, ids, t) in
+    write_logits(m, ids, t + 1)
 
 /* 训练：只给 flags=1 的格子写 logits。 */
-let write_logits_f(m, flags, t) =
+let write_logits_f(m, ids, flags, t) =
   if t >= ctx(0) then 0
   else
-    let _ = if nth(flags, t) == 0 then 0 else logits_idx(m, t) in
-    write_logits_f(m, flags, t + 1)
+    let _ = if nth(flags, t) == 0 then 0 else logits_idx(m, ids, t) in
+    write_logits_f(m, ids, flags, t + 1)
 
 /* dst[k] += src[k]。 */
 let add_row(dst, src, k) =
@@ -748,36 +766,23 @@ let vis_right(m, ids, t, j, n) =
         list_set(h, rk, 1.0) in
     vis_right(m, ids, t, j + 1, n + 1)
 
-/* 沿 step 跳过 MASK/UNK，返回下标（不是字 id）。 */
-let skip_idx(ids, j, step, mid, uid) =
-  if j < 0 then 0 - 1
-  else if j >= ctx(0) then 0 - 1
-  else
-    let id = nth(ids, j) in
-    if id == mid then skip_idx(ids, j + step, step, mid, uid)
-    else if id == uid then skip_idx(ids, j + step, step, mid, uid)
-    else j
-
-/* ids[i] 作为第 off 块的 Wout 行；缺格 -1。 */
+/* ids[i] 作为第 off 块的 Wout 行；越界 / MASK 为 -1。UNK 算可见。 */
 let feat_or(ids, i, cap, off) =
   if i < 0 then 0 - 1
+  else if i >= ctx(0) then 0 - 1
   else
     let id = nth(ids, i) in
     if id >= cap then 0 - 1
     else off + id
 
-/* H[t][0..3] = L1 / L2 / R1 / pos 的 Wout 行下标（不是 one-hot）。 */
+/* H[t][0,2,3] = 紧邻左 / 紧邻右 / pos。不透过 MASK 去抓更远的字。
+ * 更远的可见字在 logits_far 里进中间袋（cap 段）。 */
 let mark_near(m, ids, t) =
   let cap = vocab_cap(0) in
   let h = nth(nth(m, 11), t) in
-  let mid = mask_id(m) in
-  let uid = unk_id(m) in
-  let i1 = skip_idx(ids, t - 1, 0 - 1, mid, uid) in
-  let i2 = if i1 < 0 then 0 - 1 else skip_idx(ids, i1 - 1, 0 - 1, mid, uid) in
-  let ir = skip_idx(ids, t + 1, 1, mid, uid) in
-  let _ = list_set(h, 0, feat_or(ids, i1, cap, 0)) in
-  let _ = list_set(h, 1, feat_or(ids, i2, cap, cap)) in
-  let _ = list_set(h, 2, feat_or(ids, ir, cap, cap + cap)) in
+  let _ = list_set(h, 0, feat_or(ids, t - 1, cap, 0)) in
+  let _ = list_set(h, 1, 0 - 1) in
+  let _ = list_set(h, 2, feat_or(ids, t + 1, cap, cap + cap)) in
   list_set(h, 3, cap + cap + cap + t)
 
 /* 只给要算 logits 的格填 4 个下标。 */
@@ -809,16 +814,15 @@ let x_to_qkv(m, ids, t) =
         zero_row(nth(nth(m, 8), t), 0) in
     x_to_qkv(m, ids, t + 1)
 
-/* 一张快门：可见字均匀平均 + 小位置 + Wout。
- * Q·K 加权在多样 jsonl 上会塌成「随机盯一个可见字」，比 maj 还差。 */
+/* 一张快门：紧邻 + 远可见袋 + pos + Wout。不跑 QKV。 */
 let forward(m, ids) =
   let _ = bow_t(m, ids, 0) in
-  write_logits(m, 0)
+  write_logits(m, ids, 0)
 
 /* 训练用快门：只算被挖格子的 logits。 */
 let forward_train(m, ids, flags) =
   let _ = bow_f(m, ids, flags, 0) in
-  write_logits_f(m, flags, 0)
+  write_logits_f(m, ids, flags, 0)
 
 /* 一格 SGD 已不用；窗口末尾动量（mean g）。 */
 let zero_wrow(W, base, j, n) =
@@ -869,9 +873,10 @@ let gw_row_j(m, i, xi, g, j) =
   let v = ntok(m) in
   gw_go(nth(m, 25), g, i * v, j, v - 1)
 
-/* 只对外积到的 ≤4 个特征行累加梯度。 */
+/* 紧邻左 / 紧邻右 / pos 三行。h[1] 不用。 */
 let gw_idx(m, h, g, k) =
   if k >= 4 then 0
+  else if k == 1 then gw_idx(m, h, g, k + 1)
   else
     let i = nth(h, k) in
     let _ =
@@ -880,6 +885,26 @@ let gw_idx(m, h, g, k) =
         let _ = gw_prep(m, i) in
         gw_row_j(m, i, 1.0, g, 0) in
     gw_idx(m, h, g, k + 1)
+
+/* 远可见袋的梯度，与 logits_far 同一批行。 */
+let gw_far(m, ids, t, g, j) =
+  let cap = vocab_cap(0) in
+  let mid = mask_id(m) in
+  if j >= ctx(0) then 0
+  else
+    let _ =
+      if j == t then 0
+      else if j == t - 1 then 0
+      else if j == t + 1 then 0
+      else
+        let id = nth(ids, j) in
+        if id == mid then 0
+        else if id >= cap then 0
+        else
+          let fi = cap + id in
+          let _ = gw_prep(m, fi) in
+          gw_row_j(m, fi, 1.0, g, 0) in
+    gw_far(m, ids, t, g, j + 1)
 
 let adam_k(m, k, invn) =
   let st = nth(m, 26) in
@@ -1319,10 +1344,12 @@ let vis_dist(gold, flags, t, j, best) =
     vis_dist(gold, flags, t, j + 1, b2)
 
 /* 只在 flags[t]=1 且落在焦点半径内做交叉熵（和显影光圈对齐）。 */
-let train_at(m, gold, flags, t, acc) =
+let train_at(m, st, t, acc) =
+  let gold = nth(st, 0) in
+  let flags = nth(st, 1) in
   if t >= ctx(0) then acc
-  else if nth(flags, t) == 0 then train_at(m, gold, flags, t + 1, acc)
-  else if is_gap(m, nth(gold, t)) == 1 then train_at(m, gold, flags, t + 1, acc)
+  else if nth(flags, t) == 0 then train_at(m, st, t + 1, acc)
+  else if is_gap(m, nth(gold, t)) == 1 then train_at(m, st, t + 1, acc)
   else
     let y = nth(gold, t) in
     let z0 = sm_row(m, t) in
@@ -1335,13 +1362,14 @@ let train_at(m, gold, flags, t, acc) =
     let w = nth(m, 13) in
     let _ = g_fill(w, y, z, 0, ntok(m)) in
     let _ = gw_idx(m, h, w, 0) in
+    let _ = gw_far(m, nth(st, 2), t, w, 0) in
     let fr = nth(m, 17) in
     let _ = list_set(fr, y, nth(fr, y) + 1) in
     let _ = list_set(acc, 0, nth(acc, 0) + hit) in
     let _ = list_set(acc, 1, nth(acc, 1) + 1) in
     let _ = list_set(acc, 2, nth(acc, 2) + nll) in
     let _ = list_set(acc, 3, nth(acc, 3) + inv) in
-    train_at(m, gold, flags, t + 1, acc)
+    train_at(m, st, t + 1, acc)
 
 /* 验证：与 train_at 同一套挖洞/邻字，不更新 Wout。
  * bun = [hit, n, tp, goldn, predn]。 */
@@ -1380,16 +1408,19 @@ let mask_from(canvas, flags, mid, cut, i) =
         list_set(flags, i, 1) in
     mask_from(canvas, flags, mid, cut, i + 1)
 
-/* 一步：混合轻/中/重挖洞 + 两档后缀（对齐推理全 MASK）。
- * lr 占位。返回 [hit, nmask, nll, invp, new_seed]。 */
+/* 一步：轻/中/重挖洞 + 高掩码 + 后缀（对齐推理几乎全 MASK）。 */
 let noise_step(gold, canvas, flags, seed, mid) =
-  let k = irem(seed, 6) in
-  if k == 0 then mask_i(gold, canvas, flags, triple(seed, mid, 10), 0)
-  else if k == 1 then mask_i(gold, canvas, flags, triple(seed, mid, 20), 0)
-  else if k == 2 then mask_i(gold, canvas, flags, triple(seed, mid, 35), 0)
-  else if k == 3 then mask_i(gold, canvas, flags, triple(seed, mid, 50), 0)
+  let k = irem(seed, 8) in
+  if k == 0 then mask_i(gold, canvas, flags, triple(seed, mid, 15), 0)
+  else if k == 1 then mask_i(gold, canvas, flags, triple(seed, mid, 40), 0)
+  else if k == 2 then mask_i(gold, canvas, flags, triple(seed, mid, 65), 0)
+  else if k == 3 then mask_i(gold, canvas, flags, triple(seed, mid, 85), 0)
   else
-    let min_cut = if k == 4 then 6 else 4 in
+    let min_cut =
+      if k == 4 then 6
+      else if k == 5 then 4
+      else if k == 6 then 2
+      else 1 in
     let span = ctx(0) - min_cut in
     let cut = min_cut + irem(seed, if span < 1 then 1 else span) in
     let _ = mask_from(canvas, flags, mid, cut, 0) in
@@ -1404,7 +1435,7 @@ let train_step(m, ids, pos, seed, lr) =
   let _ = bump_gen(m) in
   let _ = forward_train(m, canvas, flags) in
   let acc = acc4(0) in
-  let _ = train_at(m, gold, flags, 0, acc) in
+  let _ = train_at(m, triple(gold, flags, canvas), 0, acc) in
   let _ = adam_win(m, nth(acc, 1)) in
   let _ = list_push(acc, seed2) in
   acc
@@ -1433,13 +1464,13 @@ let train_step_chat(m, gold, u, seed, lr) =
   let mid = mask_id(m) in
   let canvas = copy_ids(gold, 0, list_new()) in
   let flags = flags_new(0) in
-  let rate = 25 * (irem(seed, 3) + 1) in
+  let rate = 50 + 20 * irem(seed, 3) in
   let seed2 = mask_i(gold, canvas, flags, triple(seed, mid, rate), 0) in
   let _ = bump_gen(m) in
   let _ = restore_user(gold, canvas, flags, u, 0) in
   let _ = forward_train(m, canvas, flags) in
   let acc = acc4(0) in
-  let _ = train_at(m, gold, flags, 0, acc) in
+  let _ = train_at(m, triple(gold, flags, canvas), 0, acc) in
   let _ = adam_win(m, nth(acc, 1)) in
   let _ = list_push(acc, seed2) in
   acc
