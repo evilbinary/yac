@@ -37,11 +37,12 @@ PHRASE_N = 12  # 训练：短语 / 说话骨架 keep 长度上界
 GEN_TEMP = 0.8  # 显影温度（作用在已经算完的整页 logits 上）
 GEN_REP = 2.5  # 已可见字的重复惩罚
 GEN_NEAR = 4.0  # 禁止与左邻同一字（挡「你你」）
-GEN_BETA1 = 1.2  # 主干：信息量指数（稀有字优先）
-GEN_BETA2 = 0.2  # 细节：接近模型原概率
-GEN_CONF = 0.08  # 主干过阈；无候选时回退 top-1
+GEN_BETA1 = 1.2  # 显影第一步：抬稀有字
+GEN_BETA3 = 0.2  # 显影最后一步：接近原概率
+GEN_CONF = 0.08  # 过阈才落；空转时降阈
 GEN_K = 24  # 默认显影步数；K=8 锁不住主干
-GEN_NEAR_N = 2  # 只在已有真字半径内落笔，禁止远处第二岛
+GEN_NEAR_N = 1  # 只在已有真字邻格落笔，禁止跳格第二岛
+IDLE_W = 2.0  # 训练：邻格洞 CE 加倍，惩罚「挨着真字却乱猜」
 MASK_CH = "[MASK]"  # 未曝光格
 UNK_CH = "[UNK]"  # 词表外
 PAD_CH = "[PAD]"  # 短窗垫字
@@ -293,7 +294,15 @@ def run_epoch(model, opts, wins: torch.Tensor, train: bool, sched=None):
                 continue
             logits = model.logits_pick(canvas, pick)
             y = gold[pick]
-            loss = F.cross_entropy(logits, y)
+            vis = (gold != model.pad) & ~pick
+            left = torch.zeros_like(pick)
+            right = torch.zeros_like(pick)
+            left[:, 1:] = vis[:, :-1]
+            right[:, :-1] = vis[:, 1:]
+            front = pick & (left | right)
+            w = torch.ones(y.shape, dtype=logits.dtype, device=logits.device)
+            w = w + IDLE_W * front[pick].to(logits.dtype)
+            loss = (F.cross_entropy(logits, y, reduction="none") * w).sum() / w.sum()
             if train:
                 opts.zero_grad(set_to_none=True)
                 loss.backward()
@@ -422,6 +431,7 @@ def show_canvas(
 
 
 _FLESH = set("的了是在着过和与也又都就还把被让从到得地吗呢吧啊呀么呵之乎亦，。！？：；、\"'（）“”\n")
+_HANG = set("也的与")
 
 
 def _info_weight(model) -> torch.Tensor:
@@ -444,7 +454,6 @@ _TALK = set("道叫喝问曰云")
 _STOP = set("。！？")
 _QUOTE_OPEN = set("\"“")
 _QUOTE_CLOSE = set("\"”")
-_PUNCT_RUN = set("，。！？：；、\"'“”")
 
 
 def _vocab_ids(model, chars: set[str]) -> torch.Tensor:
@@ -507,6 +516,16 @@ def _n_take(n_ok: int, steps_left: int) -> int:
     return max(1, min(n_ok, (n_ok + sl - 1) // sl))
 
 
+def _force_frontier(logits: torch.Tensor, front: torch.Tensor):
+    """Idle: neighbor hole with highest logit over the full vocab (already filtered)."""
+    if not bool(front.any()):
+        return None, None
+    idx = front.nonzero(as_tuple=False).view(-1)
+    row_max, tok = logits.index_select(0, idx).max(dim=-1)
+    j = int(row_max.argmax().item())
+    return int(idx[j].item()), int(tok[j].item())
+
+
 def _near_visible(vis: torch.Tensor, radius: int) -> torch.Tensor:
     """True on cells within `radius` of any already-visible char (one blob, not a second island)."""
     t = vis.numel()
@@ -559,27 +578,28 @@ def _cut_after_utterance(
 def denoise_ids(
     model, prompt: str, stoi: dict[str, int], k: int, device, frames: bool = False,
 ):
-    """Stage1: parallel core near the blob. Stage2: flesh. Cut after first utterance."""
+    """MaskGIT: β anneals; syntax lives in the net, not a POS schedule."""
     model.eval()
     canvas, at = blank_canvas(prompt, stoi, model, device)
     frozen = canvas[0] != model.mask
     orig = canvas[0].clone()
     locked = frozen.clone()
     k = max(1, k)
-    n_prompt = int(frozen.sum().item())
     info = _info_weight(model)
     talk_ids = _vocab_ids(model, _TALK)
-    flesh_ids = _vocab_ids(model, _FLESH)
     stop_ids = _vocab_ids(model, _STOP)
     open_ids = _vocab_ids(model, _QUOTE_OPEN)
     close_ids = _vocab_ids(model, _QUOTE_CLOSE)
-    trunk_end = max(1, k // 3)
+    hang_ids = _vocab_ids(model, _HANG)
+    pause_ids = _vocab_ids(model, set("，："))
+    idle = 0
+    forced = False
     snaps = [canvas[0].clone()] if frames else None
     for step in range(k):
+        t = step / max(k - 1, 1)
+        beta = GEN_BETA1 * (1.0 - t) + GEN_BETA3 * t
         logits = _gen_logits(model, canvas)
         probs = F.softmax(logits, dim=-1)
-        trunk = step < trunk_end
-        beta = GEN_BETA1 if trunk else GEN_BETA2
         score = probs * info.unsqueeze(0).pow(beta)
         top2 = score.topk(2, dim=-1)
         pred = top2.indices[:, 0].clone()
@@ -587,40 +607,37 @@ def denoise_ids(
         run = pred[1:] == pred[:-1]
         pred[1:] = torch.where(run, alt[1:], pred[1:])
         pred = torch.where(frozen, orig, pred)
-        conf = probs[torch.arange(T, device=device), pred]
-        hole = (~locked) & (canvas[0] == model.mask)
         vis = (canvas[0] != model.mask) & (canvas[0] != model.pad)
+        hole = (~locked) & (canvas[0] == model.mask)
         n_talk = int((_is_in(canvas[0], talk_ids) & vis).sum().item())
         n_open = int((_is_in(canvas[0], open_ids) & vis).sum().item())
-        if (not trunk) and n_talk >= 1:
+        if n_talk >= 1:
             pred = torch.where(_is_in(pred, talk_ids), alt, pred)
-        if (not trunk) and n_open >= 1:
+        if n_open >= 1:
             pred = torch.where(_is_in(pred, open_ids), alt, pred)
         conf = probs[torch.arange(T, device=device), pred]
         near = _near_visible(vis, GEN_NEAR_N)
         past = _cut_after_utterance(canvas[0], vis, stop_ids, open_ids, close_ids)
-        core = ~_is_in(pred, flesh_ids)
+        if vis.any():
+            last = int(torch.arange(T, device=device)[vis].max().item())
+            if hang_ids.numel() and bool((hang_ids == canvas[0, last]).any()):
+                past[:] = False
+        thr = GEN_CONF * (0.25 if idle else 1.0)
         sc = conf * info[pred].pow(beta)
         sc[~hole | ~near | past] = -1.0
         any_right = torch.zeros(T, dtype=torch.bool, device=device)
         if T > 1:
             any_right[:-1] = vis.flip(0).cumsum(0).flip(0)[1:] > 0
         sc[_is_in(pred, stop_ids) & any_right] = -1.0
-        if trunk:
-            sc[~core | (conf < GEN_CONF)] = -1.0
-            if int((sc >= 0).sum().item()) == 0:
-                sc = conf * info[pred].pow(beta)
-                sc[~hole | ~near | past | ~core] = -1.0
-        else:
-            sc[conf < (GEN_CONF * 0.5)] = -1.0
+        sc[conf < thr] = -1.0
         n_ok = int((sc >= 0).sum().item())
-        steps_left = (trunk_end - step) if trunk else (k - step)
-        m = _n_take(n_ok, steps_left)
+        m = _n_take(n_ok, k - step)
         if m > 0:
             top = torch.topk(sc, k=m).indices
             take = torch.zeros(T, dtype=torch.bool, device=device)
             take[top] = sc[top] >= 0
             canvas[0, take] = pred[take]
+            idle = 0
             if step < k - 1 and int(take.sum().item()) > 1:
                 left_ok = torch.zeros(T, dtype=torch.bool, device=device)
                 right_ok = torch.zeros(T, dtype=torch.bool, device=device)
@@ -634,10 +651,25 @@ def denoise_ids(
                     conf_rm[~edge] = 1e9
                     low = torch.topk(conf_rm, k=min(n_rm, n_edge), largest=False).indices
                     canvas[0, low] = model.mask
-        if step == trunk_end - 1:
-            filled = (canvas[0] != model.mask) & (~frozen)
-            if int(filled.sum().item()) >= max(2, n_prompt):
-                locked = canvas[0] != model.mask
+        else:
+            idle += 1
+            force = idle >= 2 and not forced
+            if vis.any():
+                last = int(torch.arange(T, device=device)[vis].max().item())
+                last_tok = canvas[0, last]
+                if stop_ids.numel() and bool((stop_ids == last_tok).any()):
+                    force = False
+                elif open_ids.numel() and bool((open_ids == last_tok).any()):
+                    force = False
+                elif pause_ids.numel() and bool((pause_ids == last_tok).any()):
+                    force = False
+            if force:
+                front = hole & near & (~past)
+                pos, tok = _force_frontier(logits, front)
+                if pos is not None:
+                    canvas[0, pos] = tok
+                    idle = 0
+                    forced = True
         if snaps is not None:
             snaps.append(canvas[0].clone())
     out = canvas[0]
@@ -661,9 +693,11 @@ def print_frames(model, prompt: str, stoi: dict[str, int], k: int, device):
 
 
 def print_k_curve(model, stoi: dict[str, int], device):
-    print("--- generate (trunk then detail) ---", flush=True)
+    print("--- generate (MaskGIT) ---", flush=True)
     torch.manual_seed(1)
     print(f"K={GEN_K} 悟空            {denoise(model, '悟空', stoi, GEN_K, device)}", flush=True)
+    torch.manual_seed(1)
+    print(f"K={GEN_K} 悟空打          {denoise(model, '悟空打', stoi, GEN_K, device)}", flush=True)
     torch.manual_seed(1)
     print(f"K={GEN_K} 美猴王          {denoise(model, '美猴王', stoi, GEN_K, device)}", flush=True)
     torch.manual_seed(1)
@@ -756,7 +790,7 @@ def cmd_infer(argv: list[str]) -> int:
         print("generate  (quit to exit)", flush=True)
         infer_repl(model, stoi, k, device, False)
     else:
-        print("--- generate (trunk then detail) ---", flush=True)
+        print("--- generate (MaskGIT) ---", flush=True)
         print_frames(model, prompt, stoi, k, device)
     return 0
 
