@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Fill Yac `import` lines from unbound names.
+"""Fill Yac `import` / `export` and set one package name per file.
 
-Walks .yac files under package roots, finds identifiers that are not local
-lets / prims / keywords, matches them to another file's `export` (or top-level
-`let`), then inserts `import a.b.c { names }`.
+Walks .yac files under package roots. Import path is the file path relative
+to a root, `/` → `.` (`src-self/back/pack/elf.yac` → `back.pack.elf`).
+`package` is rewritten to that path (one file, one package). Identifiers
+that are not local lets / prims / keywords are matched to another file's
+`export` or top-level `let`, then `import a.b.c { names }` is inserted.
 
   python3 tools/fill_imports.py              # dry-run
   python3 tools/fill_imports.py --apply      # write files
   python3 tools/fill_imports.py --apply pkg/compiler.yac
-
-Import path is the file path relative to a root, `/` → `.`
-(`src-self/back/pack/elf.yac` → `back.pack.elf`). Guest lookup is
-`--pkg ROOT`: this script does not concatenate the compiler bundle.
+  python3 tools/test_fill_imports.py         # unit tests
 """
 
 from __future__ import annotations
@@ -44,9 +43,11 @@ PRIMS = {
     "is_int", "iadd", "isub", "imul", "idiv", "irem", "ccall",
 }
 
-# Kernel image; not a guest package.
+# Kernel image; not a guest package. Main program keeps an anonymous package.
 SKIP_PROVIDERS = {"rt/runtime.yac"}
 SKIP_PROVIDER_PREFIX = ("drivers/",)
+SKIP_PACKAGE = {"yc.yac", "rt/runtime.yac"}
+SKIP_PACKAGE_PREFIX = ("drivers/",)
 
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 IMPORT_LINE = re.compile(
@@ -63,14 +64,22 @@ def strip_comments(src: str) -> str:
     i, n = 0, len(src)
     while i < n:
         if i + 1 < n and src[i] == "/" and src[i + 1] == "*":
+            # Same as lexer: /*. is a path glob, not a nested opener.
+            # */. (as in rt/*.yac) is also a glob, not a closer.
             depth = 1
             j = i + 2
             while j + 1 < n and depth:
                 if src[j] == "/" and src[j + 1] == "*":
+                    if j + 2 < n and src[j + 2] == ".":
+                        j += 1
+                        continue
                     depth += 1
                     j += 2
                     continue
                 if src[j] == "*" and src[j + 1] == "/":
+                    if j + 2 < n and src[j + 2] == ".":
+                        j += 1
+                        continue
                     depth -= 1
                     j += 2
                     continue
@@ -119,6 +128,25 @@ def idents_with_dots(src: str) -> List[Tuple[str, bool]]:
             prev_dot = False
         i += 1
     return found
+
+
+def rel_to_import_path(rel: str) -> str:
+    if rel.endswith(".yac"):
+        rel = rel[:-4]
+    return rel.replace("\\", "/").replace("/", ".")
+
+
+def skip_package_rel(rel: str) -> bool:
+    rel = rel.replace("\\", "/")
+    if rel in SKIP_PACKAGE:
+        return True
+    return any(rel.startswith(p) for p in SKIP_PACKAGE_PREFIX)
+
+
+def wanted_package(rel: str, import_path: str) -> Optional[str]:
+    if skip_package_rel(rel):
+        return None
+    return import_path
 
 
 @dataclass
@@ -208,17 +236,22 @@ def defs_in(plain: str) -> Tuple[Set[str], Set[str]]:
 def parse_header_meta(plain: str) -> Tuple[str, List[str]]:
     pkg = ""
     exports: List[str] = []
+    seen: Set[str] = set()
     m = re.search(r"(?m)^[ \t]*package[ \t]+([A-Za-z_][A-Za-z0-9_.]*)", plain)
     if m:
         pkg = m.group(1)
-    m = re.search(r"(?m)^[ \t]*export[ \t]+(.+?)$", plain)
-    if m:
-        exports = [x.strip() for x in m.group(1).split(",") if x.strip()]
+    for em in re.finditer(r"(?m)^[ \t]*export[ \t]+(.+?)$", plain):
+        for x in em.group(1).split(","):
+            x = x.strip()
+            if x and x not in seen:
+                seen.add(x)
+                exports.append(x)
     return pkg, exports
 
 
 def load_file(path: str, rel: str, import_path: str) -> FileInfo:
-    text = open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
     plain = strip_comments(text)
     info = FileInfo(path=path, rel=rel, import_path=import_path, text=text)
     info.package, info.exports = parse_header_meta(plain)
@@ -239,13 +272,13 @@ def load_file(path: str, rel: str, import_path: str) -> FileInfo:
     header_names = set(info.exports)
     if info.package:
         header_names.update(info.package.split("."))
+    header_names.update(import_path.split("."))
     for imp in info.imps:
         header_names.update(imp.path.split("."))
         if imp.alias:
             header_names.add(imp.alias)
         if imp.names:
             header_names |= imp.names
-    # Ignore idents on package/export/import lines.
     plain_body = re.sub(
         r"(?m)^[ \t]*(package|export|import)\b.*$",
         "",
@@ -275,7 +308,7 @@ def walk_roots(roots: List[str]) -> List[FileInfo]:
                 rel = os.path.relpath(path, root).replace(os.sep, "/")
                 if rel in SKIP_PROVIDERS:
                     continue
-                ip = rel[:-4].replace("/", ".")
+                ip = rel_to_import_path(rel)
                 files.append(load_file(path, rel, ip))
     return files
 
@@ -284,6 +317,11 @@ def is_provider(f: FileInfo) -> bool:
     if f.rel in SKIP_PROVIDERS:
         return False
     return not any(f.rel.startswith(p) for p in SKIP_PROVIDER_PREFIX)
+
+
+def _in_pkg_root(f: FileInfo) -> bool:
+    p = f.path.replace("\\", "/")
+    return "/pkg/" in p or f.rel.startswith("pkg/")
 
 
 def providers(files: List[FileInfo]) -> Dict[str, List[FileInfo]]:
@@ -316,23 +354,33 @@ def pick_provider(
     cands = [c for c in cands if c.path != consumer.path]
     if not cands:
         return None
-    # Prefer a file that already exports the name.
     exp = [c for c in cands if name in c.exports]
     pool = exp or cands
-    # Prefer already-imported path.
     have = {i.path for i in consumer.imps}
     for c in pool:
         if c.import_path in have:
             return c
+    # Compiler sources must not pick pkg/ shims (profile vs back.profile).
+    cons_pkg = _in_pkg_root(consumer)
+    if not cons_pkg:
+        src = [c for c in pool if "/src-self/" in c.path.replace("\\", "/")]
+        if len(src) == 1:
+            return src[0]
+        if src:
+            pool = src
+    else:
+        same_tree = [c for c in pool if _in_pkg_root(c)]
+        if len(same_tree) == 1:
+            return same_tree[0]
+        if same_tree:
+            pool = same_tree
     if len(pool) == 1:
         return pool[0]
-    # Prefer src-self compiler files over pkg shims.
-    pool.sort(key=lambda c: (0 if "/pkg/" not in c.path.replace("\\", "/")
-                             and not c.rel.startswith("pkg/") else 1,
+    pool.sort(key=lambda c: (0 if not _in_pkg_root(c) else 1,
                              len(c.import_path), c.import_path))
-    # Still ambiguous if two compiler files define it.
-    defs = [c for c in pool if name in c.defs]
-    if len({c.import_path for c in defs[:2]}) > 1 and not exp:
+    defs = [c for c in pool if name in c.provide]
+    uniq = {c.import_path for c in (defs or pool)}
+    if len(uniq) > 1 and not exp:
         return None
     return pool[0]
 
@@ -397,6 +445,8 @@ def merge_imps(f: FileInfo, new: Dict[str, Set[str]]) -> List[Imp]:
             elif cur.names is not None and imp.names:
                 cur.names |= imp.names
     for path, names in sorted(new.items()):
+        if path == f.import_path:
+            continue
         if path not in by:
             order.append(path)
             by[path] = Imp(path, names=set(names))
@@ -413,14 +463,30 @@ def merge_imps(f: FileInfo, new: Dict[str, Set[str]]) -> List[Imp]:
     return [by[p] for p in order]
 
 
-def strip_import_lines(text: str) -> str:
+def strip_kind_lines(text: str, kind: str) -> str:
     lines = text.splitlines(keepends=True)
     out = []
     for ln in lines:
-        if re.match(r"^[ \t]*import\b", ln):
+        if re.match(r"^[ \t]*" + kind + r"\b", ln):
             continue
         out.append(ln)
     return "".join(out)
+
+
+def leading_code_index(text: str) -> int:
+    m = re.match(r"(?s)^(?:[ \t]*\n|/\*.*?\*/[ \t]*\n?)*", text)
+    return m.end() if m else 0
+
+
+def set_package(text: str, pkg: str) -> str:
+    lines = text.splitlines(keepends=True)
+    for i, ln in enumerate(lines):
+        if re.match(r"^[ \t]*package\b", ln):
+            lead = re.match(r"^[ \t]*", ln).group(0)
+            lines[i] = f"{lead}package {pkg}\n"
+            return "".join(lines)
+    at = leading_code_index(text)
+    return text[:at] + f"package {pkg}\n\n" + text[at:]
 
 
 def insert_block(text: str, imports: List[Imp], new_exports: Optional[List[str]]) -> str:
@@ -431,16 +497,22 @@ def insert_block(text: str, imports: List[Imp], new_exports: Optional[List[str]]
             pkg_i = i
         if re.match(r"^[ \t]*export\b", ln):
             exp_i = i
-    if new_exports is not None and exp_i is not None:
-        raw = lines[exp_i]
-        lead = re.match(r"^[ \t]*", raw).group(0)
-        lines[exp_i] = lead + "export " + ", ".join(new_exports) + "\n"
+    if new_exports is not None:
+        line = "export " + ", ".join(new_exports) + "\n"
+        if exp_i is not None:
+            lead = re.match(r"^[ \t]*", lines[exp_i]).group(0)
+            lines[exp_i] = lead + line
+        elif pkg_i is not None:
+            lines.insert(pkg_i + 1, line)
+            exp_i = pkg_i + 1
+        else:
+            lines.insert(0, line)
+            exp_i = 0
     at = exp_i if exp_i is not None else pkg_i
     if at is None:
         block = "".join(imp.render() + "\n" for imp in imports)
-        return block + ("\n" if not text.startswith("\n") else "") + text
+        return block + ("\n" if text and not text.startswith("\n") else "") + text
     block = [imp.render() + "\n" for imp in imports]
-    # Insert after package/export, skip following blank lines then add one blank.
     j = at + 1
     while j < len(lines) and lines[j].strip() == "":
         j += 1
@@ -452,8 +524,14 @@ def insert_block(text: str, imports: List[Imp], new_exports: Optional[List[str]]
 
 
 def apply_file(
-    f: FileInfo, new: Dict[str, Set[str]], extra_exp: Set[str]
+    f: FileInfo,
+    new: Dict[str, Set[str]],
+    extra_exp: Set[str],
+    *,
+    fix_package: bool = True,
 ) -> Optional[str]:
+    want = wanted_package(f.rel, f.import_path) if fix_package else None
+    pkg_changed = want is not None and want != f.package
     imps = merge_imps(f, new)
     exports = list(f.exports)
     changed_exp = False
@@ -463,10 +541,12 @@ def apply_file(
             changed_exp = True
     old_render = [i.render() for i in f.imps]
     new_render = [i.render() for i in imps]
-    if old_render == new_render and not changed_exp:
+    if old_render == new_render and not changed_exp and not pkg_changed:
         return None
-    body = strip_import_lines(f.text)
-    # Re-find export in stripped text (import removal shouldn't move export).
+    text = f.text
+    if pkg_changed:
+        text = set_package(text, want)
+    body = strip_kind_lines(text, "import")
     return insert_block(body, imps, exports if changed_exp else None)
 
 
@@ -483,6 +563,11 @@ def main() -> int:
         "--no-export",
         action="store_true",
         help="do not add missing names to export lists",
+    )
+    ap.add_argument(
+        "--no-package",
+        action="store_true",
+        help="do not rewrite package to the file path",
     )
     ap.add_argument("only", nargs="*", help="limit to these files (paths)")
     args = ap.parse_args()
@@ -503,16 +588,22 @@ def main() -> int:
             continue
         new = add.get(f.path, {})
         ex = extra_exp.get(f.path, set())
-        if not new and not ex:
+        want = None if args.no_package else wanted_package(f.rel, f.import_path)
+        pkg_changed = want is not None and want != f.package
+        if not new and not ex and not pkg_changed:
             continue
         nfile += 1
         print(f"## {f.rel}")
+        if pkg_changed:
+            print(f"  package {f.package or '(none)'} -> {want}")
         for path, names in sorted(new.items()):
             print(f"  import {path} {{{', '.join(sorted(names))}}}")
         if ex:
             print(f"  export += {', '.join(sorted(ex))}")
         if args.apply:
-            out = apply_file(f, new, ex)
+            out = apply_file(
+                f, new, ex, fix_package=not args.no_package
+            )
             if out is not None and out != f.text:
                 with open(f.path, "w", encoding="utf-8") as fh:
                     fh.write(out)
@@ -522,7 +613,7 @@ def main() -> int:
         for w in warns:
             print(" ", w)
 
-    print(f"\n{nfile} file(s) with import/export updates"
+    print(f"\n{nfile} file(s) with package/import/export updates"
           f"{' [written]' if args.apply else ' [dry-run]'}")
     return 0
 
