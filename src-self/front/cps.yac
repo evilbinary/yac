@@ -10,6 +10,9 @@
  * No mutual top-level recursion: cps_expr nests the bind walker.
  */
 
+package front
+export cps_all, cps_expr, cps_maybe_opt, cps_opt_all
+
 let cps_newk(st) =
   let n = box_get(st) in
   let _ = box_set(st, n + 1) in

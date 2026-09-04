@@ -3,6 +3,8 @@
  * before win_x86_64.yac and emit_x86_64.yac.
  */
 
+package emit
+
 let slot_off(k) = 0 - bshl(k + 1, 3)
 
 let emit_obj_store_rdi(b, off) = mov_rax_disp32_rdi(b, off)

@@ -3,6 +3,9 @@
  * HO prims (map/filter/fold) use a nested trampoline; they must not re-enter ce_run.
  */
 
+package front
+export eval_cps_all
+
 let ce_eb =
   let b = box_new() in
   let _ = box_set(b, 0) in

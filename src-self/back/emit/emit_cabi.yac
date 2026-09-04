@@ -2,6 +2,8 @@
  * PIC abs64: x86 patches an imm64 in-place; ARM/RISC-V load a pooled u64.
  */
 
+package emit
+
 let dlib_pool_put(b, val) =
   let pad(_) =
     if band(bytes_len(b), 7) == 0 then 0

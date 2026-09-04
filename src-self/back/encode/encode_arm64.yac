@@ -1,5 +1,7 @@
 /* encode_arm64.yac — AArch64 instruction words (little-endian). */
 
+package emit
+
 let a64_u32(b, w) =
   let _ = bytes_append(b, band(w, 255)) in
   let _ = bytes_append(b, band(bshr(w, 8), 255)) in

@@ -12,6 +12,8 @@
 /* ---- small helpers ---- */
 
 /* append a byte */
+package emit
+
 let e8(b, v) = bytes_append(b, band(v, 255))
 /* append imm32 little-endian */
 let e32(b, v) =

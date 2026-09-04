@@ -1,5 +1,8 @@
 /* backend.yac — pipeline + image. lir_expr = ANF→LIR；lower_expr = LIR→emit. */
 
+package backend
+export compile_src, compile_file, compile_bytes, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit
+
 let backend_emit(t, ast) = nth(lower_expr(ast, t), 0)
 
 let backend_pack(t, code) =
@@ -107,10 +110,14 @@ let intern_names(xs, i, acc) =
   if i >= len(xs) then acc
   else intern_names(xs, i + 1, cons(intern(nth(xs, i)), acc))
 
+/* Concatenated coarse packages may have one export per file. */
 let ast_export_list(ast, i) =
-  if i >= len(ast) then []
-  else if nth(nth(ast, i), 0) == "export" then intern_names(nth(nth(ast, i), 1), 0, [])
-  else ast_export_list(ast, i + 1)
+  let rec(j, acc) =
+    if j >= len(ast) then acc
+    else if nth(nth(ast, j), 0) == "export" then
+      rec(j + 1, intern_names(nth(nth(ast, j), 1), 0, acc))
+    else rec(j + 1, acc) in
+  rec(i, [])
 
 let ast_pkg_name(ast, i) =
   if i >= len(ast) then ""

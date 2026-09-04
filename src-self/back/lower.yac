@@ -7,6 +7,9 @@
  */
 
 /* vreg s 的 home。现在 = 自己（emit 映 [rbp-8*(s+1)] / FP 帧）。 */
+package backend
+export lower_expr, drop_unreachable, alloc_prog
+
 let alloc_home(s) = s
 
 let insn_callee(ins) =

@@ -20,6 +20,8 @@ YC_BUNDLE = $(YC_BUILD)/yc_bundle.yac
 YC_BIN = yc$(EXEEXT)
 YC_A = $(YC_BUILD)/yc_a$(EXEEXT)
 YC_B = $(YC_BUILD)/yc_b$(EXEEXT)
+# Coarse packages (package/export in the files; still cat as one yc image):
+#   lib | front | pack | emit | backend | scheme.  runtime.yac and yc.yac stay out.
 YC_SRCS = src-self/lib/log.yac src-self/lib/pass.yac src-self/lib/map.yac \
 	src-self/front/lexer.yac src-self/front/parser.yac src-self/front/anf.yac src-self/front/cps.yac src-self/front/eval_cps.yac src-self/front/uncps.yac src-self/front/lir.yac \
 	src-self/rt/runtime.yac \

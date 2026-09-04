@@ -5,6 +5,9 @@
  * collides, and interned keys must hash the same before/after intern.
  */
 
+package lib
+export intern, hash_str, fmap_new, fmap_init, fmap_init_n, fmap_new64, fmap_get, fmap_get_h, fmap_put, fmap_put_h, fmap_push
+
 let hash_str(s) = str_hash(s)
 
 let fmap_fill(b, i, cap) =

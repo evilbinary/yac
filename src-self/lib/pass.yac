@@ -7,6 +7,9 @@
  * Later ANF opts go between "anf" and "lower". pack is the container.
  */
 
+package lib
+export mk_pass, run_pass, run_passes, pass_name, pass_fn
+
 let mk_pass(name, fn) = ["pass", name, fn]
 
 let pass_name(p) = nth(p, 1)

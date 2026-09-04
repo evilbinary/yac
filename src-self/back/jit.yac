@@ -5,6 +5,9 @@
  * Session names are rewritten to calls before ANF so lir.yac stays generic.
  */
 
+package backend
+export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live
+
 let jit_lets_box =
   let b = box_new() in
   let _ = box_set(b, 0) in

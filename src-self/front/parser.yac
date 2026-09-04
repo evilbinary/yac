@@ -23,6 +23,9 @@
  *   ["error", msg, line, near]
  */
 
+package front
+export parse_program, prog_has_err, prog_find_err, report_syntax, syntax_msg
+
 let reverse(xs) = list_rev(xs)
 let is_err(a) = nth(a, 0) == "error"
 /* Nested ["error", ...] (e.g. print without an argument) must not reach ANF. */

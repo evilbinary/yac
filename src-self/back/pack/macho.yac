@@ -2,6 +2,9 @@
  * Headers padded to text_off (4096); __text follows. vmaddr = vaddr.
  */
 
+package pack
+export pack_macho_target
+
 let mo_le16(b, v, i) =
   let _ = bytes_put(b, i + 0, band(v, 255)) in
   let _ = bytes_put(b, i + 1, band(bshr(v, 8), 255)) in

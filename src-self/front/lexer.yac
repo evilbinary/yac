@@ -12,6 +12,9 @@
  *   token_kind(t), token_text(t), token_line(t)
  */
 
+package front
+export tokenize, token_kind, token_text, token_line, tok_ident_line
+
 let is_digit(c) = c >= 48 and c <= 57
 let is_alpha(c) = (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95
 let is_alnum(c) = is_digit(c) or is_alpha(c)

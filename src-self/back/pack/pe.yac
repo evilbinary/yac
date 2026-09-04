@@ -2,6 +2,9 @@
  * ImageBase = vaddr so emit absolute patches match.
  */
 
+package pack
+export pack_pe_target, pe_finish_imports, pe_finish_dll
+
 let pe_le16(b, v, i) =
   let _ = bytes_put(b, i + 0, band(v, 255)) in
   let _ = bytes_put(b, i + 1, band(bshr(v, 8), 255)) in

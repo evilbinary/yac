@@ -13,6 +13,9 @@
  *   lir_expr(ast, st)  一项 ANF body × 状态 → [insns, slot, Γ, ctr, Σ, uid]
  */
 
+package front
+export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, env_new, sigma_of_rt, sigma_list, is_prim_name, import_alias, import_locals
+
 let reverse(xs) = list_rev(xs)
 
 /* Guest import aliases: local name → LIR key (env/get). Module as-name → pkg. */

@@ -20,6 +20,9 @@
  * anf_expr) is a nested local closure inside it.
  */
 
+package front
+export anf_all, anf_expr
+
 let reverse(xs) = list_rev(xs)
 
 let anf_expr(ast, counter) =

@@ -21,6 +21,9 @@
  * Bundle this file first so drivers / stages can call it.
  */
 
+package lib
+export log, log_i, log_set_hush, log_get_hush
+
 let log_hush =
   let b = box_new() in
   let _ = box_set(b, true) in

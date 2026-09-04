@@ -2,6 +2,9 @@
  * File: 64-byte hdr + TEXT [+ RODATA + DATA + LINK].
  * v1 pack treats the emit blob as a single TEXT section. */
 
+package pack
+export pack_yjit_ex, pack_yjit_flat, yjit_arch_num, yjit_arch_name, yjit_read, yjit_export_enc, yjit_export_dec, yjit_imp_enc, yjit_imp_parse
+
 let YJIT_HDR = 64
 let YJIT_VER = 1
 let YJIT_ARCH_X64 = 1

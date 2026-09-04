@@ -1,5 +1,7 @@
 /* encode_riscv64.yac — RV64I (+ MUL) instruction words. */
 
+package emit
+
 let rv_u32(b, w) =
   let _ = bytes_append(b, band(w, 255)) in
   let _ = bytes_append(b, band(bshr(w, 8), 255)) in

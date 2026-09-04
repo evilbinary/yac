@@ -3,6 +3,9 @@
  * (a single huge function overflows the compiler frame).
  */
 
+package front
+export uncps_all, uncps_is_err
+
 let uncps_take(xs, n, i, acc) =
   if i >= n then list_rev(acc)
   else uncps_take(xs, n, i + 1, cons(nth(xs, i), acc))

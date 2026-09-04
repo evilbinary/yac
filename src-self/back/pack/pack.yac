@@ -1,5 +1,8 @@
 /* pack.yac — container dispatch: elf | pe | macho (exec or dylib). */
 
+package pack
+export pack_image, pack_elf_target
+
 let pack_elf_target(t, code) =
   let sh = if target_shared(t) then 1 else 0 in
   let img = pack_elf_ex(code, target_emachine(t), target_vaddr(t),

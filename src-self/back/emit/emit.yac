@@ -8,6 +8,8 @@
  * patch-list extend. Instruction emit stays in emit_<arch>.yac.
  */
 
+package emit
+
 let reverse(xs) = list_rev(xs)
 
 /* 0-cap closures are 32 bytes. Cons cdr / BYTES cap live at +32, which is

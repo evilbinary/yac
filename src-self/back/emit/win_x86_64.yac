@@ -1,6 +1,8 @@
 /* win_x86_64.yac — x86-64 Windows host: Win64 ccall, PE _start, kernel32.
  */
 
+package emit
+
 let win_cc_regarg(b, args, j, nargs) =
   if j >= nargs then 0
   else if j >= 4 then 0
