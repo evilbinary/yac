@@ -1,6 +1,6 @@
 {
-  "name": "yac-lang",
-  "displayName": "Yac",
+  "name": "yc-lang",
+  "displayName": "Yac Language",
   "description": "Syntax highlighting for the Yac functional language",
   "version": "0.1.1",
   "publisher": "yac-lang",
