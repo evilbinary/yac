@@ -32,14 +32,16 @@ VOCAB_MAX = 4096  # 字符 cap，另加 PAD/UNK/MASK
 MASK_P = 0.15  # 仅评价对照；训练用 cosine 动态 r∈[0.10,0.90]
 LR = 6e-4  # AdamW；cosine 降到 0.1 * LR
 WD = 0.01  # 权重衰减
-FREEZE_N = 8  # 训练：生成同族每行留下的可见字个数上界
+FREEZE_N = 8  # 训练：散点 keep 个数上界
+PHRASE_N = 12  # 训练：短语 / 说话骨架 keep 长度上界
 GEN_TEMP = 0.8  # 显影温度（作用在已经算完的整页 logits 上）
 GEN_REP = 2.5  # 已可见字的重复惩罚
 GEN_NEAR = 4.0  # 禁止与左邻同一字（挡「你你」）
 GEN_BETA1 = 1.2  # 主干：信息量指数（稀有字优先）
 GEN_BETA2 = 0.2  # 细节：接近模型原概率
-GEN_CONF = 0.08  # 主干 / 细节：原概率过低则不落笔
+GEN_CONF = 0.08  # 主干过阈；无候选时回退 top-1
 GEN_K = 24  # 默认显影步数；K=8 锁不住主干
+GEN_NEAR_N = 2  # 只在已有真字半径内落笔，禁止远处第二岛
 MASK_CH = "[MASK]"  # 未曝光格
 UNK_CH = "[UNK]"  # 词表外
 PAD_CH = "[PAD]"  # 短窗垫字
@@ -184,6 +186,32 @@ def _keep_scatter(valid: torch.Tensor, n_lo: int, n_hi: int) -> torch.Tensor:
     return valid & (rank < nk)
 
 
+def _keep_prefix(valid: torch.Tensor, n_lo: int, n_hi: int) -> torch.Tensor:
+    """Infer-like: keep a left prefix at native indices, rest MASK. No PAD."""
+    b, t = valid.shape
+    nk = torch.randint(n_lo, n_hi + 1, (b, 1), device=valid.device)
+    pos = torch.arange(t, device=valid.device).view(1, t)
+    return valid & (pos < nk)
+
+
+def _keep_talk(gold: torch.Tensor, valid: torch.Tensor, talk_ids: torch.Tensor, n_lo: int, n_hi: int) -> torch.Tensor:
+    """Keep a real span around 道/叫/喝/问/曰/云 (XYJ quote scaffold)."""
+    b, t = gold.shape
+    device = gold.device
+    if talk_ids.numel() == 0:
+        return torch.zeros_like(valid)
+    is_talk = (gold.unsqueeze(-1) == talk_ids.view(1, 1, -1)).any(-1) & valid
+    has = is_talk.any(dim=1)
+    rnd = torch.rand(b, t, device=device).masked_fill(~is_talk, -1.0)
+    at = rnd.argmax(dim=1)
+    width = torch.randint(n_lo, n_hi + 1, (b,), device=device)
+    start = (at - width // 3).clamp(min=0)
+    start = torch.minimum(start, (t - width).clamp(min=0))
+    pos = torch.arange(t, device=device).view(1, t)
+    keep = valid & (pos >= start.unsqueeze(1)) & (pos < (start + width).unsqueeze(1))
+    return keep & has.unsqueeze(1)
+
+
 def _keep_phrases(valid: torch.Tensor, n_lo: int, n_hi: int) -> torch.Tensor:
     """1–2 substrings that already sit in the window; start is wherever they are, not centered."""
     b, t = valid.shape
@@ -202,7 +230,13 @@ def _keep_phrases(valid: torch.Tensor, n_lo: int, n_hi: int) -> torch.Tensor:
     return keep | (extra & two.expand(b, t))
 
 
-def mask_tokens(gold: torch.Tensor, pad: int, mask_id: int, p: float | None):
+def mask_tokens(
+    gold: torch.Tensor,
+    pad: int,
+    mask_id: int,
+    p: float | None,
+    talk_ids: torch.Tensor | None = None,
+):
     """Train: cosine independent holes + generate-family keeps at native indices. Eval: fixed p."""
     b, t = gold.shape
     valid = gold != pad
@@ -216,11 +250,21 @@ def mask_tokens(gold: torch.Tensor, pad: int, mask_id: int, p: float | None):
     u = torch.rand(b, 1, device=device)
     ratio = 0.10 + 0.80 * torch.cos(u * math.pi / 2)
     pick = (torch.rand(b, t, device=device) < ratio) & valid
-    is_gen = torch.rand(b, 1, device=device) < 0.35
+    is_gen = torch.rand(b, 1, device=device) < 0.40
     keep_sc = _keep_scatter(valid, 2, FREEZE_N)
-    keep_ph = _keep_phrases(valid, 2, FREEZE_N)
-    scatter = torch.rand(b, 1, device=device) < 0.5
-    keep = torch.where(scatter.expand(b, t), keep_sc, keep_ph)
+    keep_ph = _keep_phrases(valid, 2, PHRASE_N)
+    keep_pf = _keep_prefix(valid, 2, FREEZE_N)
+    if talk_ids is None:
+        talk_ids = gold.new_zeros(0)
+    keep_tk = _keep_talk(gold, valid, talk_ids, 4, PHRASE_N)
+    mode = torch.rand(b, 1, device=device)
+    keep = torch.where(
+        mode < 0.25,
+        keep_pf,
+        torch.where(mode < 0.45, keep_sc, torch.where(mode < 0.70, keep_tk, keep_ph)),
+    )
+    empty = ~keep.any(dim=1, keepdim=True)
+    keep = torch.where(empty.expand(b, t), keep_ph, keep)
     pick_gen = valid & ~keep
     pick = torch.where(is_gen.expand(b, t), pick_gen, pick)
     canvas = gold.clone()
@@ -242,7 +286,9 @@ def run_epoch(model, opts, wins: torch.Tensor, train: bool, sched=None):
         for i0 in range(0, nwin, BATCH):
             gold = wins[order[i0 : i0 + BATCH]]
             p = None if train else MASK_P
-            canvas, pick = mask_tokens(gold, model.pad, model.mask, p)
+            canvas, pick = mask_tokens(
+                gold, model.pad, model.mask, p, talk_ids=_vocab_ids(model, _TALK),
+            )
             if not pick.any():
                 continue
             logits = model.logits_pick(canvas, pick)
@@ -396,6 +442,8 @@ def _info_weight(model) -> torch.Tensor:
 
 _TALK = set("道叫喝问曰云")
 _STOP = set("。！？")
+_QUOTE_OPEN = set("\"“")
+_QUOTE_CLOSE = set("\"”")
 _PUNCT_RUN = set("，。！？：；、\"'“”")
 
 
@@ -410,16 +458,6 @@ def _is_in(ids: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
     if table.numel() == 0:
         return torch.zeros(ids.shape, dtype=torch.bool, device=ids.device)
     return (ids.unsqueeze(-1) == table).any(-1)
-
-
-def _prefix_end(ids: torch.Tensor, mask: int, pad: int) -> int:
-    """Left-to-right visible run length; first MASK after the written prefix."""
-    vis = (ids != mask) & (ids != pad)
-    t = int(ids.numel())
-    i = 0
-    while i < t and bool(vis[i]):
-        i += 1
-    return i
 
 
 def _ban_ids(model) -> torch.Tensor:
@@ -462,64 +500,144 @@ def blank_canvas(prompt: str, stoi: dict[str, int], model, device):
     return canvas, 0
 
 
+def _n_take(n_ok: int, steps_left: int) -> int:
+    if n_ok <= 0:
+        return 0
+    sl = max(1, steps_left)
+    return max(1, min(n_ok, (n_ok + sl - 1) // sl))
+
+
+def _near_visible(vis: torch.Tensor, radius: int) -> torch.Tensor:
+    """True on cells within `radius` of any already-visible char (one blob, not a second island)."""
+    t = vis.numel()
+    device = vis.device
+    idx = torch.arange(t, device=device)
+    vis_idx = idx[vis]
+    if vis_idx.numel() == 0:
+        return torch.zeros(t, dtype=torch.bool, device=device)
+    dist = (idx.unsqueeze(1) - vis_idx.unsqueeze(0)).abs().min(dim=1).values
+    return dist <= radius
+
+
+def _cut_after_utterance(
+    ids: torch.Tensor,
+    vis: torch.Tensor,
+    stop_ids: torch.Tensor,
+    open_ids: torch.Tensor,
+    close_ids: torch.Tensor,
+) -> torch.Tensor:
+    """Holes to the right of the first finished sentence/quote — do not start a second scene."""
+    t = ids.numel()
+    device = ids.device
+    after = torch.zeros(t, dtype=torch.bool, device=device)
+    opened = False
+    n_vis = 0
+    cut = t
+    for i in range(t):
+        if not bool(vis[i]):
+            continue
+        n_vis += 1
+        tok = ids[i]
+        closed = close_ids.numel() and bool((close_ids == tok).any())
+        stopped = stop_ids.numel() and bool((stop_ids == tok).any())
+        if opened and closed:
+            if i + 1 >= t or not bool(vis[i + 1 :].any()):
+                cut = i
+                break
+        if open_ids.numel() and bool((open_ids == tok).any()):
+            opened = True
+        if n_vis >= 2 and stopped:
+            if i + 1 >= t or not bool(vis[i + 1 :].any()):
+                cut = i
+                break
+    if cut < t:
+        after[cut + 1 :] = True
+    return after
+
+
 @torch.no_grad()
 def denoise_ids(
     model, prompt: str, stoi: dict[str, int], k: int, device, frames: bool = False,
 ):
-    """主干只加格；细节只填剩余 MASK，不改已落主干。提示冻结。"""
+    """Stage1: parallel core near the blob. Stage2: flesh. Cut after first utterance."""
     model.eval()
     canvas, at = blank_canvas(prompt, stoi, model, device)
     frozen = canvas[0] != model.mask
     orig = canvas[0].clone()
     locked = frozen.clone()
     k = max(1, k)
+    n_prompt = int(frozen.sum().item())
     info = _info_weight(model)
     talk_ids = _vocab_ids(model, _TALK)
+    flesh_ids = _vocab_ids(model, _FLESH)
     stop_ids = _vocab_ids(model, _STOP)
-    punct_ids = _vocab_ids(model, _PUNCT_RUN)
+    open_ids = _vocab_ids(model, _QUOTE_OPEN)
+    close_ids = _vocab_ids(model, _QUOTE_CLOSE)
     trunk_end = max(1, k // 3)
     snaps = [canvas[0].clone()] if frames else None
     for step in range(k):
+        logits = _gen_logits(model, canvas)
+        probs = F.softmax(logits, dim=-1)
         trunk = step < trunk_end
-        n_inner = 1 if trunk else 2
-        for _ in range(n_inner):
-            logits = _gen_logits(model, canvas)
-            probs = F.softmax(logits, dim=-1)
-            beta = GEN_BETA1 if trunk else GEN_BETA2
-            score = probs * info.unsqueeze(0).pow(beta)
-            top2 = score.topk(2, dim=-1)
-            pred = top2.indices[:, 0].clone()
-            alt = top2.indices[:, 1]
-            run = pred[1:] == pred[:-1]
-            pred[1:] = torch.where(run, alt[1:], pred[1:])
-            pred = torch.where(frozen, orig, pred)
-            end = _prefix_end(canvas[0], model.mask, model.pad)
-            if end >= T:
-                break
-            hole = (not bool(locked[end])) and int(canvas[0, end].item()) == model.mask
-            if not hole:
-                break
-            vis = (canvas[0] != model.mask) & (canvas[0] != model.pad)
-            allow_stop = (not trunk) and (step >= (2 * k) // 3)
-            tok = int(pred[end].item())
-            if not allow_stop and bool((stop_ids == tok).any()):
-                tok = int(alt[end].item())
-            n_talk = int((_is_in(canvas[0], talk_ids) & vis).sum().item())
-            if (not trunk) and n_talk >= 1 and bool((talk_ids == tok).any()):
-                tok = int(alt[end].item())
-            if end > 0 and bool(_is_in(canvas[0, end - 1 : end], punct_ids)):
-                if bool((punct_ids == tok).any()):
-                    tok = int(alt[end].item())
-                if bool((punct_ids == tok).any()):
-                    continue
-            if not allow_stop and bool((stop_ids == tok).any()):
-                continue
-            conf = float(probs[end, tok].item())
-            if trunk and conf < GEN_CONF:
-                continue
-            canvas[0, end] = tok
-        if trunk and step == trunk_end - 1:
-            locked = canvas[0] != model.mask
+        beta = GEN_BETA1 if trunk else GEN_BETA2
+        score = probs * info.unsqueeze(0).pow(beta)
+        top2 = score.topk(2, dim=-1)
+        pred = top2.indices[:, 0].clone()
+        alt = top2.indices[:, 1]
+        run = pred[1:] == pred[:-1]
+        pred[1:] = torch.where(run, alt[1:], pred[1:])
+        pred = torch.where(frozen, orig, pred)
+        conf = probs[torch.arange(T, device=device), pred]
+        hole = (~locked) & (canvas[0] == model.mask)
+        vis = (canvas[0] != model.mask) & (canvas[0] != model.pad)
+        n_talk = int((_is_in(canvas[0], talk_ids) & vis).sum().item())
+        n_open = int((_is_in(canvas[0], open_ids) & vis).sum().item())
+        if (not trunk) and n_talk >= 1:
+            pred = torch.where(_is_in(pred, talk_ids), alt, pred)
+        if (not trunk) and n_open >= 1:
+            pred = torch.where(_is_in(pred, open_ids), alt, pred)
+        conf = probs[torch.arange(T, device=device), pred]
+        near = _near_visible(vis, GEN_NEAR_N)
+        past = _cut_after_utterance(canvas[0], vis, stop_ids, open_ids, close_ids)
+        core = ~_is_in(pred, flesh_ids)
+        sc = conf * info[pred].pow(beta)
+        sc[~hole | ~near | past] = -1.0
+        any_right = torch.zeros(T, dtype=torch.bool, device=device)
+        if T > 1:
+            any_right[:-1] = vis.flip(0).cumsum(0).flip(0)[1:] > 0
+        sc[_is_in(pred, stop_ids) & any_right] = -1.0
+        if trunk:
+            sc[~core | (conf < GEN_CONF)] = -1.0
+            if int((sc >= 0).sum().item()) == 0:
+                sc = conf * info[pred].pow(beta)
+                sc[~hole | ~near | past | ~core] = -1.0
+        else:
+            sc[conf < (GEN_CONF * 0.5)] = -1.0
+        n_ok = int((sc >= 0).sum().item())
+        steps_left = (trunk_end - step) if trunk else (k - step)
+        m = _n_take(n_ok, steps_left)
+        if m > 0:
+            top = torch.topk(sc, k=m).indices
+            take = torch.zeros(T, dtype=torch.bool, device=device)
+            take[top] = sc[top] >= 0
+            canvas[0, take] = pred[take]
+            if step < k - 1 and int(take.sum().item()) > 1:
+                left_ok = torch.zeros(T, dtype=torch.bool, device=device)
+                right_ok = torch.zeros(T, dtype=torch.bool, device=device)
+                left_ok[1:] = vis[:-1]
+                right_ok[:-1] = vis[1:]
+                edge = take & (~(left_ok & right_ok)) & (~frozen)
+                n_edge = int(edge.sum().item())
+                if n_edge > 0:
+                    n_rm = max(1, n_edge // 3)
+                    conf_rm = conf.clone()
+                    conf_rm[~edge] = 1e9
+                    low = torch.topk(conf_rm, k=min(n_rm, n_edge), largest=False).indices
+                    canvas[0, low] = model.mask
+        if step == trunk_end - 1:
+            filled = (canvas[0] != model.mask) & (~frozen)
+            if int(filled.sum().item()) >= max(2, n_prompt):
+                locked = canvas[0] != model.mask
         if snaps is not None:
             snaps.append(canvas[0].clone())
     out = canvas[0]
@@ -692,7 +810,7 @@ def main():
         flush=True,
     )
     print(
-        "mask  train cosine-r[0.10,0.90] + 35% keep-at-native-pos  "
+        "mask  train cosine-r[0.10,0.90] + 40% keep-at-native (prefix/scatter/talk/phrase)  "
         f"eval r=15/50/90%  corpus={path}",
         flush=True,
     )
