@@ -17,12 +17,13 @@
     if bin == 0 then 1 else let _ = write_file(outpath, bin) in 0
 
 
-let load(path) =
+let load(path, t) =
     let src = read_file(path) in
     if src == 0 then 1
+    else if target_live(t) then compile_jit(src, t, true)
     else compile_jit(src, mk_jit_target(host_arch(0)), true)
-  
-let compile(src) =
+
+let compile(src, t) =
     if src == 0 then 0
-    else compile_native(src, mk_target(host_arch(0), "yjit", "exec"))
-  
+    else if target_live(t) then compile_jit(src, t, false)
+    else compile_native(src, mk_target(host_arch(0), host_format(0), "exec"))
