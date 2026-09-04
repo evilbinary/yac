@@ -5,20 +5,18 @@
  * rest of the program. Arguments must be string literals.
  *
  *   compile_file(inpath, outpath)  write an image (guest target)
- *   compile(path)                  .yac → .yjit bytes (discarded unless used as rc)
- *   load(path)                     JIT-compile and run in this yc process
- *   compile_src                    same as yc internals (string source → bytes)
+ *   compile(src)                 exp -> bin
+ *   load(path)                   
  */
 
  package compiler
  export compile_file, compile, load
  
  let compile_file(inpath, outpath, t, profpath) =
-    let bin = compile_src(read_file(inpath), t) in
+    let bin = compile_native(read_file(inpath), t) in
     if bin == 0 then 1 else let _ = write_file(outpath, bin) in 0
 
 
-/* Same pipeline as `yc --repl` / `yc --format yjit -o` (in-process, no system). */
 let load(path) =
     let src = read_file(path) in
     if src == 0 then 1
@@ -26,5 +24,5 @@ let load(path) =
   
 let compile(src) =
     if src == 0 then 0
-    else compile_src(src, mk_target(host_arch(0), "yjit", "exec"))
+    else compile_native(src, mk_target(host_arch(0), "yjit", "exec"))
   

@@ -322,7 +322,7 @@ let run_cli(pr) =
               let _ = if profpath == "" then 0 else yac_prof_enable(profpath) in
               let _ = log("yc", "start") in
               let _ = log_i("yc", "src_len", str_len(src)) in
-              let bin = compile_src(src, t) in
+              let bin = compile_native(src, t) in
               if bin == 0 then 1
               else
                 let _ = log_i("yc", "bin_len", bytes_len(bin)) in

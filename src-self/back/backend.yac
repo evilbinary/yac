@@ -1,7 +1,7 @@
 /* backend.yac — pipeline + image. lir_expr = ANF→LIR；lower_expr = LIR→emit. */
 
 package backend
-export compile_src, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit
+export compile_native, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit
 
 let backend_emit(t, ast) = nth(lower_expr(ast, t), 0)
 
@@ -417,7 +417,7 @@ let dump_uncps(src, do_opt) =
     else
       let _ = print(r) in 0
 
-let compile_src(src, t) =
+let compile_native(src, t) =
   let ast0 = pass_parse(pass_lex(src)) in
   if prog_has_err(ast0, 0) then
     let _ = report_syntax(ast0) in 0
