@@ -42,7 +42,7 @@ GEN_BETA3 = 0.2  # 显影最后一步：接近原概率
 GEN_CONF = 0.08  # 过阈才落；空转时降阈
 GEN_K = 24  # 默认显影步数；K=8 锁不住主干
 GEN_NEAR_N = 1  # 只在已有真字邻格落笔，禁止跳格第二岛
-IDLE_W = 2.0  # 训练：邻格洞 CE 加倍，惩罚「挨着真字却乱猜」
+IDLE_W = 0.5  # 训练：只给生成同族行的邻格洞加一点 CE；2.0 已过拟合 train
 MASK_CH = "[MASK]"  # 未曝光格
 UNK_CH = "[UNK]"  # 词表外
 PAD_CH = "[PAD]"  # 短窗垫字
@@ -245,7 +245,7 @@ def mask_tokens(
         pick = (torch.rand(b, t, device=gold.device) < p) & valid
         canvas = gold.clone()
         canvas[pick] = mask_id
-        return canvas, pick
+        return canvas, pick, gold.new_zeros(b, 1, dtype=torch.bool)
 
     device = gold.device
     u = torch.rand(b, 1, device=device)
@@ -259,10 +259,11 @@ def mask_tokens(
         talk_ids = gold.new_zeros(0)
     keep_tk = _keep_talk(gold, valid, talk_ids, 4, PHRASE_N)
     mode = torch.rand(b, 1, device=device)
+    # 一半前缀（和推理同族），其余散点 / 说话 / 短语
     keep = torch.where(
-        mode < 0.25,
+        mode < 0.50,
         keep_pf,
-        torch.where(mode < 0.45, keep_sc, torch.where(mode < 0.70, keep_tk, keep_ph)),
+        torch.where(mode < 0.65, keep_sc, torch.where(mode < 0.82, keep_tk, keep_ph)),
     )
     empty = ~keep.any(dim=1, keepdim=True)
     keep = torch.where(empty.expand(b, t), keep_ph, keep)
@@ -270,7 +271,7 @@ def mask_tokens(
     pick = torch.where(is_gen.expand(b, t), pick_gen, pick)
     canvas = gold.clone()
     canvas[pick] = mask_id
-    return canvas, pick
+    return canvas, pick, is_gen
 
 
 def run_epoch(model, opts, wins: torch.Tensor, train: bool, sched=None):
@@ -287,7 +288,7 @@ def run_epoch(model, opts, wins: torch.Tensor, train: bool, sched=None):
         for i0 in range(0, nwin, BATCH):
             gold = wins[order[i0 : i0 + BATCH]]
             p = None if train else MASK_P
-            canvas, pick = mask_tokens(
+            canvas, pick, is_gen = mask_tokens(
                 gold, model.pad, model.mask, p, talk_ids=_vocab_ids(model, _TALK),
             )
             if not pick.any():
@@ -299,7 +300,7 @@ def run_epoch(model, opts, wins: torch.Tensor, train: bool, sched=None):
             right = torch.zeros_like(pick)
             left[:, 1:] = vis[:, :-1]
             right[:, :-1] = vis[:, 1:]
-            front = pick & (left | right)
+            front = pick & (left | right) & is_gen.expand_as(pick)
             w = torch.ones(y.shape, dtype=logits.dtype, device=logits.device)
             w = w + IDLE_W * front[pick].to(logits.dtype)
             loss = (F.cross_entropy(logits, y, reduction="none") * w).sum() / w.sum()
@@ -334,7 +335,7 @@ def eval_rate(model, wins: torch.Tensor, p: float, max_win: int = 128) -> int:
     hit = n = 0
     for i0 in range(0, gold.size(0), BATCH):
         g = gold[i0 : i0 + BATCH]
-        canvas, pick = mask_tokens(g, model.pad, model.mask, p)
+        canvas, pick, _ = mask_tokens(g, model.pad, model.mask, p)
         if not pick.any():
             continue
         pred = model.logits_pick(canvas, pick).argmax(-1)
@@ -374,7 +375,7 @@ def eval_cont(model, wins: torch.Tensor, freeze: int = 8, width: int | None = No
 def probe(model, wins, device) -> tuple[int, int]:
     model.eval()
     gold = wins[: min(32, len(wins))]
-    canvas, pick = mask_tokens(gold, model.pad, model.mask, 0.5)
+    canvas, pick, _ = mask_tokens(gold, model.pad, model.mask, 0.5)
     a = model(canvas).argmax(-1)
     vis = (canvas != model.mask) & (canvas != model.pad)
     scramble = canvas.clone()
@@ -451,7 +452,7 @@ def _info_weight(model) -> torch.Tensor:
 
 
 _TALK = set("道叫喝问曰云")
-_STOP = set("。！？")
+_STOP = set("。！？；")
 _QUOTE_OPEN = set("\"“")
 _QUOTE_CLOSE = set("\"”")
 
@@ -844,8 +845,8 @@ def main():
         flush=True,
     )
     print(
-        "mask  train cosine-r[0.10,0.90] + 40% keep-at-native (prefix/scatter/talk/phrase)  "
-        f"eval r=15/50/90%  corpus={path}",
+        "mask  train cosine-r[0.10,0.90] + 40% keep-at-native (½ prefix / scatter/talk/phrase)  "
+        f"eval r=15/50/90%  idle_w={IDLE_W}  corpus={path}",
         flush=True,
     )
     print(
