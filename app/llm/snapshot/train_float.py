@@ -8,6 +8,7 @@ No causal mask. Loss only on MASK holes. See DESIGN.md.
 """
 from __future__ import annotations
 
+import itertools
 import math
 import os
 import random
@@ -43,6 +44,16 @@ GEN_CONF = 0.08  # 过阈才落；空转时降阈
 GEN_K = 24  # 默认显影步数；K=8 锁不住主干
 GEN_NEAR_N = 1  # 只在已有真字邻格落笔，禁止跳格第二岛
 IDLE_W = 0.5  # 训练：只给生成同族行的邻格洞加一点 CE；2.0 已过拟合 train
+GEN_MIX = 0.55  # 训练行里生成同族（左可见、右全 MASK）的比例
+PF_SHARE = 0.70  # 生成同族里左前缀占比（对推理「悟空打」）
+CONT_W = 2.0  # 训练：左前缀后头 3 个洞的 CE，对准推理第一格
+STUMP_N = 3  # 显影：第一步一次快门写下提示右缘连续 3 格（同一张 logits）
+STUMP_K = 6  # 每格取 top-k 做 3 字组合，不是逐步重算
+# 训练窗除 stride 切片外，再在这些人名/称呼处对齐到画布左边（和 infer 提示同族）
+PROMPT_HEADS = (
+    "悟空", "孙悟空", "八戒", "猪八戒", "沙僧", "唐僧", "三藏",
+    "行者", "大圣", "美猴王", "菩萨", "妖精", "那怪", "长老",
+)
 MASK_CH = "[MASK]"  # 未曝光格
 UNK_CH = "[UNK]"  # 词表外
 PAD_CH = "[PAD]"  # 短窗垫字
@@ -72,15 +83,37 @@ def encode(text: str, stoi: dict[str, int]) -> np.ndarray:
     return np.array(ids, dtype=np.int32)
 
 
-def windows(ids: np.ndarray, t: int, stride: int) -> np.ndarray:
+def windows(ids: np.ndarray, t: int, stride: int, glyphs: list[str] | None = None) -> np.ndarray:
     n = len(ids)
     if n < t:
         pad = np.full(t - n, 0, dtype=np.int32)
         return np.stack([np.concatenate([ids, pad])])
-    pos = list(range(0, n - t + 1, stride))
-    if pos[-1] != n - t:
-        pos.append(n - t)
-    return np.stack([ids[p : p + t] for p in pos])
+    pos = set(range(0, n - t + 1, stride))
+    pos.add(n - t)
+    if glyphs is not None and len(glyphs) == n:
+        pos.update(_aligned_starts(glyphs, t))
+    order = sorted(pos)
+    return np.stack([ids[p : p + t] for p in order])
+
+
+def _aligned_starts(glyphs: list[str], t: int) -> list[int]:
+    """Starts where a sentence or a name sits at canvas[0] (infer-like prefixes)."""
+    n = len(glyphs)
+    cap = n - t
+    if cap < 0:
+        return []
+    out = {0}
+    stops = set("。！？；\n")
+    for i, c in enumerate(glyphs):
+        if c in stops and i + 1 <= cap:
+            out.add(i + 1)
+    for name in PROMPT_HEADS:
+        L = len(name)
+        head = list(name)
+        for i in range(0, cap + 1):
+            if glyphs[i : i + L] == head:
+                out.add(i)
+    return list(out)
 
 
 class Block(nn.Module):
@@ -188,9 +221,14 @@ def _keep_scatter(valid: torch.Tensor, n_lo: int, n_hi: int) -> torch.Tensor:
 
 
 def _keep_prefix(valid: torch.Tensor, n_lo: int, n_hi: int) -> torch.Tensor:
-    """Infer-like: keep a left prefix at native indices, rest MASK. No PAD."""
+    """Infer-like: keep a left prefix at native indices, rest MASK. No PAD.
+
+    Length biased short (u²) so 2–5 字更常出现，对齐「悟空 / 悟空打」。
+    """
     b, t = valid.shape
-    nk = torch.randint(n_lo, n_hi + 1, (b, 1), device=valid.device)
+    u = torch.rand(b, 1, device=valid.device)
+    span = max(n_hi - n_lo + 1, 1)
+    nk = n_lo + (u * u * span).long().clamp(max=n_hi - n_lo)
     pos = torch.arange(t, device=valid.device).view(1, t)
     return valid & (pos < nk)
 
@@ -251,7 +289,7 @@ def mask_tokens(
     u = torch.rand(b, 1, device=device)
     ratio = 0.10 + 0.80 * torch.cos(u * math.pi / 2)
     pick = (torch.rand(b, t, device=device) < ratio) & valid
-    is_gen = torch.rand(b, 1, device=device) < 0.40
+    is_gen = torch.rand(b, 1, device=device) < GEN_MIX
     keep_sc = _keep_scatter(valid, 2, FREEZE_N)
     keep_ph = _keep_phrases(valid, 2, PHRASE_N)
     keep_pf = _keep_prefix(valid, 2, FREEZE_N)
@@ -259,11 +297,15 @@ def mask_tokens(
         talk_ids = gold.new_zeros(0)
     keep_tk = _keep_talk(gold, valid, talk_ids, 4, PHRASE_N)
     mode = torch.rand(b, 1, device=device)
-    # 一半前缀（和推理同族），其余散点 / 说话 / 短语
+    rest = 1.0 - PF_SHARE
     keep = torch.where(
-        mode < 0.50,
+        mode < PF_SHARE,
         keep_pf,
-        torch.where(mode < 0.65, keep_sc, torch.where(mode < 0.82, keep_tk, keep_ph)),
+        torch.where(
+            mode < PF_SHARE + 0.33 * rest,
+            keep_sc,
+            torch.where(mode < PF_SHARE + 0.66 * rest, keep_tk, keep_ph),
+        ),
     )
     empty = ~keep.any(dim=1, keepdim=True)
     keep = torch.where(empty.expand(b, t), keep_ph, keep)
@@ -300,9 +342,22 @@ def run_epoch(model, opts, wins: torch.Tensor, train: bool, sched=None):
             right = torch.zeros_like(pick)
             left[:, 1:] = vis[:, :-1]
             right[:, :-1] = vis[:, 1:]
-            front = pick & (left | right) & is_gen.expand_as(pick)
+            gen = is_gen.expand_as(pick)
+            front = pick & (left | right) & gen
+            # 左缘可见、其后连续洞：推理第一格及紧邻两格
+            run = vis.cumprod(dim=1).bool()
+            pl = run.sum(dim=1).clamp(max=T - 1)
+            pos = torch.arange(T, device=gold.device).view(1, T)
+            cont = (
+                pick
+                & gen
+                & vis[:, :1]
+                & (pos >= pl.unsqueeze(1))
+                & (pos < (pl + STUMP_N).unsqueeze(1).clamp(max=T))
+            )
             w = torch.ones(y.shape, dtype=logits.dtype, device=logits.device)
             w = w + IDLE_W * front[pick].to(logits.dtype)
+            w = w + CONT_W * cont[pick].to(logits.dtype)
             loss = (F.cross_entropy(logits, y, reduction="none") * w).sum() / w.sum()
             if train:
                 opts.zero_grad(set_to_none=True)
@@ -447,7 +502,7 @@ def _info_weight(model) -> torch.Tensor:
     w[model.mask] = 0
     for i, c in enumerate(model.vocab):
         if c in _FLESH:
-            w[i] = w[i] * 0.15
+            w[i] = w[i] * 0.5
     return w
 
 
@@ -481,12 +536,19 @@ def _ban_ids(model) -> torch.Tensor:
     return torch.tensor(ids, device=model.tok.weight.device, dtype=torch.long)
 
 
-def _gen_logits(model, canvas: torch.Tensor) -> torch.Tensor:
-    """一次快门：整页 logits。过滤 + 重复惩罚都作用在这张已经算完的分上。"""
+def _gen_logits(model, canvas: torch.Tensor, frozen: torch.Tensor | None = None) -> torch.Tensor:
+    """一次快门：整页 logits。过滤 + 重复惩罚都作用在这张已经算完的分上。
+
+    GEN_REP 只打显影过程中新写下的字，不打冻结提示（否则「打妖怪」无法再写妖/怪/打）。
+    """
     logits = model(canvas)[0] / GEN_TEMP
     logits[:, _ban_ids(model)] = -1e9
     vis = canvas[0]
-    vis = vis[(vis != model.mask) & (vis != model.pad)]
+    if frozen is not None:
+        extra = (~frozen) & (vis != model.mask) & (vis != model.pad)
+        vis = vis[extra]
+    else:
+        vis = vis[(vis != model.mask) & (vis != model.pad)]
     if vis.numel():
         counts = torch.bincount(vis, minlength=model.V).to(logits.dtype)
         logits = logits - GEN_REP * counts
@@ -515,6 +577,46 @@ def _n_take(n_ok: int, steps_left: int) -> int:
         return 0
     sl = max(1, steps_left)
     return max(1, min(n_ok, (n_ok + sl - 1) // sl))
+
+
+def _stump_tokens(
+    probs: torch.Tensor,
+    i0: int,
+    n: int,
+    left: int,
+    stop: torch.Tensor,
+) -> list[int] | None:
+    """One shutter: 3-char fill from this logits page, score = sum log p (no info^β).
+
+    info 会把「：」「“」「，」打掉，把 1.5% 的「物」抬过 72% 的逗号。
+    """
+    n = min(n, T - i0)
+    if n <= 0:
+        return None
+    k = STUMP_K
+    tops: list[list[tuple[int, float]]] = []
+    for j in range(n):
+        p = probs[i0 + j]
+        topv, topi = p.topk(min(k, int(p.numel())))
+        tops.append(list(zip(topi.tolist(), topv.tolist())))
+    stop_set = set(int(x) for x in stop.tolist()) if stop.numel() else set()
+    best: list[int] | None = None
+    best_s = -1e18
+    eps = 1e-8
+    for combo in itertools.product(*tops):
+        toks = [c[0] for c in combo]
+        ps = [c[1] for c in combo]
+        if toks[0] == left:
+            continue
+        if any(toks[j] == toks[j - 1] for j in range(1, n)):
+            continue
+        if any(toks[j] in stop_set for j in range(n - 1)):
+            continue
+        s = sum(math.log(p + eps) for p in ps)
+        if s > best_s:
+            best_s = s
+            best = toks
+    return best
 
 
 def _force_frontier(logits: torch.Tensor, front: torch.Tensor):
@@ -599,7 +701,7 @@ def denoise_ids(
     for step in range(k):
         t = step / max(k - 1, 1)
         beta = GEN_BETA1 * (1.0 - t) + GEN_BETA3 * t
-        logits = _gen_logits(model, canvas)
+        logits = _gen_logits(model, canvas, frozen)
         probs = F.softmax(logits, dim=-1)
         score = probs * info.unsqueeze(0).pow(beta)
         top2 = score.topk(2, dim=-1)
@@ -623,6 +725,36 @@ def denoise_ids(
             last = int(torch.arange(T, device=device)[vis].max().item())
             if hang_ids.numel() and bool((hang_ids == canvas[0, last]).any()):
                 past[:] = False
+        stump_ok = False
+        if step == 0 and vis.any() and hole.any():
+            last = int(torch.arange(T, device=device)[vis].max().item())
+            last_tok = int(canvas[0, last].item())
+            skip_stump = False
+            if stop_ids.numel() and bool((stop_ids == canvas[0, last]).any()):
+                skip_stump = True
+            elif open_ids.numel() and bool((open_ids == canvas[0, last]).any()):
+                skip_stump = True
+            elif pause_ids.numel() and bool((pause_ids == canvas[0, last]).any()):
+                skip_stump = True
+            i0 = last + 1
+            if (
+                not skip_stump
+                and i0 < T
+                and bool(hole[i0])
+                and (i0 >= T or not bool(past[i0]))
+            ):
+                n_st = 0
+                while i0 + n_st < T and bool(hole[i0 + n_st]) and not bool(past[i0 + n_st]):
+                    n_st += 1
+                    if n_st >= STUMP_N:
+                        break
+                toks = _stump_tokens(probs, i0, n_st, last_tok, stop_ids)
+                if toks:
+                    canvas[0, i0 : i0 + len(toks)] = torch.tensor(
+                        toks, device=device, dtype=canvas.dtype,
+                    )
+                    stump_ok = True
+                    idle = 0
         thr = GEN_CONF * (0.25 if idle else 1.0)
         sc = conf * info[pred].pow(beta)
         sc[~hole | ~near | past] = -1.0
@@ -633,7 +765,9 @@ def denoise_ids(
         sc[conf < thr] = -1.0
         n_ok = int((sc >= 0).sum().item())
         m = _n_take(n_ok, k - step)
-        if m > 0:
+        if stump_ok:
+            pass
+        elif m > 0:
             top = torch.topk(sc, k=m).indices
             take = torch.zeros(T, dtype=torch.bool, device=device)
             take[top] = sc[top] >= 0
@@ -813,7 +947,8 @@ def main():
     vocab = build_vocab(text, VOCAB_MAX)
     stoi = {c: i for i, c in enumerate(vocab)}
     ids = encode(text, stoi)
-    wins = torch.from_numpy(windows(ids, T, STRIDE)).long()
+    glyphs = list(chars_of(text))
+    wins = torch.from_numpy(windows(ids, T, STRIDE, glyphs)).long()
     ntr = int(len(wins) * 0.9)
     train_w, test_w = wins[:ntr], wins[ntr:]
     device = setup_device()
@@ -845,8 +980,9 @@ def main():
         flush=True,
     )
     print(
-        "mask  train cosine-r[0.10,0.90] + 40% keep-at-native (½ prefix / scatter/talk/phrase)  "
-        f"eval r=15/50/90%  idle_w={IDLE_W}  corpus={path}",
+        "mask  train cosine-r[0.10,0.90] + "
+        f"{int(GEN_MIX * 100)}% keep-at-native ({int(PF_SHARE * 100)}% short-prefix)  "
+        f"eval r=15/50/90%  idle_w={IDLE_W}  cont_w={CONT_W}  aligned-heads  corpus={path}",
         flush=True,
     )
     print(
