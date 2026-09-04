@@ -62,7 +62,7 @@ $(YC_A): $(BIN) $(YC_BUNDLE)
 		mv -f $@.new2 $@ && rm -f $@.new; \
 	else \
 		echo "L4: ./yac compiling bundle with C GC (slow; not the native <3s path)"; \
-		./$(BIN) --pkg src-self $(YC_BUNDLE) $(YC_BUNDLE) -o $@ && chmod +x $@; \
+		./$(BIN) --pkg src-self $(YC_BUNDLE) -o $@ && chmod +x $@; \
 	fi
 
 # L5: native yc_a compiles the same bundle. yc_a and yc_b need not match.

@@ -147,6 +147,15 @@ let contains(s, sub) =
   else if m > n then false
   else rec(0)
 
+/* Non-overlapping count. Doubled L4 (bundle passed twice) ran main twice. */
+let count_str(s, sub, i, n) =
+  let m = str_len(sub) in
+  let k = str_len(s) in
+  if m == 0 then n
+  else if i + m > k then n
+  else if str_slice(s, i, m) == sub then count_str(s, sub, i + m, n + 1)
+  else count_str(s, sub, i + 1, n)
+
 let interp_eq(st, name, flags, path, want) =
   let argv = append(yac_c(0), append(flags, [path])) in
   let r = run(argv) in
@@ -233,7 +242,17 @@ let compiler_multi(st, yc) =
     let _ = run(["chmod", "+x", bin]) in
     let st1 = check(st, "compiler multi-file", "42", int_to_str(nth(run([bin]), 0))) in
     let r2 = run(append(yc, ["--cps", a, b])) in
-    check(st1, "cps multi-file", "42", chomp(nth(r2, 1)))
+    let st2 = check(st1, "cps multi-file", "42", chomp(nth(r2, 1))) in
+    let once = str_cat(TMP, "/dup_once.yac") in
+    let dbin = native(str_cat(TMP, "/c_dup")) in
+    let _ = write_file(once, "print(\"once\")\n") in
+    let cr2 = run(append(yc, [once, once, "-o", dbin])) in
+    if nth(run(["test", "-f", dbin]), 0) != 0 then
+      check(st2, "compiler dup source", "wrote binary",
+            str_cat("compile rc=", int_to_str(nth(cr2, 0))))
+    else
+      let _ = run(["chmod", "+x", dbin]) in
+      check(st2, "compiler dup source", "once\nonce", chomp(nth(run([dbin]), 1)))
 
 /* Cross-pkg string + format: with `import fmt` args stay in place (exit 42).
  * Without it, format is unbound and compile must fail (not a silent ncap steal). */
@@ -657,8 +676,14 @@ let compiler_all(st, yc) =
   let st6 =
     if ok then check(st5b, "scheme set!", "1", "1")
     else check(st5b, "scheme set!", "unsupported Scheme form", blob) in
+  let rh = run(append(yc, ["-h"])) in
+  let st6h = check(st6, "yc -h usage once", "1",
+                   int_to_str(count_str(nth(rh, 1), "usage: yc", 0, 0))) in
+  let rnf = run(append(yc, ["--no-such"])) in
+  let st6b = check(st6h, "yc bad flag once", "error: bad arguments",
+                   chomp(nth(rnf, 1))) in
   let radd = run(append(yc, ["--eval-cps", "tests/compiler/cases/add.yac"])) in
-  let st7 = check(st6, "eval-cps add", "3", chomp(nth(radd, 1))) in
+  let st7 = check(st6b, "eval-cps add", "3", chomp(nth(radd, 1))) in
   let rcc = run(append(yc, ["--eval-cps", "tests/interp/callcc.yac"])) in
   let st8 = check(st7, "eval-cps callcc", "42", chomp(nth(rcc, 1))) in
   let rcc2 = run(append(yc, ["--eval-cps", "tests/interp/callcc2.yac"])) in

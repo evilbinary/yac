@@ -1313,6 +1313,13 @@ let rt_gc_collect_ins(_) =
    ["$ld64", 3, 3, 0],
    ["jmp", "gc_bf"],
    ["label", "gc_sc0"],
+   ["$ld64", 5, 1, 120],
+   ["$and", 9, 5, 7],
+   ["mov_imm", 10, 1],
+   ["$jcc", "==", 9, 10, "gc_pmark", "gc_pnone"],
+   ["label", "gc_pmark"],
+   ["fcall", 12, "yac_gc_mark", [5]],
+   ["label", "gc_pnone"],
    ["$ld64", 2, 1, 24],
    ["$smap", 21],
    ["$jcc", "==", 21, 8, "gc_cons", "gc_smp"],
@@ -1863,7 +1870,7 @@ let rt_box_set_ins(_) =
    ["mov_imm", 3, 0 + 0],
    ["ret", 3]]
 
-/* glob 3 holds the profiler listbuf (0 until yac_prof_cell). */
+/* glob 3 = G+120 profiler list (GC root). glob 4 = G+128 enter/leave busy. */
 let rt_prof_cell_ins(_) =
   [["local", 8, 0],
    ["glob", 1, 3],
