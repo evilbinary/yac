@@ -3,7 +3,9 @@
  */
 
 package pack
-export pack_pe_target, pe_finish_imports, pe_finish_dll
+export pack_pe_target, pe_finish_imports, pe_finish_dll, pe_iat_qwords
+import back.pack.target {target_pe_machine, target_vaddr, target_text_off, target_shared}
+import back.pack.elf {elf_init_off, elf_dynexp_get, elf_relocs_get}
 
 let pe_le16(b, v, i) =
   let _ = bytes_put(b, i + 0, band(v, 255)) in

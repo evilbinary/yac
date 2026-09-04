@@ -5,6 +5,7 @@
 
 package front
 export eval_cps_all
+import lib.map
 
 let ce_eb =
   let b = box_new() in

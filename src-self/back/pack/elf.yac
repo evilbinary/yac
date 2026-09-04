@@ -7,7 +7,7 @@
  */
 
 package pack
-export pack_elf, pack_elf_ex, pack_elf_libc, pack_elf_exec, pack_elf_dyn, elf_shared_set, elf_maybe_debug, elf_note_abs64, elf_dynexp_set, elf_dynexp_get, elf_init_off_set, elf_init_off, elf_pic_set, elf_pic, elf_relocs_reset, elf_relocs_get, syms_enable
+export pack_elf, pack_elf_ex, pack_elf_libc, pack_elf_exec, pack_elf_dyn, elf_shared_set, elf_maybe_debug, elf_note_abs64, elf_dynexp_set, elf_dynexp_get, elf_init_off_set, elf_init_off, elf_pic_set, elf_pic, elf_relocs_reset, elf_relocs_get, syms_enable, le16, le32, le64
 
 let le16(b, v, i) =
   let _ = bytes_put(b, i + 0, band(v, 255)) in

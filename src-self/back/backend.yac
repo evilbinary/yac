@@ -7,11 +7,20 @@ import back.pack.elf {elf_shared_set}
 import back.pack.target {target_shared,target_format}
 import back.pack.pe {pack_pe_target, pe_finish_imports, pe_finish_dll}
 import back.pack.elf {pack_elf_libc}
-import back.pack.image {pack_image}
+import back.pack.pack {pack_image}
 import back.pack.elf {pack_elf}
 import back.pack.target {target_emachine, target_vaddr, target_text_off}
 import back.pack.target {target_arch, target_format, target_shared, target_emachine, target_vaddr, target_text_off}
 import lib.map
+import back.emit.emit {cimport_names, cimport_got, cimport_n}
+import front.lir {in_list, imap_box, malias_box, imap_load, pkg_prefix_get, pkg_prefix_set, lir_all, env_new, sigma_of_rt, start_proc, tco_prog, sigma_list}
+import front.lexer {tokenize, tok_ident_line}
+import front.parser {parse_program, prog_has_err, report_syntax}
+import front.anf {anf_all}
+import front.cps {cps_all, cps_maybe_opt}
+import front.eval_cps {eval_cps_all}
+import front.uncps {uncps_all, uncps_is_err}
+import lib.pass {mk_pass, run_passes}
 
 
 let backend_emit(t, ast) = nth(lower_expr(ast, t), 0)

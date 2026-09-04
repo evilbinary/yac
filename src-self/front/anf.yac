@@ -22,6 +22,7 @@
 
 package front
 export anf_all, anf_expr
+import lib.map {intern}
 
 let reverse(xs) = list_rev(xs)
 

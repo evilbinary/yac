@@ -5,6 +5,7 @@
 
 package front
 export uncps_all, uncps_is_err
+import lib.map {intern}
 
 let uncps_take(xs, n, i, acc) =
   if i >= n then list_rev(acc)

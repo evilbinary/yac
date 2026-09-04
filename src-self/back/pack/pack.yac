@@ -2,9 +2,11 @@
 
 package pack
 export pack_image, pack_elf_target
-import back.pe
-import back.elf
-import back.macho
+import back.pack.pe {pack_pe_target}
+import back.pack.elf {pack_elf_ex, elf_maybe_debug}
+import back.pack.macho {pack_macho_target}
+import back.pack.yjit {pack_yjit_flat, yjit_arch_num}
+import back.pack.target {target_shared, target_emachine, target_vaddr, target_text_off, target_format, target_arch}
 
 let pack_elf_target(t, code) =
   let sh = if target_shared(t) then 1 else 0 in

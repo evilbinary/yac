@@ -16,6 +16,7 @@
 
 package backend
 export yac_prof_enable, yac_prof_dump
+import lib.map {fmap_get, fmap_put, fmap_new, fmap_init_n}
 
 let prof_roots = list_new()
 

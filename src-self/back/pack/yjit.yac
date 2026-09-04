@@ -4,6 +4,8 @@
 
 package pack
 export pack_yjit_ex, pack_yjit_flat, yjit_arch_num, yjit_arch_name, yjit_read, yjit_export_enc, yjit_export_dec, yjit_imp_enc, yjit_imp_parse
+import back.pack.elf {le16, le32, le64}
+import lib.map {fmap_cap_ok, fmap_new, fmap_init_n, fmap_put, intern}
 
 let YJIT_HDR = 64
 let YJIT_VER = 1
