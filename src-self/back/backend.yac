@@ -1,7 +1,7 @@
 /* backend.yac — pipeline + image. lir_expr = ANF→LIR；lower_expr = LIR→emit. */
 
 package back.backend
-export compile_native, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, ast_packages, skip_local_imp, fun_off, link_need_box, link_local_box, rewrite_imports, rt_for_link
+export compile_native, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, report_unbound_ex, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, ast_packages, skip_local_imp, fun_off, link_need_box, link_local_box, rewrite_imports, rt_for_link, compiler_top_env, compiler_env_bind
 import back.lower
 import back.pack.elf {elf_shared_set, funsym_get, pack_elf, pack_elf_libc}
 import back.pack.target {target_arch, target_emachine, target_format, target_shared, target_text_off, target_vaddr}
@@ -165,7 +165,11 @@ let import_sel(sel, all, i, acc) =
     else import_sel(sel, all, i + 1, acc)
 
 let fill_import(e) =
-  let all = pkg_export_names(nth(e, 1)) in
+  let raw = pkg_export_names(nth(e, 1)) in
+  let all =
+    if raw != [] then raw
+    else if nth(e, 1) != "compiler" then raw
+    else intern_names(["compile_file", "compile", "load"], 0, []) in
   let alias = if len(e) > 3 then nth(e, 3) else 0 in
   let pairs =
     if len(e) < 3 then import_id_pairs(all, 0, [])
@@ -208,10 +212,21 @@ let kernel_names_cache =
   let _ = box_set(b, 0) in
   b
 
+let compiler_top_env(_) =
+  ["compile_native", "compile_jit", "target_live", "mk_jit_target",
+   "mk_target", "host_arch", "host_format"]
+
+let compiler_env_bind(xs, i) =
+  if i >= len(xs) then 0
+  else
+    let n = intern(nth(xs, i)) in
+    let _ = box_set(imap_box, cons([n, n], box_get(imap_box))) in
+    compiler_env_bind(xs, i + 1)
+
 let kernel_fun_names(_) =
   let c = box_get(kernel_names_cache) in
   if c == 0 then
-    let v = rt_fun_names(runtime_funs(0)) in
+    let v = intern_names(compiler_top_env(0), 0, rt_fun_names(runtime_funs(0))) in
     let _ = box_set(kernel_names_cache, v) in
     v
   else c
@@ -263,19 +278,6 @@ let report_unbound_ex(src, ast, extra) =
 
 let report_unbound(src, ast) = report_unbound_ex(src, ast, [])
 
-/* Host compile API: names already in yc, injected as this package's env.
- * imap local→bare so lir resolve_call does not qualify them. */
-let compiler_top_env(_) =
-  ["compile_native", "compile_jit", "target_live", "mk_jit_target",
-   "mk_target", "host_arch", "host_format"]
-
-let compiler_env_bind(xs, i) =
-  if i >= len(xs) then 0
-  else
-    let n = intern(nth(xs, i)) in
-    let _ = box_set(imap_box, cons([n, n], box_get(imap_box))) in
-    compiler_env_bind(xs, i + 1)
-
 let lir_extend(pkg, src, acc) =
   if src == 0 then acc
   else
@@ -291,9 +293,7 @@ let lir_extend(pkg, src, acc) =
       let saved_p = pkg_prefix_get(0) in
       let filled = rewrite_imports(ast, 0, []) in
       let _ = imap_load(filled, 0) in
-      let _ =
-        if pkg == "compiler" then compiler_env_bind(compiler_top_env(0), 0)
-        else 0 in
+      let _ = compiler_env_bind(compiler_top_env(0), 0) in
       let _ = pkg_prefix_set(ast_pkg_name(ast, 0)) in
       if report_unbound(src, ast) != 0 then
         let _ = pkg_fail_set(1) in
@@ -351,6 +351,7 @@ let link_from_ast(ast) =
   let _ = box_set(link_need_box, ast_imports(ast1, 0, [])) in
   let _ = box_set(link_local_box, pkgs) in
   let _ = imap_load(filled, 0) in
+  let _ = compiler_env_bind(compiler_top_env(0), 0) in
   0
 
 let rt_cache_num =
@@ -482,13 +483,29 @@ let dump_uncps(src, do_opt) =
       let _ = print(r) in 0
 
 let compile_native(src, t) =
-  let ast0 = pass_parse(pass_lex(src)) in
-  if prog_has_err(ast0, 0) then
-    let _ = report_syntax(ast0) in 0
-  else if report_unbound(src, ast0) != 0 then 0
+  if src == 0 then 0
+  else if is_int(src) then 0
+  else if t == 0 then 0
   else
-    let _ = pkg_fail_set(0) in
-    let _ = link_from_ast(ast0) in
-    let bin = run_passes(make_pipeline(t), src) in
-    if pkg_fail(0) != 0 then 0 else bin
+    let saved_i = box_get(imap_box) in
+    let saved_m = box_get(malias_box) in
+    let saved_p = pkg_prefix_get(0) in
+    let saved_n = box_get(link_need_box) in
+    let saved_l = box_get(link_local_box) in
+    let ast0 = pass_parse(pass_lex(src)) in
+    let bin =
+      if prog_has_err(ast0, 0) then
+        let _ = report_syntax(ast0) in 0
+      else if report_unbound(src, ast0) != 0 then 0
+      else
+        let _ = pkg_fail_set(0) in
+        let _ = link_from_ast(ast0) in
+        let b = run_passes(make_pipeline(t), src) in
+        if pkg_fail(0) != 0 then 0 else b in
+    let _ = box_set(imap_box, saved_i) in
+    let _ = box_set(malias_box, saved_m) in
+    let _ = pkg_prefix_set(saved_p) in
+    let _ = box_set(link_need_box, saved_n) in
+    let _ = box_set(link_local_box, saved_l) in
+    bin
 

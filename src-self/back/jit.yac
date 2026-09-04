@@ -10,7 +10,7 @@ export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
 import back.emit.emit {cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, yjit_layout_get}
 import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog}
-import back.backend {ast_imports, ast_packages, fun_off, link_from_ast, link_local_box, link_need_box, pass_anf, pass_lex, pass_parse, report_unbound, rewrite_imports, rt_for_link, skip_local_imp}
+import back.backend {ast_imports, ast_packages, compiler_env_bind, compiler_top_env, fun_off, link_from_ast, link_local_box, link_need_box, pass_anf, pass_lex, pass_parse, report_unbound, report_unbound_ex, rewrite_imports, rt_for_link, skip_local_imp}
 import back.lower {emit_apply_unres, lower_expr}
 import back.pack.target {JIT_VADDR, target_arch}
 import back.pack.yjit {bytes_copy_range, pack_yjit_ex, yjit_arch_name, yjit_arch_num, yjit_export_dec, yjit_export_enc, yjit_imp_enc, yjit_imp_parse, yjit_read}
@@ -197,6 +197,19 @@ let pkgs_append(dst, src, i) =
     if in_list(p, dst) then pkgs_append(dst, src, i + 1)
     else pkgs_append(cons(p, dst), src, i + 1)
 
+let repl_imp_sc_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+let filled_imp_sc(filled, i, acc) =
+  if i >= len(filled) then acc
+  else
+    let e = nth(filled, i) in
+    if nth(e, 0) == "import" then
+      filled_imp_sc(filled, i + 1, append(import_locals(e), acc))
+    else filled_imp_sc(filled, i + 1, acc)
+
 let link_from_ast_repl(ast) =
   let pkgs = ast_packages(ast, 0, []) in
   let ast1 = skip_local_imp(ast, pkgs, 0, []) in
@@ -204,7 +217,10 @@ let link_from_ast_repl(ast) =
   let more = ast_imports(ast1, 0, []) in
   let _ = box_set(link_need_box, pkgs_append(box_get(link_need_box), more, 0)) in
   let _ = box_set(link_local_box, pkgs_append(box_get(link_local_box), pkgs, 0)) in
+  let _ = box_set(repl_imp_sc_box,
+    pkgs_append(box_get(repl_imp_sc_box), filled_imp_sc(filled, 0, []), 0)) in
   let _ = imap_load_merge(filled, 0) in
+  let _ = compiler_env_bind(compiler_top_env(0), 0) in
   0
 
 let repl_quiet_print(ast) =
@@ -264,11 +280,11 @@ let compile_jit(src, t, named) =
     else
       let ast0 = ast_repl_import(ast) in
       let ast1 = jslot_rw_all(ast0) in
-      if report_unbound(src, ast1) != 0 then 1
+      let _ = link_from_ast_repl(ast1) in
+      if report_unbound_ex(src, ast1, box_get(repl_imp_sc_box)) != 0 then 1
       else
         let live0 = box_get(jit_live_box) in
         let live = if jit_sess_ok(t) then live0 else 0 in
-        let _ = link_from_ast_repl(ast1) in
         let _ =
           if live == 0 then emit_jsess_set(0)
           else emit_jsess_set(live) in
