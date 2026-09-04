@@ -32,10 +32,13 @@ VOCAB_MAX = 4096  # 字符 cap，另加 PAD/UNK/MASK
 MASK_P = 0.15  # 仅评价对照；训练用 cosine 动态 r∈[0.10,0.90]
 LR = 6e-4  # AdamW；cosine 降到 0.1 * LR
 WD = 0.01  # 权重衰减
-FREEZE_N = 8  # 推理：左侧最多冻结这么多提示字
+FREEZE_N = 8  # 训练：生成同族每行留下的可见字个数上界
 GEN_TEMP = 0.8  # 显影温度（作用在已经算完的整页 logits 上）
 GEN_REP = 2.5  # 已可见字的重复惩罚
 GEN_NEAR = 4.0  # 禁止与左邻同一字（挡「你你」）
+GEN_BETA1 = 1.2  # 主干：信息量指数（稀有字优先）
+GEN_BETA2 = 0.2  # 细节：接近模型原概率
+GEN_CONF = 0.08  # 主干：原概率过低则不占 keep 名额
 MASK_CH = "[MASK]"  # 未曝光格
 UNK_CH = "[UNK]"  # 词表外
 PAD_CH = "[PAD]"  # 短窗垫字
@@ -168,19 +171,38 @@ class SnapshotLM(nn.Module):
         return F.linear(self.encode(ids), self.tok.weight)
 
 
-def _span_pick(valid: torch.Tensor, ratio: torch.Tensor) -> torch.Tensor:
-    """Start at ~ratio/2.5 of positions, cover 2–4 tokens (phrase-sized holes)."""
+def _keep_scatter(valid: torch.Tensor, n_lo: int, n_hi: int) -> torch.Tensor:
+    """Leave n_lo..n_hi gold chars at their native indices (not moved to a template)."""
     b, t = valid.shape
-    p_start = (ratio / 2.5).clamp(0.04, 0.35)
-    starts = (torch.rand(b, t, device=valid.device) < p_start) & valid
-    pick = starts.clone()
-    for k in range(1, 4):
-        pick[:, k:] |= starts[:, : t - k]
-    return pick & valid
+    device = valid.device
+    score = torch.rand(b, t, device=device).masked_fill(~valid, -1.0)
+    nk = torch.randint(n_lo, n_hi + 1, (b, 1), device=device)
+    order = score.argsort(dim=-1, descending=True)
+    rank = torch.empty_like(order)
+    rank.scatter_(1, order, torch.arange(t, device=device).expand(b, t))
+    return valid & (rank < nk)
+
+
+def _keep_phrases(valid: torch.Tensor, n_lo: int, n_hi: int) -> torch.Tensor:
+    """1–2 substrings that already sit in the window; start is wherever they are, not centered."""
+    b, t = valid.shape
+    device = valid.device
+    pos = torch.arange(t, device=device).view(1, t)
+
+    def one_span():
+        width = torch.randint(n_lo, n_hi + 1, (b, 1), device=device)
+        cap = (t - width.float() + 1).clamp(min=1)
+        start = (torch.rand(b, 1, device=device) * cap).long()
+        return valid & (pos >= start) & (pos < start + width)
+
+    keep = one_span()
+    two = torch.rand(b, 1, device=device) < 0.5
+    extra = one_span()
+    return keep | (extra & two.expand(b, t))
 
 
 def mask_tokens(gold: torch.Tensor, pad: int, mask_id: int, p: float | None):
-    """Train: per-row r ~ U(0.10, 0.90), independent holes. Eval: fixed p."""
+    """Train: cosine independent holes + generate-family keeps at native indices. Eval: fixed p."""
     b, t = gold.shape
     valid = gold != pad
     if p is not None:
@@ -193,18 +215,16 @@ def mask_tokens(gold: torch.Tensor, pad: int, mask_id: int, p: float | None):
     # MaskGIT cosine：u=0 → r≈0.90（第一帧），u=1 → r≈0.10
     u = torch.rand(b, 1, device=device)
     ratio = 0.10 + 0.80 * torch.cos(u * math.pi / 2)
-    pick_ind = (torch.rand(b, t, device=device) < ratio) & valid
-    pick_span = _span_pick(valid, ratio)
-    use_span = (ratio < 0.50) & (torch.rand(b, 1, device=device) < 0.5)
-    pick = torch.where(use_span.expand(b, t), pick_span, pick_ind)
-    # 25%: 主题+背景 — 保留窗内一段真字（2–8），其余全 MASK
-    is_subj = torch.rand(b, 1, device=device) < 0.25
-    pos = torch.arange(t, device=device).view(1, t)
-    width = torch.randint(2, FREEZE_N + 1, (b, 1), device=device)
-    start = (torch.rand(b, 1, device=device) * (t - width.float() + 1)).long()
-    keep = valid & (pos >= start) & (pos < start + width)
-    pick_subj = valid & ~keep
-    pick = torch.where(is_subj.expand(b, t), pick_subj, pick)
+    pick = (torch.rand(b, t, device=device) < ratio) & valid
+    # 生成同族：可见字留在书页真实下标，其余全 MASK。
+    # 不要「左金标 / 居中主题 / 左右夹洞」几何模板，也不要把字搬到别的格。
+    is_gen = torch.rand(b, 1, device=device) < 0.35
+    keep_sc = _keep_scatter(valid, 2, FREEZE_N)
+    keep_ph = _keep_phrases(valid, 2, FREEZE_N)
+    scatter = torch.rand(b, 1, device=device) < 0.5
+    keep = torch.where(scatter.expand(b, t), keep_sc, keep_ph)
+    pick_gen = valid & ~keep
+    pick = torch.where(is_gen.expand(b, t), pick_gen, pick)
     canvas = gold.clone()
     canvas[pick] = mask_id
     return canvas, pick
@@ -323,13 +343,15 @@ def probe(model, wins, device) -> tuple[int, int]:
 
 
 def prompt_glyphs(prompt: str) -> list[str]:
-    return [c for c in prompt if c != "\r"][-FREEZE_N:]
+    g = [c for c in prompt if c != "\r"]
+    return g[: T - 2]
 
 
-def encode_prompt(prompt: str, stoi: dict[str, int]) -> list[int]:
+def encode_prompt(prompt: str, stoi: dict[str, int], cap: int | None = None) -> list[int]:
     unk = stoi[UNK_CH]
     ids = [stoi.get(c, unk) for c in prompt if c != "\r"]
-    return ids[-FREEZE_N:]
+    n = (T - 2) if cap is None else cap
+    return ids[:n] if n else ids
 
 
 def n_freeze(prompt: str) -> int:
@@ -362,6 +384,25 @@ def show_canvas(
     return "".join(out)
 
 
+_FLESH = set("的了是在着过和与也又都就还把被让从到得地吗呢吧啊呀么呵之乎亦，。！？：；、\"'（）“”\n")
+
+
+def _info_weight(model) -> torch.Tensor:
+    """词表按频次降序：下标越大越稀有，信息量越高。"""
+    v = model.V
+    n = max(v - 3, 1)
+    idx = torch.arange(v, device=model.tok.weight.device, dtype=torch.float32)
+    rank = (idx - 2).clamp(min=1)
+    w = 0.2 + 0.8 * (rank / n).sqrt()
+    w[model.pad] = 0
+    w[model.unk] = 0
+    w[model.mask] = 0
+    for i, c in enumerate(model.vocab):
+        if c in _FLESH:
+            w[i] = w[i] * 0.15
+    return w
+
+
 def _ban_ids(model) -> torch.Tensor:
     """工程防护：UNK/PAD/MASK、脚注括号与 ASCII 数字不进正文。"""
     ids = [model.pad, model.unk, model.mask]
@@ -385,53 +426,67 @@ def _gen_logits(model, canvas: torch.Tensor) -> torch.Tensor:
     left = canvas[0, :-1]
     ok = (left != model.mask) & (left != model.pad)
     if bool(ok.any()):
-        idx = torch.arange(1, T, device=logits.device)[ok]
-        logits[idx, left[ok]] = logits[idx, left[ok]] - GEN_NEAR
+        idx = torch.arange(1, T, device=logits.device)
+        logits[idx[ok], left[ok]] = logits[idx[ok], left[ok]] - GEN_NEAR
     return logits
 
 
-def blank_canvas(prompt: str, stoi: dict[str, int], model, device, layout: str = "left"):
-    """layout=left: 提示贴左边；center: 主题放画面中间，两边当背景 MASK。"""
+def blank_canvas(prompt: str, stoi: dict[str, int], model, device):
+    """提示按原词序写在下标 0..n，不搬格。"""
     ids = encode_prompt(prompt, stoi)
     canvas = torch.full((1, T), model.mask, dtype=torch.long, device=device)
-    n = min(len(ids), T - 1)
-    at = 0
+    n = min(len(ids), T - 2)
     if n:
-        at = (T - n) // 2 if layout == "center" else 0
-        canvas[0, at : at + n] = torch.tensor(ids[:n], device=device)
-    return canvas, at
+        canvas[0, :n] = torch.tensor(ids[:n], device=device)
+    return canvas, 0
 
 
 @torch.no_grad()
 def denoise_ids(
-    model, prompt: str, stoi: dict[str, int], k: int, device,
-    frames: bool = False, layout: str = "left",
+    model, prompt: str, stoi: dict[str, int], k: int, device, frames: bool = False,
 ):
-    """Mask-Predict：整页预测，低置信度格重涂成 MASK，冻结主题不改。"""
+    """主干（高信息量先占格）→ 细节（按 cosine 逐渐填满）；冻结提示不改。"""
     model.eval()
-    canvas, at = blank_canvas(prompt, stoi, model, device, layout)
+    canvas, at = blank_canvas(prompt, stoi, model, device)
     frozen = canvas[0] != model.mask
     orig = canvas[0].clone()
     k = max(1, k)
     n0 = int((~frozen).sum().item())
+    info = _info_weight(model)
     snaps = [canvas[0].clone()] if frames else None
     for step in range(k):
         logits = _gen_logits(model, canvas)
-        top2 = logits.topk(2, dim=-1)
+        probs = F.softmax(logits, dim=-1)
+        trunk = step < max(1, k // 3)
+        beta = GEN_BETA1 if trunk else GEN_BETA2
+        score = probs * info.unsqueeze(0).pow(beta)
+        top2 = score.topk(2, dim=-1)
         pred = top2.indices[:, 0].clone()
         alt = top2.indices[:, 1]
-        for i in range(1, T):
-            if pred[i] == pred[i - 1]:
-                pred[i] = alt[i]
+        run = pred[1:] == pred[:-1]
+        pred[1:] = torch.where(run, alt[1:], pred[1:])
         pred = torch.where(frozen, orig, pred)
-        conf = F.softmax(logits, dim=-1)[torch.arange(T, device=device), pred]
-        canvas[0] = pred
-        n_remask = cosine_n_remask(step, k, n0)
-        if n_remask > 0:
-            score = conf.clone()
-            score[frozen] = 1e9
-            low = torch.topk(score, k=min(n_remask, n0), largest=False).indices
-            canvas[0, low] = model.mask
+        conf = probs[torch.arange(T, device=device), pred]
+        if trunk:
+            hole = (~frozen) & (canvas[0] == model.mask)
+            keep_sc = conf * info[pred].pow(beta)
+            keep_sc[~hole | (conf < GEN_CONF)] = -1.0
+            n_ok = int((keep_sc >= 0).sum().item())
+            m = min(n_ok, max(1, (step + 1) * max(2, n0 // (3 * k))))
+            if m > 0 and n_ok > 0:
+                top = torch.topk(keep_sc, k=m).indices
+                canvas[0, top] = pred[top]
+        else:
+            canvas[0] = torch.where(frozen, orig, pred)
+            n_remask = cosine_n_remask(step, k, n0)
+            filled = (~frozen) & (canvas[0] != model.mask)
+            nf = int(filled.sum().item())
+            n_remask = min(n_remask, nf)
+            if n_remask > 0 and nf > 0:
+                sc = conf.clone()
+                sc[~filled] = 1e9
+                low = torch.topk(sc, k=n_remask, largest=False).indices
+                canvas[0, low] = model.mask
         if snaps is not None:
             snaps.append(canvas[0].clone())
     out = canvas[0]
@@ -440,30 +495,28 @@ def denoise_ids(
     return out, at
 
 
-def denoise(model, prompt: str, stoi: dict[str, int], k: int, device, layout: str = "left") -> str:
-    ids, at = denoise_ids(model, prompt, stoi, k, device, layout=layout)
+def denoise(model, prompt: str, stoi: dict[str, int], k: int, device) -> str:
+    ids, at = denoise_ids(model, prompt, stoi, k, device)
     return show_canvas(model, ids.tolist(), prompt_glyphs(prompt), glyph_at=at)
 
 
-def print_frames(model, prompt: str, stoi: dict[str, int], k: int, device, layout: str = "left"):
+def print_frames(model, prompt: str, stoi: dict[str, int], k: int, device):
     glyphs = prompt_glyphs(prompt)
-    ids, snaps, at = denoise_ids(model, prompt, stoi, k, device, frames=True, layout=layout)
-    n = len(snaps)
-    mid = min(1 + (n - 1) // 2, n - 1) if n > 2 else 0
-    print(f"step 0  {show_canvas(model, snaps[0].tolist(), glyphs, glyph_at=at)}", flush=True)
-    if n > 2 and mid not in (0, n - 1):
-        print(f"step {mid}  {show_canvas(model, snaps[mid].tolist(), glyphs, glyph_at=at)}", flush=True)
-    print(f"final   {show_canvas(model, ids.tolist(), glyphs, glyph_at=at)}", flush=True)
+    _ids, snaps, at = denoise_ids(model, prompt, stoi, k, device, frames=True)
+    last = len(snaps) - 1
+    for i, snap in enumerate(snaps):
+        tag = "final" if i == last else f"step {i}"
+        print(f"{tag:<8}{show_canvas(model, snap.tolist(), glyphs, glyph_at=at)}", flush=True)
 
 
 def print_k_curve(model, stoi: dict[str, int], device):
-    print("--- generate (left freeze / center subject) ---", flush=True)
+    print("--- generate (trunk then detail) ---", flush=True)
     torch.manual_seed(1)
-    print(f"K=8 左 悟空    {denoise(model, '悟空', stoi, 8, device, 'left')}", flush=True)
+    print(f"K=8 悟空            {denoise(model, '悟空', stoi, 8, device)}", flush=True)
     torch.manual_seed(1)
-    print(f"K=8 中 悟空    {denoise(model, '悟空', stoi, 8, device, 'center')}", flush=True)
+    print(f"K=8 美猴王          {denoise(model, '美猴王', stoi, 8, device)}", flush=True)
     torch.manual_seed(1)
-    print(f"K=8 中 美猴王  {denoise(model, '美猴王', stoi, 8, device, 'center')}", flush=True)
+    print(f"K=8 孙悟空打妖怪    {denoise(model, '孙悟空打妖怪', stoi, 8, device)}", flush=True)
 
 
 def save_ckpt(path: str, model, vocab: list[str], opts=None, sched=None, ep=0):
@@ -534,14 +587,13 @@ def cmd_infer(argv: list[str]) -> int:
     prompt = argv[2] if len(argv) > 2 else "悟空"
     k = int(argv[3]) if len(argv) > 3 and argv[3].lstrip("-").isdigit() else 8
     chat = "chat" in argv
-    layout = "center" if "center" in argv else "left"
     if not os.path.isfile(ckpt):
         print(f"load failed (train first): {ckpt}", flush=True)
         return 1
     device = setup_device()
     torch.manual_seed(1)
     model, stoi = load_ckpt(ckpt, device)
-    print(f"snapshot  V={model.V}  d={D}  T={T}  K={k}  layout={layout}  {ckpt}", flush=True)
+    print(f"snapshot  V={model.V}  d={D}  T={T}  K={k}  {ckpt}", flush=True)
     if chat:
         if prompt == "-":
             print("chat  (quit to exit)", flush=True)
@@ -553,9 +605,8 @@ def cmd_infer(argv: list[str]) -> int:
         print("generate  (quit to exit)", flush=True)
         infer_repl(model, stoi, k, device, False)
     else:
-        tag = "center subject" if layout == "center" else "prefix frozen"
-        print(f"--- generate ({tag}, fill MASK) ---", flush=True)
-        print_frames(model, prompt, stoi, k, device, layout=layout)
+        print("--- generate (trunk then detail) ---", flush=True)
+        print_frames(model, prompt, stoi, k, device)
     return 0
 
 
@@ -608,7 +659,7 @@ def main():
         flush=True,
     )
     print(
-        "mask  train cosine-r[0.10,0.90] + 25% subject-span  "
+        "mask  train cosine-r[0.10,0.90] + 35% keep-at-native-pos  "
         f"eval r=15/50/90%  corpus={path}",
         flush=True,
     )
