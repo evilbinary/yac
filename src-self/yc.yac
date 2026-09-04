@@ -317,7 +317,21 @@ let run_cli(pr) =
                 else if fn == "pe" then pe_out(out0)
                 else out0 in
               let _ = if fl(spec, "syms") then syms_enable(1) else syms_enable(0) in
-              compile_src(src, outpath, t, nth(spec, 3))
+              let t0 = time_ms() in
+              let profpath = nth(spec, 3) in
+              let _ = if profpath == "" then 0 else yac_prof_enable(profpath) in
+              let _ = log("yc", "start") in
+              let _ = log_i("yc", "src_len", str_len(src)) in
+              let bin = compile_src(src, t) in
+              if bin == 0 then 1
+              else
+                let _ = log_i("yc", "bin_len", bytes_len(bin)) in
+                let _ = log("yc", "write") in
+                let _ = write_file(outpath, bin) in
+                let _ = log_i("prof", "total", time_ms() - t0) in
+                let _ = log("yc", "done") in
+                let _ = if profpath == "" then 0 else yac_prof_dump(0) in
+                0
 
 let main =
   let argc_n = argc() in

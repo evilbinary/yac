@@ -1,0 +1,3 @@
+import compiler
+if compile_file("tests/compiler/cases/l4_42.yac", "build/test_tmp/pkg_compiler_out") != 0 then 0
+else 42

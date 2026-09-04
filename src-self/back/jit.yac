@@ -385,13 +385,3 @@ let jit_load_yjit(path, sess) =
             [bytes_len(code), JIT_VADDR + nth(im, 3), m, code, ent]) in
       0
 
-/* Same pipeline as `yc --repl` / `yc --format yjit -o` (in-process, no system). */
-let load(path) =
-  let src = read_file(path) in
-  if src == 0 then 1
-  else compile_jit(src, mk_jit_target(host_arch(0)), true)
-
-let compile(path) =
-  let src = read_file(path) in
-  if src == 0 then 0
-  else compile_bytes(src, mk_target(host_arch(0), "yjit", "exec"))

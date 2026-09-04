@@ -1,7 +1,7 @@
 /* backend.yac — pipeline + image. lir_expr = ANF→LIR；lower_expr = LIR→emit. */
 
 package backend
-export compile_src, compile_file, compile_bytes, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit
+export compile_src, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit
 
 let backend_emit(t, ast) = nth(lower_expr(ast, t), 0)
 
@@ -417,7 +417,7 @@ let dump_uncps(src, do_opt) =
     else
       let _ = print(r) in 0
 
-let compile_bytes(src, t) =
+let compile_src(src, t) =
   let ast0 = pass_parse(pass_lex(src)) in
   if prog_has_err(ast0, 0) then
     let _ = report_syntax(ast0) in 0
@@ -428,28 +428,3 @@ let compile_bytes(src, t) =
     let bin = run_passes(make_pipeline(t), src) in
     if pkg_fail(0) != 0 then 0 else bin
 
-let compile_src(src, outpath, t, profpath) =
-  let ast0 = pass_parse(pass_lex(src)) in
-  if prog_has_err(ast0, 0) then
-    let _ = report_syntax(ast0) in 1
-  else if report_unbound(src, ast0) != 0 then 1
-  else
-    let _ = pkg_fail_set(0) in
-    let _ = link_from_ast(ast0) in
-    let t0 = time_ms() in
-    let _ = if profpath == "" then 0 else yac_prof_enable(profpath) in
-    let _ = log("yc", "start") in
-    let _ = log_i("yc", "src_len", str_len(src)) in
-    let bin = run_passes(make_pipeline(t), src) in
-    if pkg_fail(0) != 0 then 1
-    else
-      let _ = log_i("yc", "bin_len", bytes_len(bin)) in
-      let _ = log("yc", "write") in
-      let _ = write_file(outpath, bin) in
-      let _ = log_i("prof", "total", time_ms() - t0) in
-      let _ = log("yc", "done") in
-      let _ = if profpath == "" then 0 else yac_prof_dump(0) in
-      0
-
-let compile_file(inpath, outpath, t, profpath) =
-  compile_src(read_file(inpath), outpath, t, profpath)

@@ -343,6 +343,7 @@ let pkg_cases(_) = [
   ["env", "rc", "42"], ["cli", "rc", "42"], ["http", "rc", "42"], ["yui", "rc", "42"],
   ["math", "rc", "42"],
   ["profile", "rc", "42"],
+  ["compiler", "rc", "42"],
   ["import_as", "rc", "42"]
 ]
 
