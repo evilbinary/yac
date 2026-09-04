@@ -26,13 +26,13 @@ N_HEAD = 6
 FF = 768
 DROP = 0.05
 BATCH = 96
-STRIDE = 64
+STRIDE = 32
 VOCAB_MAX = 4096
 MASK_P = 0.15
 LR = 6e-4
 WD = 0.01
 FREEZE_N = 8
-GEN_TEMP = 1.0
+GEN_TEMP = 0.8
 GEN_REP = 1.5
 MASK_CH = "[MASK]"
 UNK_CH = "[UNK]"
@@ -175,7 +175,7 @@ def _span_pick(valid: torch.Tensor, ratio: torch.Tensor) -> torch.Tensor:
 
 
 def mask_tokens(gold: torch.Tensor, pad: int, mask_id: int, p: float | None):
-    """MASK holes only. Train mixes cloze / high-r / prefix-frozen continuation."""
+    """Independent random holes. Train: 30% r=12-35% + 35% r=40-70% + 35% r=70-90%."""
     b, t = gold.shape
     valid = gold != pad
     if p is not None:
@@ -186,20 +186,16 @@ def mask_tokens(gold: torch.Tensor, pad: int, mask_id: int, p: float | None):
 
     device = gold.device
     u = torch.rand(b, 1, device=device)
-    is_cont = u < 0.35
-    is_high = (u >= 0.35) & (u < 0.70)
+    is_light = u < 0.30
+    is_mid = (u >= 0.30) & (u < 0.65)
     r_light = torch.rand(b, 1, device=device) * 0.23 + 0.12
-    r_high = torch.rand(b, 1, device=device) * 0.35 + 0.50
-    ratio = torch.where(is_high, r_high, r_light)
+    r_mid = torch.rand(b, 1, device=device) * 0.30 + 0.40
+    r_high = torch.rand(b, 1, device=device) * 0.20 + 0.70
+    ratio = torch.where(is_light, r_light, torch.where(is_mid, r_mid, r_high))
     pick_ind = (torch.rand(b, t, device=device) < ratio) & valid
     pick_span = _span_pick(valid, ratio)
-    use_span = (~is_cont) & (torch.rand(b, 1, device=device) < 0.5)
+    use_span = (u < 0.65) & (torch.rand(b, 1, device=device) < 0.5)
     pick = torch.where(use_span.expand(b, t), pick_span, pick_ind)
-    freeze = torch.randint(4, FREEZE_N + 1, (b, 1), device=device)
-    left = torch.arange(t, device=device).view(1, t) < freeze
-    pick_cont = valid & ~left
-    pick = torch.where(is_cont.expand(b, t), pick_cont, pick)
-
     canvas = gold.clone()
     canvas[pick] = mask_id
     return canvas, pick
@@ -266,18 +262,26 @@ def eval_rate(model, wins: torch.Tensor, p: float, max_win: int = 128) -> int:
 
 
 @torch.inference_mode()
-def eval_cont(model, wins: torch.Tensor, freeze: int = 8, max_win: int = 128) -> int:
-    """Infer-like: keep left freeze chars, MASK the rest."""
+def eval_cont(model, wins: torch.Tensor, freeze: int = 8, width: int | None = None, max_win: int = 128) -> int:
+    """Infer-like canvas. If width set, score only freeze:freeze+width."""
     gold = wins[: min(max_win, wins.size(0))]
     hit = n = 0
     for i0 in range(0, gold.size(0), BATCH):
         g = gold[i0 : i0 + BATCH]
-        pick = (g != model.pad)
-        pick[:, :freeze] = False
-        if not pick.any():
+        suffix = (g != model.pad)
+        suffix[:, :freeze] = False
+        if not suffix.any():
             continue
         canvas = g.clone()
-        canvas[pick] = model.mask
+        canvas[suffix] = model.mask
+        if width is None:
+            pick = suffix
+        else:
+            pick = suffix.clone()
+            pick[:, freeze + width :] = False
+            pick[:, :freeze] = False
+        if not pick.any():
+            continue
         pred = model.logits_pick(canvas, pick).argmax(-1)
         hit += int((pred == g[pick]).sum())
         n += int(g[pick].numel())
@@ -375,7 +379,7 @@ def denoise_ids(model, prompt: str, stoi: dict[str, int], k: int, device, frames
         if nm <= 0:
             break
         logits = _gen_logits(model, canvas)
-        pred = logits.argmax(-1)
+        pred = torch.multinomial(F.softmax(logits, dim=-1), 1).squeeze(-1)
         conf = F.softmax(logits, dim=-1)[torch.arange(T, device=device), pred]
         conf = torch.where(holes, conf, torch.zeros_like(conf))
         ntake = nm if left == 1 else max(1, (nm + left - 1) // left)
@@ -405,7 +409,10 @@ def print_frames(model, prompt: str, stoi: dict[str, int], k: int, device):
 
 def print_k_curve(model, stoi: dict[str, int], device):
     print("--- generate (prefix frozen, fill MASK) ---", flush=True)
-    print(f"K=8 悟空  {denoise(model, '悟空', stoi, 8, device)}", flush=True)
+    torch.manual_seed(1)
+    for k in (1, 8, 16):
+        print(f"K={k} 悟空  {denoise(model, '悟空', stoi, k, device)}", flush=True)
+    torch.manual_seed(1)
     print(f"K=8 猴    {denoise(model, '猴', stoi, 8, device)}", flush=True)
 
 
@@ -549,8 +556,8 @@ def main():
         flush=True,
     )
     print(
-        "mask  train 35% cont-prefix + 35% r=50-85% + 30% r=12-35%  "
-        f"span~half  eval {MASK_P:.0%}  corpus={path}",
+        "mask  train 30% r=12-35% + 35% r=40-70% + 35% r=70-90%  "
+        f"span~half-of-low/mid  eval {MASK_P:.0%}  corpus={path}",
         flush=True,
     )
     print(
@@ -572,12 +579,11 @@ def main():
             f"         test mask-acc ~{tacc}%  maj ~{tmaj}%  nll {tnll:.3f}  hit {th} / {tn}",
             flush=True,
         )
+        a50 = eval_rate(model, test_w, 0.5)
+        a90 = eval_rate(model, test_w, 0.9)
+        print(f"         test r=50% ~{a50}%  r=90% ~{a90}%", flush=True)
         extra = ep % 4 == 0 or ep == epochs - 1
         if extra:
-            a50 = eval_rate(model, test_w, 0.5)
-            a90 = eval_rate(model, test_w, 0.9)
-            ac = eval_cont(model, test_w)
-            print(f"         test r=50% ~{a50}%  r=90% ~{a90}%  cont ~{ac}%", flush=True)
             print_k_curve(model, stoi, device)
         save_ckpt(CKPT, model, vocab, opts, sched, ep)
         if tacc >= best:
