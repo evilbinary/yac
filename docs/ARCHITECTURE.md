@@ -28,8 +28,8 @@ docs/
 
 ## 包与编译单元
 
-- **语言**：`package` / `import` / `export`。内核 / `rt.*` / `pkg/` 常见库分层见 `docs/DESIGN.md` §3.3。
-- **构建**：单元无关键字；客链接由 import 选择 `num`/`os`/`ffi` 及 `pkg/` 下的库；包根为 `--pkg` / `./pkg` / 可执行文件旁。编译器产品边界仍是 `cat $(YC_SRCS)`。见 `docs/SELFHOST.md` §5.3。
+- **语言**：一包一 `.yac`（`package` 名 = 路径）。`import` / `export`。内核 / `rt.*` / `pkg/` 与编译器包同一规则，见 `docs/DESIGN.md` §3.3。禁止多文件共用一个 `package` 短名。
+- **构建**：单元无关键字；链接由 import 选择 `rt.num` / `rt.os` / `rt.ffi`、`pkg/` 库、以及 `src-self` 下各编译器文件。包根为 `--pkg` / `./pkg` / 可执行文件旁。`yc` 的入口是 `yc.yac` 的 import 图；`cat $(YC_SRCS)` 仅为自举。见 `docs/SELFHOST.md` §5.3。
 - PE/ELF 的 `cimport` 是宿主动态库导入，不是语言 `import`。
 
 ## 管线

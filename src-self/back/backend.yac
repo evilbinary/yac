@@ -132,7 +132,7 @@ let intern_names(xs, i, acc) =
   if i >= len(xs) then acc
   else intern_names(xs, i + 1, cons(intern(nth(xs, i)), acc))
 
-/* Concatenated coarse packages may have one export per file. */
+/* One file may list export more than once; union them. */
 let ast_export_list(ast, i) =
   let rec(j, acc) =
     if j >= len(ast) then acc

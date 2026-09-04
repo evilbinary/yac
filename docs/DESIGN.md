@@ -378,16 +378,19 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 
 包是**命名空间与信息隐藏**，不是链接或版本边界。物理切分（CRP/CCP、是否进镜像）见 `docs/SELFHOST.md` 的「编译单元」；语言里没有 `unit` 关键字。不要把 `import` 和 PE/ELF 的 `cimport` 混为一谈。
 
+**一包一文件（硬规则）。** 一个 `package` 名严格对应一个 `.yac`。禁止粗包：不得多个文件写同一个 `package emit` / `package front` 并指望同名可见。编译器源（`src-self`）与客程序同一套规则；`yc` 是正经程序，用 `import` 组装，不靠 `cat` 当语言语义。
+
 规则：
 
-- 一个包对应一个 `.yac` 文件（`.` → `/`）：`import rt.os` → `rt/os.yac`。目录只是包名前缀，不是「一目录多文件同一包」。包内可前向引用同包绑定。
-- 未 `export` 的名字只在包内可见。客库 LIR 键是 `env/get` 这种 `包/名`；`rt.*` 仍用裸名（内核 `fcall yac_num_slow`）。
-- `import` 只引入该包的导出集。没有默认 `import *`。
+- `package` 名 = 相对包根的路径（`.` → `/`），且必须与文件一致：`package back.emit.emit_x86_64` 只属于 `back/emit/emit_x86_64.yac`。`import P` 只打开那一个文件。目录只是路径前缀，不是「一目录多文件同一包」。
+- 跨文件名字只能 `import`。包内可前向引用**该文件**里的顶层绑定；另一文件即使曾共用短名，也不是同包。
+- 未 `export` 的名字只在该文件内可见。LIR 键是 `包/名`（`包` 即 `package` 行，与 import 路径相同）；`rt.*` 仍用裸名（内核 `fcall yac_num_slow`）。
+- `import` 只引入该文件的导出集。没有默认 `import *`。不要按包名扫描其它 `.yac`，不要在绑定时合并多个文件的环境。
 - `import P as a` 只绑定模块名 `a`，不把导出放进当前作用域；用 `a.x`（AST `qvar`）。
 - `import P { x as y, z }` 把 `y`/`z` 放进当前作用域（`z` 未改名则仍叫 `z`）。
-- 查找根（每个根下再拼 `rt/os.yac` 这类相对路径）：`--pkg DIR[,DIR...]`（从左到右）、当前目录 `pkg/`、再是 `yc` / `yac` 可执行文件所在目录。空段（`a,,b`）为错误；`--pkg` 只能出现一次。本仓库开发用 `--pkg src-self`（提供 `rt.*`）；`./pkg` 提供常见库。独立项目把 `rt/` 放在 `yc` 旁边，或 `--pkg` 指向含 `rt/` 的根。
+- 查找根（每个根下再拼 `rt/os.yac` 这类相对路径）：`--pkg DIR[,DIR...]`（从左到右）、当前目录 `pkg/`、再是 `yc` / `yac` 可执行文件所在目录。空段（`a,,b`）为错误；`--pkg` 只能出现一次。本仓库开发用 `--pkg src-self`（提供 `rt.*` 与编译器包）；`./pkg` 提供常见库。独立项目把 `rt/` 放在 `yc` 旁边，或 `--pkg` 指向含 `rt/` 的根。
 - 原语名（`cons`、`ccall`、`str_cat` 等）走 `is_prim_name`，不是包。客库不得再导出这些名字。
-- 没有 `package` 的文件属于匿名主包（与改前行为相同）。
+- 没有 `package` 的文件属于匿名主包（入口，如 `yc.yac` 或客的 `main.yac`）。主包通过 `import` 拉依赖；默认仍链 `kernel`+`rt.num`。
 
 三层库（不要混）：
 
@@ -397,7 +400,7 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 | 语言运行时 | `rt.*` | `src-self/rt/{num,os,ffi}.yac` | `import rt.os`；客默认还链 `rt.num` |
 | 常见库 | 短名，不用 `rt` 前缀 | 仓库根 `pkg/*.yac` | `import path`；项目自己的库也放 `./pkg` |
 
-`src-self/lib`（`log` / `map` / `pass`）只给编译器用，不是客库。不要用包名 `os`（与 `rt.os` 冲突）。
+`src-self/lib`（`lib.log` / `lib.map` / `lib.pass`，各一文件）只给编译器用，不是客库。不要用包名 `os`（与 `rt.os` 冲突）。编译器后端同理：`back.emit.emit`、`back.emit.emit_x86_64`、`back.encode.encode_x64` 各是一包；交叉编译器的入口 import 它需要的 arch 文件，而不是一个叫 `emit` 的粗包。
 
 `rt.*` 维持现状：`rt.num`（慢路径算术，默认链）、`rt.os`（`uname` / `host_*`）、`rt.ffi`（`cload` / `csym`）。不要再拆 `rt.str` / `rt.list`（已是原语）。
 
@@ -421,7 +424,7 @@ export    ::= export ident ("," ident)*
 
 `import P as a` 只引入模块别名：`a.x` 解析为 `P/x`。`import P { x as y, z }` 只引入列出且确为导出的名字（`y` 是本地名）。不要写 `import P as a { ... }`。
 
-客程序绑定检查：内核名（`runtime_funs`）加 `import` 的本地名（别名或选出的导出）。未 import 则 `host_os` / `cload` 为未绑定。链接按 import **及包源里的 import**（`http` 会链 `net`）：默认 `kernel`+`rt.num`，再 DFS 依赖。`os_has` 留在包 `rt.os` 且不导出。
+绑定检查（客与 `yc` 相同）：内核名（`runtime_funs`）加 `import` 的本地名（别名或选出的导出）。未 import 则 `host_os` / `cload` 为未绑定。链接按 import **及被 import 的那一个文件里的 import**（`http` 会链 `net`）：默认 `kernel`+`rt.num`，再 DFS 依赖。`os_has` 留在包 `rt.os` 且不导出。imap / LIR 用 `package` 名，不用「粗包短名」。
 
 
 ### 3.4 示例

@@ -111,35 +111,35 @@ let anf = ["tailcall", ["var","fact"], [["int",5]]]
 
 ```
 src-self/
-  lib/           log / pass / map
-  front/         lexer → parser → anf → lir
-  rt/            runtime.yac（进 bundle，内核）；os/ffi/num.yac（客 stdlib，C import 展开 / 原生 rt_image_link）
-  back/
-    pack/        target + elf / pe / macho
+  lib/           各一包：lib.log / lib.pass / lib.map
+  front/         各一包：front.lexer → front.parser → front.anf → front.lir …
+  rt/            runtime.yac（内核）；rt.os / rt.ffi / rt.num（语言包）
+  back/          路径即包名（back.pack.elf、back.emit.emit_x86_64、…）
+    pack/        target / elf / pe / macho / …
     encode/      单条目标指令 → 字节
-    emit/        LIR → .text（调用 encode）
-    lower.yac    按 target 调 emit_*
+    emit/        LIR → .text（各 arch 文件不是同一包）
+    lower.yac    按 target import 所需 emit_*
     profile.yac
-    backend.yac  管线 + compile_file
-  lang/          scheme.yac
-  yc.yac         CLI（--arch / --format / --pkg）
-  drivers/       各阶段测试驱动（不进 bundle）
-pkg/             客常见库（path / str / io / list / hash / fmt / log / test / net / bytes / ffi / json / env / cli / http / yui / math；lookup 默认 ./pkg，不进 compiler cat）
+    backend.yac  管线 + compile_native
+  lang/          lang.scheme
+  yc.yac         入口（匿名主包；import 其余编译器包）
+  drivers/       各阶段测试驱动（不进 yc）
+pkg/             客常见库（path / str / io / …；查找默认 ./pkg）
 ```
 
 没有单独的 `regalloc.yac` / `link.yac`：M3 值为栈槽（`[rbp+off]`），符号/入口在 emit+pack 里完成。
 
 ### 5.3 编译单元（无语法；不是 `package`）
 
-**单元**只存在于编译器/构建：链接、版本、重建边界（CRP + CCP）。没有 `unit` 关键字。客镜像按 import 组装：`import a.b.c` → 文件 `a/b/c.yac`。查找根：`--pkg DIR[,DIR...]`、`./pkg`、可执行文件所在目录（C `yac` 与原生 `yc` 相同）。本仓库 `--pkg src-self` 提供 `rt.*`；常见库在 `./pkg`。独立项目把 `rt/` 放在 `yc` 旁边或另给 `--pkg`。导出名单读源里的 `export`。库分层见 `docs/DESIGN.md` §3.3。
+**单元**只存在于构建：链接、版本、重建边界（CRP + CCP）。没有 `unit` 关键字。语言包严格一文件一包（`docs/DESIGN.md` §3.3）。镜像按 import 组装：`import a.b.c` → **仅** `a/b/c.yac`。查找根：`--pkg DIR[,DIR...]`、`./pkg`、可执行文件所在目录（C `yac` 与原生 `yc` 相同）。本仓库 `--pkg src-self` 提供 `rt.*` 与编译器包；常见库在 `./pkg`。独立项目把 `rt/` 放在 `yc` 旁边或另给 `--pkg`。导出名单读该文件里的 `export`。
+
+`yc` 与客程序同一链接规则。目标形态：`./yac --pkg src-self src-self/yc.yac -o yc`（再由 `./yc` 同样编自己）。`cat $(YC_SRCS)` 只是自举脚手架，不是「多文件同一 `package`」。禁止用粗包名把 pe 与 lexer、或各 arch emit，合成一个语言包。
 
 约束：
 
-- 客默认链接：`kernel`（`runtime_funs`）+ `rt.num`。其它包有 `import` 才链对应 `.yac`，并 DFS 包源里的 `import`（`http` → `net`）。`rt.os` 与 `rt.ffi` 不进默认集（CRP）。
+- 默认链接：`kernel`（`runtime_funs`）+ `rt.num`。其它包有 `import` 才链对应那一个 `.yac`，并 DFS **该文件**里的 `import`（`http` → `net`）。`rt.os` 与 `rt.ffi` 不进默认集（CRP）。
 - `os_has` 留在语言包 `rt.os` 且不导出（CCP + 隐藏）。
-- 编译器 `cat` 仍是一个单元；把 pe 与 lexer 拆开是后续工作。
-
-语言层的 `package`/`import`/`export` 见 `docs/DESIGN.md` §3.3。
+- 内核 `runtime.yac` 仍特殊：它生成 `runtime_funs`，不是 `import` 包。编译器其余源都是普通包。
 
 
 > **架构约束**：yac 无相互递归/前向引用，故每个解析器/转换器实现为一个
