@@ -602,14 +602,15 @@ static int skip_idlist(Parser *p) {
     return 1;
 }
 
-#define YAC_IMPORT_MAX 16
+#define YAC_IMPORT_MAX 64
 
 typedef struct {
     char pkgs[YAC_IMPORT_MAX][64];
     int n;
 } ImportCtx;
 
-static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, int *cap);
+static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, int *cap,
+                       const char *self_pkg);
 
 static int parse_dotted_name(Parser *p, char *buf, size_t bufsz) {
     if (!at(p, TK_IDENT)) {
@@ -756,7 +757,7 @@ static int import_splice(Parser *errp, ImportCtx *ictx, const char *pkg,
      * host_os unbound in earlier lets (emit). Native lir_extend is outer too. */
     Item *pkg_items = NULL;
     int pkg_n = 0, pkg_cap = 0;
-    int ok = parse_items(&ip, ictx, &pkg_items, &pkg_n, &pkg_cap);
+    int ok = parse_items(&ip, ictx, &pkg_items, &pkg_n, &pkg_cap, pkg);
     if (!ok && ip.error) errp->error = ip.error;
     free(lx.toks);
     free(src);
@@ -789,12 +790,17 @@ static int import_splice(Parser *errp, ImportCtx *ictx, const char *pkg,
     return 1;
 }
 
-static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, int *cap) {
+static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, int *cap,
+                       const char *self_pkg) {
     while (!at(p, TK_EOF)) {
         if (at(p, TK_KW_PACKAGE)) {
             advance(p);
-            if (!skip_dotted(p)) return 0;
+            char pkg[128];
+            if (!parse_dotted_name(p, pkg, sizeof(pkg))) return 0;
             eat(p, TK_SEMI);
+            /* Same unit already has this file (cat bundle). Do not splice it. */
+            if (!import_seen(ictx, pkg))
+                import_mark(ictx, pkg);
             continue;
         }
         if (at(p, TK_KW_EXPORT)) {
@@ -824,6 +830,9 @@ static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, in
                 advance(p);
             }
             eat(p, TK_SEMI);
+            /* import compiler is a host API: keep its lets, do not splice back.*. */
+            if (self_pkg && strcmp(self_pkg, "compiler") == 0)
+                continue;
             if (!import_splice(p, ictx, pkg, items, nitems, cap)) return 0;
             continue;
         }
@@ -891,7 +900,7 @@ ParseResult parse_program(const Token *toks, int n, Arena *a) {
     int nitems = 0, cap = 0;
     int discard_cnt = 0;
 
-    if (!parse_items(&p, &ictx, &items, &nitems, &cap)) goto err;
+    if (!parse_items(&p, &ictx, &items, &nitems, &cap, NULL)) goto err;
 
     if (nitems == 0) {
         p_err(&p, "empty program");

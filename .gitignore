@@ -60,3 +60,4 @@ app/llm/snapshot/*.pt
 app/llm/snapshot/remote_train.ps1
 app/llm/snapshot/remote_train.sh
 tools/__pycache__/fill_imports.cpython-310.pyc
+.fuse_hidden000568cb0000018b

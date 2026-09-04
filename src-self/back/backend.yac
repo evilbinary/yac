@@ -1,7 +1,7 @@
 /* backend.yac — pipeline + image. lir_expr = ANF→LIR；lower_expr = LIR→emit. */
 
 package back.backend
-export compile_native, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, fun_off, link_need_box, rewrite_imports, rt_for_link
+export compile_native, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, ast_packages, skip_local_imp, fun_off, link_need_box, link_local_box, rewrite_imports, rt_for_link
 import back.lower
 import back.pack.elf {elf_shared_set, funsym_get, pack_elf, pack_elf_libc}
 import back.pack.target {target_arch, target_emachine, target_format, target_shared, target_text_off, target_vaddr}
@@ -216,10 +216,38 @@ let kernel_fun_names(_) =
     v
   else c
 
+let ast_imports(ast, i, acc) =
+  if i >= len(ast) then acc
+  else
+    let e = nth(ast, i) in
+    if nth(e, 0) == "import" then
+      let p = nth(e, 1) in
+      if in_list(p, acc) then ast_imports(ast, i + 1, acc)
+      else ast_imports(ast, i + 1, cons(p, acc))
+    else ast_imports(ast, i + 1, acc)
+
+let ast_packages(ast, i, acc) =
+  if i >= len(ast) then acc
+  else
+    let e = nth(ast, i) in
+    if nth(e, 0) == "package" then
+      ast_packages(ast, i + 1, cons(nth(e, 1), acc))
+    else ast_packages(ast, i + 1, acc)
+
+let skip_local_imp(ast, local, i, acc) =
+  if i >= len(ast) then reverse(acc)
+  else
+    let e = nth(ast, i) in
+    if nth(e, 0) == "import" then
+      if in_list(nth(e, 1), local) then skip_local_imp(ast, local, i + 1, acc)
+      else skip_local_imp(ast, local, i + 1, cons(e, acc))
+    else skip_local_imp(ast, local, i + 1, cons(e, acc))
+
 let report_unbound_ex(src, ast, extra) =
+  let ast1 = skip_local_imp(ast, ast_packages(ast, 0, []), 0, []) in
   let sc0 = pair_locals(box_get(imap_box), 0, kernel_fun_names(0)) in
   let sc1 = pair_locals(box_get(malias_box), 0, sc0) in
-  let nm = ub_prog(rewrite_imports(ast, 0, []), 0, append(extra, sc1)) in
+  let nm = ub_prog(rewrite_imports(ast1, 0, []), 0, append(extra, sc1)) in
   if nm == "" then 0
   else
     let toks = tokenize(src) in
@@ -234,6 +262,19 @@ let report_unbound_ex(src, ast, extra) =
     1
 
 let report_unbound(src, ast) = report_unbound_ex(src, ast, [])
+
+/* Host compile API: names already in yc, injected as this package's env.
+ * imap local→bare so lir resolve_call does not qualify them. */
+let compiler_top_env(_) =
+  ["compile_native", "compile_jit", "target_live", "mk_jit_target",
+   "mk_target", "host_arch", "host_format"]
+
+let compiler_env_bind(xs, i) =
+  if i >= len(xs) then 0
+  else
+    let n = intern(nth(xs, i)) in
+    let _ = box_set(imap_box, cons([n, n], box_get(imap_box))) in
+    compiler_env_bind(xs, i + 1)
 
 let lir_extend(pkg, src, acc) =
   if src == 0 then acc
@@ -250,6 +291,9 @@ let lir_extend(pkg, src, acc) =
       let saved_p = pkg_prefix_get(0) in
       let filled = rewrite_imports(ast, 0, []) in
       let _ = imap_load(filled, 0) in
+      let _ =
+        if pkg == "compiler" then compiler_env_bind(compiler_top_env(0), 0)
+        else 0 in
       let _ = pkg_prefix_set(ast_pkg_name(ast, 0)) in
       if report_unbound(src, ast) != 0 then
         let _ = pkg_fail_set(1) in
@@ -268,21 +312,13 @@ let lir_extend(pkg, src, acc) =
         let _ = pkg_prefix_set(saved_p) in
         out
 
-let ast_imports(ast, i, acc) =
-  if i >= len(ast) then acc
-  else
-    let e = nth(ast, i) in
-    if nth(e, 0) == "import" then
-      let p = nth(e, 1) in
-      if in_list(p, acc) then ast_imports(ast, i + 1, acc)
-      else ast_imports(ast, i + 1, cons(p, acc))
-    else ast_imports(ast, i + 1, acc)
-
 /* Imports written inside a package source (so http can use net). */
 let pkg_file_imports(pkg) =
-  let src = pkg_src(pkg) in
-  if src == 0 then []
-  else ast_imports(pass_parse(pass_lex(src)), 0, [])
+  if pkg == "compiler" then []
+  else
+    let src = pkg_src(pkg) in
+    if src == 0 then []
+    else ast_imports(pass_parse(pass_lex(src)), 0, [])
 
 /* DFS imports. op 0 = one pkg p; op 1 = xs[i..]. 6 args (emit max). */
 let visit_go(op, p, xs, i, seen, order) =
@@ -303,9 +339,17 @@ let link_need_box =
   let _ = box_set(b, []) in
   b
 
+let link_local_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
 let link_from_ast(ast) =
-  let filled = rewrite_imports(ast, 0, []) in
-  let _ = box_set(link_need_box, ast_imports(ast, 0, [])) in
+  let pkgs = ast_packages(ast, 0, []) in
+  let ast1 = skip_local_imp(ast, pkgs, 0, []) in
+  let filled = rewrite_imports(ast1, 0, []) in
+  let _ = box_set(link_need_box, ast_imports(ast1, 0, [])) in
+  let _ = box_set(link_local_box, pkgs) in
   let _ = imap_load(filled, 0) in
   0
 
@@ -323,7 +367,8 @@ let rt_base(_) =
   else c
 
 let rt_for_link(_) =
-  let st = visit_go(1, 0, box_get(link_need_box), 0, [], []) in
+  let st = visit_go(1, 0, box_get(link_need_box), 0,
+                    cons("rt.num", box_get(link_local_box)), []) in
   let pkgs = reverse(nth(st, 1)) in
   let rec(i, acc) =
     if i >= len(pkgs) then acc
