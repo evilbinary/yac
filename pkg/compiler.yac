@@ -11,6 +11,11 @@
 
  package compiler
  export compile_file, compile, load
+ import back.backend {compile_native}
+ import back.pack.target {target_live}
+ import back.jit {compile_jit}
+ import back.pack.target {mk_jit_target, mk_target}
+ import rt.os {host_arch, host_format}
  
  let compile_file(inpath, outpath, t, profpath) =
     let bin = compile_native(read_file(inpath), t) in

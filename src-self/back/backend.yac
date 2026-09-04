@@ -2,6 +2,17 @@
 
 package backend
 export compile_native, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit
+import back.lower
+import back.pack.elf {elf_shared_set}
+import back.pack.target {target_shared,target_format}
+import back.pack.pe {pack_pe_target, pe_finish_imports, pe_finish_dll}
+import back.pack.elf {pack_elf_libc}
+import back.pack.image {pack_image}
+import back.pack.elf {pack_elf}
+import back.pack.target {target_emachine, target_vaddr, target_text_off}
+import back.pack.target {target_arch, target_format, target_shared, target_emachine, target_vaddr, target_text_off}
+import lib.map
+
 
 let backend_emit(t, ast) = nth(lower_expr(ast, t), 0)
 

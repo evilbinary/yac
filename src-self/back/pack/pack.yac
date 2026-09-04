@@ -2,6 +2,9 @@
 
 package pack
 export pack_image, pack_elf_target
+import back.pe
+import back.elf
+import back.macho
 
 let pack_elf_target(t, code) =
   let sh = if target_shared(t) then 1 else 0 in
