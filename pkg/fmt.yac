@@ -1,7 +1,177 @@
-/* fmt.yac — %s / %d / %% formatting. args is a list, one slot per conversion. */
+/* fmt.yac — printf 占位符：%[flags][width][.prec]conv
+ * flags: - 左对齐，0 数字补零。conv: s d i f x %% 。args 一格对应一个转换。 */
 
 package fmt
 export format, printf
+
+let fmt_trip(a, b, c) =
+  let s = list_new() in
+  let _ = list_push(s, a) in
+  let _ = list_push(s, b) in
+  let _ = list_push(s, c) in
+  s
+
+let fmt_rep(ch, n, acc) =
+  if n <= 0 then acc
+  else fmt_rep(ch, n - 1, str_cat(acc, str_chr(ch)))
+
+let fmt_pad(s, w, left, fill) =
+  let k = w - str_len(s) in
+  if k <= 0 then s
+  else
+    let p = fmt_rep(fill, k, "") in
+    if left == 1 then str_cat(s, p) else str_cat(p, s)
+
+/* 有符号时 0 填在符号后面：%04d -3 → -003。- 优先于 0。 */
+let fmt_pad_num(s, w, left, zpad) =
+  if left == 1 then fmt_pad(s, w, 1, 32)
+  else if zpad != 1 then fmt_pad(s, w, 0, 32)
+  else if str_len(s) < 1 then fmt_pad(s, w, 0, 48)
+  else if str_ref(s, 0) != 45 then fmt_pad(s, w, 0, 48)
+  else if w <= 1 then s
+  else str_cat("-", fmt_pad(str_slice(s, 1, str_len(s) - 1), w - 1, 0, 48))
+
+let fmt_trunc(s, prec) =
+  if prec < 0 then s
+  else if str_len(s) <= prec then s
+  else str_slice(s, 0, prec)
+
+let fmt_pow10(n, acc) =
+  if n <= 0 then acc
+  else fmt_pow10(n - 1, acc * 10)
+
+let fmt_ftoi_hi(x, h) =
+  if h * 1.0 > x then h
+  else fmt_ftoi_hi(x, h * 2)
+
+let fmt_ftoi_bin(x, lo, hi) =
+  if hi - lo <= 1 then
+    if hi * 1.0 <= x then hi else lo
+  else
+    let mid = lo + (hi - lo) / 2 in
+    if mid * 1.0 <= x then fmt_ftoi_bin(x, mid, hi)
+    else fmt_ftoi_bin(x, lo, mid)
+
+let fmt_ftoi_pos(x) =
+  if x < 1.0 then 0
+  else fmt_ftoi_bin(x, 0, fmt_ftoi_hi(x, 1))
+
+let fmt_frac_s(n, w) = fmt_pad(int_to_str(n), w, 0, 48)
+
+let fmt_f_pos(x, prec) =
+  let p = if prec < 0 then 6 else prec in
+  let den = fmt_pow10(p, 1) in
+  let n = fmt_ftoi_pos(x * (den * 1.0) + 0.5) in
+  let ip = n / den in
+  let fp = n - ip * den in
+  if p == 0 then int_to_str(ip)
+  else str_cat(int_to_str(ip), str_cat(".", fmt_frac_s(fp, p)))
+
+let fmt_f(x, prec) =
+  let y = if is_int(x) then x * 1.0 else x in
+  if y < 0.0 then str_cat("-", fmt_f_pos(0.0 - y, prec))
+  else fmt_f_pos(y, prec)
+
+let fmt_int(n) =
+  if n < 0 then str_cat("-", int_to_str(0 - n))
+  else int_to_str(n)
+
+let fmt_hex_d(n) =
+  if n < 10 then 48 + n else 87 + n
+
+let fmt_hex_go(n, acc) =
+  if n < 16 then str_cat(str_chr(fmt_hex_d(n)), acc)
+  else fmt_hex_go(n / 16, str_cat(str_chr(fmt_hex_d(irem(n, 16))), acc))
+
+let fmt_hex(n) =
+  if n < 0 then str_cat("-", fmt_hex_go(0 - n, ""))
+  else if n == 0 then "0"
+  else fmt_hex_go(n, "")
+
+let fmt_flags(pat, i, left, zpad) =
+  let n = str_len(pat) in
+  if i >= n then fmt_trip(i, left, zpad)
+  else
+    let c = str_ref(pat, i) in
+    if c == 45 then fmt_flags(pat, i + 1, 1, zpad)
+    else if c == 48 then fmt_flags(pat, i + 1, left, 1)
+    else fmt_trip(i, left, zpad)
+
+let fmt_num(pat, i, acc) =
+  let n = str_len(pat) in
+  if i >= n then fmt_trip(acc, i, 0)
+  else
+    let c = str_ref(pat, i) in
+    if c < 48 then fmt_trip(acc, i, 0)
+    else if c > 57 then fmt_trip(acc, i, 0)
+    else fmt_num(pat, i + 1, acc * 10 + (c - 48))
+
+/* 从 % 后第一个字符起。失败 0；成功 [next, left, zpad, width, prec, conv]。 */
+let fmt_spec(pat, i0) =
+  let n = str_len(pat) in
+  if i0 >= n then 0
+  else if str_ref(pat, i0) == 37 then
+    let s = list_new() in
+    let _ = list_push(s, i0 + 1) in
+    let _ = list_push(s, 0) in
+    let _ = list_push(s, 0) in
+    let _ = list_push(s, 0) in
+    let _ = list_push(s, 0 - 1) in
+    let _ = list_push(s, 37) in
+    s
+  else
+    let fl = fmt_flags(pat, i0, 0, 0) in
+    let i1 = nth(fl, 0) in
+    let wn = fmt_num(pat, i1, 0) in
+    let i2 = nth(wn, 1) in
+    let pr =
+      if i2 >= n then fmt_trip(0 - 1, i2, 0)
+      else if str_ref(pat, i2) != 46 then fmt_trip(0 - 1, i2, 0)
+      else
+        let pn = fmt_num(pat, i2 + 1, 0) in
+        fmt_trip(nth(pn, 0), nth(pn, 1), 0) in
+    let i3 = nth(pr, 1) in
+    if i3 >= n then 0
+    else
+      let conv = str_ref(pat, i3) in
+      let ok =
+        if conv == 115 then 1
+        else if conv == 100 then 1
+        else if conv == 105 then 1
+        else if conv == 102 then 1
+        else if conv == 120 then 1
+        else 0 in
+      if ok == 0 then 0
+      else
+        let s = list_new() in
+        let _ = list_push(s, i3 + 1) in
+        let _ = list_push(s, nth(fl, 1)) in
+        let _ = list_push(s, nth(fl, 2)) in
+        let _ = list_push(s, nth(wn, 0)) in
+        let _ = list_push(s, nth(pr, 0)) in
+        let _ = list_push(s, conv) in
+        s
+
+let fmt_body(spec, arg) =
+  let conv = nth(spec, 5) in
+  let prec = nth(spec, 4) in
+  if conv == 115 then fmt_trunc(arg, prec)
+  else if conv == 100 then fmt_int(arg)
+  else if conv == 105 then fmt_int(arg)
+  else if conv == 120 then fmt_hex(arg)
+  else if conv == 102 then fmt_f(arg, prec)
+  else ""
+
+let fmt_one(spec, arg) =
+  let conv = nth(spec, 5) in
+  if conv == 37 then "%"
+  else
+    let raw = fmt_body(spec, arg) in
+    let w = nth(spec, 3) in
+    let left = nth(spec, 1) in
+    let zpad = nth(spec, 2) in
+    if conv == 115 then fmt_pad(raw, w, left, 32)
+    else fmt_pad_num(raw, w, left, zpad)
 
 /* Walk pat; i in pat, ai in args. Nested rec scrambled ncap. */
 let fmt_go(pat, args, i, ai, acc) =
@@ -12,15 +182,14 @@ let fmt_go(pat, args, i, ai, acc) =
     if c != 37 then fmt_go(pat, args, i + 1, ai, str_cat(acc, str_chr(c)))
     else if i + 1 >= n then str_cat(acc, "%")
     else
-      let d = str_ref(pat, i + 1) in
-      if d == 37 then fmt_go(pat, args, i + 2, ai, str_cat(acc, "%"))
-      else if d == 115 then
-        fmt_go(pat, args, i + 2, ai + 1, str_cat(acc, nth(args, ai)))
-      else if d == 100 then
-        fmt_go(pat, args, i + 2, ai + 1, str_cat(acc, int_to_str(nth(args, ai))))
-      else fmt_go(pat, args, i + 1, ai, str_cat(acc, "%"))
+      let spec = fmt_spec(pat, i + 1) in
+      if spec == 0 then fmt_go(pat, args, i + 1, ai, str_cat(acc, "%"))
+      else if nth(spec, 5) == 37 then
+        fmt_go(pat, args, nth(spec, 0), ai, str_cat(acc, "%"))
+      else
+        fmt_go(pat, args, nth(spec, 0), ai + 1, str_cat(acc, fmt_one(spec, nth(args, ai))))
 
-/* Build a string. %s = already a string, %d = int_to_str, %% = "%". */
+/* Build a string. %% = "%"；其余见文件头。 */
 let format(pat, args) = fmt_go(pat, args, 0, 0, "")
 
 /* Print format(pat, args) and return that string.

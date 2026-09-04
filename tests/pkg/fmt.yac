@@ -2,7 +2,25 @@ import fmt
 if format("%s=%d", ["n", 3]) == "n=3" then
   if format("%%", []) == "%" then
     if format("%d", [42]) == "42" then
-      if format("a", []) == "a" then 42 else 0
+      if format("a", []) == "a" then
+        if format("%5d", [3]) == "    3" then
+          if format("%-5d", [3]) == "3    " then
+            if format("%04d", [7]) == "0007" then
+              if format("%04d", [0 - 3]) == "-003" then
+                if format("%.2s", ["abcd"]) == "ab" then
+                  if format("%-4s", ["hi"]) == "hi  " then
+                    if format("%x", [255]) == "ff" then
+                      if format("%.2f", [1.5]) == "1.50" then
+                        if format("%i", [9]) == "9" then 42 else 0
+                      else 0
+                    else 0
+                  else 0
+                else 0
+              else 0
+            else 0
+          else 0
+        else 0
+      else 0
     else 0
   else 0
 else 0

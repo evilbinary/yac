@@ -7,6 +7,8 @@ TARGET=${1:-cursor}
 case "$TARGET" in
   cursor) EXT_DIR="${HOME}/.cursor/extensions" ;;
   code|vscode) EXT_DIR="${HOME}/.vscode/extensions" ;;
+  trae-cn) EXT_DIR="${HOME}/.trae-cn/extensions" ;;
+
   *)
     echo "usage: $0 [cursor|code]" >&2
     exit 1

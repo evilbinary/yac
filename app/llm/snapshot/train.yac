@@ -312,18 +312,14 @@ let run_mlm(m, ids, st, path) =
   else
     let nuse = nth(st, 2) in
     let ntr = nuse - nuse / 5 in
-    let _ =
-      if ep != 0 then 0
-      else
-        let _ = print("ep  acc  maj  loss(nat)  invp  hit  nmask  maj_hit") in
-        0 in
+    let _ = print("ep  acc  maj  loss(nat)  invp  hit  nmask  maj_hit") in
     let _ = zero_freq(m, 0) in
     let row = epoch_row(nuse, nth(st, 3)) in
     let _ = epoch_mlm(m, ids, row, ntr) in
     let nm = nth(row, 4) in
     let hit = nth(row, 3) in
     let mj = maj_count(m) in
-    let _ = print(format("%d %d  %d  %s  %s  %d  %d  %d",
+    let _ = print(format("%d   %d%%  %d%%  %s  %s  %d  %d  %d",
       [ep, pct(hit, nm), pct(mj, nm), fstr(avg_nll(nth(row, 5), nm)), fstr(avg_nll(nth(row, 6), nm)),
         hit, nm, mj])) in
     let _ = print("acc  f1  hit  nmask") in
@@ -331,7 +327,7 @@ let run_mlm(m, ids, st, path) =
     let ev = st5(0, nuse, nth(row, 2), 0, 0) in
     let _ = epoch_eval(m, ids, ev, bun, ntr) in
     let te = nth(bun, 1) in
-    let _ = print(format("%d  %d  %d  %d",
+    let _ = print(format("%d   %d  %d  %d",
       [pct(nth(bun, 0), te), f1_macro(nth(bun, 2), nth(bun, 3), nth(bun, 4)),
         nth(bun, 0), te])) in
     let _ = print("") in
