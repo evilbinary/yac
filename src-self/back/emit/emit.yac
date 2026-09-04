@@ -9,9 +9,9 @@
  */
 
 package emit
-export cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop
+export cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set
 import back.pack.elf {elf_note_abs64}
-import back.pack.pe {pe_iat_qwords}
+import back.pack.pe {pe_iat_qwords, pe_iat_off}
 import lib.map {intern, fmap_get, fmap_put, fmap_new, fmap_init_n}
 
 let reverse(xs) = list_rev(xs)

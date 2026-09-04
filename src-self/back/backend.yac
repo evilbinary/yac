@@ -13,7 +13,9 @@ import back.pack.target {target_emachine, target_vaddr, target_text_off}
 import back.pack.target {target_arch, target_format, target_shared, target_emachine, target_vaddr, target_text_off}
 import lib.map
 import back.emit.emit {cimport_names, cimport_got, cimport_n}
-import front.lir {in_list, imap_box, malias_box, imap_load, pkg_prefix_get, pkg_prefix_set, lir_all, env_new, sigma_of_rt, start_proc, tco_prog, sigma_list}
+
+let reverse(xs) = list_rev(xs)
+import front.lir {in_list, imap_box, malias_box, imap_load, pkg_prefix_get, pkg_prefix_set, lir_all, env_new, sigma_of_rt, start_proc, tco_prog, sigma_list, import_alias}
 import front.lexer {tokenize, tok_ident_line}
 import front.parser {parse_program, prog_has_err, report_syntax}
 import front.anf {anf_all}

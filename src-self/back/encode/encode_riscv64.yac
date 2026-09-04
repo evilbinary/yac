@@ -1,6 +1,7 @@
 /* encode_riscv64.yac — RV64I (+ MUL) instruction words. */
 
 package emit
+export rv_u32, rv_u32_at, rv_addi, rv_add, rv_sub, rv_and, rv_or, rv_sll, rv_srl, rv_xori, rv_sra, rv_mul, rv_div, rv_rem, rv_xor, rv_slt, rv_sltu, rv_sltiu, rv_lui, rv_nop_at, rv_ld_at, rv_auipc_at, rv_ld, rv_lbu, rv_sd, rv_sb, rv_beq, rv_word, rv_bxx, rv_blt, rv_bge, rv_bltu, rv_bgeu, rv_patch_b, rv_slli, rv_srli, rv_bne, rv_jal, rv_jalr, rv_auipc, rv_andi, rv_srai, rv_fp, rv_fadd_d, rv_fsub_d, rv_fmul_d, rv_fdiv_d, rv_fmv_x_d, rv_fmv_d_x, rv_fcvt_d_l, rv_feq_d, rv_flt_d, rv_fle_d, rv_ecall, rv_unimp, rv_slli_at, rv_srli_at, rv_add_at, rv_li, rv_lui_addi, rv_lui_addi_at, rv_li_tmp, rv_li32_pair, rv_insn_rd, rv_li32_at
 
 let rv_u32(b, w) =
   let _ = bytes_append(b, band(w, 255)) in

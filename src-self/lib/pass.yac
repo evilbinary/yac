@@ -9,6 +9,7 @@
 
 package lib
 export mk_pass, run_pass, run_passes, pass_name, pass_fn
+import lib.log {log}
 
 let mk_pass(name, fn) = ["pass", name, fn]
 

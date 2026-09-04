@@ -1,6 +1,7 @@
 /* encode_arm64.yac — AArch64 instruction words (little-endian). */
 
 package emit
+export a64_u32, a64_u32_at, a64_movz, a64_movk, a64_mov_imm64_at, a64_mov_imm64, a64_add_imm, a64_sub_imm, a64_add_reg, a64_sub_reg, a64_mul, a64_sdiv, a64_msub, a64_and_reg, a64_orr_reg, a64_eor_reg, a64_mov_reg, a64_mov_sp, a64_nop_at, a64_adrp_at, a64_ldr_at, a64_ldr, a64_str, a64_lsl1, a64_lslv, a64_lsrv, a64_mvn, a64_asr1, a64_cmp_reg, a64_cmp_imm, a64_ldrb, a64_strb, a64_ldrb_reg, a64_strb_reg, a64_ldr_lsl3, a64_word, a64_patch_bcond, a64_stur, a64_ldur, a64_stp_fp_lr, a64_ldp_fp_lr, a64_ret, a64_b, a64_b_cond, a64_b_eq, a64_b_ne, a64_bl, a64_adr, a64_blr, a64_br, a64_svc, a64_brk, a64_fmov_d_x, a64_fmov_x_d, a64_scvtf_d_x, a64_fadd_d, a64_fsub_d, a64_fmul_d, a64_fdiv_d, a64_fcmp_d, a64_cset
 
 let a64_u32(b, w) =
   let _ = bytes_append(b, band(w, 255)) in

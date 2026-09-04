@@ -9,7 +9,9 @@ package backend
 export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live
 import lib.map {intern, fmap_new, fmap_init_n, fmap_put, fmap_get}
 import back.emit.emit {cimport_names, cimport_got, cimport_jit_bind, cimport_jit_bind_got}
-import front.lir {in_list, is_prim_name}
+import front.lir {in_list, is_prim_name, import_alias, import_locals, lir_all, env_new, sigma_of_rt, tco_prog, sigma_list}
+
+let reverse(xs) = list_rev(xs)
 
 let jit_lets_box =
   let b = box_new() in

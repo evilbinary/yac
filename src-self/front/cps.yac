@@ -11,7 +11,7 @@
  */
 
 package front
-export cps_all, cps_expr, cps_maybe_opt, cps_opt_all
+export cps_all, cps_expr, cps_maybe_opt, cps_opt_all, cps_atoi
 import lib.map {intern}
 
 let cps_newk(st) =
