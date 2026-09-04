@@ -244,10 +244,11 @@ let emit_fmt(_) = box_get(emit_fmt_box)
 
 let emit_is_pe(_) = emit_fmt(0) == "pe"
 
-/* 112 bytes GC globals + 8 bytes host jit_map ptr (G+112). */
+/* 112 GC + 8 jit_map (G+112) + 8 prof cell (G+120) + 8 prof busy (G+128).
+ * glob 3/4 must not sit on G+48/56/64 (mmap lo / bitmap). */
 let emit_glob_data(b) =
   let fill(i) =
-    if i >= 120 then 0
+    if i >= 136 then 0
     else let _ = bytes_append(b, 0) in fill(i + 1) in
   fill(0)
 
@@ -687,9 +688,9 @@ let emit_resolve_patch(st, p) =
   else if tag == 6 then
     apply_u64_rel(b, nth(p, 1), globbase + 24)
   else if tag == 7 then
-    apply_u64_rel(b, nth(p, 1), globbase + 56)
+    apply_u64_rel(b, nth(p, 1), globbase + 120)
   else if tag == 8 then
-    apply_u64_rel(b, nth(p, 1), globbase + 64)
+    apply_u64_rel(b, nth(p, 1), globbase + 128)
   else if tag == 11 then
     apply_u64_rel(b, nth(p, 1), nth(st, 4) + nth(p, 2) + 1)
   else if tag == 12 then

@@ -12,6 +12,7 @@
 package profile
 export prof_enable, prof_dump, yac_prof_enable, yac_prof_dump
 import fmap
+import fmt
 
 let prof_stk_fill(stk, i, n) =
   if i >= n then stk
@@ -196,7 +197,7 @@ let prof_lines(b, xs, tot, i) =
 
 let yac_prof_dump(_) =
   let c = yac_prof_cell() in
-  if len(c) == 0 then 0
+  if len(c) == 0 then print("no profile data")
   else
     let t0 = box_get(nth(c, 0)) in
     let path = nth(t0, 0) in
@@ -219,6 +220,7 @@ let yac_prof_dump(_) =
     let h5 = prof_col(h4, "excl_ms", 8) in
     let h6 = prof_nl(prof_puts(h5, "   pct")) in
     let b6 = prof_lines(h6, xs, tot, 0) in
-    write_file(path, bytes_to_str(b6))
+    let _ = write_file(path, b6) in
+    print(str_cat("wrote ", path))
 
 let prof_dump(_) = yac_prof_dump(0)

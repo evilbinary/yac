@@ -1966,7 +1966,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let LOAD_VADDR = load_vaddr in
   /* Blob-relative VAs (text_off only). REPL append adds dest in emit_apply_unres. */
   let TEXT_OFF = text_off in
-  /* writable globals: 112-byte GC block + 8-byte host jit_map at +112. */
+  /* writable globals: 112 GC + 8 jit_map (G+112) + 16 prof (G+120, G+128). */
   let pad8(_) =
     if band(bytes_len(b), 7) == 0 then 0
     else let _ = bytes_append(b, 0) in pad8(0) in

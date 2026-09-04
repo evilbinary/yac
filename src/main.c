@@ -326,8 +326,10 @@ int main(int argc, char **argv) {
             fwd[nfwd++] = argv[0];
             for (i = 1; i < argc; i++) {
                 /* --pkg must reach the guest: L4 is ./yac --pkg DIR bundle
-                 * bundle -o yc_a, so the interpreted compiler can pkg_set
-                 * and resolve import rt.os (host_os). --prof-out is C-only. */
+                 * -o yc_a. C interprets that one positional; argv is forwarded
+                 * so the guest compiles the same path once. Passing the bundle
+                 * twice made native yc concatenate two copies and run main
+                 * twice (eval-cps / -h printed twice). --prof-out is C-only. */
                 if (strcmp(argv[i], "--prof-out") == 0) {
                     if (i + 1 < argc) i++;
                     continue;

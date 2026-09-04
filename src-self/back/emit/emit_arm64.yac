@@ -1685,9 +1685,9 @@ let a64_resolve_patch(st, p) =
   else if tag == 6 then
     dlib_a64_va(b, nth(p, 1), 0, globbase + 24, codebase)
   else if tag == 7 then
-    dlib_a64_va(b, nth(p, 1), 0, globbase + 48, codebase)
+    dlib_a64_va(b, nth(p, 1), 0, globbase + 120, codebase)
   else if tag == 8 then
-    dlib_a64_va(b, nth(p, 1), 0, globbase + 56, codebase)
+    dlib_a64_va(b, nth(p, 1), 0, globbase + 128, codebase)
   else if tag == 9 then
     a64_apply_b26(b, nth(p, 1), nth(offs, nth(p, 2)))
   else if tag == 11 then
