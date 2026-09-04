@@ -8,6 +8,7 @@ No causal mask. Loss only on MASK holes. See DESIGN.md.
 """
 from __future__ import annotations
 
+import math
 import os
 import random
 import sys
@@ -26,7 +27,7 @@ N_HEAD = 6
 FF = 768
 DROP = 0.05
 BATCH = 96
-STRIDE = 32
+STRIDE = 64
 VOCAB_MAX = 4096
 MASK_P = 0.15
 LR = 6e-4
@@ -91,27 +92,30 @@ class Block(nn.Module):
             nn.Linear(ff, d),
             nn.Dropout(drop),
         )
-        # bidirectional ALiBi: nearer keys preferred, so two MASK slots
-        # see different neighbors even when token embeddings are identical
-        slopes = 2 ** (-8.0 * torch.arange(1, n_head + 1) / n_head)
-        self.register_buffer("slopes", slopes, persistent=False)
-        i = torch.arange(T)
-        dist = (i[:, None] - i[None, :]).abs().float()
-        self.register_buffer("alibi", -(slopes[:, None, None] * dist), persistent=False)
+        # RoPE on Q/K so identical MASK slots still attend different neighbors.
+        half = self.dh // 2
+        inv = 1.0 / (10000 ** (torch.arange(0, half).float() / half))
+        ang = torch.arange(T).float()[:, None] * inv[None, :]
+        self.register_buffer("rope_cos", ang.cos(), persistent=False)
+        self.register_buffer("rope_sin", ang.sin(), persistent=False)
 
-    def _bias(self, t: int, key_pad: torch.Tensor | None, dtype: torch.dtype):
-        bias = self.alibi[:, :t, :t].to(dtype)
-        if key_pad is None:
-            return bias
-        return bias.unsqueeze(0).masked_fill(key_pad[:, None, None, :], torch.finfo(dtype).min)
+    def _rope(self, x: torch.Tensor) -> torch.Tensor:
+        t = x.size(-2)
+        half = self.dh // 2
+        cos = self.rope_cos[:t].to(dtype=x.dtype)[None, None, :, :]
+        sin = self.rope_sin[:t].to(dtype=x.dtype)[None, None, :, :]
+        x1, x2 = x[..., :half], x[..., half:]
+        return torch.cat((x1 * cos - x2 * sin, x1 * sin + x2 * cos), dim=-1)
 
     def forward(self, x: torch.Tensor, key_pad: torch.Tensor | None):
         b, t, d = x.shape
         h = self.ln1(x)
         qkv = self.qkv(h).view(b, t, 3, self.n_head, self.dh).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
+        q, k = self._rope(q), self._rope(k)
+        pad = None if key_pad is None else key_pad[:, None, None, :]
         a = F.scaled_dot_product_attention(
-            q, k, v, attn_mask=self._bias(t, key_pad, q.dtype),
+            q, k, v, attn_mask=pad,
             dropout_p=self.drop_p if self.training else 0.0,
         )
         a = self.wo(a.transpose(1, 2).contiguous().view(b, t, d))
@@ -199,6 +203,16 @@ def mask_tokens(gold: torch.Tensor, pad: int, mask_id: int, p: float | None):
     canvas = gold.clone()
     canvas[pick] = mask_id
     return canvas, pick
+
+
+def cosine_n_take(step: int, k: int, nm: int, n0: int) -> int:
+    """MaskGIT: few commits early, rest later. Last step takes all remaining."""
+    if nm <= 0:
+        return 0
+    if step >= k - 1:
+        return nm
+    left_after = int(math.ceil(n0 * math.cos(math.pi * 0.5 * (step + 1) / k)))
+    return max(1, min(nm, nm - left_after))
 
 
 def run_epoch(model, opts, wins: torch.Tensor, train: bool, sched=None):
@@ -371,18 +385,21 @@ def denoise_ids(model, prompt: str, stoi: dict[str, int], k: int, device, frames
     model.eval()
     canvas = blank_canvas(prompt, stoi, model, device)
     k = max(1, k)
+    n0 = 0
     snaps = [canvas[0].clone()] if frames else None
     for step in range(k):
-        left = k - step
         holes = (canvas == model.mask)[0]
         nm = int(holes.sum().item())
         if nm <= 0:
             break
+        if n0 == 0:
+            n0 = nm
         logits = _gen_logits(model, canvas)
-        pred = torch.multinomial(F.softmax(logits, dim=-1), 1).squeeze(-1)
-        conf = F.softmax(logits, dim=-1)[torch.arange(T, device=device), pred]
+        probs = F.softmax(logits, dim=-1)
+        conf, _ = probs.max(dim=-1)
+        pred = torch.multinomial(probs, 1).squeeze(-1)
         conf = torch.where(holes, conf, torch.zeros_like(conf))
-        ntake = nm if left == 1 else max(1, (nm + left - 1) // left)
+        ntake = cosine_n_take(step, k, nm, n0)
         top = torch.topk(conf, k=min(ntake, nm)).indices
         canvas[0, top] = pred[top]
         if snaps is not None:
@@ -562,7 +579,7 @@ def main():
     )
     print(
         f"opt  AdamW lr={LR} cosine  wd={WD}  drop={DROP}  "
-        f"bidir SDPA+ALiBi  tied head  B={BATCH} stride={STRIDE}",
+        f"bidir SDPA+RoPE  tied head  B={BATCH} stride={STRIDE}",
         flush=True,
     )
     print("--- train ---", flush=True)
