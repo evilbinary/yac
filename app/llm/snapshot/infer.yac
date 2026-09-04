@@ -71,7 +71,7 @@ let rc =
     else
       let _ = print("--- generate (prefix frozen, fill MASK) ---") in
       let canvas = denoise(m, prompt0, k) in
-      let _ = print(str_cat("final  ", show_canvas(m, canvas))) in
+      let _ = print(str_cat("final  ", show_prompt(m, canvas, prompt0))) in
       0
 
 rc

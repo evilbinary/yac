@@ -18,7 +18,7 @@
 package snapshot
 export sc, dim, ctx, freeze_n, u8len, ch_at, fill, mat, find_char, add_char, build_vocab,
   build_vocab_top, vocab_cap, encode, argmax, rng_next, mask_id, model_new, train_step, train_step_chat, gold_chat, forward,
-  canvas_from_prompt, show_canvas, show_from, n_freeze, denoise, denoise_quiet, save_model, load_model,
+  canvas_from_prompt, show_canvas, show_prompt, show_from, n_freeze, denoise, denoise_quiet, save_model, load_model,
   vocab_of, ntok, parse_int, zero_freq, maj_count, probe_shuffle, eval_step, fstr
 
 import io
@@ -1460,8 +1460,8 @@ let gold_chat(m, user, asst) =
   let _ = set_range(gold, u, take_from(aids, off, list_new()), 0, need) in
   pair(gold, u)
 
-/* 提示词 → id；跳过未知字和 MASK 符本身。 */
-let prompt_ids_go(prompt, vocab, ix, i, acc) =
+/* 与 encode 同一套跳过规则，留下原字（OOV 也留，显示用）。 */
+let prompt_glyphs_go(prompt, vocab, ix, i, acc) =
   if i >= str_len(prompt) then acc
   else
     let c = ch_at(prompt, i) in
@@ -1470,13 +1470,15 @@ let prompt_ids_go(prompt, vocab, ix, i, acc) =
       else
         let k = ix_of(ix, c) in
         let mid = len(vocab) - 1 in
-        if k < 0 then 0
+        let uid = mid - 1 in
+        if k < 0 then
+          if uid < 0 then 0 else list_push(acc, c)
         else if k == mid then 0
-        else list_push(acc, k) in
-    prompt_ids_go(prompt, vocab, ix, i + str_len(c), acc)
+        else list_push(acc, c) in
+    prompt_glyphs_go(prompt, vocab, ix, i + str_len(c), acc)
 
-let prompt_ids(prompt, vocab, i, acc) =
-  prompt_ids_go(prompt, vocab, vocab_ix(vocab), i, acc)
+let prompt_glyphs(prompt, vocab) =
+  tail_ids(prompt_glyphs_go(prompt, vocab, vocab_ix(vocab), 0, list_new()), freeze_n(0))
 
 /* 左侧写提示（冻结区），其余铺 MASK。 */
 let fill_canvas(pids, canvas, mid, i) =
@@ -1486,15 +1488,15 @@ let fill_canvas(pids, canvas, mid, i) =
     let _ = list_set(canvas, i, v) in
     fill_canvas(pids, canvas, mid, i + 1)
 
-/* 推理用底片：问句最多 freeze_n 字（取后缀），其余 MASK 给回复。 */
+/* 推理用底片：问句最多 freeze_n 字（取后缀），OOV 冻成 UNK，不丢格。 */
 let canvas_from_prompt(m, prompt) =
   let vocab = vocab_of(m) in
-  let pids = tail_ids(prompt_ids(prompt, vocab, 0, list_new()), freeze_n(0)) in
+  let pids = tail_ids(encode(prompt, vocab, list_new(), 0), freeze_n(0)) in
   fill_canvas(pids, fill(ctx(0), mask_id(m)), mask_id(m), 0)
 
 /* 实际冻结长度（问句短于 freeze_n 时更短）。 */
 let n_freeze(m, prompt) =
-  let n = len(prompt_ids(prompt, vocab_of(m), 0, list_new())) in
+  let n = len(encode(prompt, vocab_of(m), list_new(), 0)) in
   if n < freeze_n(0) then n else freeze_n(0)
 
 /* 换行改成可见符，避免 print 把一张底片拆成多行。 */
@@ -1506,16 +1508,24 @@ let tok_show(c) =
     else if b == 13 then "␍"
     else c
 
-/* 拼画布字符串。 */
-let show_i(canvas, vocab, i, acc) =
+/* 拼画布字符串。冻结格用原提示字，避免 OOV 打成 <unk>。 */
+let show_i(canvas, vocab, glyphs, i, acc) =
   if i >= len(canvas) then acc
-  else show_i(canvas, vocab, i + 1, str_cat(acc, tok_show(nth(vocab, nth(canvas, i)))))
+  else
+    let bit =
+      if i < len(glyphs) then tok_show(nth(glyphs, i))
+      else tok_show(nth(vocab, nth(canvas, i))) in
+    show_i(canvas, vocab, glyphs, i + 1, str_cat(acc, bit))
 
 /* 把当前底片打成一行（MASK 显示为 ░）。 */
-let show_canvas(m, canvas) = show_i(canvas, vocab_of(m), 0, "")
+let show_canvas(m, canvas) = show_i(canvas, vocab_of(m), list_new(), 0, "")
+
+/* 冻结区显示原提示（OOV 不打 <unk>）。 */
+let show_prompt(m, canvas, prompt) =
+  show_i(canvas, vocab_of(m), prompt_glyphs(prompt, vocab_of(m)), 0, "")
 
 /* 只打冻结区右边的回复。 */
-let show_from(m, canvas, u) = show_i(canvas, vocab_of(m), u, "")
+let show_from(m, canvas, u) = show_i(canvas, vocab_of(m), list_new(), u, "")
 
 /* 还剩多少格是 MASK。 */
 let count_mask(canvas, mid, i, n) =
@@ -1581,27 +1591,6 @@ let fill_pc(m, canvas, mid, i) =
         list_set(nth(m, 16), i, nth(row, p)) in
     fill_pc(m, canvas, mid, i + 1)
 
-/* 第一个 MASK：取景后焦平面落在提示右缘。 */
-let first_mask(canvas, mid, i) =
-  if i >= len(canvas) then 0
-  else if nth(canvas, i) == mid then i
-  else first_mask(canvas, mid, i + 1)
-
-/* 光圈外的 MASK 置信度打掉：本张快门只揭焦点附近。st = [mid, focus, rad]。 */
-let fov_dim(conf, canvas, st, i) =
-  if i >= len(conf) then 0
-  else
-    let mid = nth(st, 0) in
-    let focus = nth(st, 1) in
-    let rad = nth(st, 2) in
-    let d = i - focus in
-    let ad = if d < 0 then 0 - d else d in
-    let _ =
-      if nth(canvas, i) != mid then 0
-      else if ad <= rad then 0
-      else list_set(conf, i, 0 - 999999) in
-    fov_dim(conf, canvas, st, i + 1)
-
 /* 在仍为 MASK 的格子里找置信度最高的下标。acc = [bi, bv]。
  * 不按阅读顺序；并列时留下标更小的（稳定，不是扫行策略）。 */
 let best_mask(canvas, conf, mid, i, acc) =
@@ -1627,15 +1616,16 @@ let unveil_n(m, canvas, mid, n) =
       let _ = list_set(nth(m, 16), i, 0 - 999999) in
       unveil_n(m, canvas, mid, n - 1)
 
-/* kmax<0 表示安静模式（|kmax| 仍是 K），训完扫 K 曲线用。 */
-let denoise_go(m, canvas, left, kmax) =
+/* kmax<0 表示安静模式（|kmax| 仍是 K），训完扫 K 曲线用。
+ * 每步按置信度揭 MASK，不从左往右扩光圈（那是卷帘快门）。 */
+let denoise_go(m, canvas, glyphs, left, kmax) =
   let km = if kmax < 0 then 0 - kmax else kmax in
   let mid = mask_id(m) in
   let step = km - left in
   let _ =
     if kmax < 0 then 0
     else print(str_cat(str_cat("step ", int_to_str(step)),
-      str_cat("  ", show_canvas(m, canvas)))) in
+      str_cat("  ", show_i(canvas, vocab_of(m), glyphs, 0, "")))) in
   if left <= 0 then canvas
   else
     let nm = count_mask(canvas, mid, 0, 0) in
@@ -1643,25 +1633,19 @@ let denoise_go(m, canvas, left, kmax) =
     else
       let _ = forward(m, canvas) in
       let _ = fill_pc(m, canvas, mid, 0) in
-      let focus = first_mask(canvas, mid, 0) in
-      let rad0 = (step + 1) * ctx(0) / km in
-      let rad = if rad0 < 1 then 1 else rad0 in
-      let _ =
-        if left == 1 then 0
-        else fov_dim(nth(m, 16), canvas, triple(mid, focus, rad), 0) in
       let ntake = if left == 1 then nm else (nm + left - 1) / left in
       let _ = unveil_n(m, canvas, mid, ntake) in
-      denoise_go(m, canvas, left - 1, kmax)
+      denoise_go(m, canvas, glyphs, left - 1, kmax)
 
 /* K 次显影。K 与文本长度无关。 */
 let denoise(m, prompt, k) =
   let canvas = canvas_from_prompt(m, prompt) in
-  denoise_go(m, canvas, k, k)
+  denoise_go(m, canvas, prompt_glyphs(prompt, vocab_of(m)), k, k)
 
 /* 只返回成片，不打每步。 */
 let denoise_quiet(m, prompt, k) =
   let canvas = canvas_from_prompt(m, prompt) in
-  denoise_go(m, canvas, k, 0 - k)
+  denoise_go(m, canvas, prompt_glyphs(prompt, vocab_of(m)), k, 0 - k)
 
 /* 命令行无符号十进制。 */
 let parse_int(s, i, n, acc) =

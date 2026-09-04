@@ -489,11 +489,11 @@ let rc =
       let _ = print(format("probe  scramble-vis  pred-changed %d / %d  (0 = ignores context)",
         [nth(pr, 0), nth(pr, 1)])) in
       let _ = print("--- K curve (same shutter, more K = more exposures) ---") in
-      let _ = print(str_cat("K=1   ", show_canvas(m, denoise_quiet(m, "悟空", 1)))) in
-      let _ = print(str_cat("K=4   ", show_canvas(m, denoise_quiet(m, "悟空", 4)))) in
-      let _ = print(str_cat("K=8   ", show_canvas(m, denoise_quiet(m, "悟空", 8)))) in
-      let _ = print(str_cat("K=14  ", show_canvas(m, denoise_quiet(m, "悟空", 14)))) in
-      let _ = print(str_cat("K=8 Romeo  ", show_canvas(m, denoise_quiet(m, "Romeo", 8)))) in
+      let _ = print(str_cat("K=1   ", show_prompt(m, denoise_quiet(m, "悟空", 1), "悟空"))) in
+      let _ = print(str_cat("K=4   ", show_prompt(m, denoise_quiet(m, "悟空", 4), "悟空"))) in
+      let _ = print(str_cat("K=8   ", show_prompt(m, denoise_quiet(m, "悟空", 8), "悟空"))) in
+      let _ = print(str_cat("K=14  ", show_prompt(m, denoise_quiet(m, "悟空", 14), "悟空"))) in
+      let _ = print(str_cat("K=8 Romeo  ", show_prompt(m, denoise_quiet(m, "Romeo", 8), "Romeo"))) in
       let _ = print(str_cat("wrote ", wpath)) in
       0
 
