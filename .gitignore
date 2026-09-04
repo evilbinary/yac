@@ -57,3 +57,5 @@ tools/vscode-yac/yc-lang-0.1.1.vsix
 app/llm/snapshot/__pycache__/train_float.cpython-311.pyc
 app/llm/snapshot/snapshot_bert.pt
 app/llm/snapshot/*.pt
+app/llm/snapshot/remote_train.ps1
+app/llm/snapshot/remote_train.sh

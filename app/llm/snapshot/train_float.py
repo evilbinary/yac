@@ -24,12 +24,12 @@ D = 192
 N_LAYER = 4
 N_HEAD = 6
 FF = 768
-DROP = 0.1
-BATCH = 64
+DROP = 0.05
+BATCH = 96
 STRIDE = 64
 VOCAB_MAX = 4096
 MASK_P = 0.15
-LR = 3e-4
+LR = 6e-4
 WD = 0.01
 FREEZE_N = 8
 GEN_TEMP = 1.0
@@ -95,11 +95,12 @@ class Block(nn.Module):
         # see different neighbors even when token embeddings are identical
         slopes = 2 ** (-8.0 * torch.arange(1, n_head + 1) / n_head)
         self.register_buffer("slopes", slopes, persistent=False)
+        i = torch.arange(T)
+        dist = (i[:, None] - i[None, :]).abs().float()
+        self.register_buffer("alibi", -(slopes[:, None, None] * dist), persistent=False)
 
     def _bias(self, t: int, key_pad: torch.Tensor | None, dtype: torch.dtype):
-        i = torch.arange(t, device=self.slopes.device)
-        dist = (i[:, None] - i[None, :]).abs().to(dtype)
-        bias = -(self.slopes.to(dtype)[:, None, None] * dist)
+        bias = self.alibi[:, :t, :t].to(dtype)
         if key_pad is None:
             return bias
         return bias.unsqueeze(0).masked_fill(key_pad[:, None, None, :], torch.finfo(dtype).min)
@@ -162,28 +163,49 @@ class SnapshotLM(nn.Module):
         return F.linear(self.encode(ids), self.tok.weight)
 
 
-def mask_tokens(gold: torch.Tensor, pad: int, mask_id: int, p: float | None):
-    """Replace picked tokens with MASK. Loss only on those holes.
+def _span_pick(valid: torch.Tensor, ratio: torch.Tensor) -> torch.Tensor:
+    """Start at ~ratio/2.5 of positions, cover 2–4 tokens (phrase-sized holes)."""
+    b, t = valid.shape
+    p_start = (ratio / 2.5).clamp(0.04, 0.35)
+    starts = (torch.rand(b, t, device=valid.device) < p_start) & valid
+    pick = starts.clone()
+    for k in range(1, 4):
+        pick[:, k:] |= starts[:, : t - k]
+    return pick & valid
 
-    Train: mostly 12–35% holes (syntax); 25% of rows 45–75% (generate).
-    Eval: fixed p (BERT cloze).
-    """
+
+def mask_tokens(gold: torch.Tensor, pad: int, mask_id: int, p: float | None):
+    """MASK holes only. Train mixes cloze / high-r / prefix-frozen continuation."""
     b, t = gold.shape
     valid = gold != pad
-    if p is None:
-        light = torch.rand(b, 1, device=gold.device) < 0.75
-        lo = torch.rand(b, 1, device=gold.device) * 0.23 + 0.12
-        hi = torch.rand(b, 1, device=gold.device) * 0.30 + 0.45
-        ratio = torch.where(light, lo, hi)
-        pick = (torch.rand(b, t, device=gold.device) < ratio) & valid
-    else:
+    if p is not None:
         pick = (torch.rand(b, t, device=gold.device) < p) & valid
+        canvas = gold.clone()
+        canvas[pick] = mask_id
+        return canvas, pick
+
+    device = gold.device
+    u = torch.rand(b, 1, device=device)
+    is_cont = u < 0.35
+    is_high = (u >= 0.35) & (u < 0.70)
+    r_light = torch.rand(b, 1, device=device) * 0.23 + 0.12
+    r_high = torch.rand(b, 1, device=device) * 0.35 + 0.50
+    ratio = torch.where(is_high, r_high, r_light)
+    pick_ind = (torch.rand(b, t, device=device) < ratio) & valid
+    pick_span = _span_pick(valid, ratio)
+    use_span = (~is_cont) & (torch.rand(b, 1, device=device) < 0.5)
+    pick = torch.where(use_span.expand(b, t), pick_span, pick_ind)
+    freeze = torch.randint(4, FREEZE_N + 1, (b, 1), device=device)
+    left = torch.arange(t, device=device).view(1, t) < freeze
+    pick_cont = valid & ~left
+    pick = torch.where(is_cont.expand(b, t), pick_cont, pick)
+
     canvas = gold.clone()
     canvas[pick] = mask_id
     return canvas, pick
 
 
-def run_epoch(model, opts, wins: torch.Tensor, train: bool):
+def run_epoch(model, opts, wins: torch.Tensor, train: bool, sched=None):
     model.train(train)
     nwin = wins.size(0)
     order = torch.randperm(nwin) if train else torch.arange(nwin)
@@ -191,7 +213,7 @@ def run_epoch(model, opts, wins: torch.Tensor, train: bool):
     hit = n = 0
     nll_sum = 0.0
     n_steps = 0
-    vc = torch.zeros(model.V, dtype=torch.long)
+    vc = torch.zeros(model.V, dtype=torch.long, device=wins.device)
     ctx = torch.enable_grad() if train else torch.inference_mode()
     with ctx:
         for i0 in range(0, nwin, BATCH):
@@ -207,6 +229,8 @@ def run_epoch(model, opts, wins: torch.Tensor, train: bool):
                 opts.zero_grad(set_to_none=True)
                 loss.backward()
                 opts.step()
+                if sched is not None:
+                    sched.step()
             pred = logits.argmax(-1)
             hit += int((pred == y).sum())
             n += int(y.numel())
@@ -226,7 +250,7 @@ def run_epoch(model, opts, wins: torch.Tensor, train: bool):
 
 
 @torch.inference_mode()
-def eval_rate(model, wins: torch.Tensor, p: float, max_win: int = 256) -> int:
+def eval_rate(model, wins: torch.Tensor, p: float, max_win: int = 128) -> int:
     """MASK acc at a fixed hole rate (generate-like check)."""
     gold = wins[: min(max_win, wins.size(0))]
     hit = n = 0
@@ -235,6 +259,25 @@ def eval_rate(model, wins: torch.Tensor, p: float, max_win: int = 256) -> int:
         canvas, pick = mask_tokens(g, model.pad, model.mask, p)
         if not pick.any():
             continue
+        pred = model.logits_pick(canvas, pick).argmax(-1)
+        hit += int((pred == g[pick]).sum())
+        n += int(g[pick].numel())
+    return 100 * hit // n if n else 0
+
+
+@torch.inference_mode()
+def eval_cont(model, wins: torch.Tensor, freeze: int = 8, max_win: int = 128) -> int:
+    """Infer-like: keep left freeze chars, MASK the rest."""
+    gold = wins[: min(max_win, wins.size(0))]
+    hit = n = 0
+    for i0 in range(0, gold.size(0), BATCH):
+        g = gold[i0 : i0 + BATCH]
+        pick = (g != model.pad)
+        pick[:, :freeze] = False
+        if not pick.any():
+            continue
+        canvas = g.clone()
+        canvas[pick] = model.mask
         pred = model.logits_pick(canvas, pick).argmax(-1)
         hit += int((pred == g[pick]).sum())
         n += int(g[pick].numel())
@@ -362,20 +405,28 @@ def print_frames(model, prompt: str, stoi: dict[str, int], k: int, device):
 
 def print_k_curve(model, stoi: dict[str, int], device):
     print("--- generate (prefix frozen, fill MASK) ---", flush=True)
-    for k in (1, 8, 16):
-        print(f"K={k:<3} 悟空  {denoise(model, '悟空', stoi, k, device)}", flush=True)
-    print(f"K=8  猴    {denoise(model, '猴', stoi, 8, device)}", flush=True)
+    print(f"K=8 悟空  {denoise(model, '悟空', stoi, 8, device)}", flush=True)
+    print(f"K=8 猴    {denoise(model, '猴', stoi, 8, device)}", flush=True)
 
 
-def save_ckpt(path: str, model, vocab: list[str]):
-    torch.save(
-        {"model": model.state_dict(), "vocab": vocab, "cfg": {"T": T, "D": D}},
-        path,
-    )
+def save_ckpt(path: str, model, vocab: list[str], opts=None, sched=None, ep=0):
+    blob = {"model": model.state_dict(), "vocab": vocab, "cfg": {"T": T, "D": D}, "ep": ep}
+    if opts is not None:
+        blob["opt"] = opts.state_dict()
+    if sched is not None:
+        blob["sched"] = sched.state_dict()
+    torch.save(blob, path)
+
+
+def _load(path, device):
+    try:
+        return torch.load(path, map_location=device, weights_only=False)
+    except TypeError:
+        return torch.load(path, map_location=device)
 
 
 def load_ckpt(path: str, device):
-    blob = torch.load(path, map_location=device)
+    blob = _load(path, device)
     vocab = blob["vocab"]
     model = SnapshotLM(vocab).to(device)
     model.load_state_dict(blob["model"])
@@ -383,10 +434,19 @@ def load_ckpt(path: str, device):
     return model, {c: i for i, c in enumerate(vocab)}
 
 
-def setup_threads():
+def setup_device():
+    global BATCH
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+        BATCH = 256
+        print(f"device  cuda  {torch.cuda.get_device_name(0)}  B={BATCH}", flush=True)
+        return torch.device("cuda")
     nt = os.cpu_count() or 4
     torch.set_num_threads(nt)
-    torch.set_num_interop_threads(min(4, nt))
+    torch.set_num_interop_threads(1)
+    if hasattr(torch.backends, "mkldnn"):
+        torch.backends.mkldnn.enabled = True
+    print(f"device  cpu  B={BATCH}", flush=True)
     return torch.device("cpu")
 
 
@@ -420,7 +480,7 @@ def cmd_infer(argv: list[str]) -> int:
     if not os.path.isfile(ckpt):
         print(f"load failed (train first): {ckpt}", flush=True)
         return 1
-    device = setup_threads()
+    device = setup_device()
     torch.manual_seed(1)
     model, stoi = load_ckpt(ckpt, device)
     print(f"snapshot  V={model.V}  d={D}  T={T}  K={k}  {ckpt}", flush=True)
@@ -460,33 +520,50 @@ def main():
     wins = torch.from_numpy(windows(ids, T, STRIDE)).long()
     ntr = int(len(wins) * 0.9)
     train_w, test_w = wins[:ntr], wins[ntr:]
-    device = setup_threads()
+    device = setup_device()
+    train_w = train_w.to(device)
+    test_w = test_w.to(device)
     torch.manual_seed(1)
     random.seed(1)
     np.random.seed(1)
     model = SnapshotLM(vocab).to(device)
+    opts = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
+    n_batch = max(1, (len(train_w) + BATCH - 1) // BATCH)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opts, T_max=max(1, epochs * n_batch), eta_min=LR * 0.1)
     resume = (not fresh) and os.path.isfile(CKPT)
     if resume:
-        blob = torch.load(CKPT, map_location=device)
+        blob = _load(CKPT, device)
         model.load_state_dict(blob["model"])
+        if blob.get("opt"):
+            try:
+                opts.load_state_dict(blob["opt"])
+                for g in opts.param_groups:
+                    g["lr"] = LR
+            except Exception:
+                print("resume  opt skipped (device/shape)", flush=True)
         print(f"resume  {CKPT}", flush=True)
-    opts = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
     nparam = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(
         f"snapshot-bert  V={model.V}  d={D}  L={N_LAYER}  H={N_HEAD}  T={T}  "
         f"params={nparam}  tokens={len(ids)}  train-win={len(train_w)}  test-win={len(test_w)}",
         flush=True,
     )
-    print(f"mask  train 75%×12-35% + 25%×45-75%  eval {MASK_P:.0%}  corpus={path}", flush=True)
-    print(f"opt  AdamW lr={LR}  wd={WD}  bidir SDPA+ALiBi  tied head  B={BATCH} stride={STRIDE}", flush=True)
+    print(
+        "mask  train 35% cont-prefix + 35% r=50-85% + 30% r=12-35%  "
+        f"span~half  eval {MASK_P:.0%}  corpus={path}",
+        flush=True,
+    )
+    print(
+        f"opt  AdamW lr={LR} cosine  wd={WD}  drop={DROP}  "
+        f"bidir SDPA+ALiBi  tied head  B={BATCH} stride={STRIDE}",
+        flush=True,
+    )
     print("--- train ---", flush=True)
     t0 = time.perf_counter()
     best = 0
     for ep in range(epochs):
-        acc, nll, hit, n, maj = run_epoch(model, opts, train_w, True)
+        acc, nll, hit, n, maj = run_epoch(model, opts, train_w, True, sched)
         tacc, tnll, th, tn, tmaj = run_epoch(model, opts, test_w, False)
-        a50 = eval_rate(model, test_w, 0.5)
-        a90 = eval_rate(model, test_w, 0.9)
         print(
             f"epoch {ep}  mask-acc ~{acc}%  maj ~{maj}%  nll {nll:.3f}  hit {hit} / {n}",
             flush=True,
@@ -495,11 +572,16 @@ def main():
             f"         test mask-acc ~{tacc}%  maj ~{tmaj}%  nll {tnll:.3f}  hit {th} / {tn}",
             flush=True,
         )
-        print(f"         test r=50% ~{a50}%  r=90% ~{a90}%", flush=True)
-        save_ckpt(CKPT, model, vocab)
+        extra = ep % 4 == 0 or ep == epochs - 1
+        if extra:
+            a50 = eval_rate(model, test_w, 0.5)
+            a90 = eval_rate(model, test_w, 0.9)
+            ac = eval_cont(model, test_w)
+            print(f"         test r=50% ~{a50}%  r=90% ~{a90}%  cont ~{ac}%", flush=True)
+            print_k_curve(model, stoi, device)
+        save_ckpt(CKPT, model, vocab, opts, sched, ep)
         if tacc >= best:
             best = tacc
-        print_k_curve(model, stoi, device)
     dt = time.perf_counter() - t0
     print(f"--- after train  {dt:.1f}s  best-test {best}%  {CKPT} ---", flush=True)
     ch, nh = probe(model, test_w, device)
