@@ -16,10 +16,9 @@ let join_cmd(xs) =
 
 let run(argv) =
   let cmd = join_cmd(argv) in
-  /* Distinct from tests/run.yac (pout/perr): that harness redirects this
-   * binary onto those files, so sharing them truncated boot stdout. */
-  let outp = str_cat(TMP, "/poutb") in
-  let errp = str_cat(TMP, "/perrb") in
+  let tag = int_to_str(time_ns()) in
+  let outp = str_cat(TMP, str_cat("/poutb.", tag)) in
+  let errp = str_cat(TMP, str_cat("/perrb.", tag)) in
   let full = str_cat(cmd, str_cat(" >", str_cat(outp, str_cat(" 2>", errp)))) in
   let rc = system(full) in
   let out = read_file(outp) in

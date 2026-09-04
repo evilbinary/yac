@@ -35,8 +35,9 @@ let join_cmd(xs) =
 
 let run(argv) =
   let cmd = join_cmd(argv) in
-  let outp = str_cat(TMP, "/pout") in
-  let errp = str_cat(TMP, "/perr") in
+  let tag = int_to_str(time_ns()) in
+  let outp = str_cat(TMP, str_cat("/pout.", tag)) in
+  let errp = str_cat(TMP, str_cat("/perr.", tag)) in
   let full = str_cat(cmd, str_cat(" >", str_cat(outp, str_cat(" 2>", errp)))) in
   let rc = system(full) in
   let out = read_file(outp) in
@@ -929,12 +930,20 @@ let suite_name(_) =
 let boot_front(st, ya) =
   let boot_bin = native(str_cat(TMP, "/boot_run")) in
   let _ = run(["rm", "-f", boot_bin]) in
-  let _ = run(append(yc_pkg(ya), ["tests/boot/run.yac", "-o", boot_bin])) in
-  let _ = run(["chmod", "+x", boot_bin]) in
+  let cr = run(append(yc_pkg(ya), ["tests/boot/run.yac", "-o", boot_bin])) in
   let _ = banner("boot", ya) in
-  let br = run([boot_bin]) in
-  let _ = print(chomp(nth(br, 1))) in
-  check(st, "boot frontend", "0", int_to_str(nth(br, 0)))
+  if nth(cr, 0) != 0 then
+    let _ = print(chomp(nth(cr, 1))) in
+    let _ = print(chomp(nth(cr, 2))) in
+    check(st, "boot frontend", "0", int_to_str(nth(cr, 0)))
+  else
+    let _ = run(["chmod", "+x", boot_bin]) in
+    let br = run([boot_bin]) in
+    let _ = print(chomp(nth(br, 1))) in
+    let _ =
+      if nth(br, 0) == 0 then 0
+      else print(chomp(nth(br, 2))) in
+    check(st, "boot frontend", "0", int_to_str(nth(br, 0)))
 
 let qemu_both(st, yc) =
   qemu_arch(qemu_arch(st, yc, "arm64"), yc, "riscv64")
