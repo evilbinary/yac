@@ -4,7 +4,7 @@ package back.backend
 export compile_native, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, report_unbound_ex, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, ast_packages, skip_local_imp, fun_off, link_need_box, link_local_box, rewrite_imports, rt_for_link, compiler_top_env, compiler_env_bind
 import back.lower
 import back.pack.elf {elf_shared_set, funsym_get, pack_elf, pack_elf_libc}
-import back.pack.target {target_arch, target_emachine, target_format, target_shared, target_text_off, target_vaddr}
+import back.pack.target {mk_target, target_arch, target_emachine, target_format, target_shared, target_text_off, target_vaddr}
 import back.pack.pe {pack_pe_target, pe_finish_dll, pe_finish_imports}
 import back.pack.pack {pack_image}
 import lib.map
@@ -18,6 +18,7 @@ import front.eval_cps {eval_cps_all}
 import front.uncps {uncps_all, uncps_is_err}
 import lib.pass {mk_pass, run_passes}
 import back.pack.yjit {pack_yjit_ex, yjit_arch_num, yjit_imp_enc}
+import rt.os {host_arch, host_format}
 
 let reverse(xs) = list_rev(xs)
 
@@ -181,7 +182,10 @@ let rewrite_imports(ast, i, acc) =
   if i >= len(ast) then reverse(acc)
   else
     let e = nth(ast, i) in
-    let e2 = if nth(e, 0) == "import" then fill_import(e) else e in
+    let e2 =
+      if nth(e, 0) != "import" then e
+      else if nth(e, 1) == "compiler" then e
+      else fill_import(e) in
     rewrite_imports(ast, i + 1, cons(e2, acc))
 
 /* Compile one rt/*.yac against already-lowered procs so later stdlib
@@ -226,7 +230,7 @@ let compiler_env_bind(xs, i) =
 let kernel_fun_names(_) =
   let c = box_get(kernel_names_cache) in
   if c == 0 then
-    let v = intern_names(compiler_top_env(0), 0, rt_fun_names(runtime_funs(0))) in
+    let v = rt_fun_names(runtime_funs(0)) in
     let _ = box_set(kernel_names_cache, v) in
     v
   else c
@@ -293,7 +297,6 @@ let lir_extend(pkg, src, acc) =
       let saved_p = pkg_prefix_get(0) in
       let filled = rewrite_imports(ast, 0, []) in
       let _ = imap_load(filled, 0) in
-      let _ = compiler_env_bind(compiler_top_env(0), 0) in
       let _ = pkg_prefix_set(ast_pkg_name(ast, 0)) in
       if report_unbound(src, ast) != 0 then
         let _ = pkg_fail_set(1) in
@@ -325,6 +328,7 @@ let visit_go(op, p, xs, i, seen, order) =
   if op == 0 then
     if in_list(p, seen) then [seen, order]
     else if p == "rt.num" then [cons(p, seen), order]
+    else if p == "compiler" then [cons(p, seen), order]
     else
       let seen1 = cons(p, seen) in
       let st = visit_go(1, p, pkg_file_imports(p), 0, seen1, order) in
@@ -351,7 +355,6 @@ let link_from_ast(ast) =
   let _ = box_set(link_need_box, ast_imports(ast1, 0, [])) in
   let _ = box_set(link_local_box, pkgs) in
   let _ = imap_load(filled, 0) in
-  let _ = compiler_env_bind(compiler_top_env(0), 0) in
   0
 
 let rt_cache_num =
@@ -482,7 +485,7 @@ let dump_uncps(src, do_opt) =
     else
       let _ = print(r) in 0
 
-let compile_native(src, t) =
+let compile_native_go(src, t) =
   if src == 0 then 0
   else if is_int(src) then 0
   else if t == 0 then 0
@@ -502,6 +505,136 @@ let compile_native(src, t) =
         let _ = link_from_ast(ast0) in
         let b = run_passes(make_pipeline(t), src) in
         if pkg_fail(0) != 0 then 0 else b in
+    let _ = box_set(imap_box, saved_i) in
+    let _ = box_set(malias_box, saved_m) in
+    let _ = pkg_prefix_set(saved_p) in
+    let _ = box_set(link_need_box, saved_n) in
+    let _ = box_set(link_local_box, saved_l) in
+    bin
+
+let host_exec_t(_) = mk_target(host_arch(0), host_format(0), "exec")
+
+let host_hc_n =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let host_fold_bin(s) =
+  let bin = compile_native_go(s, host_exec_t(0)) in
+  if bin == 0 then ["int", "0"]
+  else
+    let n = box_get(host_hc_n) in
+    let _ = box_set(host_hc_n, n + 1) in
+    let p = str_cat("build/yc_tmp/hc_", int_to_str(n)) in
+    let _ = write_file(p, bin) in
+    ["call", ["var", "read_file"], [["str", p]]]
+
+let host_fold_call(nm, args) =
+  if nm == "compile" then
+    if len(args) < 1 then 0
+    else if nth(nth(args, 0), 0) != "str" then 0
+    else host_fold_bin(nth(nth(args, 0), 1))
+  else if nm == "compile_native" then
+    if len(args) < 1 then 0
+    else if nth(nth(args, 0), 0) != "str" then 0
+    else host_fold_bin(nth(nth(args, 0), 1))
+  else if nm == "compile_file" then
+    if len(args) < 2 then 0
+    else if nth(nth(args, 0), 0) != "str" then 0
+    else if nth(nth(args, 1), 0) != "str" then 0
+    else
+      let src = read_file(nth(nth(args, 0), 1)) in
+      if src == 0 then ["int", "1"]
+      else
+        let bin = compile_native_go(src, host_exec_t(0)) in
+        if bin == 0 then ["int", "1"]
+        else
+          let _ = write_file(nth(nth(args, 1), 1), bin) in
+          ["int", "0"]
+  else if nm == "load" then
+    if len(args) < 1 then 0
+    else if nth(nth(args, 0), 0) != "str" then 0
+    else
+      let src = read_file(nth(nth(args, 0), 1)) in
+      if src == 0 then ["int", "1"]
+      else
+        let p = pass_parse(pass_lex(src)) in
+        if prog_has_err(p, 0) then ["int", "1"]
+        else
+          let rec(i, last) =
+            if i >= len(p) then last
+            else
+              let e = nth(p, i) in
+              let k = nth(e, 0) in
+              if k == "import" then rec(i + 1, last)
+              else if k == "package" then rec(i + 1, last)
+              else if k == "export" then rec(i + 1, last)
+              else rec(i + 1, e) in
+          rec(0, ["int", "0"])
+  else 0
+
+let host_fold_go(op, x, i, acc) =
+  if op == 0 then
+    let k = nth(x, 0) in
+    if k == "call" then
+      let fn = host_fold_go(0, nth(x, 1), 0, []) in
+      let args = host_fold_go(1, nth(x, 2), 0, []) in
+      if nth(fn, 0) != "var" then ["call", fn, args]
+      else
+        let r = host_fold_call(nth(fn, 1), args) in
+        if r == 0 then ["call", fn, args] else r
+    else if k == "if" then
+      ["if", host_fold_go(0, nth(x, 1), 0, []),
+       host_fold_go(0, nth(x, 2), 0, []),
+       host_fold_go(0, nth(x, 3), 0, [])]
+    else if k == "let" then
+      ["let", nth(x, 1), host_fold_go(0, nth(x, 2), 0, []),
+       host_fold_go(0, nth(x, 3), 0, [])]
+    else if k == "fun" then
+      ["fun", nth(x, 1), host_fold_go(0, nth(x, 2), 0, [])]
+    else if k == "binop" then
+      ["binop", nth(x, 1), host_fold_go(0, nth(x, 2), 0, []),
+       host_fold_go(0, nth(x, 3), 0, [])]
+    else if k == "not" then ["not", host_fold_go(0, nth(x, 1), 0, [])]
+    else if k == "list" then ["list", host_fold_go(1, nth(x, 1), 0, [])]
+    else x
+  else if i >= len(x) then reverse(acc)
+  else host_fold_go(1, x, i + 1, cons(host_fold_go(0, nth(x, i), 0, []), acc))
+
+let host_fold(ast) =
+  let rec(i, acc) =
+    if i >= len(ast) then reverse(acc)
+    else
+      let e = nth(ast, i) in
+      let k = nth(e, 0) in
+      if k == "import" then rec(i + 1, cons(e, acc))
+      else if k == "package" then rec(i + 1, cons(e, acc))
+      else if k == "export" then rec(i + 1, cons(e, acc))
+      else rec(i + 1, cons(host_fold_go(0, e, 0, []), acc)) in
+  rec(0, [])
+
+let compile_native(src, t) =
+  if src == 0 then 0
+  else if is_int(src) then 0
+  else if t == 0 then 0
+  else
+    let saved_i = box_get(imap_box) in
+    let saved_m = box_get(malias_box) in
+    let saved_p = pkg_prefix_get(0) in
+    let saved_n = box_get(link_need_box) in
+    let saved_l = box_get(link_local_box) in
+    let ast0 = pass_parse(pass_lex(src)) in
+    let bin =
+      if prog_has_err(ast0, 0) then
+        let _ = report_syntax(ast0) in 0
+      else
+        let ast1 = host_fold(ast0) in
+        if report_unbound(src, ast1) != 0 then 0
+        else
+          let _ = pkg_fail_set(0) in
+          let _ = link_from_ast(ast1) in
+          let b = run_passes(drop(make_pipeline(t), 2), ast1) in
+          if pkg_fail(0) != 0 then 0 else b in
     let _ = box_set(imap_box, saved_i) in
     let _ = box_set(malias_box, saved_m) in
     let _ = pkg_prefix_set(saved_p) in
