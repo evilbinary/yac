@@ -32,6 +32,7 @@ YC_SRCS = src-self/lib/log.yac src-self/lib/pass.yac src-self/lib/map.yac \
 	src-self/back/emit/emit_cabi.yac src-self/back/emit/emit_x86_64.yac src-self/back/emit/emit_arm64.yac src-self/back/emit/emit_riscv64.yac \
 	src-self/back/lower.yac src-self/back/profile.yac src-self/back/backend.yac \
 	src-self/back/jit.yac \
+	src-self/back/fold.yac \
 	src-self/lang/scheme.yac src-self/yc.yac
 
 all: $(BIN) $(YC_BIN)

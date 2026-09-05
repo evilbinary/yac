@@ -1,5 +1,6 @@
 import rt.os
 import back.backend {compile_native, dump_anf, dump_ast, dump_cps, dump_uncps, eval_cps_src, pkg_set}
+import back.fold {compiler_fold, fold_active, fold_import, fold_repl}
 import back.jit {compile_jit, compile_uncps, jit_dump_live, jit_load_yjit}
 import back.pack.elf {syms_enable}
 import back.pack.target {mk_jit_target, mk_target, parse_arch_name, parse_format_name, target_shared}
@@ -262,9 +263,12 @@ let repl_loop(spec) =
       else jit_load_yjit(p, 1) in
     repl_loop(spec)
   else
-    let _ = jit_eval_repl(prep_src(line, spec), arch) in
+    let pline = prep_src(line, spec) in
+    let _ =
+      if fold_active(0) != 0 then fold_repl(pline)
+      else if fold_import(pline) != 0 then fold_repl(pline)
+      else jit_eval_repl(pline, arch) in
     repl_loop(spec)
-
 let run_cli(pr) =
   let out_opt = nth(pr, 0) in
   let pos = nth(pr, 1) in
@@ -329,16 +333,24 @@ let run_cli(pr) =
               let _ = if profpath == "" then 0 else yac_prof_enable(profpath) in
               let _ = log("yc", "start") in
               let _ = log_i("yc", "src_len", str_len(src)) in
-              let bin = compile_native(src, t) in
-              if bin == 0 then 1
+              let foldr = compiler_fold(src) in
+              let foldk = nth(foldr, 0) in
+              if foldk == "err" then
+                let _ = print(nth(foldr, 1)) in 1
               else
-                let _ = log_i("yc", "bin_len", bytes_len(bin)) in
-                let _ = log("yc", "write") in
-                let _ = write_file(outpath, bin) in
-                let _ = log_i("prof", "total", time_ms() - t0) in
-                let _ = log("yc", "done") in
-                let _ = if profpath == "" then 0 else yac_prof_dump(0) in
-                0
+                let src2 =
+                  if foldk == "ok" then int_to_str(nth(foldr, 1))
+                  else src in
+                let bin = compile_native(src2, t) in
+                if bin == 0 then 1
+                else
+                  let _ = log_i("yc", "bin_len", bytes_len(bin)) in
+                  let _ = log("yc", "write") in
+                  let _ = write_file(outpath, bin) in
+                  let _ = log_i("prof", "total", time_ms() - t0) in
+                  let _ = log("yc", "done") in
+                  let _ = if profpath == "" then 0 else yac_prof_dump(0) in
+                  0
 
 let main =
   let argc_n = argc() in
