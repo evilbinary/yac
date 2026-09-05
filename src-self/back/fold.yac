@@ -391,11 +391,12 @@ let fold_repl(src) =
               if is_int(v) then
                 let _ = print(str_cat(str_cat(nm, " = "), int_to_str(v))) in
                 0
-              else 0 in
+              else
+                let _ = print(str_cat(nm, " = "), false) in
+                let _ = print(v) in
+                0 in
           0
         else
           let wv = nth(nth(r0, 2), 1) in
-          if is_int(wv) then
-            let _ = print(wv) in
-            0
-          else 0
+          let _ = print(wv) in
+          0
