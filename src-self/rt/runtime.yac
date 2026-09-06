@@ -1,3 +1,4 @@
+export runtime_funs, runtime_add
 /* runtime.yac — arch-independent runtime as LIR (same emit_insn as user code).
  *
  * Kernel: obj_kind / mref / mset / obj_sti / obj_st_int / tag / alloc
@@ -2099,6 +2100,21 @@ let rt_jit_run_ins(_) =
    ["mov_imm", 12, 0],
    ["ret", 12]]
 
+/* Host function-address table: host image's own G+136..G+216 slots, baked
+ * by emit_program_* at host build time. arg1 = slot id (0..9). */
+let rt_host_sym_ins(_) =
+  [["$local", 8, 1],
+   ["$shr", 2, 1, 1],
+   ["$add", 2, 2, 2],
+   ["$add", 2, 2, 2],
+   ["$add", 2, 2, 2],
+   ["mov_imm", 4, 136],
+   ["$add", 2, 2, 4],
+   ["$gbase", 3],
+   ["$add", 3, 3, 2],
+   ["$ld64", 4, 3, 0],
+   ["ret", 4]]
+
 /* REPL top-level lets: qword slots at JIT_VADDR+12MiB (same 16MiB map).
  * Must not use $gbase: this $proc is emitted into the JIT image, whose G
  * is guest DATA; the map pointer lives in the host G+112. */
@@ -2247,6 +2263,7 @@ let runtime_funs(_) =
    ["$proc", "yac_system", 1, 0, rt_system_ins(0), "yac_system"],
    ["$proc", "yac_read_line", 0, 0, rt_read_line_ins(0), "yac_read_line"],
    ["$proc", "yac_jit_run", 3, 0, rt_jit_run_ins(0), "yac_jit_run"],
+    ["$proc", "yac_host_sym", 1, 0, rt_host_sym_ins(0), "yac_host_sym"],
    ["$proc", "yac_jslot_get", 1, 0, rt_jslot_get_ins(0), "yac_jslot_get"],
    ["$proc", "yac_jslot_set", 2, 0, rt_jslot_set_ins(0), "yac_jslot_set"],
    ["$proc", "yac_alloc", 1, 0, rt_alloc_ins(0), "yac_alloc"],

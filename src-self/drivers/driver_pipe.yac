@@ -1,5 +1,5 @@
 import rt.os
-import back.emit.emit {cimport_got, cimport_names}
+import back.emit.emit {cimport_got, cimport_names, reverse}
 import back.lower {lower_expr}
 import back.pack.elf {pack_elf}
 import back.pack.pe {pack_pe_target, pe_finish_imports}
