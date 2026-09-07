@@ -238,26 +238,32 @@ let link_has_nstub(c, i) =
   else if nth(c, i) != "stub" then true
   else link_has_nstub(c, i + 1)
 
-let link_suffix(mode) =
-  if mode == "embed" then ".host"
-  else if mode == "dylib" then ".so"
-  else if mode == "yjit" then ".yjit"
-  else ""
+/* Artifact suffixes per mode. dylib is target-format dependent: ELF .so,
+ * PE .dll, Mach-O .dylib — probe all so the same chain works on any host. */
+let link_suffixes(mode) =
+  if mode == "embed" then [".host"]
+  else if mode == "dylib" then [".so", ".dll", ".dylib"]
+  else if mode == "yjit" then [".yjit"]
+  else []
 
 /* Artifact file <pkg>.yac<mode-suffix> under the package roots. Content or
  * 0. Only used when a non-stub mode was explicitly requested. */
 let link_artifact(pkg, mode) =
-  let suf = link_suffix(mode) in
-  if suf == "" then 0
-  else
-    let f = str_cat(pkg_file(pkg), suf) in
-    let extra = box_get(pkg_extra_box) in
-    let a = if extra == 0 then 0 else pkg_try(extra, f, 0) in
-    if a != 0 then a
+  let try_suf(sufs, i) =
+    if i >= len(sufs) then 0
     else
-      let p = file_or_0(join_path("pkg", f)) in
-      if p != 0 then p
-      else file_or_0(join_path(path_dirname(argv(0)), f))
+      let f = str_cat(pkg_file(pkg), nth(sufs, i)) in
+      let extra = box_get(pkg_extra_box) in
+      let a = if extra == 0 then 0 else pkg_try(extra, f, 0) in
+      if a != 0 then a
+      else
+        let p = file_or_0(join_path("pkg", f)) in
+        if p != 0 then p
+        else
+          let q = file_or_0(join_path(path_dirname(argv(0)), f)) in
+          if q != 0 then q
+          else try_suf(sufs, i + 1) in
+  try_suf(link_suffixes(mode), 0)
 
 let link_render_go(xs, i, acc) =
   if i >= len(xs) then acc

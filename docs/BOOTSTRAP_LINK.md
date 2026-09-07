@@ -654,8 +654,8 @@ src/*.c                                                # C 参考实现不改（
 - [x] 12.3.2 `backend.yac` 加 `link_global_box` / `link_pkg_box` +
       `link_chain_of(pkg)`：**包覆盖（后写者胜，反查）> 全局链 > `["stub"]`**
 - [x] 12.3.3 产物探测 `link_artifact(pkg, mode)`：包根下查
-      `<pkg>.yac.host` / `.so` / `.yjit`（`link_suffix` 映射），**只判存在**，
-      返回内容或 0
+      `<pkg>.yac.host` / `.yjit`；`dylib` 按目标格式探测 `.so` / `.dll` /
+      `.dylib` 三种后缀（`link_suffixes`），**只判存在**，返回内容或 0
 - [x] 12.3.4 `lir_extend` 入口统一链解析（`pkg != rt.num` 时 `link_check_pkg`）：
       - 链无非 stub 模式 → 直接源码链接（默认/纯 stub，现状不变）
       - 命中产物但模式未实现 → `error: ... not implemented yet`
@@ -666,11 +666,12 @@ src/*.c                                                # C 参考实现不改（
       - `--link dylib` + 无产物 → 编译 rc=1，报 `no precompiled artifact`
       - `--link path=dylib,stub` → 回源码，运行 42
       - `--link bogus` → `error: bad arguments` rc=2
-- [x] 12.3.7 回归套件（Windows 实测 **7/7 PASS**）：`tests/run.yac` 新增
+- [x] 12.3.7 回归套件（Windows 实测 **9/9 PASS**）：`tests/run.yac` 新增
       `link` 套件 + `Makefile` `test-link` 目标。用例：
       default source-link(42) / global dylib no artifact / override
       dylib,stub→source / repeat override later-wins→source / bad mode /
-      artifact-not-implemented（构造假 `path.yac.so`）/ help 含 `--link`
+      artifact-not-implemented（`.so` / `.dll` / `.dylib` 三种假产物各一）/
+      help 含 `--link`
 - [ ] 12.3.6 跟进：Linux 上 `make test` / `yc-iso` 确认**不带 `--link` 时
       产物与改动前逐字节一致**
 
