@@ -29,7 +29,7 @@ let target_text_off(t) = nth(t, 9)
 let target_shared(t) = target_kind(t) == "dylib"
 let target_live(t) =
   if target_format(t) == "yjit" then false
-  else target_vaddr(t) == JIT_VADDR
+  else target_vaddr(t) == 8589934592
 
 let arch_ids(arch) =
   if arch == "x86_64" then [62, 34404, 16777223, 3]
@@ -49,16 +49,16 @@ let mk_target(arch, format, kind) =
   if ids == 0 then 0
   else if format == "elf" then
     ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
-     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(format, kind)]
+     nth(ids, 2), nth(ids, 3), 4194304, layout_off(format, kind)]
   else if format == "pe" then
     ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
-     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(format, kind)]
+     nth(ids, 2), nth(ids, 3), 4194304, layout_off(format, kind)]
   else if format == "macho" then
     ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
-     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(format, kind)]
+     nth(ids, 2), nth(ids, 3), 4194304, layout_off(format, kind)]
   else if format == "yjit" then
     ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
-     nth(ids, 2), nth(ids, 3), JIT_VADDR, 0]
+     nth(ids, 2), nth(ids, 3), 8589934592, 0]
   else 0
 
 /* In-process JIT: text at a high MAP_FIXED address, no ELF header.
@@ -66,9 +66,8 @@ let mk_target(arch, format, kind) =
 let mk_jit_target(arch) =
   let ids = arch_ids(arch) in
   if ids == 0 then 0
-  else
-    ["target", arch, "elf", "exec", nth(ids, 0), nth(ids, 1),
-     nth(ids, 2), nth(ids, 3), JIT_VADDR, 0]
+  else ["target", arch, "elf", "exec", nth(ids, 0), nth(ids, 1),
+        nth(ids, 2), nth(ids, 3), 8589934592, 0]
 
 let target_by_name(s) = mk_target(s, "elf", "exec")
 

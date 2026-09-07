@@ -1,11 +1,12 @@
 import rt.os {host_arch, host_format}
-import back.backend {compile_native, dump_anf, dump_ast, dump_cps, dump_uncps, eval_cps_src, pkg_set}
+import back.backend {compile_native, dump_anf, dump_ast, dump_cps, dump_uncps, eval_cps_src, pass_lex, pass_parse, pkg_set}
 import back.jit {compile_jit, compile_uncps, jit_dump_live, jit_load_yjit}
 import back.pack.elf {syms_enable}
 import back.pack.target {mk_jit_target, mk_target, parse_arch_name, parse_format_name, target_shared}
 import lang.scheme {scheme_to_yac}
 import lib.log {log, log_i, log_set_hush}
 import back.profile {yac_prof_dump, yac_prof_enable}
+import front.parser {prog_has_err}
 
 /* yc.yac — CLI: compile to ELF by default; yac-compatible run/dump flags JIT. */
 
@@ -245,6 +246,63 @@ let repl_preload(pos, spec, an) =
     else if raw == "" then 0
     else jit_eval_repl(prep_src(raw, spec), an)
 
+/* Compile-time host eval (BOOTSTRAP_LINK.md §2): a REPL line that is a
+ * host compile-API call with literal string args runs in the host while
+ * compiling, instead of a runtime session hostcall. */
+let repl_host_eval(line) =
+  let ast = pass_parse(pass_lex(line)) in
+  if prog_has_err(ast, 0) then 0
+  else if len(ast) != 1 then 0
+  else
+    let e = nth(ast, 0) in
+    if nth(e, 0) != "call" then 0
+    else
+      let f = nth(e, 1) in
+      if nth(f, 0) != "var" then 0
+      else
+        let nm = nth(f, 1) in
+        let args = nth(e, 2) in
+        let str_arg(i) =
+          if i >= len(args) then 0
+          else if nth(nth(args, i), 0) == "str" then nth(nth(args, i), 1)
+          else 0 in
+        if nm == "compile" and len(args) == 1 then
+          let src = str_arg(0) in
+          if src == 0 then 0
+          else
+            let t = mk_target(host_arch(0), host_format(0), "exec") in
+            let b = compile_native(src, t) in
+            if b == 0 then
+              let _ = print_val(1) in 1
+            else
+              let _ = print(str_cat("<bytes ", str_cat(int_to_str(bytes_len(b)), ">\n"))) in 1
+        else if nm == "load" and len(args) == 1 then
+          let p = str_arg(0) in
+          if p == 0 then 0
+          else
+            let src = read_file(p) in
+            if src == 0 then
+              let _ = print("error: load: cannot read") in 1
+            else
+              let _ = compile_jit(src, mk_jit_target(host_arch(0)), true) in 1
+        else if nm == "compile_file" and len(args) == 2 then
+          let inpath = str_arg(0) in
+          let outpath = str_arg(1) in
+          if inpath == 0 or outpath == 0 then 0
+          else
+            let src = read_file(inpath) in
+            if src == 0 then
+              let _ = print_val(1) in 1
+            else
+              let t = mk_target(host_arch(0), host_format(0), "exec") in
+              let bin = compile_native(src, t) in
+              if bin == 0 then
+                let _ = print_val(1) in 1
+              else
+                let _ = write_file(outpath, bin) in
+                let _ = print_val(0) in 1
+        else 0
+
 let repl_loop(spec) =
   let arch = parse_arch_name(nth(spec, 0)) in
   let _ = print("yc> ", false) in
@@ -260,6 +318,8 @@ let repl_loop(spec) =
     let _ =
       if p == "" then print("usage: :load FILE.yjit")
       else jit_load_yjit(p, 1) in
+    repl_loop(spec)
+  else if repl_host_eval(prep_src(line, spec)) != 0 then
     repl_loop(spec)
   else
     let _ = jit_eval_repl(prep_src(line, spec), arch) in
