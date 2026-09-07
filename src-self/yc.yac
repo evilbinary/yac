@@ -1,7 +1,7 @@
 import rt.os {host_arch, host_format}
 import back.backend {compile_native, dump_anf, dump_ast, dump_cps, dump_uncps, eval_cps_src, pkg_set, link_set}
 import back.jit {compile_jit, compile_uncps, jit_dump_live, jit_load_yjit}
-import back.pack.elf {syms_enable}
+import back.pack.elf {elf_int_set, syms_enable}
 import back.pack.target {mk_jit_target, mk_target, parse_arch_name, parse_format_name, target_shared}
 import lang.scheme {scheme_to_yac}
 import lib.log {log, log_i, log_set_hush}
@@ -39,7 +39,8 @@ let usage(_) =
   let _ = print("  -g, --syms       write ELF function symbols (nm/gdb)") in
   let _ = print("  --arch x86_64|arm64|riscv64") in
   let _ = print("  --format elf|pe|macho|yjit   (default: host)") in
-  let _ = print("  --shared         ELF .so / PE .dll / Mach-O .dylib") in
+  let _ = print("  --shared         ELF .so / PE .dll / Mach-O .dylib (C ABI exports)") in
+  let _ = print("  --shared-int     shared with raw internal-ABI proc exports (12.5 dylib loader)") in
   let _ = print("  --prof-out file  write profile data to file") in
   let _ = print("  -v, --verbose    compile progress ([yc]/[prof]/[emit])") in
   0
@@ -139,6 +140,10 @@ let parse_args(i, argc, out, pos, spec) =
       parse_args(i + 1, argc, out, pos,
         [nth(spec, 0), nth(spec, 1), "dylib", nth(spec, 3),
          nth(spec, 4), nth(spec, 5), nth(spec, 6)])
+    else if a == "--shared-int" or a == "--dylib-int" then
+      parse_args(i + 1, argc, out, pos,
+        spec_flag([nth(spec, 0), nth(spec, 1), "dylib", nth(spec, 3),
+                   nth(spec, 4), nth(spec, 5), nth(spec, 6)], "intabi"))
     else if a == "--profile" then
       parse_args(i + 1, argc, out, pos, spec)
     else if a == "-v" or a == "--verbose" then
@@ -330,6 +335,7 @@ let run_cli(pr) =
                 else if fn == "pe" then pe_out(out0)
                 else out0 in
               let _ = if fl(spec, "syms") then syms_enable(1) else syms_enable(0) in
+              let _ = if fl(spec, "intabi") then elf_int_set(1) else elf_int_set(0) in
               let t0 = time_ms() in
               let profpath = nth(spec, 3) in
               let _ = if profpath == "" then 0 else yac_prof_enable(profpath) in
