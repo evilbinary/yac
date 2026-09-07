@@ -1,7 +1,7 @@
 package back.emit.emit_x86_64
 export emit_program, emit_program_x86_64
 import rt.os {host_os}
-import back.emit.emit {apply_args, apply_ncap, apply_patch, apply_u64, cimport_buf, cimport_reset, clos_bytes, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, fun_is_raw, host_id, host_names, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {apply_args, apply_ncap, apply_patch, apply_u64, cimport_buf, cimport_reset, clos_bytes, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, fun_is_raw, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {emit_cabi_all}
 import back.emit.linux_x86_64 {call_rbx_user, call_user, cc_of, emit_lea_rax_slot, emit_load_rax_slot, emit_load_rbx_slot, emit_load_rdi_slot, emit_obj_load_argreg, emit_obj_load_rax, emit_obj_store_rdi, emit_store_param, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_unalign, emit_x86_c_untag, linux_begin, linux_cc_marshal, linux_ccall_patch, linux_clock, linux_entry, linux_exit, linux_finish, linux_num_syscall, linux_syscall, linux_write1}
 import back.emit.win_x86_64 {win_begin, win_cc_marshal, win_ccall_patch, win_clock, win_entry, win_exit, win_finish, win_num_syscall, win_syscall, win_write1}
@@ -568,8 +568,13 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
     let _ = emit_x86_load_reg_args(b, args, nargs) in
     let _ = emit_zero_sysv_args(b, nargs) in
     let hid = host_id(intern(fn), 0) in
-    let is_host = hid >= 0 and emit_map_get(nth(st, 4), intern(fn)) == 0 in
-    if is_host then
+    let xid = extsym_find(intern(fn), 0) in
+    let local = emit_map_get(nth(st, 4), intern(fn)) != 0 in
+    /* Host leaves and 12.5 external package symbols both call through a
+     * global slot (G+136+8*id; extern id = 10 + index → G+216+8*i). */
+    let via_slot = (hid >= 0 or xid >= 0) and local == false in
+    if via_slot then
+      let id = if hid >= 0 then hid else 10 + xid in
       let _ = mov_rax_imm64(b, 0) in
       let hpat = bytes_len(b) - 8 in
       let _ = mov_rax_mem_rax(b) in
@@ -580,7 +585,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
         if nstack == 0 then 0
         else add_rsp_imm32(b, bshl(nstack, 3)) in
       let _ = emit_store_rax_slot(b, dst) in
-      emit_st4(st, b, cur, labels, cons([21, hpat, hid], patches))
+      emit_st4(st, b, cur, labels, cons([21, hpat, id], patches))
     else
       let callstart = bytes_len(b) in
       let _ = call_user(b) in
@@ -2055,9 +2060,25 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
                     LOAD_VADDR + TEXT_OFF + stub)
         else 0 in
       bake(id + 1, fr, stub) in
+  let stub = stub_off(funOffsRev) in
   let _ =
     if len(host_names(0)) == 0 then 0
-    else bake(0, funOffsRev, stub_off(funOffsRev)) in
+    else bake(0, funOffsRev, stub) in
+  /* Extern package-symbol slots (G+216+8*i) default to the stub too, so an
+   * AOT call before the --link loader fills them prints instead of call [0].
+   * The loader (12.4.C) overwrites these at startup. */
+  let _ =
+    if T != 0 then 0
+    else if extsym_n(0) == 0 then 0
+    else if stub < 0 then 0
+    else
+      let rec_fe(i) =
+        if i >= extsym_n(0) then 0
+        else
+          let _ = apply_u64(b, data_start + 216 + bshl(i, 3),
+                            LOAD_VADDR + TEXT_OFF + stub) in
+          rec_fe(i + 1) in
+      rec_fe(0) in
   let _ = yjit_layout_set(pool_start, smap_start, data_start, bytes_len(b)) in
   [b, funOffsRev]
 

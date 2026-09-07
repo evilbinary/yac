@@ -704,17 +704,38 @@ src/*.c                                                # C 参考实现不改（
 > 驱动 `import ffi; load()/sym()/ccall(ptr,…)` —— 见仓库内
 > `tests/compiler/cases/ccall_cload.yac` 与 §12.4.D 描述。
 
-### 12.5 P2 — `emit_patch_rel` 支持名字级未解析符号（`embed` 前置）
+### 12.5 P2 — 名字级外部符号（槽间接调用；`embed`/loader 前置）
 
-- [ ] 12.5.1 加 `unres_box`；`emit_patch_rel`（`emit.yac:223-224`）miss 且标记为
-      external 时 push `[1, pos, name]` 而非 `[1, pos, 0]`
-- [ ] 12.5.2 `emit_resolve_patch`（`emit.yac:704+`）tag 1 加分支：str → 查外部
-      符号表，patch **绝对地址**；x86 跨镜像可能超 2G，**不能复用 `call_rel32`**
-- [ ] 12.5.3 arm64 / riscv64 加"加载绝对地址 + 间接跳转"
-      （抄 `emit_cabi.yac:33-68` 的 `dlib_a64_va` / `dlib_rv_va`）
-- [ ] 12.5.4 导出侧：包编译时把 funsym（`elf.yac:235-237`）落盘成 `name→off`
-- [ ] 12.5.5 验收：两 blob 共享一份 runtime 的最小用例，GC 后跨镜像引用仍存活
-- [ ] 12.5.6 建议先只打通 x86_64，arm64/riscv64 给明确报错
+> **实现方案（2026-09 定稿）**：不另起"未解析 patch 携带名字 + 绝对值补丁"
+> 体系，而是**复用现有 host 槽间接调用**（tag 21：`mov imm slot; mov rax,[rax];
+> call`）：新增外部符号注册表，每个符号分到一个 **host 表之后的 8B 槽**
+> （`G+216+8*i`，tag21 id = 10+i）。调用点与 host 同形态；启动期 loader 把
+> `dlsym/dlopen` 解到的地址写槽；默认槽填 12.1 的桩（打印而非 `call [0]`）。
+> 优点：无需超 2G 绝对调用、无跨镜像 rela；与 host 共用解析路径。
+> **阶段一（本项，2026-09）已落地并回归**：
+> - `emit.yac` 外部符号注册表 `extsym_add/find/n/reset`（名字列表 box）；
+>   `emit_glob_data` 表区按 `216 + 8*extsym_n` 扩容（默认空 → 与之前逐字节一致）
+> - `emit_x86_64` `fcall` 泛化：`host_id` **或** `extsym_find` 命中且非本地
+>   proc → 槽间接调用（`id = host_id` 或 `10+extsym`），patch tag21
+> - AOT（`T==0`）时 extern 槽默认写 `yac_host_unimpl` 桩地址
+> - 回归：`link` 9/9、`compiler` 170/170（Windows 原生）
+> - 边界：`tcall`/`closure` 走外部符号尚未覆盖（阶段二做）；arm64/riscv64
+>   未接（同 host 现状，无需裸名则无影响）
+>
+> **阶段二（未做）**：① `fill_import` 对 dylib 链的包登记导出名为外部符号
+> 并把 `imap` 指向它（不 lir_extend 源码）；② guest 启动段生成
+> `cload+csym → G+216 槽` 填装（12.4.C）；③ 产物 symbol 命名/前缀；④
+> arm64/riscv64 槽间接分支。
+
+- [x] 12.5.1 外部符号注册表（`emit.yac::extsym_*`）+ glob 表区条件扩容
+- [x] 12.5.2 x86 `fcall` 对 host/extern 统一走槽间接调用（tag21，
+      extern id = 10+i）；AOT 空槽默认填桩
+- [ ] 12.5.3 `tcall`/`closure` 的外部符号路径（阶段二）
+- [ ] 12.5.4 `fill_import` dylib 链登记 + guest 启动段 `cload/csym` 填槽
+      （12.4.B/12.4.C）
+- [ ] 12.5.5 验收（阶段二）：自建 int 包 `--shared` → guest
+      `--link pkg=dylib` import 调用真执行；产物缺失启动期报错
+- [ ] 12.5.6 arm64/riscv64 槽间接分支；x86 先行已通
 
 ### 12.6 P3 — `embed`（依赖 12.1 / 12.3 / 12.5）
 
