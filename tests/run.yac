@@ -381,17 +381,18 @@ let link_err_case(st, yc, name, extra, needle) =
   else if contains(blob, needle) then check(st, str_cat("link ", name), "1", "1")
   else check(st, str_cat("link ", name), needle, blob)
 
-/* Plant a fake artifact <pkg>.yac<artifact> in an extra pkg root and expect
- * --link <pkg>=dylib to fail with "not implemented yet". Covers the
- * platform suffixes: .so (ELF), .dll (PE), .dylib (Mach-O). */
-let link_art_case(st, ya, name, artifact) =
-  let fake = str_cat(TMP, str_cat("/path.yac", artifact)) in
+/* Plant a fake artifact <pkg>.yac<suf> in an extra pkg root and expect
+ * --link <pkg>=<mode> to fail with "not implemented yet". embed and yjit
+ * still have no loader (12.6/12.7); dylib now binds externs (12.5 stage 2)
+ * and is covered by link_dylib_case below instead. */
+let link_art_case(st, ya, name, mode, suf) =
+  let fake = str_cat(TMP, str_cat("/path.yac", suf)) in
   let y = native(str_cat(TMP, "/link_y")) in
   let _ = run(["rm", "-f", fake, y]) in
   let _ = write_file(fake, "fake artifact\n") in
   let cr =
     run([ya, "--pkg", str_cat("src-self,", TMP),
-         "--link", "path=dylib", link_guest(0), "-o", y]) in
+         "--link", str_cat("path=", mode), link_guest(0), "-o", y]) in
   let blob = str_cat(chomp(nth(cr, 1)), chomp(nth(cr, 2))) in
   let _ = run(["rm", "-f", fake]) in
   if nth(cr, 0) == 0 then
@@ -399,6 +400,54 @@ let link_art_case(st, ya, name, artifact) =
   else if contains(blob, "not implemented yet") then
     check(st, str_cat("link ", name), "1", "1")
   else check(st, str_cat("link ", name), "not implemented yet", blob)
+
+/* Real dylib binding (12.5 stage 2): build a package DLL with --shared, then
+ * compile a guest with --link dadd=dylib. The package source is NOT linked
+ * in; the call binds an extern slot that lands on the yac_host_unimpl stub
+ * (runtime loader is 12.4.C), so the guest prints "host fn unavailable" and
+ * keeps going (42). The same file without --link must source-link (rc 0). */
+let link_dylib_case(st, yc) =
+  let ya = nth(yc, 0) in
+  let src = str_cat(TMP, "/dadd.yac") in
+  let gsrc = str_cat(TMP, "/dadd_guest.yac") in
+  let y = native(str_cat(TMP, "/link_dy")) in
+  let y2 = native(str_cat(TMP, "/link_dy2")) in
+  let art = str_cat(TMP, "/dadd.yac.dll") in
+  let _ = run(["rm", "-f", art, y, y2]) in
+  let _ = write_file(src,
+    "package dadd\nexport add, sub\nlet add(a, b) = a + b\nlet sub(a, b) = a - b\n") in
+  let _ = write_file(gsrc,
+    "import dadd {add}\nlet a = add(2, 3) in\nif a == 0 then 42 else 0\n") in
+  let _ = run(append([ya, "--shared", src, "-o"], [art])) in
+  if nth(run(["test", "-f", art]), 0) != 0 then
+    check(st, "link dylib artifact", "1", "0")
+  else
+    let pk = str_cat("src-self,", TMP) in
+    let cr = run([ya, "--pkg", pk, "--link", "dadd=dylib", gsrc, "-o", y]) in
+    let st1 =
+      if nth(cr, 0) != 0 then
+        let blob = str_cat(chomp(nth(cr, 1)), chomp(nth(cr, 2))) in
+        let _ = print(blob) in
+        check(st, "link dylib bind compiles", "0", int_to_str(nth(cr, 0)))
+      else
+        let _ = run(["chmod", "+x", y]) in
+        let rr = run([y]) in
+        let blob = str_cat(chomp(nth(rr, 1)), chomp(nth(rr, 2))) in
+        let st_a =
+          check(st, "link dylib bind stub msg", "1",
+                if contains(blob, "host fn unavailable") then "1" else "0") in
+        check(st_a, "link dylib bind rc", "42", int_to_str(nth(rr, 0))) in
+    let cr2 = run([ya, "--pkg", pk, gsrc, "-o", y2]) in
+    let st2 =
+      if nth(cr2, 0) != 0 then
+        let blob = str_cat(chomp(nth(cr2, 1)), chomp(nth(cr2, 2))) in
+        let _ = print(blob) in
+        check(st1, "link dylib default compiles", "0", int_to_str(nth(cr2, 0)))
+      else
+        let _ = run(["chmod", "+x", y2]) in
+        let rr2 = run([y2]) in
+        check(st1, "link dylib default rc", "0", int_to_str(nth(rr2, 0))) in
+    st2
 
 let link_all(st, yc) =
   let _ = banner("link", nth(yc, 0)) in
@@ -415,9 +464,11 @@ let link_all(st, yc) =
   let st5 =
     link_err_case(st4, yc, "bad mode", ["--link", "bogus"], "bad arguments") in
   let ya = nth(yc, 0) in
-  let st6 = link_art_case(st5, ya, "artifact .so not implemented", ".so") in
-  let st7 = link_art_case(st6, ya, "artifact .dll not implemented", ".dll") in
-  let st8 = link_art_case(st7, ya, "artifact .dylib not implemented", ".dylib") in
+  let st6 = link_art_case(st5, ya, "artifact .host not implemented",
+                          "embed", ".host") in
+  let st7 = link_art_case(st6, ya, "artifact .yjit not implemented",
+                          "yjit", ".yjit") in
+  let st8 = link_dylib_case(st7, yc) in
   let help = run(append(yc, ["-h"])) in
   let hblob = str_cat(chomp(nth(help, 1)), chomp(nth(help, 2))) in
   if contains(hblob, "--link") then check(st8, "link help", "1", "1")

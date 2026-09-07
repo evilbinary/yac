@@ -8,8 +8,8 @@ import back.pack.target {target_arch, target_emachine, target_format, target_sha
 import back.pack.pe {pack_pe_target, pe_finish_dll, pe_finish_imports}
 import back.pack.pack {pack_image}
 import lib.map
-import back.emit.emit {cimport_got, cimport_n, cimport_names, emit_abi_win, emit_jsess, emit_jsess_set, host_names, yjit_layout_get, yjit_layout_set}
-import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, malias_box, pkg_prefix_get, pkg_prefix_set, sigma_list, sigma_of_rt, start_proc, tco_prog, ub_prog}
+import back.emit.emit {cimport_got, cimport_n, cimport_names, emit_abi_win, emit_jsess, emit_jsess_set, extsym_add, host_names, yjit_layout_get, yjit_layout_set}
+import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, malias_box, pkg_prefix_get, pkg_prefix_set, pkg_qn, sigma_list, sigma_of_rt, start_proc, tco_prog, ub_prog}
 import front.lexer {tok_ident_line, tokenize}
 import front.parser {parse_program, prog_has_err, report_syntax}
 import front.anf {anf_all}
@@ -272,33 +272,51 @@ let link_render_go(xs, i, acc) =
 
 let link_render(xs) = link_render_go(xs, 0, "")
 
+/* dylib-bound packages (12.5 stage 2): the operative chain mode is dylib and
+ * the dylib artifact exists. Their source is NOT linked into the image; each
+ * exported function name becomes one extern slot (G+216+8*i, tag21 id 10+i).
+ * Calls currently land on the yac_host_unimpl stub until the runtime loader
+ * (12.4.C) fills the slots. */
+let link_operative(c, i) =
+  if i >= len(c) then "stub"
+  else if nth(c, i) == "stub" then link_operative(c, i + 1)
+  else nth(c, i)
+
+let link_is_dylib(pkg) =
+  if link_operative(link_chain_of(pkg), 0) == "dylib" then
+    if link_artifact(pkg, "dylib") == 0 then 0
+    else 1
+  else 0
+
 /* 0 = proceed (source-link, or artifact mode that can't apply yet).
  * 1 = fail compile with a message (pkg_fail). Only fires when the chain
  * names a non-stub mode for this pkg. Found artifact -> "not implemented"
  * (loaders land in 12.4+); nothing found and no stub tail -> error. */
 let link_check_pkg(pkg) =
-  let chain = link_chain_of(pkg) in
-  if link_has_nstub(chain, 0) == false then 0
+  if link_is_dylib(pkg) == 1 then 0
   else
-    let rec_scan(i) =
-      if i >= len(chain) then
-        if in_list("stub", chain) then 0
+    let chain = link_chain_of(pkg) in
+    if link_has_nstub(chain, 0) == false then 0
+    else
+      let rec_scan(i) =
+        if i >= len(chain) then
+          if in_list("stub", chain) then 0
+          else
+            let _ = print(str_cat("error: --link for pkg '",
+              str_cat(pkg, str_cat("': no precompiled artifact (",
+                str_cat(link_render(chain),
+                  "); make one or add 'stub' to the chain"))))) in
+            1
         else
-          let _ = print(str_cat("error: --link for pkg '",
-            str_cat(pkg, str_cat("': no precompiled artifact (",
-              str_cat(link_render(chain),
-                "); make one or add 'stub' to the chain"))))) in
-          1
-      else
-        let m = nth(chain, i) in
-        if m == "stub" then rec_scan(i + 1)
-        else if link_artifact(pkg, m) != 0 then
-          let _ = print(str_cat("error: --link ", str_cat(m,
-            str_cat(" for pkg '", str_cat(pkg,
-              "': artifact exists but this mode is not implemented yet"))))) in
-          1
-        else rec_scan(i + 1) in
-    rec_scan(0)
+          let m = nth(chain, i) in
+          if m == "stub" then rec_scan(i + 1)
+          else if link_artifact(pkg, m) != 0 then
+            let _ = print(str_cat("error: --link ", str_cat(m,
+              str_cat(" for pkg '", str_cat(pkg,
+                "': artifact exists but this mode is not implemented yet"))))) in
+            1
+          else rec_scan(i + 1) in
+      rec_scan(0)
 
 let intern_names(xs, i, acc) =
   if i >= len(xs) then acc
@@ -341,6 +359,17 @@ let pkg_export_names(pkg) =
     let v = if src == 0 then [] else ast_export_list(pass_parse(pass_lex(src)), 0) in
     let _ = fmap_put(m, pkg, v) in
     v
+
+/* Register every export of a dylib-bound package as one extern slot keyed by
+ * its qname (pkg/f). See extsym_* in back.emit.emit (12.5 stage 2). */
+let pkg_extern_register(pkg) =
+  let names = pkg_export_names(pkg) in
+  let rec_add(i) =
+    if i >= len(names) then 0
+    else
+      let _ = extsym_add(intern(pkg_qn(pkg, nth(names, i)))) in
+      rec_add(i + 1) in
+  rec_add(0)
 
 let import_id_pairs(xs, i, acc) =
   if i >= len(xs) then acc
@@ -482,41 +511,43 @@ let report_unbound_ex(src, ast, extra) =
 let report_unbound(src, ast) = report_unbound_ex(src, ast, [])
 
 let lir_extend(pkg, src, acc) =
-  let _ =
-    if pkg == "rt.num" then 0
-    else if link_check_pkg(pkg) != 0 then pkg_fail_set(1)
-    else 0 in
-  if src == 0 then acc
+  if pkg != "rt.num" and link_is_dylib(pkg) == 1 then acc
   else
-    let ast = pass_parse(pass_lex(src)) in
-    if prog_has_err(ast, 0) then
-      let _ = print(str_cat("error: syntax in package '", str_cat(pkg, "'"))) in
-      let _ = report_syntax(ast) in
-      let _ = pkg_fail_set(1) in
-      acc
+    let _ =
+      if pkg == "rt.num" then 0
+      else if link_check_pkg(pkg) != 0 then pkg_fail_set(1)
+      else 0 in
+    if src == 0 then acc
     else
-      let saved_i = box_get(imap_box) in
-      let saved_m = box_get(malias_box) in
-      let saved_p = pkg_prefix_get(0) in
-      let filled = rewrite_imports(ast, 0, []) in
-      let _ = imap_load(filled, 0) in
-      let _ = pkg_prefix_set(ast_pkg_name(ast, 0)) in
-      if report_unbound(src, ast) != 0 then
+      let ast = pass_parse(pass_lex(src)) in
+      if prog_has_err(ast, 0) then
+        let _ = print(str_cat("error: syntax in package '", str_cat(pkg, "'"))) in
+        let _ = report_syntax(ast) in
         let _ = pkg_fail_set(1) in
-        let _ = box_set(imap_box, saved_i) in
-        let _ = box_set(malias_box, saved_m) in
-        let _ = pkg_prefix_set(saved_p) in
         acc
       else
-        let anf = pass_anf(ast) in
-        let st = lir_all(0, anf,
-          [env_new(0), 1, sigma_of_rt(acc), 0, list_new(), 0],
-          len(anf)) in
-        let out = reverse(sigma_list(nth(st, 2))) in
-        let _ = box_set(imap_box, saved_i) in
-        let _ = box_set(malias_box, saved_m) in
-        let _ = pkg_prefix_set(saved_p) in
-        out
+        let saved_i = box_get(imap_box) in
+        let saved_m = box_get(malias_box) in
+        let saved_p = pkg_prefix_get(0) in
+        let filled = rewrite_imports(ast, 0, []) in
+        let _ = imap_load(filled, 0) in
+        let _ = pkg_prefix_set(ast_pkg_name(ast, 0)) in
+        if report_unbound(src, ast) != 0 then
+          let _ = pkg_fail_set(1) in
+          let _ = box_set(imap_box, saved_i) in
+          let _ = box_set(malias_box, saved_m) in
+          let _ = pkg_prefix_set(saved_p) in
+          acc
+        else
+          let anf = pass_anf(ast) in
+          let st = lir_all(0, anf,
+            [env_new(0), 1, sigma_of_rt(acc), 0, list_new(), 0],
+            len(anf)) in
+          let out = reverse(sigma_list(nth(st, 2))) in
+          let _ = box_set(imap_box, saved_i) in
+          let _ = box_set(malias_box, saved_m) in
+          let _ = pkg_prefix_set(saved_p) in
+          out
 
 let ast_imports(ast, i, acc) =
   if i >= len(ast) then acc
@@ -539,6 +570,7 @@ let visit_go(op, p, xs, i, seen, order) =
   if op == 0 then
     if in_list(p, seen) then [seen, order]
     else if p == "rt.num" then [cons(p, seen), order]
+    else if link_is_dylib(p) then [cons(p, seen), cons(p, order)]
     else
       let seen1 = cons(p, seen) in
       let st = visit_go(1, p, pkg_file_imports(p), 0, seen1, order) in
@@ -608,6 +640,9 @@ let rt_for_link(_) =
     else
       let p = nth(pkgs, i) in
       if p == "rt.num" then rec(i + 1, acc)
+      else if link_is_dylib(p) == 1 then
+        let _ = pkg_extern_register(p) in
+        rec(i + 1, acc)
       else rec(i + 1, lir_extend(p, pkg_src(p), acc)) in
   runtime_add(rec(0, rt_base(0)))
 
