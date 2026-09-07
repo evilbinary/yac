@@ -675,16 +675,34 @@ src/*.c                                                # C 参考实现不改（
 - [ ] 12.3.6 跟进：Linux 上 `make test` / `yc-iso` 确认**不带 `--link` 时
       产物与改动前逐字节一致**
 
-### 12.4 P1 — H 的 `dylib`（int-only 子集）
+### 12.4 P1 — H 的 `dylib`（**重定义 2026-09**）
 
-- [ ] 12.4.1 `Makefile` 加 `yc.so` 目标（`--shared` 已可用，`run.yac:572-589`）
-- [ ] 12.4.2 导出符号加 `yc_` 前缀（现 `emit_cabi.yac:246` 用裸名）
-- [ ] 12.4.3 guest 启动代码插入填表：`cload("yc.so")` + `csym` + 写
-      `G+136+8*id`（`rt/ffi.yac:5-9`）
-- [ ] 12.4.4 `yac_init` 先跑：ELF 靠 `DT_INIT`，PE 的 `DllMain` 路径单独确认
-- [ ] 12.4.5 槽为 0 时回落到 12.1 的桩
-- [ ] 12.4.6 验收：只有 `yc.so`、无 `yc` 可执行文件的环境能跑通 `compile_file`；
-      删掉 `yc.so` → 依赖缺失提示或降级，不崩溃
+> 原"10 个 host 叶子从 `yc.so` dlsym 填 `G+136`"的图景在 12.1 定稿语义下
+> 不成立：guest 作用域不再含 host 名（裸调 = `unbound`），且 C ABI 只透
+> int（`emit_cabi` shl/sar），H 的叶子几乎全是对象/字符串/bytes，无一可
+> int-only 表达。真正有用的形态是 **P 包级 loader**：`import io` 在
+> `--link io=dylib` 时，把 `io.yac.dll/.so` 的导出函数地址填进 guest 的一张
+> **包符号表**，调用走间接跳转。这与 12.5 是同一机制（名字级外部符号 +
+> 槽表），12.4 是它的应用面。因此重定义如下：
+
+- [ ] 12.4.A 决策：guest 里 P 的 dylib 调用点复用 **host 分支形态**
+      （`mov slotimm; mov rax,[rax]; call`），host 表从 10 槽扩成
+      **host 表 + 包符号表连续槽**（`emit_glob_data` 216 字节参数化，
+      §11.4）
+- [ ] 12.4.B 前置 12.5.1/12.5.2（x86）：`emit_patch_rel` miss 时按名字挂
+      未解析；链接期把"包导出名 → 槽号"映射写进代码
+- [ ] 12.4.C 装载：guest 启动段按 `--link` 表为每个 dylib 包生成
+      `cload(path)` + 逐导出 `csym(name)` 写槽（`rt/ffi.yac` 已有叶子）
+- [ ] 12.4.D 验收（最小 int 版，Windows PE 可测）：一个自建 `dadd.yac`
+      `--shared` 成 `dll` → 另一 guest `--link dadd=dylib` import 后调用
+      `add(2,3)` 得 5；产物缺失 → 编译/启动期明确报错；默认无 `--link`
+      行为逐字节不变
+- [ ] 12.4.E 范围外（后续）：非 int 参数/返回值（值 ABI + 跨镜像 GC），
+      `yc.so`（H）形态，Mach-O/ELF 装载
+
+> 手工打样参考（当前即可跑，无需 loader）：yac `--shared` 编 `.dll/.so`，
+> 驱动 `import ffi; load()/sym()/ccall(ptr,…)` —— 见仓库内
+> `tests/compiler/cases/ccall_cload.yac` 与 §12.4.D 描述。
 
 ### 12.5 P2 — `emit_patch_rel` 支持名字级未解析符号（`embed` 前置）
 
