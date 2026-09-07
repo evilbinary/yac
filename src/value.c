@@ -784,6 +784,17 @@ static Value prim_jit_run(Value *args, int nargs, PrimCtx *ctx) {
     return VALUE_NULL;
 }
 
+/* jit.yac host_tab_fill reads the host image's baked G+136..G+216 table via
+ * yac_host_sym(id). Under C it has no host table (L4 never calls it); bind
+ * the name so the self-host bundle can ANF, and error if actually reached. */
+static Value prim_yac_host_sym(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    ctx->errored = true;
+    strcpy(ctx->errmsg, "yac_host_sym: only available in native yc");
+    return VALUE_NULL;
+}
+
 /* popen(cmd, stdin) -> [rc, stdout, stderr].
  * Same shell as system, but stdio is three pipes: stdin is the
  * given string (or bytes); stdout/stderr are collected. Compose a
@@ -1289,6 +1300,7 @@ static const Prim PRIMS[] = {
     {"system", 1, false, false, prim_system},
     {"read_line", -1, false, true, prim_read_line},
     {"jit_run", 3, false, true, prim_jit_run},
+    {"yac_host_sym", 1, false, true, prim_yac_host_sym},
     {"popen", 2, false, true, prim_popen},
     {"uname", 1, true, true, prim_uname}, /* called as uname(); parser passes unit */
     {"bshl", 2, true, false, prim_bshl},

@@ -1,11 +1,15 @@
 # 自举链接模式设计（yc ↔ guest / pkg / C）
 
-> 本文是 `docs/compiler-host.md` 的替代设计。旧文档对应的实现（`lower.yac`
-> 的 `is_host_extern` / `lw_host_rewrite`、`emit.yac` 的 `host_id`、
-> G+96 host 表、`yac_host_sym`、`yac_host_unimpl`）是**单模式草稿**，只覆盖
-> "AOT 桩 / JIT 宿主跳转" 一种语义。本文重新设计为**四种链接模式 × 三类
+> 本文是 `docs/compiler-host.md` 的替代设计。旧文档提到的 `is_host_extern` /
+> `lw_host_rewrite` / `yac_host_unimpl` **在当前代码里已不存在**（它们是单模式
+> 草稿并被移除）；真正保留下来的是 `emit.yac::host_id` + patch tag 21 +
+> `G+136..G+216` host 表 + `yac_host_sym`，只覆盖"JIT 宿主跳转"一种语义，
+> AOT 侧是**空的**（调用即崩溃）。本文重新设计为**四种链接模式 × 三类
 > 链接对象**的统一框架，面向自举链路 L4→L5→L6→L7（`Makefile` 的 `yc_a` /
-> `yc_b` / `yc` / `bootstrap`）。
+> `yc_b` / `yc` / `bootstrap`）。使用kiss原则，支持扩展性，可复用，OCP原则。
+>
+> **2026-09 代码核对**：§1–§11 的"现状"描述有若干处与代码不符，已在正文中
+> 就地订正（标注 `[订正]` 或加备注块）。落地顺序见 **§12**。
 
 ---
 
@@ -48,7 +52,7 @@ C 工具链**。
 
 | 对象 | 例子 | 现状（只有源码链接 / cimport） | 本篇新增 |
 |------|------|-------------------------------|----------|
-| **H** host 编译器函数 | `import compiler` 的 `compile`/`compile_file`/`load` 及其叶子 | `lower.yac` 识别 10 名 → JIT hostcall / AOT 桩 | 三模式复用 |
+| **H** host 编译器函数 | `import compiler` 的 `compile`/`compile_file`/`load` 及其叶子 | `lower.yac` 识别 10 名 → `emit.yac::host_id` 识别 10 名（`emit.yac:267-272`）；JIT/REPL 由 `host_tab_fill`（`jit.yac:25-34`）填 `G+136` 槽；**AOT 槽为 0 → 崩溃**（或靠 `--pkg src-self` 源码内联整个编译器） | 三模式复用 |
 | **P** 普通 pkg 包 | `pkg/io.yac`、`pkg/str.yac`、`pkg/ffi.yac` | **只有源码链接**（`backend.yac::lir_extend` 现编进 guest） | 包级 embed/dylib/yjit/stub |
 | **C** C 共享库 | `ccall("printf",…)`、`import ffi` | **只有 `ccall` + libc import**（`elf_cimport_*` / `pack_elf_libc`） | 任意 `.so` 的 embed/dylib/yjit/stub |
 
@@ -60,15 +64,20 @@ C 工具链**。
 
 ## 3. 统一通道：一切调用都收敛到"绝对地址 call"
 
-无论哪种对象哪种模式，guest 内对外部名的调用最终都编译成
-`["hostcall", dst, id, args]`（已有 LIR 指令），后端生成
-`mov imm64 addr; call`。**区别只是 addr 在装载时怎么定**：
+无论哪种对象哪种模式，guest 内对外部名的调用最终都收敛到"取一个绝对地址 →
+间接 call"。**当前实现没有独立的 `hostcall` LIR**，而是普通 `fcall`：emit 在
+`host_id(name) >= 0` 且本地无同名 proc 时改走 host 分支，发射
+`mov rax, imm64 <槽地址>; mov rax, [rax]; call rax`，并挂一条 patch tag `21`
+（`emit_x86_64.yac:570-583`、`emit.yac:744-745`）。**区别只是 addr 在装载时怎么定**。
+
+> 下文 §4–§9 仍用 `hostcall` 作为这条通道的**抽象简称**；实现上它就是上述
+> `fcall` + patch tag 21，不是独立的 LIR 指令。
 
 ```
-对象 H（host 表，G+96 已存在）:
+对象 H（host 表，G+136 已存在）:
   embed : GUEST_LOAD_VADDR + TEXT_OFF + (内嵌 blob 内 fnOff)
-  dylib : loader 用 dlsym 在 yc.so 查得，写入 G+96 host 表
-  yjit  : loader 读 .yjit import/export 表（jit_load_yjit），填入 G+96
+  dylib : loader 用 dlsym 在 yc.so 查得，写入 G+136 host 表
+  yjit  : loader 读 .yjit import/export 表（jit_load_yjit），填入 G+136
   stub  : yac_host_unimpl（本镜像内）
 
 对象 P（新：包级符号表，guest 内一张 name→addr 映射）:
@@ -85,47 +94,64 @@ C 工具链**。
   stub  : ccall 存在但符号解析失败 → 桩（返回 0 / 打印错误）
 ```
 
-> 关键洞察：**H/P 走同一 `hostcall` LIR 与 G+96 式符号表**，P 只是把"host 名
+> 关键洞察：**H/P 走同一条 fcall-host 通道与 G+136 式符号表**，P 只是把"host 名
 > 集合"从硬编码 10 名扩展成"包导出符表"；C 保持现有 cimport 不动。
 
-### 3.1 名词解释：`G+96` 是什么
+### 3.1 名词解释：`G+136` 是什么
 
-`G+96` 是 yac 运行时的一个内存约定，**只存在于宿主 / JIT 场景**，AOT 产物
+`G+136` 是 yac 运行时的一个内存约定，**只存在于宿主 / JIT 场景**，AOT 产物
 不直接依赖它（详见下文 3.2）。
 
-- **G** = guest 程序的**全局区基址寄存器**（x86_64 为 r15），guest 全局变量
-  都相对 G 偏移寻址。
-- **+96** = 全局区中偏移 96 字节处的那个槽，专门存放 **host 函数地址表**
-  （10 个已烘焙绝对地址的指针槽）。
+- **G** = guest 的**全局区**（glob area）。注意**它不是寄存器**：yac 代码不用
+  r12–r15（`encode_x64.yac:794`），全局区是 TEXT 内的一段（紧跟代码之后），
+  所有全局按**绝对 imm64** 寻址（`emit_x86_64.yac:1054-1070`、`:2014-2016`）。
+- **+136..+216** = 全局区偏移 136 起的 **10 个 8 字节槽**，专门存放 **host
+  函数地址表**（`emit.yac:256-263` 的 216 = 112 GC + 8 jit_map + 8 prof cell
+  + 8 prof busy + 10×8 host 槽）。
 
-机制沿此展开（见 `emit.yac:22-50`、`runtime.yac:1894-1916`）：
+机制沿此展开（见 `emit.yac:265-285`、`runtime.yac:2103-2117`）：
 
 1. **id 编码**：`host_id(name)` 把 10 个宿主叶子映射为 0–9（`compile`=0,
    `compile_file`=1, `load`=2, `compile_native`=3 … `host_format`=9）。
-2. **收集**：emit 时 `host_off_add(name, off)` 记录"名字 → 本镜像内文本偏移"。
-3. **烘焙**：AOT 收尾把 10 个条目的**绝对地址表**写进 G+96，即"给宿主 yc
-   自己用"的跳转表——JIT/REPL 代码靠它跳回宿主进程内的编译函数。
-4. **取址**：`hostcall` 指令执行时 `yac_host_sym(id)` 读 G+96 槽 → 绝对
-   `call`；槽为 0 表示无此函数 → 落到 `yac_host_unimpl` 桩。
-   （x86_64 在 `emit_x86_64.yac:577-599`；arm64/riscv64 同理。）
+   名字表是 `emit.yac:267-272` 的硬编码列表，可用 `host_names_set` 覆盖。
+2. **收集**：emit 收尾时 `funsym_set(funOffsRev)`（名字 → 本镜像内文本偏移），
+   pack 侧用 `funsym_get` 读。**没有** `host_off_add`（全库 0 处）。
+3. **烘焙**：`bake()`（`emit_x86_64.yac:2028-2042`）遍历 10 个名字，在本镜像
+   `funOffsRev` 里查得到才写 `LOAD_VADDR + TEXT_OFF + off` 进槽；查不到**留 0**。
+   只有 bundle 构建（`Makefile` 把 `src-self` cat 成一个文件，名字保持裸名）才
+   会全部命中 —— 这是 `skip_local_imp`（`backend.yac:341-348`）丢掉"同源自声明
+   包"的 import 的结果。
+4. **取址**：调用点读 `G+136+8*id` 槽 → 间接 `call`。**槽为 0 时当前会 SIGSEGV**
+   （`call [0]`），**不是**落到某个 `yac_host_unimpl` 桩 —— 该桩目前不存在，
+   由 12.1 引入。
+   （x86_64 在 `emit_x86_64.yac:570-583`；**arm64/riscv64 尚未实现**，
+   见 12.1.3。）
 
-### 3.2 `G+96` 与 AOT 的差别：谁真正拥有这张表
+### 3.2 `G+136` 与 AOT 的差别：谁真正拥有这张表
 
 | 场景 | 谁是宿主 | host 表位置 | 填充者 |
 |---|---|---|---|
-| JIT/REPL（`JIT_VADDR`） | 本进程 yc | **宿主自己的 G+96** | emit 收尾烘焙 |
-| AOT 独立 ELF（`T_VADDR`） | 无（guest 自己跑） | **不存在**，需新作 | —— |
+| JIT/REPL（`JIT_VADDR`） | 本进程 yc | **宿主自己的 G+136** | emit 收尾烘焙 + `host_tab_fill`（`jit.yac:25-34`） |
+| AOT 独立 ELF（`T_VADDR`） | 无（guest 自己跑） | **槽存在但为 0**，调用即崩溃 | —— |
 
-所以三模式针对 AOT 加热解决"guest 没有宿主进程、没有 G+96"的问题：
+> AOT 下"H 现状"还有一层容易误读的事实：槽**存在**（`emit_glob_data` 每次都写
+> 216 字节），但 `bake()` 只在镜像自己定义了该叶子时才填。今天 guest 想用
+> `compile` 只有两条路能成：① 不带 `--pkg src-self` → 槽为 0 → **崩溃**；
+> ② 带 `--pkg src-self` → `pkg/compiler.yac` 里的 `import back.backend` 被
+> `pkg_src` 解析到**源码**，于是**整个编译器被源码内联进 guest**（guest 变成
+> 4MB 级）。也就是说 host 表在 AOT 下**目前从未真正被用过**，它只在 bundle
+> 构建的 yc 自己身上有值，并由 REPL 会话读取。
 
-- `stub`：调用直接指本镜像内 `yac_host_unimpl`（返回 0）；
+所以三模式针对 AOT 要解决"guest 没有宿主进程、G+136 槽是空的"问题：
+
+- `stub`：槽指本镜像内的 `yac_host_unimpl`（打印后返回 0）——**由 12.1 引入**；
 - `embed`：把宿主 yc 的 host blob（重定位后）内嵌进 guest，**在 guest 自己
   的全局区新开一张等价 host/包地址表**并烘焙绝对地址；
 - `dylib`/`yjit`：guest 启动时装库（dlopen/dlsym 或 jit_load），把解析到的
   地址写进**同一张新表**。
 
-文中凡称"G+96 host 表/包符号表"均指这张抽象地址表：JIT 时它落在宿主
-G+96，AOT 时它是 guest 内新建的等价数据结构（§5.3）。
+文中凡称"G+136 host 表/包符号表"均指这张抽象地址表：JIT 时它落在宿主
+G+136，AOT 时它是 guest 内新建的等价数据结构（§5.3）。
 
 ---
 
@@ -151,7 +177,7 @@ blob 内每个绝对地址 A' = A(原布局) + (NEW_BASE - 原TEXT_BASE)
 - **P**：包构建时同样产出 `pkgname.host`（该包 procs 的 emit 结果 + 补丁表）。
 
 guest 编译（`--link embed`）时：读 `*.host` → 照常 emit guest 自身 code →
-append blob → 重定位每个绝对引用 → 写 G+96 host 表（H）或包符号表（P）→
+append blob → 重定位每个绝对引用 → 写 G+136 host 表（H）或包符号表（P）→
 pack 成 ET_EXEC。
 
 ### 4.2 `dylib`（链接系统动态库；对象 H、P、C）
@@ -161,7 +187,7 @@ guest 携带对这些库的引用，运行期由 loader 解析出绝对地址，
 
 | 对象 | 库产物 | 装载 | 现有基础 |
 |------|--------|------|----------|
-| H | `yc.so`（`--shared` 已支持） | guest 启动 `dlopen/dlsym`（`cls`？现有 `rt/ffi.yac::cload/csym`） | G+96 host 表等待填充 |
+| H | `yc.so`（`--shared` 已支持） | guest 启动 `dlopen/dlsym`（`cls`？现有 `rt/ffi.yac::cload/csym`） | G+136 host 表等待填充 |
 | P | 每包 `pkgname.so` | 同 H | 包级 `--shared` 需新开关 |
 | C | 任意 `libxyz.so` | **系统 ld.so**（`DT_NEEDED` + dynsym，`pack_elf_libc` 已做） | `elf_cimport_*` GOT 已有 |
 
@@ -178,7 +204,7 @@ RELA/JMPREL/PLT/GOT + `DT_NEEDED`（现在写死 `libc.so.6`）。新需求：
 
 | 对象 | 影像产物 | 装载 | 现有基础 |
 |------|----------|------|----------|
-| H | `yc.yjit`（`--format yjit` + host 导出） | `jit_load_yjit` 填 G+96 | `.yjit` 已有 export/import 表；`cimport_jit_bind` 已 bind C 导入 |
+| H | `yc.yjit`（`--format yjit` + host 导出） | `jit_load_yjit` 填 G+136 | `.yjit` 已有 export/import 表；`cimport_jit_bind` 已 bind C 导入 |
 | P | 每包 `pkgname.yjit` | `jit_load_yjit` 填包符号表 | 同上 |
 | C | 任意 `.so` 符号 | 影像 import 表 flags=0 → `dlsym(RTLD_DEFAULT)`（现有 `cimport_jit_bind`） | 已有 |
 
@@ -186,9 +212,23 @@ RELA/JMPREL/PLT/GOT + `DT_NEEDED`（现在写死 `libc.so.6`）。新需求：
 `import`（符号→GOT 槽）+ `export`（名称→TEXT/DATA 偏移）打通，所以 H/P 的
 "符号表"不需要新格式，只是**在运行时 jit 会话里多登记一份 name→addr**。
 
+> **⚠ 格式前置未满足（见 12.7）**：按当前代码，作为**链接模式**的 `yjit` 走
+> 不通，与"符号表格式"无关，是两处格式/运行时限制：
+> 1. `.yjit` **不可重定位** —— `pack_yjit_ex`（`yjit.yac:72-86`）只写
+>    hdr + TEXT + LINK，**没有 rela 段**；`YJIT_REL_*` 常量定义了 6 处、
+>    使用 **0 处**（死常量）。影像按 `JIT_VADDR` 绝对寻址烘焙。
+> 2. **一个进程只能有一张影像** —— `yac_jit_run`（`runtime.yac:2059-2066`）
+>    固定 `mmap` 16MiB @ `2^33`，基址存在宿主 `G+112`，后续 load 只是往同一
+>    映射里拷。`jit_load_yjit`（`jit.yac:382-412`）是**替换当前会话**、把
+>    export 表塞进 `jit_live_box`，**没有"装载一个库并填另一张符号表"的语义**。
+>
+> 所以"guest 影像 + pkg 影像共存"做不到。本模式降级为**设计保留**，不进
+> `--link`；`.yjit` 仍是 REPL `:dump`/`:load` 的往返格式，保持不变。
+
 ### 4.4 `stub`（不进入；对象 H、P、C 缺省）
 
-- **H**：现有 `yac_host_unimpl`（打印 "host fn unavailable"，返回 0）。
+- **H**：`yac_host_unimpl`（打印后返回 0）—— **当前不存在，由 12.1 引入**。
+  在此之前 AOT 下调用 host 叶子是 **SIGSEGV**（槽为 0 → `call [0]`）。
 - **P**：包只提供**声明**（导出名 + arity 进 scope，report_unbound 放行）；
   函数体不链接；调用改写为 `yac_host_unimpl`。
 - **C**：`ccall` 保留，但导入解析失败时报错/桩；已有 `pe_unimp_off_box` 类
@@ -253,7 +293,7 @@ yc --link compiler=embed main.yac               # 单个包覆盖，其余默认
 | 调用 | 绝对地址 call | 绝对地址 call | 绝对地址 call |
 | guest 文件 | 单文件 | 多一个 `.so` | 多一个 `.yjit` |
 
-> 包符号表 = guest 里一张「包导出名 → 绝对地址」的表（与 G+96 host 表同构，
+> 包符号表 = guest 里一张「包导出名 → 绝对地址」的表（与 G+136 host 表同构，
 > 放 glob 区一段连续槽）。`hostcall` 指令复用，`id` 改为"包名+函数名"的哈希
 > 或包内序号。
 
@@ -301,7 +341,7 @@ mov imm64 <addr槽>; call dst        # init: 槽=0（未绑定）或桩地址
 | guest 自包含 | ✅ | ✅ | ❌（需 `.so`） | ❌（需 `.yjit`） |
 
 > host 编译器函数（对象 H）复用同一时序：`stub` → `yac_host_unimpl`；
-> `embed` → `yc.host` append 进文本段填 G+96；`dylib` → `cload("yc.so")` +
+> `embed` → `yc.host` append 进文本段填 G+136；`dylib` → `cload("yc.so")` +
 > `csym("yc_<name>")`；`yjit` → `jit_load_yjit("yc.yjit")` 读 host export 表。
 
 ### 5.5 `--link` 解析 → 编译 → import 装配时序
@@ -392,22 +432,22 @@ yc --pkg DIR[,DIR]              # 现有：包搜索路径（不动）
 - target **不新增字段**（避免改 `mk_target` 与三处后端签名）；link 模式作为
   lower/pack 的开关透传：`lower_expr(ast, t)` 增加可选 link 参数。
 - H 的 host 名集合保持现有 10 名（`host_id` 映射不变），不破坏 host 表槽位。
-- P 的"包符号表"是新增数据结构（glob 区一段连续指针槽，与 G+96 平行）。
+- P 的"包符号表"是新增数据结构（glob 区一段连续指针槽，与 G+136 平行）。
 
 ---
 
-## 8. 与现有 hostcall / JIT 的关系
+## 8. 与现有 hcall / JIT 的关系
 
 | 场景 | target | 现有行为 | 落点 |
 |---|---|---|---|
-| REPL / `--cps` | `JIT_VADDR` | `["hostcall"]` 跳宿主 yc（G+96 表烘焙在宿主） | = yjit 的会话内特例（保留） |
+| REPL / `--cps` | `JIT_VADDR` | `["hostcall"]` 跳宿主 yc（G+136 表烘焙在宿主） | = yjit 的会话内特例（保留） |
 | AOT 无开关 | `T_VADDR` | `yac_host_unimpl` 桩 | = **stub**（默认） |
 | AOT `--link embed` | `T_VADDR` | (新) host/pkgs blob 内嵌 + 重定位 | 模式 1 |
 | AOT `--link dylib` | `T_VADDR` | (新) host/pkgs `.so` + 启动 dlopen/dlsym | 模式 2 |
 | AOT `--link yjit` | `T_VADDR` | (新) host/pkgs `.yjit` + jit_load | 模式 3 |
 
 JIT / REPL 本质是 `yjit` 的"宿主即 guest"特例：host 表烘焙在宿主自己的
-G+96，`hostcall` 绝对地址直接指向本进程已加载代码——与三模式共享同一套
+G+136，`hostcall` 绝对地址直接指向本进程已加载代码——与三模式共享同一套
 `yac_host_sym` + `call` 指令路径。
 
 ---
@@ -417,8 +457,8 @@ G+96，`hostcall` 绝对地址直接指向本进程已加载代码——与三�
 | 文件 | embed | dylib | yjit | 共用 |
 |---|---|---|---|---|
 | `back/emit/emit.yac` | `host_blob_export()`（H/P 通用 code+abs patch+符号表） | — | `.yjit` rela 导出（`JIT_IMAGE` §5） | `host_id` 保持；新增 `pkg_sym_*` 表 |
-| `back/emit/emit_x86_64/arm64/riscv64.yac` | blob 重定位 + guest 尾端符号表 | GOT/重定位槽 + 启动填槽 | 未 resolve 模块 + rela（`emit_apply_unres` 复用） | `host_off_add` 收集保持 |
-| `back/lower.yac` | hostcall 落点 = 可重定位绝对地址 | 同左（loader 填） | 同左（jit_load 填） | 保持识别；`lw_rewrite_ins` 扩展包名 |
+| `back/emit/emit_x86_64/arm64/riscv64.yac` | blob 重定位 + guest 尾端符号表 | GOT/重定位槽 + 启动填槽 | 未 resolve 模块 + rela（`emit_apply_unres` 复用） | `funsym_set` 收集 + `bake()` 烘焙保持 |
+| `back/lower.yac` | hcall 落点 = 可重定位绝对地址 | 同左（loader 填） | 同左（jit_load 填） | 保持识别；无 `lw_rewrite_ins`（已删）；包名映射在 `lir.yac::resolve_call`/`pkg_qn` 侧 |
 | `back/backend.yac` | `--link` 透传；`pkg_src` 支持 `.host/.so/.yjit` | `DT_NEEDED` 名字数组 | `--format yjit` pack 路径 | `pkg_src` 分发 |
 | `back/pack/elf.yac` | blob 追加 + 重定位 | dynsym 多导出 + `DT_NEEDED` 数组 | — | `elf_dynexp_*`、`pack_elf_libc` 泛化 |
 | `back/pack/yjit.yac` | — | — | 包独立 emit → `.yjit`；`jit_load_yjit` 填包表 | export/import 已有 |
@@ -443,13 +483,13 @@ pkg/<name>.yac.host|.so|.yjit      # (新) 可选包分发产物，pkg_src 按�
 |---|---|---|
 | `src-self/yc.yac:12-118` | `parse_args` 增 `--link <m>,…` / `--link <pkg>=<m>,…` | `--pkg DIR[,DIR]` 已被占用（包搜索路径，不改） |
 | `src-self/back/backend.yac` | `pkg_src` 按模式链分发 `.host/.so/.yjit`；`--link` 透传 | `pkg_src`/`lir_extend` 现为源码静态链接 |
-| `src-self/back/lower.yac` | `lw_rewrite_ins` 包名映射；hostcall `id` 索引包符号表 | 保持 10 名 host 识别 |
-| `src-self/back/emit/emit.yac` | `host_blob_export()`（H/P 通用）；新增 `pkg_sym_*` 表 | `host_id`/`host_off_*` 保持 |
-| `src-self/back/emit/emit_x86_64|arm64|riscv64.yac` | blob 重定位 + 客端符号表槽 | `host_off_add` 收集保持 |
+| `src-self/back/lower.yac` | 包名映射在 `lir.yac::resolve_call`/`pkg_qn`；host `id` 索引包符号表 | 保持 10 名 host 识别 |
+| `src-self/back/emit/emit.yac` | `host_blob_export()`（H/P 通用）；新增 `pkg_sym_*` 表 | `host_id`/`host_names` 保持（**无** `host_off_*`） |
+| `src-self/back/emit/emit_x86_64|arm64|riscv64.yac` | blob 重定位 + 客端符号表槽 | `funsym_set` 收集 + `bake()` 烘焙保持 |
 | `src-self/back/pack/elf.yac` | `DT_NEEDED` names 数组化；dynsym 多导出 | `pack_elf_libc`、`elf_dynexp_*` |
 | `src-self/back/pack/yjit.yac` | 包独立 emit→`.yjit`；`jit_load_yjit` 填包表 | export/import 表已有 |
 | `src-self/rt/ffi.yac` | `cload`/`csym` 填 H/P 符号表槽（dylib 运行期） | 已有 dlopen/dlsym |
-| `src-self/rt/runtime.yac` | 包符号表槽区（与 G+96 平行的 glob 连续段） | G+96 host 表烘焙逻辑保持 |
+| `src-self/rt/runtime.yac` | 包符号表槽区（与 G+136 平行的 glob 连续段） | G+136 host 表烘焙逻辑保持 |
 | `Makefile:18-19,24-29` | 新增 `yc.host/yc.so/yc.yjit` 目标；bootstrap 选模式 | `YC_SRCS`/`YC_BUNDLE` 结构不变 |
 
 不动的部分：
@@ -470,8 +510,13 @@ src/*.c                                                # C 参考实现不改（
 
 ## 10. 验证
 
-- **stub（默认回归）**：`import compiler` / `import ffi` guest 编译运行，
-  `compile_file` 打印 "host fn unavailable" 返回 0；`make test` 全绿。
+- **stub（默认回归）** ← **12.1 的验收依据**：
+  - **现状（回归基线，必须先确认）**：不带 `--pkg src-self` 的 guest 裸调
+    `compile(...)`，当前**编译通过、运行 SIGSEGV**（`G+136` 槽为 0 → `call [0]`）。
+    这是崩溃，**不是**"打印 host fn unavailable 返回 0"。
+  - **目标**：同样用例打印 host 未实现并返回 0；`import compiler` /
+    `import ffi` guest 编译运行正常；`make test` 全绿。
+  - `--arch arm64|riscv64` 下同一用例行为一致（现为静默错跳）。
 - **embed（H）**：含 `import compiler` 的 guest `--link embed` 产出单文件；
   objdump 确认 host 函数落在 guest 文本段内；**无 yc 二进制环境**单独运行成功；
   与 JIT 同输入对拍。
@@ -480,8 +525,10 @@ src/*.c                                                # C 参考实现不改（
 - **dylib（H/P/C）**：`make yc.so` + `pkg/io.yac` → guest `--link dylib` →
   只有 `.so`、无 yc 可执行文件的环境运行成功；删除 `.so` → 报错显示依赖。
   `import ffi; ccall("printf",…)` 同环境互通。
-- **yjit（H/P/C）**：`--format yjit` 产出 `yc.yjit` + `pkg.yjit` → guest
-  `--link yjit` 运行时 `jit_load_yjit` 两影像 → 函数可调、C import 可 bind。
+- **yjit（H/P/C）**：**阻塞**（格式前置未满足，见 §4.3 备注与 12.7）。
+  原计划 `--format yjit` 产出 `yc.yjit` + `pkg.yjit` → guest `--link yjit`
+  运行时 `jit_load_yjit` 两影像 —— 当前一个进程只能有一张影像且 `.yjit` 无
+  rela 段，无法执行。重启条件见 12.7.2。
 - **iso**：embed/dylib/yjit/stub 对 L4/L5 用例输出一致（host/pkgs 行为相同，
   仅落点不同），`make yc-iso` 保持。
 - **三 arch**：`--arch arm64|riscv64` 下 embed host/yjit blob 用对应后端符号
@@ -501,3 +548,135 @@ src/*.c                                                # C 参考实现不改（
    需要时再升级为 hashmap。
 5. **默认值**：保持 `stub`，不改变 `make test` / `bootstrap` 产物行为。
 6. **C 对 embed 不支持**：设计明确报错（C 代码不可嵌入 yac 镜像）。
+
+---
+
+## 12. 落地计划
+
+> 2026-09 按当前代码核对后重排。§1–§11 的分类学（4 模式 × 3 对象）保留，
+> 但落地**不按矩阵一次铺开**，按下表顺序推进；做完一条打勾一条。
+>
+> 排序原则：先修正确性 → 再做与 emit 解耦的低风险面 → 再钉接口 → 再打通
+> "运行时填表"通道 → 最后才动 emit 核心语义 → `embed` 收尾。越往后改动越
+> 靠近编译器核心，回归面越大。
+>
+> 依赖：`0 ─► 1 ──┬─────────────► 4`
+> `     2 ───────┘`
+> `     3 ─────────► 4 ─► 5 ─► 6`；`7` 因格式前置未满足，外置。
+
+### 12.0 文档勘误（P0）
+
+本文 §3.1/§3.2/§4.3/§9/§10 的"现状"有 6 处与代码不符，按错的描述动手会打偏
+（例如去改已删除的 `lower.yac::is_host_extern`）。先订正，再动代码。
+
+- [x] 12.0.1 host 表偏移订正为 **`G+136..G+216`**（`emit.yac:256-263`）；
+      并删掉"G 是 r15 基址寄存器"的说法——yac 代码不用 r12–r15
+      （`encode_x64.yac:794`），全局区按**绝对 imm64** 寻址
+- [x] 12.0.1b 不存在 `host_off_add`（全库 0 处）；收集靠 `funsym_set/funsym_get`
+      + emit 收尾的 `bake()`（`emit_x86_64.yac:2028-2042`）
+- [x] 12.0.2 不存在 `hostcall` LIR；是普通 `fcall` + patch tag `21`
+      （`emit_x86_64.yac:570-583`、`emit.yac:744-745`）
+- [x] 12.0.3 不存在 `yac_host_unimpl` / "host fn unavailable"；AOT 无开关时
+      **不是桩，是崩溃**（槽为 0 → `call [0]`）
+- [x] 12.0.4 `lower.yac::is_host_extern` / `lw_host_rewrite` 已删除
+      （另：`host_off_add`、`lw_rewrite_ins` 也都不存在）
+- [x] 12.0.5 `.yjit` **没有 rela 段**（`pack_yjit_ex` 只写 hdr+TEXT+LINK；
+      `YJIT_REL_*` 常量定义 6 处、使用 0 处）
+- [x] 12.0.6 `--shared` **已实现且测试覆盖**（`run.yac:572-639`），但导出是
+      **C ABI int**（`emit_cabi.yac:126-134`），不是 yac 值
+- [x] 12.0.7 §10 补"AOT host 槽为 0 → SIGSEGV"作为 12.1 的验收依据
+- [x] 12.0.8 §4.3 / §10 标注 `yjit` 为设计保留、格式前置未满足
+
+### 12.1 P0 — H 的 `stub`
+
+- [ ] 12.1.1 `rt/runtime.yac` 新增 `yac_host_unimpl`（print + 返回 0），
+      登记进 `runtime_funs`（参照 `runtime.yac:2267`）
+- [ ] 12.1.2 `emit_x86_64.yac:2036-2040` 的 `bake()`：`off < 0` 分支写桩地址
+      而非留 0；`T != 0`（REPL 会话）分支保持不动
+- [ ] 12.1.3 `emit_arm64.yac` / `emit_riscv64.yac` 补 host 分支（现为 0 处
+      `host_id`，走普通 `bl`/`jal` → **静默跳到第一个函数**）
+- [ ] 12.1.4 验收：不带 `--pkg src-self` 时裸调 `compile(...)` 的 guest
+      打印"host 未实现"并返回 0，不再段错误；`make test` 全绿
+
+### 12.2 P0 — C 的 `DT_NEEDED` 泛化
+
+- [ ] 12.2.1 `cimport_*` 结构从 `names: [str]` 扩成 `[(libname, symname)]`
+- [ ] 12.2.2 `pack_elf_libc`（`elf.yac:398+`）：dynstr 多库名 + `DT_NEEDED` 循环
+- [ ] 12.2.3 `elf_cimport_bind`（`elf.yac:219-225`）启发式改按显式 libname 判定
+      （避免 Win32 `LoadLibraryA` 被当 JUMP_SLOT → loader exit 127）
+- [ ] 12.2.4 PE / Mach-O import 表同构改动
+- [ ] 12.2.5 验收：`import ffi` + `ccall` 自建 `.so` 在 AOT 下可用；
+      `elf --shared dlopen` 系列不回归
+
+### 12.3 P1 — `--link` CLI 与 `pkg_src` 产物探测（先只探测 + 报错）
+
+- [ ] 12.3.1 `yc.yac:118-121` 照抄 `--pkg` 分支加 `--link`；塞进 `nth(spec,4)`
+      flags 列表，**不改 spec 元组宽度**
+- [ ] 12.3.2 `backend.yac` 加 `link_mode_box` + `link_mode_of(pkg)`：
+      按包覆盖 > 全局链 > 缺省 `["stub"]`（注意别照抄 `pkg_set` 的"只 set 一次"）
+- [ ] 12.3.3 `pkg_src` 扩成 `pkg_artifact(pkg, mode)`：`.yac` → `.host` / `.so` /
+      `.yjit` 顺序探测，**只返回路径或 0**
+- [ ] 12.3.4 `link_from_ast` 后统一链解析：命中源码 → 现有 `lir_extend`；
+      命中产物但模式未实现 → 明确报错；非 stub 全落空 → 报错；含 stub → 落声明
+- [ ] 12.3.5 验收：**不带 `--link` 时产物与今天逐字节一致**（`make test` /
+      `yc-iso` 不回归）
+
+### 12.4 P1 — H 的 `dylib`（int-only 子集）
+
+- [ ] 12.4.1 `Makefile` 加 `yc.so` 目标（`--shared` 已可用，`run.yac:572-589`）
+- [ ] 12.4.2 导出符号加 `yc_` 前缀（现 `emit_cabi.yac:246` 用裸名）
+- [ ] 12.4.3 guest 启动代码插入填表：`cload("yc.so")` + `csym` + 写
+      `G+136+8*id`（`rt/ffi.yac:5-9`）
+- [ ] 12.4.4 `yac_init` 先跑：ELF 靠 `DT_INIT`，PE 的 `DllMain` 路径单独确认
+- [ ] 12.4.5 槽为 0 时回落到 12.1 的桩
+- [ ] 12.4.6 验收：只有 `yc.so`、无 `yc` 可执行文件的环境能跑通 `compile_file`；
+      删掉 `yc.so` → 依赖缺失提示或降级，不崩溃
+
+### 12.5 P2 — `emit_patch_rel` 支持名字级未解析符号（`embed` 前置）
+
+- [ ] 12.5.1 加 `unres_box`；`emit_patch_rel`（`emit.yac:223-224`）miss 且标记为
+      external 时 push `[1, pos, name]` 而非 `[1, pos, 0]`
+- [ ] 12.5.2 `emit_resolve_patch`（`emit.yac:704+`）tag 1 加分支：str → 查外部
+      符号表，patch **绝对地址**；x86 跨镜像可能超 2G，**不能复用 `call_rel32`**
+- [ ] 12.5.3 arm64 / riscv64 加"加载绝对地址 + 间接跳转"
+      （抄 `emit_cabi.yac:33-68` 的 `dlib_a64_va` / `dlib_rv_va`）
+- [ ] 12.5.4 导出侧：包编译时把 funsym（`elf.yac:235-237`）落盘成 `name→off`
+- [ ] 12.5.5 验收：两 blob 共享一份 runtime 的最小用例，GC 后跨镜像引用仍存活
+- [ ] 12.5.6 建议先只打通 x86_64，arm64/riscv64 给明确报错
+
+### 12.6 P3 — `embed`（依赖 12.1 / 12.3 / 12.5）
+
+- [ ] 12.6.1 新增 `host_blob_export()`：`*.host` = code + funsym + reloc 位置表
+      （patch 表现成：`elf_relocs_get`，`elf.yac:78-81`）
+- [ ] 12.6.2 `pack` 阶段 append blob：`NEW_BASE = LOAD_VADDR + TEXT_OFF +
+      len(guest)`，每个 reloc 位置 `value += NEW_BASE - OLD_BASE`
+- [ ] 12.6.3 `bake` 扩展成按包符号表填；槽区从 `G+216` 往后开
+      （`emit_glob_data` 的 216 要参数化）
+- [ ] 12.6.4 smap / strlit pool 一并重定位
+- [ ] 12.6.5 体积：先全量，后按 `drop_unreachable` 收闭包（§11.1）
+- [ ] 12.6.6 验收：objdump 确认函数落在 guest TEXT 内；无 yc 二进制环境单独
+      运行成功；与 JIT 同输入对拍
+
+### 12.7 `yjit` 作为链接模式：暂缓，不进 `--link`
+
+- [ ] 12.7.1 在 §4.3 / §10 / §11 标注"设计保留，格式前置未满足"
+- [ ] 12.7.2 重启条件：`.yjit` 加 rela 段（把 `YJIT_REL_*` 真正用起来）
+      + `yac_jit_run` 支持多影像（基址不再写死 `2^33`、`G+112` 改影像表）
+      → 这两条属格式级改动，单独开一篇设计文档
+
+### 12.8 工期参考（1 人全职、Linux、已通读 emit/pack）
+
+| 里程碑 | 累计人日 | 日历 |
+|---|---|---|
+| M1 = 12.1+12.2+12.3 | 4–7d | 1–1.5 周 |
+| M2 = M1+12.4 | 7–12d | 2–2.5 周 |
+| M3 = M2+12.5+12.6（x86/ELF 单 arch） | 12–22d | 3–4.5 周 |
+| M4 = 三 arch + 三格式完整 | 20–32d | 4–6.5 周 |
+
+置信度：M1 高（±1d）；M2 中；**M3/M4 低**——12.5/12.6 悲观值可能再翻倍。
+主要成本不是写代码而是定位：emit 出错只表现为 SIGSEGV 或静默错编，改
+`src-self` 要走两轮原生自编译（`Makefile:58-68`），且要留意
+`SELFHOST.md:258` 记的"编译器自己 `_start` 里 33 元 LIR cons 字面量会错编"。
+
+压缩办法：先只做 x86_64 + ELF（省约 40%）；12.2 先只做 ELF；12.5/12.6
+先用 3 函数的假包做最小可证伪用例。
