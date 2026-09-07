@@ -50,9 +50,11 @@ let at_end(s, i) = i >= str_len(s)
 /* skip spaces; returns new pos */
 let skip_sp(s, i, line, n) =
   if i >= n then [i, line]
-  else if sat(s, i) == 10 then skip_sp(s, i + 1, line + 1, n)
-  else if is_space(sat(s, i)) then skip_sp(s, i + 1, line, n)
-  else [i, line]
+  else
+    let c = sat(s, i) in
+    if c == 10 then skip_sp(s, i + 1, line + 1, n)
+    else if c == 9 or c == 32 or c == 13 then skip_sp(s, i + 1, line, n)
+    else [i, line]
 
 /* skip -- line comment */
 let skip_line_cm(s, i) =
@@ -218,55 +220,75 @@ let punct_kind(c) =
 let is_punct(c) = c == 40 or c == 41 or c == 91 or c == 93 or c == 123 or
                   c == 125 or c == 44 or c == 59 or c == 46
 
-/* main lex loop */
+/* main lex loop. `c` is fetched once: every else-if used to call sat()
+ * again, i.e. up to ~8 str_ref per source character. */
 let lex(s, i, line, acc, n) =
   if i >= n then
     let _ = list_push(acc, mk_tok("eof", "", line)) in acc
-  else if is_space(sat(s, i)) then
-    let sp = skip_sp(s, i, line, n) in
-    lex(s, nth(sp, 0), nth(sp, 1), acc, n)
-  else if sat(s, i) == 45 and (if i + 1 >= n then false else sat(s, i + 1) == 45) then
-    lex(s, skip_line_cm(s, i + 2), line, acc, n)
-  else if sat(s, i) == 47 and (if i + 1 >= n then false else sat(s, i + 1) == 42) then
-    let starstar =
-      if i + 2 >= n then false
-      else if sat(s, i + 2) != 42 then false
-      else if i + 3 >= n then true
-      else sat(s, i + 3) != 47 in
-    let e =
-      if starstar then skip_starstar_cm(s, i + 3, line)
-      else skip_block_cm(s, i + 2, line, 1) in
-    if e == 0 then
-      let _ = list_push(acc, mk_tok("eof", "unterminated-comment", line)) in acc
-    else lex(s, e, line, acc, n)
-  else if is_alpha(sat(s, i)) then
-    let r = scan_ident(s, i, line, n) in
-    let _ = list_push(acc, nth(r, 0)) in
-    lex(s, nth(r, 1), line, acc, n)
-  else if is_digit(sat(s, i)) then
-    let r = scan_num(s, i, line) in
-    let _ = list_push(acc, nth(r, 0)) in
-    lex(s, nth(r, 1), line, acc, n)
-  else if sat(s, i) == 34 then
-    let r = scan_str(s, i + 1, line, 0, bytes_new()) in
-    if nth(nth(r, 0), 0) == "error" then
-      let _ = list_push(acc, mk_tok("eof", "unterminated-string", line)) in acc
-    else
+  else
+    let c = sat(s, i) in
+    if is_space(c) then
+      let sp = skip_sp(s, i, line, n) in
+      lex(s, nth(sp, 0), nth(sp, 1), acc, n)
+    else if c == 45 then
+      if i + 1 >= n then
+        let r = scan_op(s, i, line, n) in
+        let _ = list_push(acc, nth(r, 0)) in
+        lex(s, nth(r, 1), line, acc, n)
+      else if sat(s, i + 1) == 45 then
+        lex(s, skip_line_cm(s, i + 2), line, acc, n)
+      else
+        let r = scan_op(s, i, line, n) in
+        let _ = list_push(acc, nth(r, 0)) in
+        lex(s, nth(r, 1), line, acc, n)
+    else if c == 47 then
+      if i + 1 >= n then
+        let r = scan_op(s, i, line, n) in
+        let _ = list_push(acc, nth(r, 0)) in
+        lex(s, nth(r, 1), line, acc, n)
+      else if sat(s, i + 1) == 42 then
+        let starstar =
+          if i + 2 >= n then false
+          else if sat(s, i + 2) != 42 then false
+          else if i + 3 >= n then true
+          else sat(s, i + 3) != 47 in
+        let e =
+          if starstar then skip_starstar_cm(s, i + 3, line)
+          else skip_block_cm(s, i + 2, line, 1) in
+        if e == 0 then
+          let _ = list_push(acc, mk_tok("eof", "unterminated-comment", line)) in acc
+        else lex(s, e, line, acc, n)
+      else
+        let r = scan_op(s, i, line, n) in
+        let _ = list_push(acc, nth(r, 0)) in
+        lex(s, nth(r, 1), line, acc, n)
+    else if is_alpha(c) then
+      let r = scan_ident(s, i, line, n) in
       let _ = list_push(acc, nth(r, 0)) in
       lex(s, nth(r, 1), line, acc, n)
-  else if is_opchar(sat(s, i)) then
-    let r = scan_op(s, i, line, n) in
-    let _ = list_push(acc, nth(r, 0)) in
-    lex(s, nth(r, 1), line, acc, n)
-  else if is_punct(sat(s, i)) then
-    let c = sat(s, i) in
-    let txt = str_slice(s, i, 1) in
-    let _ = list_push(acc, mk_tok(punct_kind(c), txt, line)) in
-    lex(s, i + 1, line, acc, n)
-  else
-    let txt = str_slice(s, i, 1) in
-    let _ = list_push(acc, mk_tok("punct", txt, line)) in
-    lex(s, i + 1, line, acc, n)
+    else if is_digit(c) then
+      let r = scan_num(s, i, line) in
+      let _ = list_push(acc, nth(r, 0)) in
+      lex(s, nth(r, 1), line, acc, n)
+    else if c == 34 then
+      let r = scan_str(s, i + 1, line, 0, bytes_new()) in
+      if nth(nth(r, 0), 0) == "error" then
+        let _ = list_push(acc, mk_tok("eof", "unterminated-string", line)) in acc
+      else
+        let _ = list_push(acc, nth(r, 0)) in
+        lex(s, nth(r, 1), line, acc, n)
+    else if is_opchar(c) then
+      let r = scan_op(s, i, line, n) in
+      let _ = list_push(acc, nth(r, 0)) in
+      lex(s, nth(r, 1), line, acc, n)
+    else if is_punct(c) then
+      let txt = str_slice(s, i, 1) in
+      let _ = list_push(acc, mk_tok(punct_kind(c), txt, line)) in
+      lex(s, i + 1, line, acc, n)
+    else
+      let txt = str_slice(s, i, 1) in
+      let _ = list_push(acc, mk_tok("punct", txt, line)) in
+      lex(s, i + 1, line, acc, n)
 
 /* Seed intern table with compiler literals (pooled in native yc) so
  * intern_toks of source text returns the same pointers as k == "ident". */

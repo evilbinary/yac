@@ -312,10 +312,29 @@ let ast_pkg_name(ast, i) =
   else if nth(nth(ast, i), 0) == "package" then nth(nth(ast, i), 1)
   else ast_pkg_name(ast, i + 1)
 
+/* Exports of an imported package, cached: the bundle imports the same
+ * lib/front/back package many times, and reading+parsing it on every import
+ * was ~9 s of a ~29 s self-compile. The map value is the same list object
+ * each call, so the caller must not mutate it. */
+let pkg_exp_cache_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
 let pkg_export_names(pkg) =
-  let src = pkg_src(pkg) in
-  if src == 0 then []
-  else ast_export_list(pass_parse(pass_lex(src)), 0)
+  let b0 = box_get(pkg_exp_cache_box) in
+  let m =
+    if b0 == 0 then
+      let _ = box_set(pkg_exp_cache_box, fmap_new64(0)) in
+      box_get(pkg_exp_cache_box)
+    else b0 in
+  let e = fmap_get(m, pkg) in
+  if e != 0 then e
+  else
+    let src = pkg_src(pkg) in
+    let v = if src == 0 then [] else ast_export_list(pass_parse(pass_lex(src)), 0) in
+    let _ = fmap_put(m, pkg, v) in
+    v
 
 let import_id_pairs(xs, i, acc) =
   if i >= len(xs) then acc
@@ -333,8 +352,34 @@ let import_sel(sel, all, i, acc) =
       import_sel(sel, all, i + 1, cons([loc, orig], acc))
     else import_sel(sel, all, i + 1, acc)
 
-let fill_import(e) =
-  let all = pkg_export_names(nth(e, 1)) in
+/* Exports of packages declared in the same source. Saves reading+parsing
+ * the imported file for every `import` inside the concatenated compiler
+ * bundle (that was ~9 s; the disk cache above still covers repeat imports
+ * of packages that are genuinely separate files). */
+let ast_exp_go(ast, i, n, st) =
+  if i >= n then st
+  else
+    let e = nth(ast, i) in
+    let k = nth(e, 0) in
+    if k == "package" then ast_exp_go(ast, i + 1, n, [nth(st, 0), nth(e, 1)])
+    else if k == "export" then
+      let cur = nth(st, 1) in
+      if cur == "" then ast_exp_go(ast, i + 1, n, st)
+      else
+        let m = nth(st, 0) in
+        let old = fmap_get(m, cur) in
+        let v = if old == 0 then nth(e, 1) else append(nth(e, 1), old) in
+        let _ = fmap_put(m, cur, v) in
+        ast_exp_go(ast, i + 1, n, st)
+    else ast_exp_go(ast, i + 1, n, st)
+
+let local_exports(ast) =
+  let st = ast_exp_go(ast, 0, len(ast), [fmap_new64(0), ""]) in
+  nth(st, 0)
+
+let fill_import(e, local) =
+  let all0 = if local == 0 then 0 else fmap_get(local, nth(e, 1)) in
+  let all = if all0 == 0 then pkg_export_names(nth(e, 1)) else all0 in
   let alias = if len(e) > 3 then nth(e, 3) else 0 in
   let pairs =
     if len(e) < 3 then import_id_pairs(all, 0, [])
@@ -342,12 +387,15 @@ let fill_import(e) =
     else import_sel(nth(e, 2), all, 0, []) in
   ["import", nth(e, 1), pairs, alias]
 
-let rewrite_imports(ast, i, acc) =
+let rewrite_imports_go(ast, i, acc, local) =
   if i >= len(ast) then reverse(acc)
   else
     let e = nth(ast, i) in
-    let e2 = if nth(e, 0) == "import" then fill_import(e) else e in
-    rewrite_imports(ast, i + 1, cons(e2, acc))
+    let e2 = if nth(e, 0) == "import" then fill_import(e, local) else e in
+    rewrite_imports_go(ast, i + 1, cons(e2, acc), local)
+
+let rewrite_imports(ast, i, acc) =
+  rewrite_imports_go(ast, i, acc, local_exports(ast))
 
 /* Compile one rt/*.yac against already-lowered procs so later stdlib
  * files can call earlier ones. Guest always gets rt.num; other packages
@@ -678,7 +726,9 @@ let compile_native(src, t) =
   else
     let _ = pkg_fail_set(0) in
     let _ = link_from_ast(ast0) in
-    let bin = run_passes(make_pipeline(t), src) in
+    /* ast0 is already the parsed program (syntax + unbound checks above);
+     * rerunning lex+parse on src would duplicate ~6s of a ~38s self-compile. */
+    let bin = run_passes(drop(make_pipeline(t), 2), ast0) in
     let _ = box_set(imap_box, saved_i) in
     let _ = box_set(malias_box, saved_m) in
     let _ = pkg_prefix_set(saved_p) in
