@@ -602,7 +602,7 @@ static int skip_idlist(Parser *p) {
     return 1;
 }
 
-#define YAC_IMPORT_MAX 16
+#define YAC_IMPORT_MAX 64
 
 typedef struct {
     char pkgs[YAC_IMPORT_MAX][64];
