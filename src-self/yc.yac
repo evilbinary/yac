@@ -262,35 +262,31 @@ let repl_host_eval(line) =
       else
         let nm = nth(f, 1) in
         let args = nth(e, 2) in
-        let str_arg(i) =
-          if i >= len(args) then 0
-          else if nth(nth(args, i), 0) == "str" then nth(nth(args, i), 1)
-          else 0 in
-        if nm == "compile" and len(args) == 1 then
-          let src = str_arg(0) in
-          if src == 0 then 0
-          else
+        let arity = len(args) in
+        let a0str = arity >= 1 and nth(nth(args, 0), 0) == "str" in
+        let a1str = arity >= 2 and nth(nth(args, 1), 0) == "str" in
+        if nm == "compile" then
+          if arity == 1 and a0str then
             let t = mk_target(host_arch(0), host_format(0), "exec") in
-            let b = compile_native(src, t) in
+            let b = compile_native(nth(nth(args, 0), 1), t) in
             if b == 0 then
               let _ = print_val(1) in 1
             else
               let _ = print(str_cat("<bytes ", str_cat(int_to_str(bytes_len(b)), ">\n"))) in 1
-        else if nm == "load" and len(args) == 1 then
-          let p = str_arg(0) in
-          if p == 0 then 0
           else
-            let src = read_file(p) in
+            let _ = print("error: compile: expected a string literal\n") in 1
+        else if nm == "load" then
+          if arity == 1 and a0str then
+            let src = read_file(nth(nth(args, 0), 1)) in
             if src == 0 then
               let _ = print("error: load: cannot read") in 1
             else
               let _ = compile_jit(src, mk_jit_target(host_arch(0)), true) in 1
-        else if nm == "compile_file" and len(args) == 2 then
-          let inpath = str_arg(0) in
-          let outpath = str_arg(1) in
-          if inpath == 0 or outpath == 0 then 0
           else
-            let src = read_file(inpath) in
+            let _ = print("error: load: expected a string literal\n") in 1
+        else if nm == "compile_file" then
+          if arity == 2 and a0str and a1str then
+            let src = read_file(nth(nth(args, 0), 1)) in
             if src == 0 then
               let _ = print_val(1) in 1
             else
@@ -299,8 +295,10 @@ let repl_host_eval(line) =
               if bin == 0 then
                 let _ = print_val(1) in 1
               else
-                let _ = write_file(outpath, bin) in
+                let _ = write_file(nth(nth(args, 1), 1), bin) in
                 let _ = print_val(0) in 1
+          else
+            let _ = print("error: compile_file: expected two string literals\n") in 1
         else 0
 
 let repl_loop(spec) =
