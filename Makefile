@@ -134,6 +134,10 @@ endif
 test-pkg: $(TEST_HARNESS)
 	./$(TEST_HARNESS) pkg
 
+# --link CLI / artifact probing regression (BOOTSTRAP_LINK.md 12.3).
+test-link: $(TEST_HARNESS)
+	./$(TEST_HARNESS) link
+
 test-boot: $(TEST_HARNESS)
 	./$(TEST_HARNESS) boot
 
@@ -160,6 +164,6 @@ clean:
 	rm -rf $(BUILD)
 	rm -f src/*.o
 
-.PHONY: all clean test test-interp test-compiler test-pkg test-boot \
+.PHONY: all clean test test-interp test-compiler test-pkg test-link test-boot \
 	test-qemu test-qemu-arm64 test-qemu-riscv64 test-iso test-cps test-repl prop \
 	yc_a yc_b bootstrap yc-iso

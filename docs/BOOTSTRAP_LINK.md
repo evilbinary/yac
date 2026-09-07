@@ -641,16 +641,38 @@ src/*.c                                                # C 参考实现不改（
 
 ### 12.3 P1 — `--link` CLI 与 `pkg_src` 产物探测（先只探测 + 报错）
 
-- [ ] 12.3.1 `yc.yac:118-121` 照抄 `--pkg` 分支加 `--link`；塞进 `nth(spec,4)`
-      flags 列表，**不改 spec 元组宽度**
-- [ ] 12.3.2 `backend.yac` 加 `link_mode_box` + `link_mode_of(pkg)`：
-      按包覆盖 > 全局链 > 缺省 `["stub"]`（注意别照抄 `pkg_set` 的"只 set 一次"）
-- [ ] 12.3.3 `pkg_src` 扩成 `pkg_artifact(pkg, mode)`：`.yac` → `.host` / `.so` /
-      `.yjit` 顺序探测，**只返回路径或 0**
-- [ ] 12.3.4 `link_from_ast` 后统一链解析：命中源码 → 现有 `lir_extend`；
-      命中产物但模式未实现 → 明确报错；非 stub 全落空 → 报错；含 stub → 落声明
-- [ ] 12.3.5 验收：**不带 `--link` 时产物与今天逐字节一致**（`make test` /
-      `yc-iso` 不回归）
+> 实现说明（2026-09）：状态不塞 `spec` flags，而由 `backend.yac` 内部两个
+> box 承载（`link_global_box` / `link_pkg_box`），`yc.yac` 只调 `link_set(csv)`
+> ——同样**不改 spec 元组宽度**。`stub` 在当前阶段 = **回到现有源码链接**
+> （未给 `--link` 或链尾含 stub 时都源码链接，保证现状逐字节不变）；真正的
+> "只声明不链接"语义等 loaders（12.4/12.5）落地后再精化。
+
+- [x] 12.3.1 `yc.yac` 照抄 `--pkg` 分支加 `--link`；语法：无 `=` → 全局链；
+      有 `=` → 包级覆盖（裸 mode 段续接最近的 `pkg=`；`--link` 可重复累积，
+      **不做** `pkg_set` 的 once-only）；非法 mode / 空段 / 无 `=` 时混全局段
+      → 解析失败
+- [x] 12.3.2 `backend.yac` 加 `link_global_box` / `link_pkg_box` +
+      `link_chain_of(pkg)`：**包覆盖（后写者胜，反查）> 全局链 > `["stub"]`**
+- [x] 12.3.3 产物探测 `link_artifact(pkg, mode)`：包根下查
+      `<pkg>.yac.host` / `.so` / `.yjit`（`link_suffix` 映射），**只判存在**，
+      返回内容或 0
+- [x] 12.3.4 `lir_extend` 入口统一链解析（`pkg != rt.num` 时 `link_check_pkg`）：
+      - 链无非 stub 模式 → 直接源码链接（默认/纯 stub，现状不变）
+      - 命中产物但模式未实现 → `error: ... not implemented yet`
+      - 全链（除 stub）无产物 → `error: no precompiled artifact (链)`
+      - 链含 stub → 回落到源码（当前语义）
+- [x] 12.3.5 Windows 原生行为验证：
+      - 默认（无 `--link`）：`l4_42`=42 不回归
+      - `--link dylib` + 无产物 → 编译 rc=1，报 `no precompiled artifact`
+      - `--link path=dylib,stub` → 回源码，运行 42
+      - `--link bogus` → `error: bad arguments` rc=2
+- [x] 12.3.7 回归套件（Windows 实测 **7/7 PASS**）：`tests/run.yac` 新增
+      `link` 套件 + `Makefile` `test-link` 目标。用例：
+      default source-link(42) / global dylib no artifact / override
+      dylib,stub→source / repeat override later-wins→source / bad mode /
+      artifact-not-implemented（构造假 `path.yac.so`）/ help 含 `--link`
+- [ ] 12.3.6 跟进：Linux 上 `make test` / `yc-iso` 确认**不带 `--link` 时
+      产物与改动前逐字节一致**
 
 ### 12.4 P1 — H 的 `dylib`（int-only 子集）
 
