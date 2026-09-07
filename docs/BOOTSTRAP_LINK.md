@@ -52,7 +52,7 @@ C 工具链**。
 
 | 对象 | 例子 | 现状（只有源码链接 / cimport） | 本篇新增 |
 |------|------|-------------------------------|----------|
-| **H** host 编译器函数 | `import compiler` 的 `compile`/`compile_file`/`load` 及其叶子 | `lower.yac` 识别 10 名 → `emit.yac::host_id` 识别 10 名（`emit.yac:267-272`）；JIT/REPL 由 `host_tab_fill`（`jit.yac:25-34`）填 `G+136` 槽；**AOT 槽为 0 → 崩溃**（或靠 `--pkg src-self` 源码内联整个编译器） | 三模式复用 |
+| **H** host 编译器函数 | `import compiler` 的 `compile`/`compile_file`/`load` 及其叶子 | `emit.yac::host_id` 识别 10 名（`emit.yac:267-272`）；宿主 yc 由 `bake()` 把自身叶子烘进 `G+136` 槽、REPL 经 `host_tab_fill`（`jit.yac:25-34`）读取；**guest 作用域不含 host 名**（裸调即 `unbound`，12.1）；要用编译器须 `import compiler`（靠 `--pkg src-self` 源码内联） | 三模式复用 |
 | **P** 普通 pkg 包 | `pkg/io.yac`、`pkg/str.yac`、`pkg/ffi.yac` | **只有源码链接**（`backend.yac::lir_extend` 现编进 guest） | 包级 embed/dylib/yjit/stub |
 | **C** C 共享库 | `ccall("printf",…)`、`import ffi` | **只有 `ccall` + libc import**（`elf_cimport_*` / `pack_elf_libc`） | 任意 `.so` 的 embed/dylib/yjit/stub |
 
@@ -117,34 +117,37 @@ C 工具链**。
 2. **收集**：emit 收尾时 `funsym_set(funOffsRev)`（名字 → 本镜像内文本偏移），
    pack 侧用 `funsym_get` 读。**没有** `host_off_add`（全库 0 处）。
 3. **烘焙**：`bake()`（`emit_x86_64.yac:2028-2042`）遍历 10 个名字，在本镜像
-   `funOffsRev` 里查得到才写 `LOAD_VADDR + TEXT_OFF + off` 进槽；查不到**留 0**。
-   只有 bundle 构建（`Makefile` 把 `src-self` cat 成一个文件，名字保持裸名）才
-   会全部命中 —— 这是 `skip_local_imp`（`backend.yac:341-348`）丢掉"同源自声明
-   包"的 import 的结果。
-4. **取址**：调用点读 `G+136+8*id` 槽 → 间接 `call`。**槽为 0 时当前会 SIGSEGV**
-   （`call [0]`），**不是**落到某个 `yac_host_unimpl` 桩 —— 该桩目前不存在，
-   由 12.1 引入。
-   （x86_64 在 `emit_x86_64.yac:570-583`；**arm64/riscv64 尚未实现**，
-   见 12.1.3。）
+   `funOffsRev` 里查得到才写 `LOAD_VADDR + TEXT_OFF + off` 进槽；查不到（且
+   `T == 0`，AOT）写 **`yac_host_unimpl` 桩地址**（12.1 后；此前留 0）。
+   只有 bundle 构建（`Makefile` 把 `src-self` cat 成一个文件，名字保持裸名）
+   才会让前 3 个之外的大多数叶子命中 —— 这是 `skip_local_imp`
+   （`backend.yac:341-348`）丢掉"同源自声明包"的 import 的结果。
+4. **取址**：调用点读 `G+136+8*id` 槽 → 间接 `call`。
+   **guest 语义（12.1 后定稿）**：host 名不在 guest 作用域，裸调在编译期即
+   `unbound variable`，因此 AOT guest 不会发出 tag-21 host 调用；桩只在
+   宿主 yc 自身 / 防御路径上被读到。
+   （x86_64 在 `emit_x86_64.yac:570-583`；arm64/riscv64 因 host 名不再进
+   guest 作用域，无需实现 host 分支——见 12.1.3。）
 
 ### 3.2 `G+136` 与 AOT 的差别：谁真正拥有这张表
 
 | 场景 | 谁是宿主 | host 表位置 | 填充者 |
 |---|---|---|---|
 | JIT/REPL（`JIT_VADDR`） | 本进程 yc | **宿主自己的 G+136** | emit 收尾烘焙 + `host_tab_fill`（`jit.yac:25-34`） |
-| AOT 独立 ELF（`T_VADDR`） | 无（guest 自己跑） | **槽存在但为 0**，调用即崩溃 | —— |
+| AOT 独立 ELF（`T_VADDR`） | 无（guest 自己跑） | 槽被 `bake()` 填成桩地址（12.1 后） | `bake()`（空槽 → `yac_host_unimpl`） |
 
-> AOT 下"H 现状"还有一层容易误读的事实：槽**存在**（`emit_glob_data` 每次都写
-> 216 字节），但 `bake()` 只在镜像自己定义了该叶子时才填。今天 guest 想用
-> `compile` 只有两条路能成：① 不带 `--pkg src-self` → 槽为 0 → **崩溃**；
-> ② 带 `--pkg src-self` → `pkg/compiler.yac` 里的 `import back.backend` 被
+> AOT 下容易误读的事实：槽**存在**（`emit_glob_data` 每次都写 216 字节），
+> 但 host 名**不在 guest 作用域**（12.1 后）：guest 裸调 `compile(...)` 在编译期
+> 就报 `unbound variable`。guest 想用编译器只有一条正路：`import compiler`
+> （配合 `--pkg src-self`），`pkg/compiler.yac` 里的 `import back.backend` 被
 > `pkg_src` 解析到**源码**，于是**整个编译器被源码内联进 guest**（guest 变成
-> 4MB 级）。也就是说 host 表在 AOT 下**目前从未真正被用过**，它只在 bundle
-> 构建的 yc 自己身上有值，并由 REPL 会话读取。
+> 4MB 级）。也就是说 host 表在 AOT 下**从未被 guest 使用**，它只在 bundle
+> 构建的 yc 自己身上有值，并由 REPL 会话读取；12.1 的桩保证任何读到的空槽
+> 都指向可打印错误的过程，而不是 `call [0]`。
 
-所以三模式针对 AOT 要解决"guest 没有宿主进程、G+136 槽是空的"问题：
+所以三模式针对 AOT 要解决"guest 没有宿主进程、host 调用落点从哪来"的问题：
 
-- `stub`：槽指本镜像内的 `yac_host_unimpl`（打印后返回 0）——**由 12.1 引入**；
+- `stub`：槽指本镜像内的 `yac_host_unimpl`（打印后返回 0）——**12.1 已落地**；
 - `embed`：把宿主 yc 的 host blob（重定位后）内嵌进 guest，**在 guest 自己
   的全局区新开一张等价 host/包地址表**并烘焙绝对地址；
 - `dylib`/`yjit`：guest 启动时装库（dlopen/dlsym 或 jit_load），把解析到的
@@ -510,13 +513,20 @@ src/*.c                                                # C 参考实现不改（
 
 ## 10. 验证
 
-- **stub（默认回归）** ← **12.1 的验收依据**：
-  - **现状（回归基线，必须先确认）**：不带 `--pkg src-self` 的 guest 裸调
-    `compile(...)`，当前**编译通过、运行 SIGSEGV**（`G+136` 槽为 0 → `call [0]`）。
-    这是崩溃，**不是**"打印 host fn unavailable 返回 0"。
-  - **目标**：同样用例打印 host 未实现并返回 0；`import compiler` /
-    `import ffi` guest 编译运行正常；`make test` 全绿。
-  - `--arch arm64|riscv64` 下同一用例行为一致（现为静默错跳）。
+- **host 语义 + stub（默认回归）** ← **12.1 的验收依据**：
+  - **语义（2026-09 定稿）**：10 个 host 叶子名**不在 guest 作用域**。裸调
+    `compile(...)` → 编译期 `unbound variable 'compile'`（与其它未导入名一致）；
+    必须 `import compiler`（经 `pkg/compiler.yac` 引入真实实现）才可用。
+    `report_unbound_ex` 已把 `host_fun_names` 移出 guest 作用域
+    （`backend.yac`）；host 表仅供宿主 yc 自己（REPL `host_tab_fill`）使用。
+  - **现状（修复前基线）**：裸调 `compile(...)` **编译通过、运行 SIGSEGV**
+    （`G+136` 槽为 0 → `call [0]`）。
+  - **目标**：裸调在编译期即报错；`import compiler` / `import ffi` guest 编译
+    运行正常；`yac_host_unimpl` 桩（打印 "host fn unavailable" 返回 0）作为
+    **防御性兜底**仍被 `bake()` 填进任何空的 host 槽（例如宿主 yc 自己缺
+    `compile`/`compile_file`/`load` 三个叶子的槽），避免未来任何路径读到 0。
+  - 该两项已实测（Windows 原生）：裸调 rc=1 报 unbound；直接调用
+    `yac_host_unimpl(0)` 打印消息并返回。`make test` 需在 Linux 跑全量。
 - **embed（H）**：含 `import compiler` 的 guest `--link embed` 产出单文件；
   objdump 确认 host 函数落在 guest 文本段内；**无 yc 二进制环境**单独运行成功；
   与 JIT 同输入对拍。
@@ -587,16 +597,31 @@ src/*.c                                                # C 参考实现不改（
 - [x] 12.0.7 §10 补"AOT host 槽为 0 → SIGSEGV"作为 12.1 的验收依据
 - [x] 12.0.8 §4.3 / §10 标注 `yjit` 为设计保留、格式前置未满足
 
-### 12.1 P0 — H 的 `stub`
+### 12.1 P0 — H 的 host 语义 + `stub`
 
-- [ ] 12.1.1 `rt/runtime.yac` 新增 `yac_host_unimpl`（print + 返回 0），
-      登记进 `runtime_funs`（参照 `runtime.yac:2267`）
-- [ ] 12.1.2 `emit_x86_64.yac:2036-2040` 的 `bake()`：`off < 0` 分支写桩地址
+> **定稿语义（编码时与用户确认）**：10 个 host 叶子名**不进 guest 作用域**。
+> guest 要使用必须 `import compiler`（`pkg/compiler.yac` 把实现作为源码/宿主
+> 依赖引入）；裸调 `compile(...)` 是 `unbound variable`。host 表与桩只作为
+> **宿主 yc 自身的运行机制 + 防御性兜底**。
+
+- [x] 12.1.1 `rt/runtime.yac` 新增 `yac_host_unimpl`（write1 打印
+      "host fn unavailable\n" + 返回 int 0，0 参、标签 `proc`），登记进
+      `runtime_funs`（`rt_host_unimpl_ins` 紧邻 `rt_host_sym_ins`）
+- [x] 12.1.2 `emit_x86_64.yac` 的 `bake()`：先查 `yac_host_unimpl` 在
+      `funOffsRev` 的偏移（`stub_off`）；host 叶子不在本镜像时把槽写桩地址
       而非留 0；`T != 0`（REPL 会话）分支保持不动
-- [ ] 12.1.3 `emit_arm64.yac` / `emit_riscv64.yac` 补 host 分支（现为 0 处
-      `host_id`，走普通 `bl`/`jal` → **静默跳到第一个函数**）
-- [ ] 12.1.4 验收：不带 `--pkg src-self` 时裸调 `compile(...)` 的 guest
-      打印"host 未实现"并返回 0，不再段错误；`make test` 全绿
+- [x] 12.1.3 host 名移出 guest 作用域：`backend.yac::report_unbound_ex` 去掉
+      `host_fun_names(0)`。这使 arm64/riscv64 不再需要"host 分支"——裸调
+      host 名在**前端**即报 `unbound variable`，不会到达 emit 的静默错跳；
+      且 `pkg/compiler.yac` 通过 `import back.backend {compile_native, …}`
+      照常绑定这些名字，`import compiler` 路径不受影响
+- [x] 12.1.4 验收（Windows 原生已实测）：
+      - 裸调 `compile(...)` → 编译 rc=1，`1:1: unbound variable 'compile'`
+      - 直接调用 `yac_host_unimpl(0)` → 打印 "host fn unavailable"，程序正常
+      - `l4_42`=42、`recursion`=120、`tests/pkg/path.yac`=42 不回归
+      - `make test` 全量需在 Linux 跑（Windows 上 `tests/pkg/compiler.yac`
+        因嵌套 PE 自编译在改动前后均 SIGSEGV，为既有问题，非本改动引入）
+- [ ] 12.1.5 跟进：`make test` / `test-pkg` 在 Linux 上跑全量确认无回归
 
 ### 12.2 P0 — C 的 `DT_NEEDED` 泛化
 

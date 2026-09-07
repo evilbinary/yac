@@ -231,13 +231,16 @@ let kernel_let_names(_) =
     v
   else c
 
-/* Host functions available to REPL lines and host packages. */
+/* Host functions available to REPL lines and host packages. These are the
+ * names baked into the yc host image's G+136..G+216 table; a *guest* must not
+ * see them without an import (pkg/compiler.yac binds them via `import`), so
+ * a bare `compile(...)` is an unbound-variable error, exactly like any other
+ * name. Only the kernel (rt.runtime) and imported names widen guest scope. */
 let host_fun_names(_) = host_names(0)
 
 let report_unbound_ex(src, ast, extra) =
   let sc0 = pair_locals(box_get(imap_box), 0,
-                        append(append(host_fun_names(0), kernel_fun_names(0)),
-                               kernel_let_names(0))) in
+                        append(kernel_fun_names(0), kernel_let_names(0))) in
   let sc1 = pair_locals(box_get(malias_box), 0, sc0) in
   let nm = ub_prog(rewrite_imports(ast, 0, []), 0, append(extra, sc1)) in
   if nm == "" then 0

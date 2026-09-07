@@ -2023,9 +2023,20 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let _ = funsym_set(funOffsRev) in
   /* Bake absolute host-leaf addrs into this image's G+136..G+216 slots
    * (AOT only; REPL guest globals are filled from the host image at run
-   * time). host_wl name -> fun bc: for each host leaf present in funOffsRev,
-   * write LOAD_VADDR+TEXT_OFF+leaf text off into slot id. */
-  let bake(id, fr) =
+   * time). For each host leaf present in funOffsRev, write
+   * LOAD_VADDR+TEXT_OFF+leaf text off into slot id. A slot whose leaf is NOT
+   * in this image points at the yac_host_unimpl stub (kernel proc, always
+   * present) so AOT calls print "host fn unavailable" and return 0 instead
+   * of call [0] -> SIGSEGV (BOOTSTRAP_LINK.md 12.1). REPL (T != 0) skips:
+   * host_tab_fill overwrites from the host image at run time. */
+  let stub_off(fr) =
+    let sn = intern("yac_host_unimpl") in
+    let go(f, i) =
+      if i >= len(fr) then 0 - 1
+      else if intern(nth(nth(fr, i), 0)) == sn then nth(nth(fr, i), 1)
+      else go(f, i + 1) in
+    go(fr, 0) in
+  let bake(id, fr, stub) =
     if id >= len(host_names(0)) then 0
     else
       let nm = intern(nth(host_names(0), id)) in
@@ -2035,11 +2046,18 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
         else find(f, i + 1) in
       let off = find(fr, 0) in
       let _ =
-        if off < 0 or T != 0 then 0
-        else apply_u64(b, data_start + 136 + bshl(id, 3),
-                       LOAD_VADDR + TEXT_OFF + off) in
-      bake(id + 1, fr) in
-  let _ = if len(host_names(0)) == 0 then 0 else bake(0, funOffsRev) in
+        if T != 0 then 0
+        else if off >= 0 then
+          apply_u64(b, data_start + 136 + bshl(id, 3),
+                    LOAD_VADDR + TEXT_OFF + off)
+        else if stub >= 0 then
+          apply_u64(b, data_start + 136 + bshl(id, 3),
+                    LOAD_VADDR + TEXT_OFF + stub)
+        else 0 in
+      bake(id + 1, fr, stub) in
+  let _ =
+    if len(host_names(0)) == 0 then 0
+    else bake(0, funOffsRev, stub_off(funOffsRev)) in
   let _ = yjit_layout_set(pool_start, smap_start, data_start, bytes_len(b)) in
   [b, funOffsRev]
 
