@@ -722,19 +722,41 @@ src/*.c                                                # C 参考实现不改（
 > - 边界：`tcall`/`closure` 走外部符号尚未覆盖（阶段二做）；arm64/riscv64
 >   未接（同 host 现状，无需裸名则无影响）
 >
-> **阶段二（未做）**：① `fill_import` 对 dylib 链的包登记导出名为外部符号
-> 并把 `imap` 指向它（不 lir_extend 源码）；② guest 启动段生成
-> `cload+csym → G+216 槽` 填装（12.4.C）；③ 产物 symbol 命名/前缀；④
-> arm64/riscv64 槽间接分支。
+> **阶段二（2026-09，已提交 f3cedb6）**：backend 侧落地"dylib 链包登记外部
+> 符号、且不 source 链接"——`link_operative/link_is_dylib/pkg_extern_register`，
+> `rt_for_link`/`visit_go` 跳过 dylib 包，`lir_extend` 对 dylib 包入口短路；
+> `lir.yac` 导出 `pkg_qn`（登记键 = qname `pkg/f`）。link 套件 dylib 假产物
+> not-implemented 三条换成真实 E2E（绑定编译 → 运行打桩 rc42；默认源码链接
+> rc0），embed/yjit 产物仍 not-implemented。回归 `make test-link` 11/11；
+> `pkg` 20 通过 + 1 既有失败（`pkg compiler` 139，历史编译器同样失败）。
+>
+> **⚠ ABI 前提（2026-09，编码 12.4.C 之前必须先纠偏）**：阶段一/二的 extern
+> 槽调用点是**内部 ABI**（tag21 `mov imm slot; mov rax,[rax]; call rax`，
+> yac 寄存器约定 + tagged 值），只能调"yac 编译出的函数"。而 `--shared` 产物
+> 导出是 **C ABI**（`emit_cabi.yac` 的 `shl/sar` 包装，入口期望 C int）。
+> 所以即便 loader 把槽填成 DLL 导出地址，内部 ABI 直调会把 tagged 值当 C int
+> 传，结果错或崩——阶段二能跑只因为槽=桩、从未真调 C 导出。
+> **两条出路（择一）**：
+> - **A call-site cabi-shim**：emit 对 dylib 类 extern 在调用点内联
+>   `emit_cabi` 式转换（参 `sar`、返回 `sal`），槽存 dlsym 地址；贴合 12.4
+>   「只能传 int」的定位，改动集中在 emit。
+> - **B guest 包装预置包**：生成合成包，包装形如
+>   `add(a,b)=ccall(csym(cload(path),"add"),a,b)`，qname 落到 sigma 本地 fcall；
+>   需惰性加载/缓存 + 导出 arity 来源，且须先确认 PE 下 guest 内 `dlopen/dlsym`
+>   可用。
+> 无论 A/B：对象 H（10 叶子）与普通 pkg 包的 `dylib` 都限于"C ABI int 只透"
+> 边界，仅返回简单 int 的函数可表达；字符串/列表返回值需走 embed + 共享 GC
+> 域（12.6），不在 12.4/12.5 承诺内。
 
 - [x] 12.5.1 外部符号注册表（`emit.yac::extsym_*`）+ glob 表区条件扩容
 - [x] 12.5.2 x86 `fcall` 对 host/extern 统一走槽间接调用（tag21，
       extern id = 10+i）；AOT 空槽默认填桩
-- [ ] 12.5.3 `tcall`/`closure` 的外部符号路径（阶段二）
-- [ ] 12.5.4 `fill_import` dylib 链登记 + guest 启动段 `cload/csym` 填槽
-      （12.4.B/12.4.C）
+- [x] 12.5.3b dylib 链包登记外部符号 + 不 source 链接（`f3cedb6`，阶段二前半）
+- [ ] 12.5.3 `tcall`/`closure` 的外部符号路径
+- [ ] 12.5.4 guest 启动段装载（12.4.C）：先按上方 A/B 定调用 ABI，再
+      `cload/csym` 填槽 + PE dlopen 验证
 - [ ] 12.5.5 验收（阶段二）：自建 int 包 `--shared` → guest
-      `--link pkg=dylib` import 调用真执行；产物缺失启动期报错
+      `--link pkg=dylib` import 调用**真执行得 5**；产物缺失启动期报错
 - [ ] 12.5.6 arm64/riscv64 槽间接分支；x86 先行已通
 
 ### 12.6 P3 — `embed`（依赖 12.1 / 12.3 / 12.5）
