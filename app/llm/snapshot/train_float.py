@@ -8,7 +8,6 @@ No causal mask. Loss only on MASK holes. See DESIGN.md.
 """
 from __future__ import annotations
 
-import itertools
 import math
 import os
 import random
@@ -47,8 +46,7 @@ IDLE_W = 0.5  # 训练：只给生成同族行的邻格洞加一点 CE；2.0 已
 GEN_MIX = 0.55  # 训练行里生成同族（左可见、右全 MASK）的比例
 PF_SHARE = 0.70  # 生成同族里左前缀占比（对推理「悟空打」）
 CONT_W = 2.0  # 训练：左前缀后头 3 个洞的 CE，对准推理第一格
-STUMP_N = 3  # 显影：第一步一次快门写下提示右缘连续 3 格（同一张 logits）
-STUMP_K = 6  # 每格取 top-k 做 3 字组合，不是逐步重算
+STUMP_N = 1  # 显影第一步只揭提示右缘 1 格；标点则本步停，避免 ，”，
 # 训练窗除 stride 切片外，再在这些人名/称呼处对齐到画布左边（和 infer 提示同族）
 PROMPT_HEADS = (
     "悟空", "孙悟空", "八戒", "猪八戒", "沙僧", "唐僧", "三藏",
@@ -309,6 +307,13 @@ def mask_tokens(
     )
     empty = ~keep.any(dim=1, keepdim=True)
     keep = torch.where(empty.expand(b, t), keep_ph, keep)
+    # 一半前缀行再揭开后缀 1–16 金标：模拟第 2–K 步（提示+已曝光，其余仍 MASK）
+    do_mid = is_gen & (mode < PF_SHARE) & (torch.rand(b, 1, device=device) < 0.50)
+    pl = keep.to(torch.long).sum(dim=1, keepdim=True)
+    extra_n = 1 + (torch.rand(b, 1, device=device).pow(2) * 16).long()
+    pos = torch.arange(t, device=device).view(1, t)
+    extra_keep = valid & (pos >= pl) & (pos < pl + extra_n)
+    keep = torch.where(do_mid.expand(b, t), keep | extra_keep, keep)
     pick_gen = valid & ~keep
     pick = torch.where(is_gen.expand(b, t), pick_gen, pick)
     canvas = gold.clone()
@@ -579,44 +584,13 @@ def _n_take(n_ok: int, steps_left: int) -> int:
     return max(1, min(n_ok, (n_ok + sl - 1) // sl))
 
 
-def _stump_tokens(
-    probs: torch.Tensor,
-    i0: int,
-    n: int,
-    left: int,
-    stop: torch.Tensor,
-) -> list[int] | None:
-    """One shutter: 3-char fill from this logits page, score = sum log p (no info^β).
-
-    info 会把「：」「“」「，」打掉，把 1.5% 的「物」抬过 72% 的逗号。
-    """
-    n = min(n, T - i0)
-    if n <= 0:
-        return None
-    k = STUMP_K
-    tops: list[list[tuple[int, float]]] = []
-    for j in range(n):
-        p = probs[i0 + j]
-        topv, topi = p.topk(min(k, int(p.numel())))
-        tops.append(list(zip(topi.tolist(), topv.tolist())))
-    stop_set = set(int(x) for x in stop.tolist()) if stop.numel() else set()
-    best: list[int] | None = None
-    best_s = -1e18
-    eps = 1e-8
-    for combo in itertools.product(*tops):
-        toks = [c[0] for c in combo]
-        ps = [c[1] for c in combo]
-        if toks[0] == left:
-            continue
-        if any(toks[j] == toks[j - 1] for j in range(1, n)):
-            continue
-        if any(toks[j] in stop_set for j in range(n - 1)):
-            continue
-        s = sum(math.log(p + eps) for p in ps)
-        if s > best_s:
-            best_s = s
-            best = toks
-    return best
+def _first_cell(probs: torch.Tensor, i0: int, left: int) -> int:
+    """Step 0: one neighbor hole, argmax p (no info). Same-as-left → second."""
+    p = probs[i0]
+    tok = int(p.argmax().item())
+    if tok == left and p.numel() > 1:
+        tok = int(p.topk(2).indices[1].item())
+    return tok
 
 
 def _force_frontier(logits: torch.Tensor, front: torch.Tensor):
@@ -701,9 +675,11 @@ def denoise_ids(
     for step in range(k):
         t = step / max(k - 1, 1)
         beta = GEN_BETA1 * (1.0 - t) + GEN_BETA3 * t
+        # 前几步跟原 p，让 道 → ： → “ 能接上；info 专打第一步稀有字沙拉
+        beta_use = 0.0 if step < 3 else beta
         logits = _gen_logits(model, canvas, frozen)
         probs = F.softmax(logits, dim=-1)
-        score = probs * info.unsqueeze(0).pow(beta)
+        score = probs * info.unsqueeze(0).pow(beta_use)
         top2 = score.topk(2, dim=-1)
         pred = top2.indices[:, 0].clone()
         alt = top2.indices[:, 1]
@@ -741,22 +717,13 @@ def denoise_ids(
                 not skip_stump
                 and i0 < T
                 and bool(hole[i0])
-                and (i0 >= T or not bool(past[i0]))
+                and not bool(past[i0])
             ):
-                n_st = 0
-                while i0 + n_st < T and bool(hole[i0 + n_st]) and not bool(past[i0 + n_st]):
-                    n_st += 1
-                    if n_st >= STUMP_N:
-                        break
-                toks = _stump_tokens(probs, i0, n_st, last_tok, stop_ids)
-                if toks:
-                    canvas[0, i0 : i0 + len(toks)] = torch.tensor(
-                        toks, device=device, dtype=canvas.dtype,
-                    )
-                    stump_ok = True
-                    idle = 0
+                canvas[0, i0] = _first_cell(probs, i0, last_tok)
+                stump_ok = True
+                idle = 0
         thr = GEN_CONF * (0.25 if idle else 1.0)
-        sc = conf * info[pred].pow(beta)
+        sc = conf * info[pred].pow(beta_use)
         sc[~hole | ~near | past] = -1.0
         any_right = torch.zeros(T, dtype=torch.bool, device=device)
         if T > 1:
