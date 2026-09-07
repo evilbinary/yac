@@ -360,14 +360,65 @@ let pkg_export_names(pkg) =
     let _ = fmap_put(m, pkg, v) in
     v
 
+/* extbind entries: [qnameKey, exportSymbol, artifactPath]. Key matches the
+ * emit extern slot (extsym index), symbol is what csym() looks up in the
+ * artifact, path is what cload() opens. Fed by pkg_extern_register below,
+ * read by the 12.4.C loader. */
+let extbind_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+let extbind_add(key, sym, art) =
+  let xs = box_get(extbind_box) in
+  let has(xs2, i) =
+    if i >= len(xs2) then false
+    else if nth(nth(xs2, i), 0) == key then true
+    else has(xs2, i + 1) in
+  if has(xs, 0) then 0
+  else box_set(extbind_box, cons([key, sym, art], xs))
+
+let extbind_list(_) = box_get(extbind_box)
+
+/* Like link_artifact but returns the file path of the first existing artifact
+ * (mode suffixes, same root order) instead of its contents; 0 if none. Used
+ * to build the loader's cload() argument (12.4.C). */
+let link_artifact_path(pkg, mode) =
+  let try_suf(sufs, i) =
+    if i >= len(sufs) then 0
+    else
+      let f = str_cat(pkg_file(pkg), nth(sufs, i)) in
+      let extra = box_get(pkg_extra_box) in
+      let try_root(xs, j) =
+        if j >= len(xs) then 0
+        else
+          let c = str_cat(nth(xs, j), str_cat("/", f)) in
+          if file_or_0(c) == 0 then try_root(xs, j + 1)
+          else c in
+      let a = if extra == 0 then 0 else try_root(extra, 0) in
+      if a != 0 then a
+      else
+        let p = join_path("pkg", f) in
+        if file_or_0(p) == 0 then
+          let q = join_path(path_dirname(argv(0)), f) in
+          if file_or_0(q) == 0 then try_suf(sufs, i + 1)
+          else q
+        else p in
+  try_suf(link_suffixes(mode), 0)
+
 /* Register every export of a dylib-bound package as one extern slot keyed by
- * its qname (pkg/f). See extsym_* in back.emit.emit (12.5 stage 2). */
+ * its qname (pkg/f), plus the extbind triple the loader needs. See extsym_*
+ * (emit) and extbind_* / link_artifact_path above (12.5 stage 2/3). */
 let pkg_extern_register(pkg) =
+  let art = link_artifact_path(pkg, "dylib") in
   let names = pkg_export_names(pkg) in
   let rec_add(i) =
     if i >= len(names) then 0
     else
-      let _ = extsym_add(intern(pkg_qn(pkg, nth(names, i)))) in
+      let n = nth(names, i) in
+      let key = intern(pkg_qn(pkg, n)) in
+      let _ = extsym_add(key) in
+      let _ = if art == 0 then 0 else extbind_add(key, intern(n), art) in
       rec_add(i + 1) in
   rec_add(0)
 
