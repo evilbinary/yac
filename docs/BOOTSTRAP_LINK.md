@@ -625,13 +625,19 @@ src/*.c                                                # C 参考实现不改（
 
 ### 12.2 P0 — C 的 `DT_NEEDED` 泛化
 
+> **暂缓（2026-09 决策）**：① 任意 `.so` 在 AOT 已通过运行时
+> `cload`/`csym` + `ccall(ptr,…)` 支持（`tests/compiler/cases/ccall_cload`）；
+> ② `DT_NEEDED` 只影响"字面名 ccall 由 ld.so 静态解析"，需要一个承载
+> "符号→额外库"的入口（CLI `--lib` / `ffi.need` / 仅 packer 泛化），属公开
+> API 决策；③ 本机为 Windows/PE，ELF 多 `DT_NEEDED` 只能做结构性验证。
+> 待 Linux 环境 + 入口语义确定后重开。不做的话用 12.3 先行。
+
 - [ ] 12.2.1 `cimport_*` 结构从 `names: [str]` 扩成 `[(libname, symname)]`
 - [ ] 12.2.2 `pack_elf_libc`（`elf.yac:398+`）：dynstr 多库名 + `DT_NEEDED` 循环
 - [ ] 12.2.3 `elf_cimport_bind`（`elf.yac:219-225`）启发式改按显式 libname 判定
       （避免 Win32 `LoadLibraryA` 被当 JUMP_SLOT → loader exit 127）
 - [ ] 12.2.4 PE / Mach-O import 表同构改动
-- [ ] 12.2.5 验收：`import ffi` + `ccall` 自建 `.so` 在 AOT 下可用；
-      `elf --shared dlopen` 系列不回归
+- [ ] 12.2.5 验收：字面名 `ccall` 绑到额外库（`libm`/自建 `.so`）在 AOT 可用
 
 ### 12.3 P1 — `--link` CLI 与 `pkg_src` 产物探测（先只探测 + 报错）
 

@@ -1,7 +1,7 @@
 /* backend.yac — pipeline + image. lir_expr = ANF→LIR；lower_expr = LIR→emit. */
 
 package back.backend
-export compile_native, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, fun_off, link_need_box, rewrite_imports, rt_for_link
+export compile_native, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, link_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, fun_off, link_need_box, rewrite_imports, rt_for_link
 import back.lower
 import back.pack.elf {elf_shared_set, funsym_get, pack_elf, pack_elf_libc}
 import back.pack.target {target_arch, target_emachine, target_format, target_shared, target_text_off, target_vaddr}
@@ -124,6 +124,175 @@ let pkg_src(pkg) =
     let p = file_or_0(join_path("pkg", f)) in
     if p != 0 then p
     else file_or_0(join_path(path_dirname(argv(0)), f))
+
+/* ---- --link: BOOTSTRAP_LINK.md §5.2 / 12.3. Interface only: parse the
+ * chain into state and probe precompiled artifacts. Loaders are later steps
+ * (12.4 embed .host / dylib .so / yjit .yjit). Default ["stub"] means the
+ * current source-link behavior; stub is also the safe tail of any chain.
+ * Grammar:
+ *   --link <mode>[,<mode>…]            global chain (no '=')
+ *   --link <pkg>=<mode>[,<mode>…][,…]  per-package override; a bare mode
+ *                                      segment continues the last <pkg>=
+ * Repeated --link accumulates package overrides (later wins); a later
+ * --link without '=' replaces the global chain. --link is *not* once-only
+ * (contrast pkg_set). Modes: embed | dylib | yjit | stub. */
+let link_global_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+let link_pkg_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+let link_valid_mode(m) =
+  if m == "embed" then true
+  else if m == "dylib" then true
+  else if m == "yjit" then true
+  else m == "stub"
+
+let link_has_eq(s, i) =
+  if i >= str_len(s) then false
+  else if str_ref(s, i) == 61 then true
+  else link_has_eq(s, i + 1)
+
+let link_cut_eq(s, i) =
+  if i >= str_len(s) then 0
+  else if str_ref(s, i) == 61 then
+    [str_slice(s, 0, i), str_slice(s, i + 1, str_len(s) - i - 1)]
+  else link_cut_eq(s, i + 1)
+
+let link_any_eq(xs, i) =
+  if i >= len(xs) then false
+  else if link_has_eq(nth(xs, i), 0) then true
+  else link_any_eq(xs, i + 1)
+
+let link_modes_ok(xs, i) =
+  if i >= len(xs) then true
+  else if link_valid_mode(nth(xs, i)) == false then false
+  else link_modes_ok(xs, i + 1)
+
+/* segs from pkg_split; every later segment without '=' appends to the last
+ * <pkg>= override; a bare segment before any '=' is an error. */
+let link_parse_override(segs, i, cur, acc) =
+  if i >= len(segs) then
+    if cur == 0 then reverse(acc)
+    else reverse(cons([nth(cur, 0), reverse(nth(cur, 1))], acc))
+  else
+    let t = nth(segs, i) in
+    if link_has_eq(t, 0) then
+      let pr = link_cut_eq(t, 0) in
+      if pr == 0 then 0
+      else
+        let p = nth(pr, 0) in
+        let m = nth(pr, 1) in
+        if str_len(p) == 0 then 0
+        else if link_valid_mode(m) == false then 0
+        else if str_len(m) == 0 then 0
+        else
+          let acc2 =
+            if cur == 0 then acc
+            else cons([nth(cur, 0), reverse(nth(cur, 1))], acc) in
+          link_parse_override(segs, i + 1, [p, [m]], acc2)
+    else if cur == 0 then 0
+    else if link_valid_mode(t) == false then 0
+    else
+      link_parse_override(segs, i + 1,
+                          [nth(cur, 0), cons(t, nth(cur, 1))], acc)
+
+/* 1 on success; 0 on a bad argument (CLI then reports bad arguments). */
+let link_set(csv) =
+  let segs = pkg_split(csv) in
+  if segs == 0 then 0
+  else if link_any_eq(segs, 0) == false then
+    if link_modes_ok(segs, 0) then
+      let _ = box_set(link_global_box, segs) in
+      1
+    else 0
+  else
+    let ov = link_parse_override(segs, 0, 0, []) in
+    if ov == 0 then 0
+    else
+      let _ = box_set(link_pkg_box,
+                      append(box_get(link_pkg_box), ov)) in
+      1
+
+/* Effective chain for pkg: last package override (search back-to-front so a
+ * later --link with the same pkg wins), else global, else stub. */
+let link_chain_of(pkg) =
+  let find(xs, i) =
+    if i < 0 then 0
+    else if nth(nth(xs, i), 0) == pkg then nth(nth(xs, i), 1)
+    else find(xs, i - 1) in
+  let o = find(box_get(link_pkg_box), len(box_get(link_pkg_box)) - 1) in
+  if o != 0 then o
+  else
+    let g = box_get(link_global_box) in
+    if g == 0 then ["stub"]
+    else if len(g) == 0 then ["stub"]
+    else g
+
+let link_has_nstub(c, i) =
+  if i >= len(c) then false
+  else if nth(c, i) != "stub" then true
+  else link_has_nstub(c, i + 1)
+
+let link_suffix(mode) =
+  if mode == "embed" then ".host"
+  else if mode == "dylib" then ".so"
+  else if mode == "yjit" then ".yjit"
+  else ""
+
+/* Artifact file <pkg>.yac<mode-suffix> under the package roots. Content or
+ * 0. Only used when a non-stub mode was explicitly requested. */
+let link_artifact(pkg, mode) =
+  let suf = link_suffix(mode) in
+  if suf == "" then 0
+  else
+    let f = str_cat(pkg_file(pkg), suf) in
+    let extra = box_get(pkg_extra_box) in
+    let a = if extra == 0 then 0 else pkg_try(extra, f, 0) in
+    if a != 0 then a
+    else
+      let p = file_or_0(join_path("pkg", f)) in
+      if p != 0 then p
+      else file_or_0(join_path(path_dirname(argv(0)), f))
+
+let link_render_go(xs, i, acc) =
+  if i >= len(xs) then acc
+  else if acc == "" then link_render_go(xs, i + 1, nth(xs, i))
+  else link_render_go(xs, i + 1, str_cat(acc, str_cat(",", nth(xs, i))))
+
+let link_render(xs) = link_render_go(xs, 0, "")
+
+/* 0 = proceed (source-link, or artifact mode that can't apply yet).
+ * 1 = fail compile with a message (pkg_fail). Only fires when the chain
+ * names a non-stub mode for this pkg. Found artifact -> "not implemented"
+ * (loaders land in 12.4+); nothing found and no stub tail -> error. */
+let link_check_pkg(pkg) =
+  let chain = link_chain_of(pkg) in
+  if link_has_nstub(chain, 0) == false then 0
+  else
+    let rec_scan(i) =
+      if i >= len(chain) then
+        if in_list("stub", chain) then 0
+        else
+          let _ = print(str_cat("error: --link for pkg '",
+            str_cat(pkg, str_cat("': no precompiled artifact (",
+              str_cat(link_render(chain),
+                "); make one or add 'stub' to the chain"))))) in
+          1
+      else
+        let m = nth(chain, i) in
+        if m == "stub" then rec_scan(i + 1)
+        else if link_artifact(pkg, m) != 0 then
+          let _ = print(str_cat("error: --link ", str_cat(m,
+            str_cat(" for pkg '", str_cat(pkg,
+              "': artifact exists but this mode is not implemented yet"))))) in
+          1
+        else rec_scan(i + 1) in
+    rec_scan(0)
 
 let intern_names(xs, i, acc) =
   if i >= len(xs) then acc
@@ -259,6 +428,10 @@ let report_unbound_ex(src, ast, extra) =
 let report_unbound(src, ast) = report_unbound_ex(src, ast, [])
 
 let lir_extend(pkg, src, acc) =
+  let _ =
+    if pkg == "rt.num" then 0
+    else if link_check_pkg(pkg) != 0 then pkg_fail_set(1)
+    else 0 in
   if src == 0 then acc
   else
     let ast = pass_parse(pass_lex(src)) in
