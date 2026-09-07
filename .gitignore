@@ -61,3 +61,4 @@ app/llm/snapshot/remote_train.ps1
 app/llm/snapshot/remote_train.sh
 tools/__pycache__/fill_imports.cpython-310.pyc
 zhistory-doc/
+perf.data

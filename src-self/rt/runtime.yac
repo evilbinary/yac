@@ -2113,6 +2113,7 @@ let rt_host_sym_ins(_) =
    ["$gbase", 3],
    ["$add", 3, 3, 2],
    ["$ld64", 4, 3, 0],
+   ["$add", 4, 4, 4],
    ["ret", 4]]
 
 /* REPL top-level lets: qword slots at JIT_VADDR+12MiB (same 16MiB map).

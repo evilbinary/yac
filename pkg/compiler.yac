@@ -1,12 +1,13 @@
 /* compiler.yac — host compile API for `import compiler`.
  *
- * These names are not linked into the guest. yc runs the calls while
- * compiling (same functions as backend.yac / jit.yac), then emits the
- * rest of the program. Arguments must be string literals.
+ * In the REPL these names resolve to the host compiler running in the same
+ * process (runtime absolute jump table): the guest fcall to a host leaf is
+ * emitted as an absolute call through the host image's baked G+136..G+216
+ * table (see BOOTSTRAP_LINK.md §3). AOT (non-REPL) hosts fall back to stub.
  *
- *   compile_file(inpath, outpath)  write an image (guest target)
- *   compile(src)                 exp -> bin
- *   load(path)                   
+ *   compile_file(inpath, outpath)  write an ELF image for the host arch
+ *   compile(src)                   src -> compiled machine blob (bytes)
+ *   load(path)                     path -> run it as a yjit guest, return result
  */
 
  package compiler
@@ -16,19 +17,20 @@
  import back.jit {compile_jit}
  import back.pack.target {mk_jit_target, mk_target}
  import rt.os {host_arch, host_format}
- 
- let compile_file(inpath, outpath, t, profpath) =
-    let bin = compile_native(read_file(inpath), t) in
-    if bin == 0 then 1 else let _ = write_file(outpath, bin) in 0
 
+ let compile_file(inpath, outpath) =
+    let src = read_file(inpath) in
+    if src == 0 then 1
+    else
+      let t = mk_target(host_arch(0), host_format(0), "exec") in
+      let bin = compile_native(src, t) in
+      if bin == 0 then 1 else let _ = write_file(outpath, bin) in 0
 
-let load(path, t) =
+let load(path) =
     let src = read_file(path) in
     if src == 0 then 1
-    else if target_live(t) then compile_jit(src, t, true)
     else compile_jit(src, mk_jit_target(host_arch(0)), true)
 
-let compile(src, t) =
+let compile(src) =
     if src == 0 then 0
-    else if target_live(t) then compile_jit(src, t, false)
     else compile_native(src, mk_target(host_arch(0), host_format(0), "exec"))

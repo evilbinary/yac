@@ -8,7 +8,7 @@ import back.pack.target {target_arch, target_emachine, target_format, target_sha
 import back.pack.pe {pack_pe_target, pe_finish_dll, pe_finish_imports}
 import back.pack.pack {pack_image}
 import lib.map
-import back.emit.emit {cimport_got, cimport_n, cimport_names, emit_abi_win, yjit_layout_get}
+import back.emit.emit {cimport_got, cimport_n, cimport_names, emit_abi_win, emit_jsess, emit_jsess_set, host_names, yjit_layout_get, yjit_layout_set}
 import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, malias_box, pkg_prefix_get, pkg_prefix_set, sigma_list, sigma_of_rt, start_proc, tco_prog, ub_prog}
 import front.lexer {tok_ident_line, tokenize}
 import front.parser {parse_program, prog_has_err, report_syntax}
@@ -216,8 +216,28 @@ let kernel_fun_names(_) =
     v
   else c
 
+/* Kernel package (rt/runtime.yac) exports: always linked into every image,
+ * so a standalone package may reference them without importing. Cached. */
+let kernel_let_names_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let kernel_let_names(_) =
+  let c = box_get(kernel_let_names_box) in
+  if c == 0 then
+    let v = pkg_export_names("rt.runtime") in
+    let _ = box_set(kernel_let_names_box, v) in
+    v
+  else c
+
+/* Host functions available to REPL lines and host packages. */
+let host_fun_names(_) = host_names(0)
+
 let report_unbound_ex(src, ast, extra) =
-  let sc0 = pair_locals(box_get(imap_box), 0, kernel_fun_names(0)) in
+  let sc0 = pair_locals(box_get(imap_box), 0,
+                        append(append(host_fun_names(0), kernel_fun_names(0)),
+                               kernel_let_names(0))) in
   let sc1 = pair_locals(box_get(malias_box), 0, sc0) in
   let nm = ub_prog(rewrite_imports(ast, 0, []), 0, append(extra, sc1)) in
   if nm == "" then 0
@@ -303,9 +323,36 @@ let link_need_box =
   let _ = box_set(b, []) in
   b
 
+let link_local_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+/* Package names declared inside a source (used to skip them when linking). */
+let ast_packages(ast, i, acc) =
+  if i >= len(ast) then acc
+  else
+    let e = nth(ast, i) in
+    if nth(e, 0) == "package" then
+      ast_packages(ast, i + 1, cons(nth(e, 1), acc))
+    else ast_packages(ast, i + 1, acc)
+
+/* Drop imports of packages defined inside the same source. */
+let skip_local_imp(ast, local, i, acc) =
+  if i >= len(ast) then reverse(acc)
+  else
+    let e = nth(ast, i) in
+    if nth(e, 0) == "import" then
+      if in_list(nth(e, 1), local) then skip_local_imp(ast, local, i + 1, acc)
+      else skip_local_imp(ast, local, i + 1, cons(e, acc))
+    else skip_local_imp(ast, local, i + 1, cons(e, acc))
+
 let link_from_ast(ast) =
-  let filled = rewrite_imports(ast, 0, []) in
-  let _ = box_set(link_need_box, ast_imports(ast, 0, [])) in
+  let pkgs = ast_packages(ast, 0, []) in
+  let ast1 = skip_local_imp(ast, pkgs, 0, []) in
+  let filled = rewrite_imports(ast1, 0, []) in
+  let _ = box_set(link_need_box, ast_imports(ast1, 0, [])) in
+  let _ = box_set(link_local_box, pkgs) in
   let _ = imap_load(filled, 0) in
   0
 
@@ -323,7 +370,8 @@ let rt_base(_) =
   else c
 
 let rt_for_link(_) =
-  let st = visit_go(1, 0, box_get(link_need_box), 0, [], []) in
+  let st = visit_go(1, 0, box_get(link_need_box), 0,
+                    cons("rt.num", box_get(link_local_box)), []) in
   let pkgs = reverse(nth(st, 1)) in
   let rec(i, acc) =
     if i >= len(pkgs) then acc
@@ -437,13 +485,33 @@ let dump_uncps(src, do_opt) =
       let _ = print(r) in 0
 
 let compile_native(src, t) =
+  let saved_js = emit_jsess(0) in
+  let saved_i = box_get(imap_box) in
+  let saved_m = box_get(malias_box) in
+  let saved_p = pkg_prefix_get(0) in
+  let saved_need = box_get(link_need_box) in
+  let saved_local = box_get(link_local_box) in
+  let saved_lay = yjit_layout_get(0) in
+  let _ = emit_jsess_set(0) in
   let ast0 = pass_parse(pass_lex(src)) in
   if prog_has_err(ast0, 0) then
-    let _ = report_syntax(ast0) in 0
-  else if report_unbound(src, ast0) != 0 then 0
+    let _ = report_syntax(ast0) in
+    let _ = emit_jsess_set(saved_js) in 0
+  else if report_unbound(src, ast0) != 0 then
+    let _ = emit_jsess_set(saved_js) in 0
   else
     let _ = pkg_fail_set(0) in
     let _ = link_from_ast(ast0) in
     let bin = run_passes(make_pipeline(t), src) in
+    let _ = box_set(imap_box, saved_i) in
+    let _ = box_set(malias_box, saved_m) in
+    let _ = pkg_prefix_set(saved_p) in
+    let _ = box_set(link_need_box, saved_need) in
+    let _ = box_set(link_local_box, saved_local) in
+    let _ =
+      if saved_lay == 0 then 0
+      else yjit_layout_set(nth(saved_lay, 0), nth(saved_lay, 1),
+                           nth(saved_lay, 2), nth(saved_lay, 3)) in
+    let _ = emit_jsess_set(saved_js) in
     if pkg_fail(0) != 0 then 0 else bin
 

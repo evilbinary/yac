@@ -8,7 +8,7 @@
 package back.jit
 export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
-import back.emit.emit {cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, yjit_layout_get}
+import back.emit.emit {apply_u64, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, host_names, yjit_layout_get}
 import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog}
 import back.backend {ast_imports, fun_off, link_from_ast, link_need_box, pass_anf, pass_lex, pass_parse, report_unbound, rewrite_imports, rt_for_link}
 import back.lower {emit_apply_unres, lower_expr}
@@ -21,6 +21,17 @@ import lib.log {log_get_hush, log_set_hush}
 import rt.os {host_arch}
 
 let reverse(xs) = list_rev(xs)
+
+/* REPL first-session blob: bake the host image's own host-leaf addresses
+ * (read via runtime yac_host_sym) into this guest blob's G+136..G+216.
+ * data_start (yjit_layout[2]) is the globals area offset in the blob. */
+let host_tab_fill(code, id) =
+  if id >= len(host_names(0)) then 0
+  else
+    let lay = yjit_layout_get(0) in
+    let data_start = nth(lay, 2) in
+    let _ = apply_u64(code, data_start + 136 + bshl(id, 3), yac_host_sym(id)) in
+    host_tab_fill(code, id + 1)
 
 let jit_lets_box =
   let b = box_new() in
@@ -283,6 +294,7 @@ let compile_jit(src, t, named) =
         let _ =
           if jit_run_ok(t) then
             let _ = if dest == 0 then cimport_jit_bind(code) else 0 in
+            let _ = if dest == 0 then host_tab_fill(code, 0) else 0 in
             jit_run(code, fun_off(fo, "_eval"), dest)
           else 0 in
         let _ =

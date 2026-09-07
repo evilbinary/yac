@@ -1,4 +1,4 @@
-import rt.os
+import rt.os {host_arch, host_format}
 import back.backend {compile_native, dump_anf, dump_ast, dump_cps, dump_uncps, eval_cps_src, pkg_set}
 import back.jit {compile_jit, compile_uncps, jit_dump_live, jit_load_yjit}
 import back.pack.elf {syms_enable}
