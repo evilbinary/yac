@@ -814,3 +814,27 @@ src/*.c                                                # C 参考实现不改（
 
 压缩办法：先只做 x86_64 + ELF（省约 40%）；12.2 先只做 ELF；12.5/12.6
 先用 3 函数的假包做最小可证伪用例。
+
+### 12.9 link 测试清单（`make test-link`，实现见 `tests/link/run.yac`）
+
+自包含 runner：`yc --pkg src-self tests/link/run.yac` 编译，带编译器路径运行。
+guest 样例 = `tests/pkg/path.yac`（import `path`）；dylib 样例在运行时生成到
+`build/test_tmp/`。
+
+| # | 名称 | 场景 | 断言 |
+|---|---|---|---|
+| 1 | default source-link | 不带 `--link` 编译 import 包 guest | rc 42 |
+| 2 | global dylib no artifact | `--link dylib` 但无产物 | 报 `no precompiled artifact` |
+| 3 | override dylib,stub -> source | `--link path=dylib,stub` | rc 42（回落源码）|
+| 4 | repeat override later wins | 两次 `--link path=…` | 后者生效 → rc 42 |
+| 5 | bad mode | `--link bogus` | 报 `bad arguments` |
+| 6 | artifact .host not implemented | 假产物 `.host` + embed | 报 not implemented |
+| 7 | artifact .yjit not implemented | 假产物 `.yjit` + yjit | 报 not implemented |
+| 8 | dylib bind real exec rc | 真 `dadd.yac.dll` + `--link dadd=dylib` | rc 0（DLL `add` 真跑：`add(2,3)=5`、`add(20,22)=42`）|
+| 9 | dylib default rc | 同 guest 不带 `--link` | rc 0 |
+| 10 | missing artifact diag | 删产物后重跑绑定程序 | rc 1 + 输出含 `load failed` |
+| 11 | link help | `yc -h` | 含 `--link` |
+
+> 测试组织说明：link 套件内联在 `tests/run.yac` 时不便通读，已按 `tests/boot`
+> 先例抽到 `tests/link/run.yac`；`tests/run.yac` 的 `link` dispatch 与 `all`
+> 链经 `link_front` 委托子 runner（无代码重复）。
