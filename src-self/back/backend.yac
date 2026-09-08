@@ -438,11 +438,14 @@ let pkg_dylib_synth(pkg) =
     let names = pkg_export_names(pkg) in
     let hdr = str_cat("package ", str_cat(pkg, "\n")) in
     let one(e, acc) =
+      let msg = str_cat("dylib load failed: ", art) in
       let s1 = str_cat("(a0, a1, a2, a3, a4, a5) = let h = ccall(\"dlopen\", \"", art) in
-      let s2 = str_cat(s1, "\", 258) in if h == 0 then 0 else ccall(ccall(\"dlsym\", 0, \"") in
-      let s3 = str_cat(s2, e) in
-      let s4 = str_cat(s3, "\"), a0, a1, a2, a3, a4, a5)\n") in
-      str_cat(acc, str_cat("let ", str_cat(e, s4))) in
+      let s2 = str_cat(s1, "\", 258) in if h == 0 then let _ = print(\"") in
+      let s3 = str_cat(s2, msg) in
+      let s4 = str_cat(s3, "\") in 0 else ccall(ccall(\"dlsym\", 0, \"") in
+      let s5 = str_cat(s4, e) in
+      let s6 = str_cat(s5, "\"), a0, a1, a2, a3, a4, a5)\n") in
+      str_cat(acc, str_cat("let ", str_cat(e, s6))) in
     let rec(i, acc) =
       if i >= len(names) then acc
       else rec(i + 1, one(nth(names, i), acc)) in

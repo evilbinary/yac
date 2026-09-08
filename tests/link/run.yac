@@ -1,0 +1,243 @@
+import rt.os
+
+/* tests/link/run.yac — --link / dylib-binding suite (BOOTSTRAP_LINK.md §12).
+ *
+ * Self-contained runner: compile with `yc --pkg src-self tests/link/run.yac`,
+ * then run with the compiler path as argv(1) (default ./yc). Exits 1 on any
+ * failed check.
+ *
+ * Cases (see link_all at the bottom):
+ *   1. default source-link                rc 42
+ *   2. global dylib no artifact           compile error
+ *   3. override dylib,stub -> source      rc 42
+ *   4. repeat override later wins         rc 42
+ *   5. bad mode                           compile error
+ *   6/7. embed / yjit artifact            not implemented error
+ *   8. dylib bind real exec               rc 0 (calls add() in the DLL)
+ *   9. dylib default (source)             rc 0
+ *   10. missing artifact diag             rc 1 + "load failed"
+ *   11. help lists --link
+ */
+
+let TMP = "build/test_tmp"
+let PKGDIR = "tests/pkg/"
+let pkg_case(name) = str_cat(PKGDIR, str_cat(name, ".yac"))
+
+let sh_quote(s) = str_cat("'", str_cat(s, "'"))
+
+let join_cmd(xs) =
+  let rec(i, acc) =
+    if i >= len(xs) then acc
+    else if i == 0 then rec(1, sh_quote(nth(xs, 0)))
+    else rec(i + 1, str_cat(acc, str_cat(" ", sh_quote(nth(xs, i))))) in
+  rec(0, "")
+
+let run(argv) =
+  let cmd = join_cmd(argv) in
+  let tag = int_to_str(time_ns()) in
+  let outp = str_cat(TMP, str_cat("/plout.", tag)) in
+  let errp = str_cat(TMP, str_cat("/pler.", tag)) in
+  let full = str_cat(cmd, str_cat(" >", str_cat(outp, str_cat(" 2>", errp)))) in
+  let rc = system(full) in
+  let out = read_file(outp) in
+  let err = read_file(errp) in
+  let o2 = if out == 0 then "" else out in
+  let e2 = if err == 0 then "" else err in
+  [rc, o2, e2]
+
+let native(p) =
+  let n = str_len(p) in
+  let already =
+    if n < 4 then false
+    else str_slice(p, n - 4, 4) == ".exe" in
+  if already then p
+  else if host_os(0) == "windows" then str_cat(p, ".exe")
+  else p
+
+let strip_cr(s) =
+  let b = bytes_new() in
+  let rec(i) =
+    if i >= str_len(s) then bytes_to_str(b)
+    else
+      let c = str_ref(s, i) in
+      let _ = if c == 13 then 0 else bytes_append(b, c) in
+      rec(i + 1) in
+  rec(0)
+
+let chomp(s) =
+  let n = str_len(s) in
+  let rec(i) =
+    if i >= n then n
+    else if str_ref(s, i) == 0 then i
+    else rec(i + 1) in
+  let m = rec(0) in
+  let t0 = if m == n then s else str_slice(s, 0, m) in
+  let t = strip_cr(t0) in
+  let k = str_len(t) in
+  if k == 0 then t
+  else if str_ref(t, k - 1) == 10 then str_slice(t, 0, k - 1)
+  else t
+
+let contains(s, sub) =
+  let n = str_len(s) in
+  let m = str_len(sub) in
+  let rec(i) =
+    if i + m > n then false
+    else if str_slice(s, i, m) == sub then true
+    else rec(i + 1) in
+  if m == 0 then true
+  else if m > n then false
+  else rec(0)
+
+let banner(dir, tool) =
+  let _ = print("") in
+  print(str_cat("=== ", str_cat(dir, str_cat("  ", str_cat(tool, " ===")))))
+
+let check(st, name, want, got) =
+  let pass = nth(st, 0) in
+  let fail = nth(st, 1) in
+  if want == got then
+    let _ = print(str_cat("PASS: ", name)) in
+    [pass + 1, fail]
+  else
+    let _ = print(str_cat("FAIL: ", name)) in
+    let _ = print(str_cat("  expected: ", want)) in
+    let _ = print(str_cat("  actual:   ", got)) in
+    [pass, fail + 1]
+
+let suite_done(st) =
+  let _ = print("") in
+  let _ = print(str_cat(int_to_str(nth(st, 0)),
+                 str_cat(" passed, ",
+                   str_cat(int_to_str(nth(st, 1)), " failed")))) in
+  if nth(st, 1) == 0 then 0 else exit(1)
+
+/* ---- guest used by the CLI / chain cases: imports the `path` package. */
+let link_guest(_) = pkg_case("path")
+
+/* Compile+run expecting the guest to exit 42 (source-link / stub fallback). */
+let link_run_case(st, yc, name, extra) =
+  let y = native(str_cat(TMP, "/link_y")) in
+  let _ = run(["rm", "-f", y]) in
+  let cr = run(append(append(yc, extra), [link_guest(0), "-o", y])) in
+  if nth(cr, 0) != 0 then
+    let blob = str_cat(chomp(nth(cr, 1)), chomp(nth(cr, 2))) in
+    let _ = print(blob) in
+    check(st, str_cat("link ", name), "0", int_to_str(nth(cr, 0)))
+  else
+    let _ = run(["chmod", "+x", y]) in
+    let rr = run([y]) in
+    check(st, str_cat("link ", name), "42", int_to_str(nth(rr, 0)))
+
+/* Expect the compile to fail and stderr/stdout to contain `needle`. */
+let link_err_case(st, yc, name, extra, needle) =
+  let y = native(str_cat(TMP, "/link_y")) in
+  let _ = run(["rm", "-f", y]) in
+  let cr = run(append(append(yc, extra), [link_guest(0), "-o", y])) in
+  let blob = str_cat(chomp(nth(cr, 1)), chomp(nth(cr, 2))) in
+  if nth(cr, 0) == 0 then
+    check(st, str_cat("link ", name), "compile must fail", "0")
+  else if contains(blob, needle) then check(st, str_cat("link ", name), "1", "1")
+  else check(st, str_cat("link ", name), needle, blob)
+
+/* Fake artifact present + a mode with no loader -> "not implemented yet"
+ * (embed/yjit; dylib now binds, covered by link_dylib_case below). */
+let link_art_case(st, ya, name, mode, suf) =
+  let fake = str_cat(TMP, str_cat("/path.yac", suf)) in
+  let y = native(str_cat(TMP, "/link_y")) in
+  let _ = run(["rm", "-f", fake, y]) in
+  let _ = write_file(fake, "fake artifact\n") in
+  let cr =
+    run([ya, "--pkg", str_cat("src-self,", TMP),
+         "--link", str_cat("path=", mode), link_guest(0), "-o", y]) in
+  let blob = str_cat(chomp(nth(cr, 1)), chomp(nth(cr, 2))) in
+  let _ = run(["rm", "-f", fake]) in
+  if nth(cr, 0) == 0 then
+    check(st, str_cat("link ", name), "compile must fail", "0")
+  else if contains(blob, "not implemented yet") then
+    check(st, str_cat("link ", name), "1", "1")
+  else check(st, str_cat("link ", name), "not implemented yet", blob)
+
+/* dylib end-to-end (option B): build dadd.yac as a C-ABI dll, then a guest
+ * importing dadd with --link dadd=dylib must call add() through the wrapper
+ * package (rc 0, no stub message); the same file without --link source-links
+ * (rc 0); removing the dll makes the wrapper print a diagnostic (rc 1). */
+let link_dylib_case(st, yc) =
+  let ya = nth(yc, 0) in
+  let src = str_cat(TMP, "/dadd.yac") in
+  let gsrc = str_cat(TMP, "/dadd_guest.yac") in
+  let y = native(str_cat(TMP, "/link_dy")) in
+  let y2 = native(str_cat(TMP, "/link_dy2")) in
+  let art = str_cat(TMP, "/dadd.yac.dll") in
+  let _ = run(["rm", "-f", art, y, y2]) in
+  let _ = write_file(src,
+    "package dadd\nexport add, sub\nlet add(a, b) = a + b\nlet sub(a, b) = a - b\n") in
+  let _ = write_file(gsrc,
+    "import dadd {add}\nlet a = add(2, 3) in\nlet b = add(20, 22) in\nif a == 5 and b == 42 then 0 else 1\n") in
+  let _ = run(append([ya, "--shared", src, "-o"], [art])) in
+  if nth(run(["test", "-f", art]), 0) != 0 then
+    check(st, "link dylib artifact", "1", "0")
+  else
+    let pk = str_cat("src-self,", TMP) in
+    let cr = run([ya, "--pkg", pk, "--link", "dadd=dylib", gsrc, "-o", y]) in
+    let st1 =
+      if nth(cr, 0) != 0 then
+        let blob = str_cat(chomp(nth(cr, 1)), chomp(nth(cr, 2))) in
+        let _ = print(blob) in
+        check(st, "link dylib bind compiles", "0", int_to_str(nth(cr, 0)))
+      else
+        let _ = run(["chmod", "+x", y]) in
+        let rr = run([y]) in
+        check(st, "link dylib bind real exec rc", "0", int_to_str(nth(rr, 0))) in
+    let cr2 = run([ya, "--pkg", pk, gsrc, "-o", y2]) in
+    let st2 =
+      if nth(cr2, 0) != 0 then
+        let blob = str_cat(chomp(nth(cr2, 1)), chomp(nth(cr2, 2))) in
+        let _ = print(blob) in
+        check(st1, "link dylib default compiles", "0", int_to_str(nth(cr2, 0)))
+      else
+        let _ = run(["chmod", "+x", y2]) in
+        let rr2 = run([y2]) in
+        let st_d =
+          check(st1, "link dylib default rc", "0", int_to_str(nth(rr2, 0))) in
+        let _ = run(["rm", "-f", art]) in
+        let rr3 = run([y]) in
+        let blob3 = str_cat(chomp(nth(rr3, 1)), chomp(nth(rr3, 2))) in
+        let st_e =
+          check(st_d, "link dylib missing artifact diag rc", "1",
+                int_to_str(nth(rr3, 0))) in
+        check(st_e, "link dylib missing artifact diag msg", "1",
+              if contains(blob3, "load failed") then "1" else "0") in
+    st2
+
+let link_all(st, yc) =
+  let _ = banner("link", nth(yc, 0)) in
+  let st1 = link_run_case(st, yc, "default source-link", []) in
+  let st2 =
+    link_err_case(st1, yc, "global dylib no artifact",
+                  ["--link", "dylib"], "no precompiled artifact") in
+  let st3 =
+    link_run_case(st2, yc, "override dylib,stub -> source",
+                  ["--link", "path=dylib,stub"]) in
+  let st4 =
+    link_run_case(st3, yc, "repeat override later wins -> source",
+                  ["--link", "path=dylib", "--link", "path=stub"]) in
+  let st5 =
+    link_err_case(st4, yc, "bad mode", ["--link", "bogus"], "bad arguments") in
+  let ya = nth(yc, 0) in
+  let st6 = link_art_case(st5, ya, "artifact .host not implemented",
+                          "embed", ".host") in
+  let st7 = link_art_case(st6, ya, "artifact .yjit not implemented",
+                          "yjit", ".yjit") in
+  let st8 = link_dylib_case(st7, yc) in
+  let help = run(append(yc, ["-h"])) in
+  let hblob = str_cat(chomp(nth(help, 1)), chomp(nth(help, 2))) in
+  if contains(hblob, "--link") then check(st8, "link help", "1", "1")
+  else check(st8, "link help", "--link", hblob)
+
+let main =
+  let _ = system(str_cat("mkdir -p ", TMP)) in
+  let ya = if argc() < 2 then native("./yc") else argv(1) in
+  let yc = append([native(ya)], ["--pkg", "src-self"]) in
+  suite_done(link_all([0, 0], yc))
+in main

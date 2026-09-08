@@ -135,8 +135,14 @@ test-pkg: $(TEST_HARNESS)
 	./$(TEST_HARNESS) pkg
 
 # --link CLI / artifact probing regression (BOOTSTRAP_LINK.md 12.3).
-test-link: $(TEST_HARNESS)
-	./$(TEST_HARNESS) link
+# Self-contained runner in tests/link/run.yac.
+LINK_TESTS = $(TEST_TMP)/link_tests$(EXEEXT)
+$(LINK_TESTS): $(YC_A) tests/link/run.yac | $(TEST_TMP)
+	$(YC_A) --pkg src-self tests/link/run.yac -o $@
+	chmod +x $@
+
+test-link: $(LINK_TESTS)
+	./$(LINK_TESTS) $(YC_A)
 
 test-boot: $(TEST_HARNESS)
 	./$(TEST_HARNESS) boot

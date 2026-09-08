@@ -351,125 +351,6 @@ let pkg_all(st, yc) =
   let _ = banner("pkg", nth(yc, 0)) in
   foldl(fun(s, c) -> pkg_one(s, yc, c), st, pkg_cases(0))
 
-/* --link interface (BOOTSTRAP_LINK.md 12.3): CLI parse, chain resolution,
- * artifact probing. Default source-link must stay unchanged (rc 42). The
- * guest is tests/pkg/path.yac, which imports the `path` package. */
-let link_guest(_) = pkg_case("path")
-
-/* Compile+run expecting the guest to exit 42 (source-link / stub fallback). */
-let link_run_case(st, yc, name, extra) =
-  let y = native(str_cat(TMP, "/link_y")) in
-  let _ = run(["rm", "-f", y]) in
-  let cr = run(append(append(yc, extra), [link_guest(0), "-o", y])) in
-  if nth(cr, 0) != 0 then
-    let blob = str_cat(chomp(nth(cr, 1)), chomp(nth(cr, 2))) in
-    let _ = print(blob) in
-    check(st, str_cat("link ", name), "0", int_to_str(nth(cr, 0)))
-  else
-    let _ = run(["chmod", "+x", y]) in
-    let rr = run([y]) in
-    check(st, str_cat("link ", name), "42", int_to_str(nth(rr, 0)))
-
-/* Expect the compile to fail and stderr/stdout to contain `needle`. */
-let link_err_case(st, yc, name, extra, needle) =
-  let y = native(str_cat(TMP, "/link_y")) in
-  let _ = run(["rm", "-f", y]) in
-  let cr = run(append(append(yc, extra), [link_guest(0), "-o", y])) in
-  let blob = str_cat(chomp(nth(cr, 1)), chomp(nth(cr, 2))) in
-  if nth(cr, 0) == 0 then
-    check(st, str_cat("link ", name), "compile must fail", "0")
-  else if contains(blob, needle) then check(st, str_cat("link ", name), "1", "1")
-  else check(st, str_cat("link ", name), needle, blob)
-
-/* Plant a fake artifact <pkg>.yac<suf> in an extra pkg root and expect
- * --link <pkg>=<mode> to fail with "not implemented yet". embed and yjit
- * still have no loader (12.6/12.7); dylib now binds externs (12.5 stage 2)
- * and is covered by link_dylib_case below instead. */
-let link_art_case(st, ya, name, mode, suf) =
-  let fake = str_cat(TMP, str_cat("/path.yac", suf)) in
-  let y = native(str_cat(TMP, "/link_y")) in
-  let _ = run(["rm", "-f", fake, y]) in
-  let _ = write_file(fake, "fake artifact\n") in
-  let cr =
-    run([ya, "--pkg", str_cat("src-self,", TMP),
-         "--link", str_cat("path=", mode), link_guest(0), "-o", y]) in
-  let blob = str_cat(chomp(nth(cr, 1)), chomp(nth(cr, 2))) in
-  let _ = run(["rm", "-f", fake]) in
-  if nth(cr, 0) == 0 then
-    check(st, str_cat("link ", name), "compile must fail", "0")
-  else if contains(blob, "not implemented yet") then
-    check(st, str_cat("link ", name), "1", "1")
-  else check(st, str_cat("link ", name), "not implemented yet", blob)
-
-/* Real dylib binding (12.5 stage 2): build a package DLL with --shared, then
- * compile a guest with --link dadd=dylib. The package source is NOT linked
- * in; the call binds an extern slot that lands on the yac_host_unimpl stub
- * (runtime loader is 12.4.C), so the guest prints "host fn unavailable" and
- * keeps going (42). The same file without --link must source-link (rc 0). */
-let link_dylib_case(st, yc) =
-  let ya = nth(yc, 0) in
-  let src = str_cat(TMP, "/dadd.yac") in
-  let gsrc = str_cat(TMP, "/dadd_guest.yac") in
-  let y = native(str_cat(TMP, "/link_dy")) in
-  let y2 = native(str_cat(TMP, "/link_dy2")) in
-  let art = str_cat(TMP, "/dadd.yac.dll") in
-  let _ = run(["rm", "-f", art, y, y2]) in
-  let _ = write_file(src,
-    "package dadd\nexport add, sub\nlet add(a, b) = a + b\nlet sub(a, b) = a - b\n") in
-  let _ = write_file(gsrc,
-    "import dadd {add}\nlet a = add(2, 3) in\nlet b = add(20, 22) in\nif a == 5 and b == 42 then 0 else 1\n") in
-  let _ = run(append([ya, "--shared", src, "-o"], [art])) in
-  if nth(run(["test", "-f", art]), 0) != 0 then
-    check(st, "link dylib artifact", "1", "0")
-  else
-    let pk = str_cat("src-self,", TMP) in
-    let cr = run([ya, "--pkg", pk, "--link", "dadd=dylib", gsrc, "-o", y]) in
-    let st1 =
-      if nth(cr, 0) != 0 then
-        let blob = str_cat(chomp(nth(cr, 1)), chomp(nth(cr, 2))) in
-        let _ = print(blob) in
-        check(st, "link dylib bind compiles", "0", int_to_str(nth(cr, 0)))
-      else
-        let _ = run(["chmod", "+x", y]) in
-        let rr = run([y]) in
-        check(st, "link dylib bind real exec rc", "0", int_to_str(nth(rr, 0))) in
-    let cr2 = run([ya, "--pkg", pk, gsrc, "-o", y2]) in
-    let st2 =
-      if nth(cr2, 0) != 0 then
-        let blob = str_cat(chomp(nth(cr2, 1)), chomp(nth(cr2, 2))) in
-        let _ = print(blob) in
-        check(st1, "link dylib default compiles", "0", int_to_str(nth(cr2, 0)))
-      else
-        let _ = run(["chmod", "+x", y2]) in
-        let rr2 = run([y2]) in
-        check(st1, "link dylib default rc", "0", int_to_str(nth(rr2, 0))) in
-    st2
-
-let link_all(st, yc) =
-  let _ = banner("link", nth(yc, 0)) in
-  let st1 = link_run_case(st, yc, "default source-link", []) in
-  let st2 =
-    link_err_case(st1, yc, "global dylib no artifact",
-                  ["--link", "dylib"], "no precompiled artifact") in
-  let st3 =
-    link_run_case(st2, yc, "override dylib,stub -> source",
-                  ["--link", "path=dylib,stub"]) in
-  let st4 =
-    link_run_case(st3, yc, "repeat override later wins -> source",
-                  ["--link", "path=dylib", "--link", "path=stub"]) in
-  let st5 =
-    link_err_case(st4, yc, "bad mode", ["--link", "bogus"], "bad arguments") in
-  let ya = nth(yc, 0) in
-  let st6 = link_art_case(st5, ya, "artifact .host not implemented",
-                          "embed", ".host") in
-  let st7 = link_art_case(st6, ya, "artifact .yjit not implemented",
-                          "yjit", ".yjit") in
-  let st8 = link_dylib_case(st7, yc) in
-  let help = run(append(yc, ["-h"])) in
-  let hblob = str_cat(chomp(nth(help, 1)), chomp(nth(help, 2))) in
-  if contains(hblob, "--link") then check(st8, "link help", "1", "1")
-  else check(st8, "link help", "--link", hblob)
-
 /* List lives in a small function: a 60-element literal in _start miscompiles. */
 let compiler_cases(_) = [
   ["l4_42", "rc", "42"], ["l4_letfun", "rc", "42"], ["add", "rc", "3"],
@@ -1065,6 +946,25 @@ let boot_front(st, ya) =
       else print(chomp(nth(br, 2))) in
     check(st, "boot frontend", "0", int_to_str(nth(br, 0)))
 
+/* --link suite lives in tests/link/run.yac; run it as a sub-runner. */
+let link_front(st, ya) =
+  let lk = native(str_cat(TMP, "/link_run")) in
+  let _ = run(["rm", "-f", lk]) in
+  let cr = run(append(yc_pkg(ya), ["tests/link/run.yac", "-o", lk])) in
+  let _ = banner("link", ya) in
+  if nth(cr, 0) != 0 then
+    let _ = print(chomp(nth(cr, 1))) in
+    let _ = print(chomp(nth(cr, 2))) in
+    check(st, "link runner build", "0", int_to_str(nth(cr, 0)))
+  else
+    let _ = run(["chmod", "+x", lk]) in
+    let lr = run(append([lk], [ya])) in
+    let _ = print(chomp(nth(lr, 1))) in
+    let _ =
+      if nth(lr, 0) == 0 then 0
+      else print(chomp(nth(lr, 2))) in
+    check(st, "link runner", "0", int_to_str(nth(lr, 0)))
+
 let qemu_both(st, yc) =
   qemu_arch(qemu_arch(st, yc, "arm64"), yc, "riscv64")
 
@@ -1081,7 +981,7 @@ let main =
   let yc = yc_pkg(ya) in
   let s = suite_name(0) in
   if s == "pkg" then suite_done(pkg_all([0, 0], yc))
-  else if s == "link" then suite_done(link_all([0, 0], yc))
+  else if s == "link" then suite_done(link_front([0, 0], ya))
   else if s == "interp" then suite_done(interp_suite([0, 0]))
   else if s == "compiler" then suite_done(compiler_all([0, 0], yc))
   else if s == "cps" then
@@ -1101,6 +1001,6 @@ let main =
     let st0 = interp_suite([0, 0]) in
     let st1 = boot_front(st0, ya) in
     let st2 = pkg_all(compiler_all(st1, yc), yc) in
-    let st3 = link_all(st2, yc) in
+    let st3 = link_front(st2, ya) in
     suite_done(boot_suite(qemu_both(st3, yc), ya))
 in main
