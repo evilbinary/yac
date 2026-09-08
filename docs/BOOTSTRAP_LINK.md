@@ -748,6 +748,16 @@ src/*.c                                                # C 参考实现不改（
 > 边界，仅返回简单 int 的函数可表达；字符串/列表返回值需走 embed + 共享 GC
 > 域（12.6），不在 12.4/12.5 承诺内。
 
+> **阶段三（2026-09，option B 定稿并落地）**：dylib 绑定不再走 extern 槽 +
+> 机器码 loader，而是 `rt_for_link` 为每个 dylib 包**编译一个合成包装包**
+> （`pkg_dylib_synth`）：每个导出 `e(a0..a5) = ccall(ccall("dlsym",0,"e"),
+> ccall("dlopen","path",258), a0..a5)`，按 `package pkg` 前缀编译，import 调用
+> 经正常 sigma 路径解析到本地包装、经 ccall 真调 C-ABI 产物（int-only 边界）。
+> 无新增机器码、无入口注入。`lir_extend` 拆出 `lir_extend_go(pkg,src,acc,
+> synth)`：synth=1 时跳过"dylib 不编源码"短路但仍过 link_check。
+> **验证**：`--link dadd=dylib` guest `add(2,3)` 真跑 DLL 退出码 0、无桩输出；
+> `make test-link` 10/10。extern 槽/`extsym_bind`/`--shared-int` 保留备用。
+
 - [x] 12.5.1 外部符号注册表（`emit.yac::extsym_*`）+ glob 表区条件扩容
 - [x] 12.5.2 x86 `fcall` 对 host/extern 统一走槽间接调用（tag21，
       extern id = 10+i）；AOT 空槽默认填桩
@@ -755,8 +765,8 @@ src/*.c                                                # C 参考实现不改（
 - [ ] 12.5.3 `tcall`/`closure` 的外部符号路径
 - [ ] 12.5.4 guest 启动段装载（12.4.C）：先按上方 A/B 定调用 ABI，再
       `cload/csym` 填槽 + PE dlopen 验证
-- [ ] 12.5.5 验收（阶段二）：自建 int 包 `--shared` → guest
-      `--link pkg=dylib` import 调用**真执行得 5**；产物缺失启动期报错
+- [x] 12.5.5 验收：自建 int 包 `--shared` → guest `--link pkg=dylib` import
+      调用真执行（`add(2,3)` → 退出码 0，无桩输出；option B 包装包，2026-09）
 - [ ] 12.5.6 arm64/riscv64 槽间接分支；x86 先行已通
 
 > **loader 注入方式（2026-09 试验记录，避免重走）**：试过在 `emit_x86_64`

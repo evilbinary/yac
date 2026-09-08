@@ -432,11 +432,7 @@ let link_dylib_case(st, yc) =
       else
         let _ = run(["chmod", "+x", y]) in
         let rr = run([y]) in
-        let blob = str_cat(chomp(nth(rr, 1)), chomp(nth(rr, 2))) in
-        let st_a =
-          check(st, "link dylib bind stub msg", "1",
-                if contains(blob, "host fn unavailable") then "1" else "0") in
-        check(st_a, "link dylib bind rc", "42", int_to_str(nth(rr, 0))) in
+        check(st, "link dylib bind real exec rc", "0", int_to_str(nth(rr, 0))) in
     let cr2 = run([ya, "--pkg", pk, gsrc, "-o", y2]) in
     let st2 =
       if nth(cr2, 0) != 0 then

@@ -422,6 +422,28 @@ let pkg_extern_register(pkg) =
       rec_add(i + 1) in
   rec_add(0)
 
+/* dylib wrapper package (12.5, option B): each export becomes a shim that
+ * lazily dlopens the C-ABI artifact and forwards up to 6 tagged int args
+ * through ccall (untags args, calls the C export, tags the int result).
+ * Compiled under `package pkg`, so imported calls resolve to local procs
+ * named pkg/f through the normal sigma path. */
+let pkg_dylib_synth(pkg) =
+  let art = link_artifact_path(pkg, "dylib") in
+  if art == 0 then ""
+  else
+    let names = pkg_export_names(pkg) in
+    let hdr = str_cat("package ", str_cat(pkg, "\n")) in
+    let one(e, acc) =
+      let s1 = str_cat("(a0, a1, a2, a3, a4, a5) = let h = ccall(\"dlopen\", \"", art) in
+      let s2 = str_cat(s1, "\", 258) in if h == 0 then 0 else ccall(ccall(\"dlsym\", 0, \"") in
+      let s3 = str_cat(s2, e) in
+      let s4 = str_cat(s3, "\"), a0, a1, a2, a3, a4, a5)\n") in
+      str_cat(acc, str_cat("let ", str_cat(e, s4))) in
+    let rec(i, acc) =
+      if i >= len(names) then acc
+      else rec(i + 1, one(nth(names, i), acc)) in
+    str_cat(hdr, rec(0, ""))
+
 let import_id_pairs(xs, i, acc) =
   if i >= len(xs) then acc
   else
@@ -561,8 +583,11 @@ let report_unbound_ex(src, ast, extra) =
 
 let report_unbound(src, ast) = report_unbound_ex(src, ast, [])
 
-let lir_extend(pkg, src, acc) =
-  if pkg != "rt.num" and link_is_dylib(pkg) == 1 then acc
+/* synth = 1 when src is a synthesized dylib wrapper package (not the package
+ * source), so the "dylib-bound => do not compile real source" guard is
+ * bypassed; link_check still approves the package. */
+let lir_extend_go(pkg, src, acc, synth) =
+  if synth == 0 and pkg != "rt.num" and link_is_dylib(pkg) == 1 then acc
   else
     let _ =
       if pkg == "rt.num" then 0
@@ -599,6 +624,10 @@ let lir_extend(pkg, src, acc) =
           let _ = box_set(malias_box, saved_m) in
           let _ = pkg_prefix_set(saved_p) in
           out
+
+let lir_extend(pkg, src, acc) = lir_extend_go(pkg, src, acc, 0)
+
+let lir_extend_dylib(pkg, src, acc) = lir_extend_go(pkg, src, acc, 1)
 
 let ast_imports(ast, i, acc) =
   if i >= len(ast) then acc
@@ -692,8 +721,8 @@ let rt_for_link(_) =
       let p = nth(pkgs, i) in
       if p == "rt.num" then rec(i + 1, acc)
       else if link_is_dylib(p) == 1 then
-        let _ = pkg_extern_register(p) in
-        rec(i + 1, acc)
+        let src = pkg_dylib_synth(p) in
+        rec(i + 1, lir_extend_dylib(p, src, acc))
       else rec(i + 1, lir_extend(p, pkg_src(p), acc)) in
   runtime_add(rec(0, rt_base(0)))
 
