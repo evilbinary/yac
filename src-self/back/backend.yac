@@ -8,7 +8,7 @@ import back.pack.target {target_arch, target_emachine, target_format, target_sha
 import back.pack.pe {pack_pe_target, pe_finish_dll, pe_finish_imports}
 import back.pack.pack {pack_image}
 import lib.map
-import back.emit.emit {cimport_got, cimport_n, cimport_names, emit_abi_win, emit_jsess, emit_jsess_set, extsym_add, host_names, yjit_layout_get, yjit_layout_set}
+import back.emit.emit {cimport_got, cimport_n, cimport_names, emit_abi_win, emit_jsess, emit_jsess_set, extsym_add, extsym_bind_add, host_names, yjit_layout_get, yjit_layout_set}
 import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, malias_box, pkg_prefix_get, pkg_prefix_set, pkg_qn, sigma_list, sigma_of_rt, start_proc, tco_prog, ub_prog}
 import front.lexer {tok_ident_line, tokenize}
 import front.parser {parse_program, prog_has_err, report_syntax}
@@ -418,7 +418,7 @@ let pkg_extern_register(pkg) =
       let n = nth(names, i) in
       let key = intern(pkg_qn(pkg, n)) in
       let _ = extsym_add(key) in
-      let _ = if art == 0 then 0 else extbind_add(key, intern(n), art) in
+      let _ = if art == 0 then 0 else extsym_bind_add(key, intern(n), art) in
       rec_add(i + 1) in
   rec_add(0)
 
