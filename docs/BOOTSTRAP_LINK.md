@@ -685,18 +685,15 @@ src/*.c                                                # C 参考实现不改（
 > **包符号表**，调用走间接跳转。这与 12.5 是同一机制（名字级外部符号 +
 > 槽表），12.4 是它的应用面。因此重定义如下：
 
-- [ ] 12.4.A 决策：guest 里 P 的 dylib 调用点复用 **host 分支形态**
-      （`mov slotimm; mov rax,[rax]; call`），host 表从 10 槽扩成
-      **host 表 + 包符号表连续槽**（`emit_glob_data` 216 字节参数化，
-      §11.4）
-- [ ] 12.4.B 前置 12.5.1/12.5.2（x86）：`emit_patch_rel` miss 时按名字挂
-      未解析；链接期把"包导出名 → 槽号"映射写进代码
-- [ ] 12.4.C 装载：guest 启动段按 `--link` 表为每个 dylib 包生成
-      `cload(path)` + 逐导出 `csym(name)` 写槽（`rt/ffi.yac` 已有叶子）
-- [ ] 12.4.D 验收（最小 int 版，Windows PE 可测）：一个自建 `dadd.yac`
-      `--shared` 成 `dll` → 另一 guest `--link dadd=dylib` import 后调用
-      `add(2,3)` 得 5；产物缺失 → 编译/启动期明确报错；默认无 `--link`
-      行为逐字节不变
+- [x] 12.4.A 决策（**被 option B 取代**）：不做 host/包连续槽扩展；
+      dylib 绑定改由**合成包装包**实现（见 §12.5 阶段三）
+- [x] 12.4.B 前置（**被 option B 取代**）：无 `emit_patch_rel` 名字级改动
+- [x] 12.4.C 装载（**option B 实现，2026-09**）：guest 启动/调用经
+      `ccall("dlopen"…)` + `ccall("dlsym"…)` 真调 C-ABI 产物，不需要启动段
+      写槽的机器码 loader；extern 槽/`extsym_bind`/`--shared-int` 保留备用
+- [x] 12.4.D 验收（option B，Windows PE 实测）：自建 `dadd.yac` `--shared`
+      成 `dll` → guest `--link dadd=dylib` import 后调用 `add(2,3)` 真执行
+      （绑定退出码 0，无桩输出）；`make test-link` 10/10、compiler 170/170
 - [ ] 12.4.E 范围外（后续）：非 int 参数/返回值（值 ABI + 跨镜像 GC），
       `yc.so`（H）形态，Mach-O/ELF 装载
 
@@ -762,14 +759,16 @@ src/*.c                                                # C 参考实现不改（
 - [x] 12.5.2 x86 `fcall` 对 host/extern 统一走槽间接调用（tag21，
       extern id = 10+i）；AOT 空槽默认填桩
 - [x] 12.5.3b dylib 链包登记外部符号 + 不 source 链接（`f3cedb6`，阶段二前半）
-- [ ] 12.5.3 `tcall`/`closure` 的外部符号路径
-- [ ] 12.5.4 guest 启动段装载（12.4.C）：先按上方 A/B 定调用 ABI，再
-      `cload/csym` 填槽 + PE dlopen 验证
+- [x] 12.5.3 `tcall`/`closure` 的外部符号路径 —— **不需要**：option B 下 dylib
+      包是 sigma 本地 proc，tcall/closure 走普通路径
+- [x] 12.5.4 guest 启动段装载 —— **由 option B 取代**：包装包内部
+      `dlopen/dlsym/ccall`（int-only 边界），无启动段机器码
 - [x] 12.5.5 验收：自建 int 包 `--shared` → guest `--link pkg=dylib` import
       调用真执行（`add(2,3)` → 退出码 0，无桩输出；option B 包装包，2026-09）
 - [ ] 12.5.6 arm64/riscv64 槽间接分支；x86 先行已通
 
-> **loader 注入方式（2026-09 试验记录，避免重走）**：试过在 `emit_x86_64`
+> **loader 注入方式（2026-09 试验记录，避免重走；已被 option B 取代，不再需要
+> 机器码 loader）**：试过在 `emit_x86_64`
 > 入口函数 `local` op 的 `emit_chkstk` 之后直接 `call_rel32` 预留 loader 调用、
 > 文本末尾追加 stub 再回填 rel32 —— **失败**：运行期跳进了 `win` system 桩
 > （`CreateProcessA`）而非追加的 stub，说明入口与 `win_begin` bootstrap / 桩区
