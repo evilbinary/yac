@@ -759,6 +759,16 @@ src/*.c                                                # C 参考实现不改（
       `--link pkg=dylib` import 调用**真执行得 5**；产物缺失启动期报错
 - [ ] 12.5.6 arm64/riscv64 槽间接分支；x86 先行已通
 
+> **loader 注入方式（2026-09 试验记录，避免重走）**：试过在 `emit_x86_64`
+> 入口函数 `local` op 的 `emit_chkstk` 之后直接 `call_rel32` 预留 loader 调用、
+> 文本末尾追加 stub 再回填 rel32 —— **失败**：运行期跳进了 `win` system 桩
+> （`CreateProcessA`）而非追加的 stub，说明入口与 `win_begin` bootstrap / 桩区
+> 的坐标或执行顺序交互没对齐，且与 `pe_dlopen/pe_dlsym` 桩的关系也需理顺。
+> **推荐改用"入口重定向"**：不在已发射函数体内插字节，而是 append 一段独立
+> loader 函数（保存/恢复入口寄存器与 rsp），把 PE/ELF 的 entry 指到它，loader
+> 填完槽后 `jmp` 原 `_start` 入口。入口选择位置在 pack 侧
+> （`funsym`/`_start`），需先确认各格式 entry 字段从哪个 box/offset 取。
+
 ### 12.6 P3 — `embed`（依赖 12.1 / 12.3 / 12.5）
 
 - [ ] 12.6.1 新增 `host_blob_export()`：`*.host` = code + funsym + reloc 位置表
