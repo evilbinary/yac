@@ -851,3 +851,30 @@ guest 样例 = `tests/pkg/path.yac`（import `path`）；dylib 样例在运行�
 > 测试组织说明：link 套件内联在 `tests/run.yac` 时不便通读，已按 `tests/boot`
 > 先例抽到 `tests/link/run.yac`；`tests/run.yac` 的 `link` dispatch 与 `all`
 > 链经 `link_front` 委托子 runner（无代码重复）。
+
+### 12.10 后续小特性：dylib 解析缓存（2026-09 立项，暂缓实现）
+
+**动机**：option B 的合成包装包当前**每次调用**都 `dlopen/dlsym`
+（`pkg_dylib_synth`，`backend.yac`）。重复调用会反复加载/查符号，且每导出泄漏
+一个句柄。想缓存"已解析的 C 导出函数指针"，让后续调用直接 `ccall(ptr, …)`。
+
+**已排除的路径（勿重走）**：包内顶层 `box` 缓存**不可行**——包作用域函数引用
+同包顶层 `box` 在运行时崩溃（仅 main 文件支持该写法；已实测并回退，见
+`a258755`）。
+
+**拟定方案（二选一，实现时再定）**：
+- **A 镜像内全局槽**：在 `emit_glob_data` 的表区（`G+216` 之后或扩一段）为每个
+  extern/导出预留 8B 槽；启动前槽值 = 0（= 未解析）。合成包装判断槽为 0 才
+  `dlopen/dlsym`，成功后把解析地址写回该槽；后续调用直接读槽走 `ccall`。
+  写槽需要 guest 侧写绝对地址 → 需要一个 kernel 叶子（仿 `yac_host_sym`，
+  `runtime.yac:2103-2117` 用 `$gbase` 读槽）提供"写第 i 个缓存槽"的能力。
+- **B kernel 叶子 + 全局缓存**：kernel 提供一个
+  `yac_dylib_cache(i, dlsymArgs…)` 型叶子，内部用 `$gbase` 定位缓存区并完成
+  "已缓存→返回指针 / 未缓存→dlopen+dlsym+写缓存"。
+  依赖：先确认 kernel LIR 里能做 `dlopen/dlsym` 的等价调用（ccall/import 通路），
+  或由缓存叶子只存/取、解析仍放 guest。
+
+**验收**：guest 连续调用 `add(2,3)`、`add(20,22)`（复用 `tests/link/run.yac` 的
+样例）仍 rc 0；加断言/日志证明第二次调用不再走 `dlopen`（例如临时计数或删掉
+产物后缓存命中仍能跑——注：缓存语义下删产物后第二次调用**应仍成功**，这是与
+12.9 第 10 条"删产物报错"的区别点，实现时需厘清两者关系）。
