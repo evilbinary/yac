@@ -423,10 +423,14 @@ let pkg_extern_register(pkg) =
   rec_add(0)
 
 /* dylib wrapper package (12.5, option B): each export becomes a shim that
- * lazily dlopens the C-ABI artifact and forwards up to 6 tagged int args
- * through ccall (untags args, calls the C export, tags the int result).
- * Compiled under `package pkg`, so imported calls resolve to local procs
- * named pkg/f through the normal sigma path. */
+ * dlopens the C-ABI artifact and forwards up to 6 tagged int args through
+ * ccall (untags args, calls the C export, tags the int result). Compiled
+ * under `package pkg`, so imported calls resolve to local procs named pkg/f
+ * through the normal sigma path.
+ *
+ * Note: a per-package box cache was tried and REVERTED — package-scope
+ * functions referencing a top-level box crash at runtime (only main files
+ * support that). Resolve happens on every call for now. */
 let pkg_dylib_synth(pkg) =
   let art = link_artifact_path(pkg, "dylib") in
   if art == 0 then ""

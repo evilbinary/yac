@@ -417,7 +417,7 @@ let link_dylib_case(st, yc) =
   let _ = write_file(src,
     "package dadd\nexport add, sub\nlet add(a, b) = a + b\nlet sub(a, b) = a - b\n") in
   let _ = write_file(gsrc,
-    "import dadd {add}\nlet a = add(2, 3) in\nif a == 0 then 42 else 0\n") in
+    "import dadd {add}\nlet a = add(2, 3) in\nlet b = add(20, 22) in\nif a == 5 and b == 42 then 0 else 1\n") in
   let _ = run(append([ya, "--shared", src, "-o"], [art])) in
   if nth(run(["test", "-f", art]), 0) != 0 then
     check(st, "link dylib artifact", "1", "0")
