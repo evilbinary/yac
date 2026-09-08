@@ -780,16 +780,29 @@ src/*.c                                                # C 参考实现不改（
 
 ### 12.6 P3 — `embed`（依赖 12.1 / 12.3 / 12.5）
 
-- [ ] 12.6.1 新增 `host_blob_export()`：`*.host` = code + funsym + reloc 位置表
-      （patch 表现成：`elf_relocs_get`，`elf.yac:78-81`）
-- [ ] 12.6.2 `pack` 阶段 append blob：`NEW_BASE = LOAD_VADDR + TEXT_OFF +
-      len(guest)`，每个 reloc 位置 `value += NEW_BASE - OLD_BASE`
-- [ ] 12.6.3 `bake` 扩展成按包符号表填；槽区从 `G+216` 往后开
-      （`emit_glob_data` 的 216 要参数化）
-- [ ] 12.6.4 smap / strlit pool 一并重定位
-- [ ] 12.6.5 体积：先全量，后按 `drop_unreachable` 收闭包（§11.1）
-- [ ] 12.6.6 验收：objdump 确认函数落在 guest TEXT 内；无 yc 二进制环境单独
-      运行成功；与 JIT 同输入对拍
+> **2026-09 立项决策：保持"设计保留"，不排实现。**
+> 12.5 之后（option B）重新评估，`embed` 的独立收益在**当前 ABI/GC 约束下
+> 基本消失**：
+> - 若只做 **int-only** 的跨镜像调用 → 12.5 的 dylib(option B) 已覆盖且更简单，
+>   单文件并不能带来增量价值；
+> - 若目标是**单文件、无 `.so` 依赖、且能传 yac 值（字符串/列表）** → 这才是
+>   真正场景，但它等价于"把包源码合入 guest"（= 现在的默认 source-link），
+>   无需 embed；而把**预编译 blob** 合入则有 §4/§12.5 反复确认的硬伤：
+>   blob 自带 runtime/GC（`drop_unreachable` 强制保留 `yac_*`），跨镜像传对象
+>   → use-after-free；唯一解法是 blob **不带 runtime** 且 `yac_*` 在链接期指向
+>   guest 副本（需"名字级未解析符号 + 共享 GC 域"，即已被 option B 替代的
+>   `emit_patch_rel` 路线，重开成本高）。
+> - 结论：**12.6 不为"实现"立项**；重启条件 = 出现真实使用场景要求"单文件 +
+>   真值传递"且无 `.so`/源码可用。到时可复用 §12.6.1–12.6.6 的既有清单
+>   （blob export/重定位/`bake` 表/GC 域方案），此处保留以备参考：
+
+- [ ] 12.6.1（参考）`host_blob_export()`：`*.host` = code + funsym + reloc 位置表
+- [ ] 12.6.2（参考）`pack` append blob：`NEW_BASE = LOAD_VADDR + TEXT_OFF +
+      len(guest)`，reloc `value += NEW_BASE - OLD_BASE`
+- [ ] 12.6.3（参考）`bake` 按包符号表填；槽区从 `G+216` 往后开
+- [ ] 12.6.4（参考）smap / strlit pool 一并重定位
+- [ ] 12.6.5（参考）体积：先全量后收闭包（§11.1）
+- [ ] 12.6.6（参考）验收：objdump 确认函数在 guest TEXT 内；无 yc 环境运行；对拍
 
 ### 12.7 `yjit` 作为链接模式：暂缓，不进 `--link`
 
