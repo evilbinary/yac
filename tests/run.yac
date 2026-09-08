@@ -467,7 +467,14 @@ let repl_cases(_) = [
   ["print no replay", "print(\"ONLYONCE\")\n1\n:q\n", "yc> 1"],
   ["print str after int", "1\nprint(\"hello\")\n:q\n", "hello"],
   ["import then printf d", "let a=42\nimport fmt\nprintf(\"%d\", [a])\n:q\n", "42"],
-  ["import then printf one", "let a=42\nimport fmt\nprintf(a)\n:q\n", "42"]]
+  ["import then printf one", "let a=42\nimport fmt\nprintf(a)\n:q\n", "42"],
+  /* Host-view compiler pkg (12.11 @host): import must be fast, not crash,
+   * and bind the thin wrappers. Do NOT invoke compile/load here: calling a
+   * host leaf runs the real host compiler in-process and pollutes the REPL
+   * session (state isolation is open, see BOOTSTRAP_LINK.md §12.11). */
+  ["import compiler", "import compiler\n:q\n", "compiler"],
+  ["import compiler binds compile", "import compiler\ncompile\n:q\n", "<fun>"],
+  ["compile unbound without import", "compile\n:q\n", "unbound variable 'compile'"]]
 
 let repl_all(st, yc, stem) =
   let _ = banner("repl", nth(yc, 0)) in
