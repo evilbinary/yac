@@ -14,7 +14,7 @@
  */
 
 package front.lir
-export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_list, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, sigma_new, st_no, ub_prog
+export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, sigma_new, st_no, ub_prog
 import lib.map
 
 let reverse(xs) = list_rev(xs)
@@ -305,6 +305,28 @@ let sigma_code(fs, name) =
 let sigma_ncap(fs, name) =
   let e = sigma_ent(fs, name) in
   if e == 0 then 0 else nth(e, 1)
+
+/* Host bindings (@name) are resolved to bare host-leaf names but have no
+ * proc body, so free_vars would capture them as closure vars (ncap>0) and
+ * the wrapper's call/closure ABI breaks. Seed the sigma map with a
+ * 0-capture entry per host name currently in the import map: free_vars then
+ * treats it as a known ncap-0 function (no capture), while emit still routes
+ * the fcall through the host slot (name stays bare, no local proc exists).
+ * The procs list is untouched, so nothing host-related reaches emit ids. */
+let sigma_host_seed(fs) =
+  let xs = box_get(imap_box) in
+  let m0 = sigma_map(fs) in
+  let put(i, m) =
+    if i >= len(xs) then [sigma_list(fs), m, nth(fs, 2)]
+    else
+      let v = nth(nth(xs, i), 1) in
+      let m2 =
+        if is_host_name(v) then
+          let _ = fmap_put(m, v, [v, 0, 0 - 1]) in
+          m
+        else m in
+      put(i + 1, m2) in
+  put(0, m0)
 
 let str_to_int(s) =
   let n = str_len(s) in

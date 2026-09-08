@@ -9,7 +9,7 @@ import back.pack.pe {pack_pe_target, pe_finish_dll, pe_finish_imports}
 import back.pack.pack {pack_image}
 import lib.map
 import back.emit.emit {cimport_got, cimport_n, cimport_names, emit_abi_win, emit_jsess, emit_jsess_set, extsym_add, extsym_bind_add, host_names, yjit_layout_get, yjit_layout_set}
-import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, malias_box, pkg_prefix_get, pkg_prefix_set, pkg_qn, sigma_list, sigma_of_rt, start_proc, tco_prog, ub_prog}
+import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, malias_box, pkg_prefix_get, pkg_prefix_set, pkg_qn, sigma_host_seed, sigma_list, sigma_of_rt, start_proc, tco_prog, ub_prog}
 import front.lexer {tok_ident_line, tokenize}
 import front.parser {parse_program, prog_has_err, report_syntax}
 import front.anf {anf_all}
@@ -647,7 +647,8 @@ let lir_extend_go(pkg, src, acc, synth) =
         else
           let anf = pass_anf(ast) in
           let st = lir_all(0, anf,
-            [env_new(0), 1, sigma_of_rt(acc), 0, list_new(), 0],
+            [env_new(0), 1, sigma_host_seed(sigma_of_rt(acc)), 0,
+             list_new(), 0],
             len(anf)) in
           let out = reverse(sigma_list(nth(st, 2))) in
           let _ = box_set(imap_box, saved_i) in

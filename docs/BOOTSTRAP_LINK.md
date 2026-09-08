@@ -878,3 +878,82 @@ guest 样例 = `tests/pkg/path.yac`（import `path`）；dylib 样例在运行�
 样例）仍 rc 0；加断言/日志证明第二次调用不再走 `dlopen`（例如临时计数或删掉
 产物后缓存命中仍能跑——注：缓存语义下删产物后第二次调用**应仍成功**，这是与
 12.9 第 10 条"删产物报错"的区别点，实现时需厘清两者关系）。
+
+### 12.11 `@host` import 级 host 绑定（2026-09 落地）+ 遗留问题
+
+> 与 §5.2"模式全部走命令行、import 不进语法"的例外：host 是实现来源的一种
+> 标注，但被它标注的名字**不进 guest 源码链接闭包**（性质与 dylib 的链模式
+> 相同），因此把选择放 import 内、以 `@` 前缀表达，比再造一个 `--link` 段
+> 更贴近"这是该名字的固有来源"。§5.2 的"import 只是声明接口"仍然成立：
+> `@` 不改接口语义，只标注实现来源=宿主叶子。
+
+**动机**：`import compiler` 旧路径把整棵 `back/front/emit` 编译器树
+source-embed 进 guest（REPL 实测 ~37s）。`pkg/compiler.yac` 只是对 10 个
+宿主叶子的薄包装，embed 整树纯属浪费。
+
+**已落地（2026-09，Windows 原生实测）**：
+- 语法：`import pkg {@name}`，选择项 `@name` → AST `[name, name, 1]`
+  （长度 3 = host 标记；lexer 无需改动，`@` 天然是 punct）。
+  不带别名/`as`。
+- `front/parser.yac::parse_imp1` 识别 `@`；`@` 判定用字符比较（str-slice 与
+  字面量 `==` 不可靠，见项目已知坑）。
+- `front/lir.yac`：`host_slot_names`（10 名）+ 顶层递归
+  `host_match_i`/`is_host_name`；`imap_add_pair` 对长度 3 spec 存 **bare 名**
+  （不加 `pkg/` 前缀）→ `resolve_call` 保持裸名 → emit 的 `fcall` 走既有
+  host 槽分支（tag 21）。**注意不要**把 `host_match` 写成 `is_host_name` 内的
+  局部递归 `let go(i)=…`，那会在自举产物中引发不稳定段错误（见遗留 2）。
+- `back/backend.yac`：`import_all_host` + `fill_import`（纯 host import 不读
+  目标包导出、不进 `link_need_box`）+ `ast_imports`（DFS 不深入全 host import
+  的包）。
+- `pkg/compiler.yac` 改为 host 视图：6 个 import 全部 `@`，只留薄壳包装。
+
+**验收现状**：
+- REPL `import compiler` 0.6s（原 ~37s）；AOT/REPL 均不再段错误；
+  `make test-link` 12/12；平凡 AOT 编译无回归。
+- 裸 `compile(...)`（未 import）仍 `unbound`（12.1 语义保持）。
+- REPL 会话内调用 host 编译函数（如 `compile`）会**污染宿主 REPL 状态**，
+  会话后续行可段错误；单次调用后立即 `:q` 不崩（详见遗留 1）。本小节
+  `import compiler` 的验收只承诺"瞬时 + 绑定 + 不触 host 不崩"。
+  **语义澄清**：`compile` 正常返回值是**机器码 blob（bytes）**；当前 REPL
+  里返回 int 0 是宿主后端在无 pkg 根/状态被污染下失败（非桩、非"编译出
+  整数 0"）。判成功用 `compile(...) != 0`（或 len>0），不能把 0 当合法产物。
+
+**遗留问题（后续处理，勿丢）**：
+1. **host leaf 真值 + REPL 状态隔离（2026-09 修正认知）**：
+   - **bake 事实**：宿主 yc 是 cat bundle 自举（`skip_local_imp` 吞 import、
+     函数保裸名），故宿主映像里确实存在裸名 `compile_native` 等 → `bake()`
+     命中 → **宿主槽指向真实函数**，不是桩。REPL `host_tab_fill` 把它拷进
+     guest 槽。
+   - **REPL 污染**：REPL 里 guest 一调用 `compile`（真 host 后端函数），
+     就在**宿主进程内**递归跑编译器后端，改写宿主 REPL 正在用的全局状态
+     （imap/pkg_prefix/link box/emit_jsess…）；该会话**后续行**即段错误
+     （实测 `compile;load;1+1`、`compile;compile;compile_file` 均崩，
+     `compile` 单次后立即 `:q` 不崩、`load`（文件缺失早退，不触 host）多行
+     不崩、无 compiler 的多行不崩）。`compile("1+2")` 返回 0 是 host 后端
+     在无 `--pkg`/pkg 根状态下失败返回（不是桩）。
+   - 因此要让 REPL `compile/load` 真正可用，必须做**宿主编译状态隔离**
+     （host 调用前保存/恢复宿主全局，或 host leaf 只暴露无状态入口）——
+     架构级，与 12.4.C loader 无关。在此之前可承诺的语义：`import compiler`
+     瞬时、绑定、无 host 副作用；调用 host 编译函数会污染当前 REPL 会话。
+   - 补测试时只断言"import 瞬时 + 不崩 + 裸 `compile` unbound"，不把
+     host 调用纳入（直到隔离落地）。
+2. **free_vars host-skip 不能加回（2026-09 实测，已绕过）**：
+   在 `free_vars` 中加 `is_host_name` 跳过捕获后，编译器自举产物对**任意**
+   AOT guest（含空文件）段错误。已二分与实现形态无关，疑"free_vars 引用
+   另一顶层函数"的代码形态触发编译 bug，根因未定。
+   **替代方案（已实现并规避此问题）**：不动 free_vars；在 lir 增加
+   `sigma_host_seed(fs)`（从 imap 取 host bare 名，向 sigma map 预置
+   `[name,0,-1]` 条目，procs 列表不变 → 不进 emit ids、仍是 host 槽
+   fcall）。`backend.lir_extend_go` 的初始 sigma 用
+   `sigma_host_seed(sigma_of_rt(acc))`。效果：free_vars 把 host 名视为
+   ncap0 已知函数 → 不捕获；包装函数 ncap=0，调用形态正常。**遗留中 2 的
+   "load 段错误"已因此消失**（`load("a.yac")` 文件缺失早退返回 1）。
+   若日后要彻底去掉 seed，可再回头查 free_vars 崩溃根因。
+3. **`@name` 的宿主表校验缺失**：`@x` 若不在 host_names，当前**不报错**，
+   会按 bare 名绑定 → emit `host_id = -1` 且无 extern → 落入普通 fcall
+   却无 label，行为未定义。后续应在 `fill_import`/ub 阶段校验并报
+   "host 包 `pkg` 的导出 `x` 无宿主实现"。
+4. **`compiler.yac` 实现体已删**：未来 `embed` 形态（`--link compiler=embed`）
+   需要源码实现，届时需把包装函数体恢复为普通 `import back.backend`
+   版本或另设文件（与 host 视图互斥：同一文件同时 host 快 + embed 可用
+   不可兼得）。
