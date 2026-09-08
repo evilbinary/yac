@@ -461,11 +461,16 @@ let import_sel(sel, all, i, acc) =
   if i >= len(sel) then acc
   else
     let spec = nth(sel, i) in
-    let orig = intern(nth(spec, 1)) in
-    let loc = intern(nth(spec, 0)) in
-    if in_list(orig, all) then
-      import_sel(sel, all, i + 1, cons([loc, orig], acc))
-    else import_sel(sel, all, i + 1, acc)
+    if len(spec) > 2 then
+      /* host binding (@name): not checked against the package exports,
+       * kept as [name, name, 1] so imap_load binds the bare host name. */
+      import_sel(sel, all, i + 1, cons(spec, acc))
+    else
+      let orig = intern(nth(spec, 1)) in
+      let loc = intern(nth(spec, 0)) in
+      if in_list(orig, all) then
+        import_sel(sel, all, i + 1, cons([loc, orig], acc))
+      else import_sel(sel, all, i + 1, acc)
 
 /* Exports of packages declared in the same source. Saves reading+parsing
  * the imported file for every `import` inside the concatenated compiler
@@ -492,14 +497,32 @@ let local_exports(ast) =
   let st = ast_exp_go(ast, 0, len(ast), [fmap_new64(0), ""]) in
   nth(st, 0)
 
+/* True when every brace spec of an import is a host binding (@name): the
+ * package then only provides a name view over host leaves and its source
+ * must NOT be pulled into the link closure. */
+let import_all_host(sel, i) =
+  if i >= len(sel) then true
+  else
+    let spec = nth(sel, i) in
+    if len(spec) <= 2 then false
+    else import_all_host(sel, i + 1)
+
 let fill_import(e, local) =
-  let all0 = if local == 0 then 0 else fmap_get(local, nth(e, 1)) in
-  let all = if all0 == 0 then pkg_export_names(nth(e, 1)) else all0 in
+  let sel =
+    if len(e) < 3 then 0
+    else if nth(e, 2) == 0 then 0
+    else nth(e, 2) in
   let alias = if len(e) > 3 then nth(e, 3) else 0 in
+  let all0 = if local == 0 then 0 else fmap_get(local, nth(e, 1)) in
   let pairs =
-    if len(e) < 3 then import_id_pairs(all, 0, [])
-    else if nth(e, 2) == 0 then import_id_pairs(all, 0, [])
-    else import_sel(nth(e, 2), all, 0, []) in
+    if sel != 0 and import_all_host(sel, 0) then
+      /* every spec is @name: bind bare host names, never read the package. */
+      sel
+    else
+      let all = if all0 == 0 then pkg_export_names(nth(e, 1)) else all0 in
+      if len(e) < 3 then import_id_pairs(all, 0, [])
+      else if nth(e, 2) == 0 then import_id_pairs(all, 0, [])
+      else import_sel(sel, all, 0, []) in
   ["import", nth(e, 1), pairs, alias]
 
 let rewrite_imports_go(ast, i, acc, local) =
@@ -642,7 +665,12 @@ let ast_imports(ast, i, acc) =
     let e = nth(ast, i) in
     if nth(e, 0) == "import" then
       let p = nth(e, 1) in
-      if in_list(p, acc) then ast_imports(ast, i + 1, acc)
+      let sel =
+        if len(e) < 3 then 0
+        else if nth(e, 2) == 0 then 0
+        else nth(e, 2) in
+      if sel != 0 and import_all_host(sel, 0) then ast_imports(ast, i + 1, acc)
+      else if in_list(p, acc) then ast_imports(ast, i + 1, acc)
       else ast_imports(ast, i + 1, cons(p, acc))
     else ast_imports(ast, i + 1, acc)
 

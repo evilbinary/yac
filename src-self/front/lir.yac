@@ -45,6 +45,23 @@ let pkg_qn(pkg, name) =
   else if pkg_is_rt(pkg) then name
   else str_cat(pkg, str_cat("/", name))
 
+/* Host leaves baked into the yc image's own G+136..G+216 (10 slots). A
+ * guest gets one via `import pkg {@name}`; it stays a bare name so emit
+ * calls through the slot. Names must stay in sync with host_names_box in
+ * back.emit.emit and with the bake loop in back.jit host_tab_fill. */
+let host_slot_names = ["compile", "compile_file", "load", "compile_native",
+                       "compile_jit", "mk_target", "mk_jit_target",
+                       "target_live", "host_arch", "host_format"]
+
+/* Top-level recursion (no nested closure): match an interned name against
+ * the slot list by index. */
+let host_match_i(t, i) =
+  if i >= len(host_slot_names) then false
+  else if t == intern(nth(host_slot_names, i)) then true
+  else host_match_i(t, i + 1)
+
+let is_host_name(nm) = host_match_i(intern(nm), 0)
+
 let imap_find(xs, k, i) =
   if i >= len(xs) then 0
   else if nth(nth(xs, i), 0) == k then nth(nth(xs, i), 1)
@@ -66,7 +83,9 @@ let imap_reset(_) =
   0
 
 let imap_add_pair(pkg, spec) =
-  let q = pkg_qn(pkg, intern(nth(spec, 1))) in
+  let q =
+    if len(spec) > 2 then intern(nth(spec, 1))
+    else pkg_qn(pkg, intern(nth(spec, 1))) in
   box_set(imap_box, cons([intern(nth(spec, 0)), intern(q)], box_get(imap_box)))
 
 let imap_add_pairs(pkg, pairs, i) =

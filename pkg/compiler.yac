@@ -1,30 +1,33 @@
-/* compiler.yac — host compile API for `import compiler`.
+/* compiler.yac — compile API backed by the host leaves.
  *
- * In the REPL these names resolve to the host compiler running in the same
- * process (runtime absolute jump table): the guest fcall to a host leaf is
- * emitted as an absolute call through the host image's baked G+136..G+216
- * table (see BOOTSTRAP_LINK.md §3). AOT (non-REPL) hosts fall back to stub.
+ * Every imported symbol is a *host binding* (@name): the name is not looked
+ * up in the package's sources, it binds the host leaf of the same name
+ * (slot G+136+8*id, baked into the running image's host table). Importing
+ * this package therefore compiles only the thin wrappers below — the whole
+ * front/back compiler tree is NOT linked into the guest.
  *
- *   compile_file(inpath, outpath)  write an ELF image for the host arch
+ * In the host yc process the leaves are the compiler running in-process;
+ * in an AOT image without an embedded host the slots stay on the stub, so
+ * these functions print "host fn unavailable" and return 0.
+ *
+ *   compile_file(inpath, outpath)  write an image for the host arch
  *   compile(src)                   src -> compiled machine blob (bytes)
- *   load(path)                     path -> run it as a yjit guest, return result
+ *   load(path)                     path -> run it as a yjit guest
  */
+package compiler
+export compile_file, compile, load
+import back.backend {@compile_native}
+import back.pack.target {@mk_jit_target, @mk_target}
+import back.jit {@compile_jit}
+import rt.os {@host_arch, @host_format}
 
- package compiler
- export compile_file, compile, load
- import back.backend {compile_native}
- import back.pack.target {target_live}
- import back.jit {compile_jit}
- import back.pack.target {mk_jit_target, mk_target}
- import rt.os {host_arch, host_format}
-
- let compile_file(inpath, outpath) =
-    let src = read_file(inpath) in
-    if src == 0 then 1
-    else
-      let t = mk_target(host_arch(0), host_format(0), "exec") in
-      let bin = compile_native(src, t) in
-      if bin == 0 then 1 else let _ = write_file(outpath, bin) in 0
+let compile_file(inpath, outpath) =
+   let src = read_file(inpath) in
+   if src == 0 then 1
+   else
+     let t = mk_target(host_arch(0), host_format(0), "exec") in
+     let bin = compile_native(src, t) in
+     if bin == 0 then 1 else let _ = write_file(outpath, bin) in 0
 
 let load(path) =
     let src = read_file(path) in
