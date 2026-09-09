@@ -1031,6 +1031,26 @@ source-embed 进 guest（REPL 实测 ~37s）。`pkg/compiler.yac` 只是对 10 �
 >   insn/帧布局越界（候选：深递归下 `$local` nslots 不足、emit 栈帧
 >   尺寸与 smap 不符、tail-call/长跳后 rbp 失配）。修复前，REPL 会话内
 >   调用 host 编译函数保持"不承诺不崩"。
+>
+> **2026-09 取证收口（触发路径锁定）**：栈扫描确认 "VirtualAlloc" 字符串
+> 地址（`0x7a0c60`）被写进栈上 6 处（合法返回地址不可能指向 .rdata）。
+> 结合 `emit.yac:609`：**REPL 每行的 `cimport_jit_bind → cimport_jit_fill`
+> 用 `ccall("dlsym", 0, name)` 解析 IAT 名单**（名单含 `win_need` 的
+> "VirtualAlloc"）→ `win_dlsym_stub → GetProcAddress`，即 **REPL 会话内
+> 周期性在"含 JIT/混合帧的栈"上触发 GetProcAddress 栈回溯**；回溯器把栈上
+> 残留数据当帧（bt #1 = 字符串地址）走到坏处即崩。host compile 的深栈/
+> 大分配只是提高了"后续行触发 fill 时的坏帧概率"，并非必需前置。
+> **候选修复（未实施，需专项）**：
+> a. **宿主 GOT 直读**：宿主映像自己的 cimport GOT 已由 PE loader 填好；
+>    `cimport_jit_fill` 对名单前缀（win_need 20 名，各镜像同序）直接从
+>    宿主 GOT 槽拷地址（需 boot 期把 host GOT 绝对基址缓存成 runtime
+>    leaf，类似 `yac_host_sym`），行内不再调 dlsym/GetProcAddress。
+> b. **启动期预热**：宿主 `_start`/REPL init 时（栈干净无 JIT 帧）先把
+>    win_need 20 名经现有 dlsym stub 全部解析进缓存，行内 stub 只查缓存。
+>    改动最小，但 blob 各自的 stub/mods 槽是独立镜像，缓存不共享——需把
+>    缓存改为共享（同 a 的 G 槽）。两者最终都会落到"宿主侧一张解析缓存表"。
+> c. **绕过栈回溯**：无法控制 OS shim；不采用。
+> 在 a/b 落地前，REPL 会话内 `compile/load` 的崩溃风险保持现状。
 
 **批次**（每批独立提交）：
 1. **[x] B1 ctx 实体 + 入口会话化**（`2b82201`/`de2ba39`）：`compile_env_new/
