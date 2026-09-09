@@ -957,3 +957,77 @@ source-embed 进 guest（REPL 实测 ~37s）。`pkg/compiler.yac` 只是对 10 �
    需要源码实现，届时需把包装函数体恢复为普通 `import back.backend`
    版本或另设文件（与 host 视图互斥：同一文件同时 host 快 + embed 可用
    不可兼得）。
+
+### 12.12 REPL host 状态隔离——方向调研（2026-09，未动手）
+
+遗留 1 的 REPL 污染到底污染了什么、怎么隔离，先做静态盘点：
+
+- `backend.compile_native`（`backend.yac:867`，host 槽指向的真函数）**已有
+  保存/恢复**：`emit_jsess` / `imap_box` / `malias_box` / `pkg_prefix` /
+  `link_need_box` / `link_local_box` / `yjit_layout`，主路径结束时逐项还原。
+- **缺陷 A（2026-09 已修）**：早退分支（syntax/unbound）只恢复
+  `emit_jsess`。已改为统一走 `compile_native_restore`（imap/malias/
+  pkg_prefix/link_need/link_local/yjit_layout/emit_jsess），主路径同用。
+  link/repl 套件无回归。
+- **实测仍崩 → 缺陷 B 升级**：修复 A 后在 REPL 里
+  `compile("<语法错误串>")` 或 `compile("1+2");load;1+1` 之后会话**依旧**
+  段错误。说明污染来自保存清单之外，候选：emit/pack 侧全局（`funsym`/
+  `elf_dynexp_*`/`extsym_*`）、12.5 `link_*`/`extbind_box`、或更深层
+  （host 后端在宿主进程内跑完整 pipeline 的副作用）。下一步应对照
+  "REPL 逐行编译"与"host compile_native"各自触碰的全局求差集，逐一
+  save/restore；若仍崩则怀疑 guest↔host 调用/堆层（非 box 状态）。
+- **方向（候选，实现时选）**：
+  a. 把 compile_native 的保存清单补成"贯穿全局全集"，主路径与早退一致；
+     自举/REPL 共用，纯增量。
+  b. host leaf 改暴露无状态包装（宿主侧新建独立编译 session：自带一份
+     imap/link/emit 状态，不碰宿主 REPL 的盒子），更彻底但改动面大。
+
+### 12.13 编译器环境 ctx 化（阶段 2 实施计划；2026-09 立项，按序执行）
+
+> 目标：编译器**可重入**——每个编译会话有独立环境，host leaf / REPL /
+> 未来的 dylib loader / embed 都能"编译里再编译"而互不踩踏，最终删除进程级
+> 环境全局。改动集中在自举核心，**每一批必须自举成功 + link/repl 套件回归**
+> 再进下一批（中途失自举会阻塞一切）。
+
+**ctx（编译会话环境）实体**：yac 值（list/record）。初版字段 = 现全局盒的
+归属映射：
+
+| 字段 | 现全局（进程级） | 归属 | 备注 |
+|---|---|---|---|
+| imap | `imap_box` | 会话 | import 名→目标映射 |
+| malias | `malias_box` | 会话 | 模块 as 别名 |
+| pkg_prefix | `pkg_prefix_box` | 会话 | 当前包前缀 |
+| link_need / link_local | `link_need_box`/`link_local_box` | 会话 | --link/import 闭包 |
+| emit_jsess / yjit_layout | 同上 | 会话 | REPL/JIT 会话层 |
+| funsym / elf_dynexp / extsym / patches | `funsym_box`/… | 单次 emit/pack | 逐次产出 |
+| host_names / kernel 名 / pkg 导出缓存 / pkg_fail | box | **进程级只读/引导** | 不随会话变，保持全局 |
+
+> **2026-09 前置调研结论（B1 开工前）**：缺陷 A 修复后做 REPL 组合实验，
+> 崩溃**与具体 host 调用无确定对应**，而与"会话内继续求值的行数/分配量"
+> 相关：单个 `compile("1+2")` 后接一行普通表达式**不崩**；再接第二行就崩
+> （`compile,load,1+1`、`compile,compile,1+1` 稳定崩；纯普通行、纯 `load`
+> 多行不崩）。这**不符合纯 box 状态泄漏**（那些应在首次后续行即崩），
+> 更像宿主后端大分配活动与 REPL 会话**共享 GC 堆/根表**的相互干扰。
+> 因此 B1 若走"扩展全局切换清单"可能仍不解决；需先区分：是 box 残留
+> （切清单可解）还是堆/GC 层（ctx 化亦不够）。若后者，务实方案可能是
+> "REPL host 编译走独立子进程"或"REPL 不支持调用 compiler（import 仅视图）"。
+> 实施 B1 前先做一次判别实验（在 compile 返回后人为触发 GC 再执行下一行；
+> 或临时禁止 host 后端分配后观察）。
+
+**批次**（每批独立提交）：
+1. **B1 ctx 实体 + 入口会话化**：`backend` 新 `compile_ctx(src, t, ctx)`；
+   `compile_native` = `compile_ctx(src, t, new_ctx())`；host 调用方（REPL host
+   leaf 的入口封装）每次 new 一个 ctx，退出即弃。B1 实现上仍以"进入时把
+   进程全局绑定切到 ctx 值、退出切回"垫底（保证自举不中断），**验收**：REPL
+   `import compiler` 后 `compile("1+2")` / 语法错 / `load` 均不崩、后续行可用；
+   link 12/12、repl 26/26。此步同时把 §12.12 缺陷 B 的遗漏全局（funsym/
+   dynexp/extsym/link_*）纳入 ctx 切换清单——先实测定位哪些必须切。
+2. **B2 lir 词法环境参数化**：`front.lir` 的 imap/malias/pkg_prefix 从全局读
+   改为显式参数（`resolve_call`/`imap_load` 族/ub/free_vars/lir_all st 携带
+   ctx）；backend/jit 调用点传 ctx。**验收**：自举 + 全套件无回归 + REPL
+   host compile 仍不崩（此时嵌套编译已不依赖进程全局切回）。
+3. **B3 emit/pack 会话化**：funsym/dynexp/extsym/emit_jsess/yjit_layout 经 ctx
+   贯穿（emit/pack 调用链签名扩展）。**验收**：同上 + 并行两路编译（同一进程
+   两 ctx 交错）正确。
+4. **B4 收尾**：删/闲置被取代的进程级环境全局；冻结 `compile_ctx` 接口文档；
+   新增嵌套编译回归用例（REPL host `compile`/`load` 调用并入 repl/link 套件）。
