@@ -1013,6 +1013,24 @@ source-embed 进 guest（REPL 实测 ~37s）。`pkg/compiler.yac` 只是对 10 �
 > "REPL host 编译走独立子进程"或"REPL 不支持调用 compiler（import 仅视图）"。
 > 实施 B1 前先做一次判别实验（在 compile 返回后人为触发 GC 再执行下一行；
 > 或临时禁止 host 后端分配后观察）。
+>
+> **2026-09 取证进展（gdb，方向 3 专项）**：
+> - 崩溃点不在 yac 代码，而在 **ntdll!RtlWalkFrameChain ←
+>   RtlCaptureStackBackTrace ← apphelp!SE_GetProcAddressForCaller ←
+>   GetProcAddress**——apphelp shim 对 GetProcAddress 做栈回溯。
+> - 被解析符号是 **"VirtualAlloc"**（断点抓 rdx），caller 是宿主映像内
+>   C 风格 helper（GetModuleHandleA("KERNEL32.dll")→GetProcAddress 序列；
+>   yac 源码无 ccall("VirtualAlloc")，win `$syscall` 的 VirtualAlloc 走
+>   IAT `win_k32_call`，故该 helper 来自 C/CRT 侧）。
+> - **决定性**：bt #1 的"返回地址" = `0x7a0c60`，即 "VirtualAlloc" 字符串
+>   的**数据地址**——C helper 帧上的返回地址已被**栈越界写覆盖成数据指针**。
+>   GetProcAddress 的栈回溯只是提前引爆点；真正 bug 是 **host compile 深路径
+>   下 yac 生成代码的栈越界写**（覆盖相邻 C 帧），后续行返回时跳数据 → 崩，
+>   表现随布局漂移与此完全吻合（禁自动 GC、env 隔离都只是移动阈值）。
+> - **下一专项**：函数级栈布局审计——定位 host compile 路径上哪条
+>   insn/帧布局越界（候选：深递归下 `$local` nslots 不足、emit 栈帧
+>   尺寸与 smap 不符、tail-call/长跳后 rbp 失配）。修复前，REPL 会话内
+>   调用 host 编译函数保持"不承诺不崩"。
 
 **批次**（每批独立提交）：
 1. **[x] B1 ctx 实体 + 入口会话化**（`2b82201`/`de2ba39`）：`compile_env_new/
