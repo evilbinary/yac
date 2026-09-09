@@ -2116,6 +2116,26 @@ let rt_host_sym_ins(_) =
    ["$add", 4, 4, 4],
    ["ret", 4]]
 
+/* Host cimport GOT direct read (12.13 B3+ crash fix): G+216 holds THIS
+ * image's cimport GOT offset (baked by emit_program_* at build time);
+ * returns the already-resolved address of cimport slot id. Only meaningful
+ * when executed in the image that baked the slot (the host, from
+ * cimport_jit_fill on the host side). arg1 = cimport id. */
+let rt_cimport_host_sym_ins(_) =
+  [["$local", 16, 1],
+   ["$shr", 2, 1, 1],
+   ["$add", 2, 2, 2],
+   ["$add", 2, 2, 2],
+   ["$add", 2, 2, 2],
+   ["$gbase", 1],
+   ["$ld64", 3, 1, 216],
+   ["$add", 3, 3, 2],
+   ["mov_imm", 4, 24],
+   ["$add", 3, 3, 4],
+   ["$ld64", 5, 3, 0],
+   ["$add", 5, 5, 5],
+   ["ret", 5]]
+
 /* Stub for host-leaf calls whose implementation is not present (AOT without
  * an embedded/dylib host). Prints "host fn unavailable" and returns int 0.
  * bake() points every empty G+136..G+216 slot at this proc. Arity 0 is safe:
@@ -2314,6 +2334,7 @@ let runtime_funs(_) =
    ["$proc", "yac_read_line", 0, 0, rt_read_line_ins(0), "yac_read_line"],
    ["$proc", "yac_jit_run", 3, 0, rt_jit_run_ins(0), "yac_jit_run"],
     ["$proc", "yac_host_sym", 1, 0, rt_host_sym_ins(0), "yac_host_sym"],
+    ["$proc", "yac_cimport_host_sym", 1, 0, rt_cimport_host_sym_ins(0), "yac_cimport_host_sym"],
    ["proc", "yac_host_unimpl", 0, 0, rt_host_unimpl_ins(0), "yac_host_unimpl"],
    ["$proc", "yac_jslot_get", 1, 0, rt_jslot_get_ins(0), "yac_jslot_get"],
    ["$proc", "yac_jslot_set", 2, 0, rt_jslot_set_ins(0), "yac_jslot_set"],

@@ -1051,6 +1051,20 @@ source-embed 进 guest（REPL 实测 ~37s）。`pkg/compiler.yac` 只是对 10 �
 >    缓存改为共享（同 a 的 G 槽）。两者最终都会落到"宿主侧一张解析缓存表"。
 > c. **绕过栈回溯**：无法控制 OS shim；不采用。
 > 在 a/b 落地前，REPL 会话内 `compile/load` 的崩溃风险保持现状。
+>
+> **2026-09 实施 a（宿主 GOT 直读）后的进展**：已落地——G 布局新增
+> `G+216 = 本镜像 cimport GOT 偏移`槽（emit_program_* bake；extsym 槽后移
+> 至 G+224+8*i，tag21 分支按 id<10 / ≥10 分流）、runtime 新 leaf
+> `yac_cimport_host_sym(id)`（仿 `yac_host_sym`）、`cimport_jit_fill` 对
+> win_need 名单**按名索引**（名单是宿主累积序，非 win_need 序）优先走
+> 宿主 GOT 直读、空值回落 dlsym。link 12/12、repl 26/26。
+> **但 REPL host 调用仍崩，且现场不变**（0x84a2a2 地址在多次 yac 代码改动
+> 后零漂移）→ 该 GetProcAddress("VirtualAlloc") 的 C helper **不在 yac 编译
+> 段**，属于 **C/静态链接层（疑似 mingw CRT 的 lazy init）**——yac 源码
+> 全库无 `ccall("VirtualAlloc")`/`VirtualAlloc` 直呼。下一步取证应：
+> ① 确定 0x84a2a2 所属对象文件（对 C 段做符号对齐/objdump 全量符号表）；
+> ② 在 C 层把该 lazy 解析改为启动期预热（栈干净时先解析），或在链接时
+> 换成静态 import。这与 yac 编译器无关，是宿主 C 运行时层面的兼容性问题。
 
 **批次**（每批独立提交）：
 1. **[x] B1 ctx 实体 + 入口会话化**（`2b82201`/`de2ba39`）：`compile_env_new/
