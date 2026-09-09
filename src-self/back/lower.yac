@@ -10,7 +10,7 @@
 package back.lower
 export lower_expr, drop_unreachable, alloc_prog, lower_program, emit_apply_unres
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
-import front.lir {session_get}
+import front.lir {imap_box}
 import back.pack.target {mk_target, target_arch, target_format, target_live, target_shared, target_text_off, target_vaddr}
 import back.pack.elf {elf_pic_set, elf_relocs_reset}
 import back.emit.emit {emit_arch_set, emit_resolve_loop, emit_unres, emit_unres_set}
@@ -70,7 +70,7 @@ let drop_unreachable(funs) =
   let _ = mark(intern("_start")) in
   let _ = mark(intern("_eval")) in
   /* REPL import: keep pkg exports even if this line's _eval does not call them. */
-  let im = nth(session_get(0), 0) in
+  let im = box_get(imap_box) in
   let rec_im(i) =
     if i >= len(im) then 0
     else

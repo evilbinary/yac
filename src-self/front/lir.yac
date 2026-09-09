@@ -14,25 +14,24 @@
  */
 
 package front.lir
-export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, is_prim_name, import_alias, import_locals, in_list, session_get, session_set, env_slot, insn_extend, insn_push, sigma_new, st_no, ub_prog
+export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, sigma_new, st_no, ub_prog
 import lib.map
 
 let reverse(xs) = list_rev(xs)
 
-/* Guest import aliases: local name → LIR key (env/get). Module as-name → pkg.
- * Session compile environment (12.13 B2-B): ONE box holding
- * [imap, malias, pkg_prefix]. compile_env swaps the whole value, so an
- * independent compile binds its own environment atomically (and later
- * batches can thread it explicitly instead of the box). */
-let session_box =
+/* Guest import aliases: local name → LIR key (env/get). Module as-name → pkg. */
+let imap_box =
   let b = box_new() in
-  let _ = box_set(b, [[], [], ""]) in
+  let _ = box_set(b, []) in
   b
-let session_get(_) = box_get(session_box)
-let session_set(s) = box_set(session_box, s)
-let sess_imap(_) = nth(box_get(session_box), 0)
-let sess_malias(_) = nth(box_get(session_box), 1)
-let sess_prefix(_) = nth(box_get(session_box), 2)
+let malias_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+let pkg_prefix_box =
+  let b = box_new() in
+  let _ = box_set(b, "") in
+  b
 
 let pkg_is_rt(p) =
   if str_len(p) < 3 then false
@@ -74,21 +73,20 @@ let malias_find(xs, k, i) =
   else malias_find(xs, k, i + 1)
 
 let qvar_key(a, f) =
-  let pkg = malias_find(sess_malias(0), a, 0) in
+  let pkg = malias_find(box_get(malias_box), a, 0) in
   if pkg == 0 then 0
   else pkg_qn(pkg, f)
 
 let imap_reset(_) =
-  let _ = box_set(session_box, [[], [], sess_prefix(0)]) in
+  let _ = box_set(imap_box, []) in
+  let _ = box_set(malias_box, []) in
   0
 
 let imap_add_pair(pkg, spec) =
   let q =
     if len(spec) > 2 then intern(nth(spec, 1))
     else pkg_qn(pkg, intern(nth(spec, 1))) in
-  box_set(session_box,
-    [cons([intern(nth(spec, 0)), intern(q)], sess_imap(0)),
-     sess_malias(0), sess_prefix(0)])
+  box_set(imap_box, cons([intern(nth(spec, 0)), intern(q)], box_get(imap_box)))
 
 let imap_add_pairs(pkg, pairs, i) =
   if i >= len(pairs) then 0
@@ -105,9 +103,7 @@ let imap_load_one(e) =
     let alias = if len(e) > 3 then nth(e, 3) else 0 in
     if alias != 0 then
       if alias == "" then 0
-      else box_set(session_box,
-             [sess_imap(0), cons([intern(alias), intern(pkg)], sess_malias(0)),
-              sess_prefix(0)])
+      else box_set(malias_box, cons([intern(alias), intern(pkg)], box_get(malias_box)))
     else if pairs == 0 then 0
     else imap_add_pairs(pkg, pairs, 0)
 
@@ -126,9 +122,8 @@ let imap_load_merge(ast, i) =
     let _ = imap_load_one(nth(ast, i)) in
     imap_load_merge(ast, i + 1)
 
-let pkg_prefix_set(p) =
-  box_set(session_box, [sess_imap(0), sess_malias(0), p])
-let pkg_prefix_get(_) = sess_prefix(0)
+let pkg_prefix_set(p) = box_set(pkg_prefix_box, p)
+let pkg_prefix_get(_) = box_get(pkg_prefix_box)
 
 let fv_skip_go(xs, name, i, n, acc) =
   if i >= n then acc
@@ -319,7 +314,7 @@ let sigma_ncap(fs, name) =
  * the fcall through the host slot (name stays bare, no local proc exists).
  * The procs list is untouched, so nothing host-related reaches emit ids. */
 let sigma_host_seed(fs) =
-  let xs = sess_imap(0) in
+  let xs = box_get(imap_box) in
   let m0 = sigma_map(fs) in
   let put(i, m) =
     if i >= len(xs) then [sigma_list(fs), m, nth(fs, 2)]
@@ -486,11 +481,11 @@ let name_has_slash(s, i) =
 let resolve_call(nm) =
   if is_prim_name(nm) then nm
   else
-    let m = imap_find(sess_imap(0), nm, 0) in
+    let m = imap_find(box_get(imap_box), nm, 0) in
     if m != 0 then m
     else if name_has_slash(nm, 0) then nm
     else
-      let p = sess_prefix(0) in
+      let p = box_get(pkg_prefix_box) in
       if p == "" then nm
       else if pkg_is_rt(p) then nm
       else pkg_qn(p, nm)
