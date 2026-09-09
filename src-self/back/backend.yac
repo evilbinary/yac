@@ -8,7 +8,7 @@ import back.pack.target {target_arch, target_emachine, target_format, target_sha
 import back.pack.pe {pack_pe_target, pe_finish_dll, pe_finish_imports}
 import back.pack.pack {pack_image}
 import lib.map
-import back.emit.emit {cimport_got, cimport_n, cimport_names, emit_abi_win, emit_jsess, emit_jsess_set, extsym_add, extsym_bind_add, host_names, yjit_layout_get, yjit_layout_set}
+import back.emit.emit {cimport_buf, cimport_got, cimport_n, cimport_names, cimport_set, emit_abi_win, emit_jsess, emit_jsess_set, extsym_add, extsym_bind_add, extsym_bind_list, extsym_bind_set, extsym_names, extsym_names_set, host_names, yjit_layout_get, yjit_layout_set}
 import front.lir {env_new, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, pkg_prefix_get, pkg_prefix_set, pkg_qn, session_get, session_set, sigma_host_seed, sigma_list, sigma_of_rt, start_proc, tco_prog, ub_prog}
 import front.lexer {tok_ident_line, tokenize}
 import front.parser {parse_program, prog_has_err, report_syntax}
@@ -869,12 +869,13 @@ let dump_uncps(src, do_opt) =
  * state (host leaves, REPL rows) create their own env.
  * Fields: 0 emit_jsess, 1 lir session env, 2 link_need, 3 link_local,
  * 4 yjit_layout, 5 pkg_fail, 6 link_pkg, 7 link_global, 8 extbind,
- * 9 pkg_extra. */
+ * 9 pkg_extra, 10 extsym_names, 11 extsym_bind, 12 cimport. */
 let compile_env_new(_) =
   [emit_jsess(0), session_get(0), box_get(link_need_box),
    box_get(link_local_box), yjit_layout_get(0), pkg_fail(0),
    box_get(link_pkg_box), box_get(link_global_box), box_get(extbind_box),
-   box_get(pkg_extra_box)]
+   box_get(pkg_extra_box), extsym_names(0), extsym_bind_list(0),
+   cimport_buf(0)]
 
 let compile_env_leave(env) =
   let _ = session_set(nth(env, 1)) in
@@ -889,6 +890,9 @@ let compile_env_leave(env) =
   let _ = box_set(link_global_box, nth(env, 7)) in
   let _ = box_set(extbind_box, nth(env, 8)) in
   let _ = box_set(pkg_extra_box, nth(env, 9)) in
+  let _ = extsym_names_set(nth(env, 10)) in
+  let _ = extsym_bind_set(nth(env, 11)) in
+  let _ = cimport_set(nth(env, 12)) in
   let _ = emit_jsess_set(nth(env, 0)) in
   0
 
