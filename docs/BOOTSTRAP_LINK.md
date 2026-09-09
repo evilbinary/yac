@@ -1015,19 +1015,22 @@ source-embed 进 guest（REPL 实测 ~37s）。`pkg/compiler.yac` 只是对 10 �
 > 或临时禁止 host 后端分配后观察）。
 
 **批次**（每批独立提交）：
-1. **B1 ctx 实体 + 入口会话化**：`backend` 新 `compile_ctx(src, t, ctx)`；
-   `compile_native` = `compile_ctx(src, t, new_ctx())`；host 调用方（REPL host
-   leaf 的入口封装）每次 new 一个 ctx，退出即弃。B1 实现上仍以"进入时把
-   进程全局绑定切到 ctx 值、退出切回"垫底（保证自举不中断），**验收**：REPL
-   `import compiler` 后 `compile("1+2")` / 语法错 / `load` 均不崩、后续行可用；
-   link 12/12、repl 26/26。此步同时把 §12.12 缺陷 B 的遗漏全局（funsym/
-   dynexp/extsym/link_*）纳入 ctx 切换清单——先实测定位哪些必须切。
-2. **B2 lir 词法环境参数化**：`front.lir` 的 imap/malias/pkg_prefix 从全局读
-   改为显式参数（`resolve_call`/`imap_load` 族/ub/free_vars/lir_all st 携带
-   ctx）；backend/jit 调用点传 ctx。**验收**：自举 + 全套件无回归 + REPL
-   host compile 仍不崩（此时嵌套编译已不依赖进程全局切回）。
-3. **B3 emit/pack 会话化**：funsym/dynexp/extsym/emit_jsess/yjit_layout 经 ctx
-   贯穿（emit/pack 调用链签名扩展）。**验收**：同上 + 并行两路编译（同一进程
-   两 ctx 交错）正确。
-4. **B4 收尾**：删/闲置被取代的进程级环境全局；冻结 `compile_ctx` 接口文档；
-   新增嵌套编译回归用例（REPL host `compile`/`load` 调用并入 repl/link 套件）。
+1. **[x] B1 ctx 实体 + 入口会话化**（`2b82201`/`de2ba39`）：`compile_env_new/
+   of/leave`，env = 会话全局快照（独立编译三出口统一还原，含 pkg_fail 判定
+   顺序修正——先读失败值再还原）。验收 link 12/12、repl 26/26。
+2. **[x] B2（实现为 B2-B 单盒化，`d5c8c42`）**：原计划"imap/malias/pkg_prefix
+   显式参数贯穿"评估后改道——`resolve_call` 热路径被 free_vars/calli 等不带
+   st 的函数调用，贯穿需 30–60 处签名改动且 yac 无并发场景；改为把三盒合并
+   为**一个 session env 值**（`session_get/set`，内容 `[imap, malias, prefix]`），
+   `compile_env` 对其整份原子切换。达成"每个独立编译一份词法环境"语义，
+   显式参数化（B2-A）留待出现真实多会话并发消费者再做。
+3. **[x] B3（`049df68`，范围收窄为累积型）**：盘点后只有 **extsym 注册表
+   （names + loader bind side-car）与 cimport 注册表**是跨会话累积型全局
+   （funsym/dynexp/pic/shared/int/init_off 都是各自消费者每次覆盖，无需
+   快照）。新增 `extsym_names_set/extsym_bind_set/cimport_set`，纳入
+   compile env 字段 10–12，独立编译退出即还原（dylib 绑定编译不留注册表
+   残留）。验收 link 12/12（含 dylib 用例）、repl 26/26。
+4. **B4（待做）**：接口冻结 + 嵌套编译回归用例。注意：REPL host 调用崩
+   （§12.11 遗留 1）已证实与这些环境全局**无关**（内存损坏层，禁自动 GC
+   后仍崩、触发随布局漂移），env 化不解决——该崩的取证/修复仍是独立专项，
+   在其落地前 repl 套件不把 host 编译函数调用纳入断言。
