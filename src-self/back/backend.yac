@@ -870,11 +870,16 @@ let dump_uncps(src, do_opt) =
  * compile rewrites, applied on entry and restored on every exit (incl. the
  * syntax / unbound early returns). Later batches (B2/B3) thread these fields
  * explicitly instead of through the process-global boxes; callers that must
- * not share state (host leaves, REPL rows) create their own env. */
+ * not share state (host leaves, REPL rows) create their own env.
+ * Fields: 0 emit_jsess, 1 imap, 2 malias, 3 pkg_prefix, 4 link_need,
+ * 5 link_local, 6 yjit_layout, 7 pkg_fail, 8 link_pkg, 9 link_global,
+ * 10 extbind, 11 pkg_extra. emit/pack-side globals (funsym, dynexp,
+ * extsym, ...) are B3, not here. */
 let compile_env_new(_) =
   [emit_jsess(0), box_get(imap_box), box_get(malias_box),
    pkg_prefix_get(0), box_get(link_need_box), box_get(link_local_box),
-   yjit_layout_get(0)]
+   yjit_layout_get(0), pkg_fail(0), box_get(link_pkg_box),
+   box_get(link_global_box), box_get(extbind_box), box_get(pkg_extra_box)]
 
 let compile_env_leave(env) =
   let _ = box_set(imap_box, nth(env, 1)) in
@@ -886,6 +891,11 @@ let compile_env_leave(env) =
     if nth(env, 6) == 0 then 0
     else yjit_layout_set(nth(nth(env, 6), 0), nth(nth(env, 6), 1),
                          nth(nth(env, 6), 2), nth(nth(env, 6), 3)) in
+  let _ = pkg_fail_set(nth(env, 7)) in
+  let _ = box_set(link_pkg_box, nth(env, 8)) in
+  let _ = box_set(link_global_box, nth(env, 9)) in
+  let _ = box_set(extbind_box, nth(env, 10)) in
+  let _ = box_set(pkg_extra_box, nth(env, 11)) in
   let _ = emit_jsess_set(nth(env, 0)) in
   0
 
@@ -903,8 +913,10 @@ let compile_env_of(env, src, t) =
     /* ast0 is already the parsed program (syntax + unbound checks above);
      * rerunning lex+parse on src would duplicate ~6s of a ~38s self-compile. */
     let bin = run_passes(drop(make_pipeline(t), 2), ast0) in
+    /* read pkg_fail BEFORE leave restores the caller's value */
+    let failed = pkg_fail(0) in
     let _ = compile_env_leave(env) in
-    if pkg_fail(0) != 0 then 0 else bin
+    if failed != 0 then 0 else bin
 
 let compile_native(src, t) = compile_env_of(compile_env_new(0), src, t)
 
