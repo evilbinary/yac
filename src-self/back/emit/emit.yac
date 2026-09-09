@@ -637,7 +637,9 @@ let cimport_jit_fill(i, n, xs, b, got) =
     let nm = nth(xs, i) in
     let wid = cimport_win_index(nm) in
     let p =
-      if emit_host_win(0) and wid >= 0 then
+      /* No emit_host_win gate: the leaf reads the host G+216 slot and
+       * returns 0 on a non-win host, falling back to dlsym by itself. */
+      if wid >= 0 then
         let h = yac_cimport_host_sym(wid) in
         if h == 0 then ccall("dlsym", 0, nm) else h
       else ccall("dlsym", 0, nm) in

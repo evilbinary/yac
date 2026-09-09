@@ -1065,6 +1065,15 @@ source-embed 进 guest（REPL 实测 ~37s）。`pkg/compiler.yac` 只是对 10 �
 > ① 确定 0x84a2a2 所属对象文件（对 C 段做符号对齐/objdump 全量符号表）；
 > ② 在 C 层把该 lazy 解析改为启动期预热（栈干净时先解析），或在链接时
 > 换成静态 import。这与 yac 编译器无关，是宿主 C 运行时层面的兼容性问题。
+>
+> **2026-09 探针补记（修正调用点归属）**：给 fill 的 leaf 分支加 print 探针
+> 后，`compile("1+2")` 行内**没有任何 DBG 输出即崩**——说明
+> `cimport_jit_fill` 尚未执行，`dlsym("VirtualAlloc")`（gdb 实证调用者
+> `0x621b00`，yac 编译的 ccall 代码：tag untag/shl 特征 + call dlsym stub）
+> 来自 **compile pipeline 内的另一处 ccall**，非 fill。该调用者的 yac 函数
+> 身份未定位（反汇编其函数起点 + 与 funOffsRev/funsym 对齐是下一步）；
+> host-GOT 直读基建保留（对 cimport fill 路径有效），崩溃修复仍待定位
+> pipeline 中这个 ccall 调用者。
 
 **批次**（每批独立提交）：
 1. **[x] B1 ctx 实体 + 入口会话化**（`2b82201`/`de2ba39`）：`compile_env_new/
