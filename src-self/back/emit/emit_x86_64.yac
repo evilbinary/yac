@@ -2115,7 +2115,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
       let rec_fe(i) =
         if i >= extsym_n(0) then 0
         else
-          let _ = apply_u64(b, data_start + 376 + bshl(i, 3),
+          let _ = apply_u64(b, data_start + 440 + bshl(i, 3),
                             LOAD_VADDR + TEXT_OFF + stub) in
           rec_fe(i + 1) in
       rec_fe(0) in

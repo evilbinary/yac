@@ -2118,9 +2118,10 @@ let rt_host_sym_ins(_) =
    ["ret", 4]]
 
 /* Host cimport address table direct read (12.13 B3+ crash fix):
- * G+216..G+376 holds 20 absolute runtime addresses (win_need order) of the
- * fixed kernel32 APIs, baked by emit_program_* at build time from this
- * image's own IAT/GOT. Returns the address for cimport id (win_need index).
+ * G+216..G+432 holds absolute runtime addresses (win_need order) of this
+ * image's own IAT/GOT slots for the fixed APIs, baked by emit_program_* at
+ * build time; the loader has resolved them by the time a REPL session runs.
+ * Double dereference: table -> slot address -> resolved API address.
  * Only meaningful when executed in the image that baked the table (the
  * host, from cimport_jit_fill on the host side). arg1 = win_need index. */
 let rt_cimport_host_sym_ins(_) =
@@ -2134,6 +2135,7 @@ let rt_cimport_host_sym_ins(_) =
    ["$gbase", 1],
    ["$add", 3, 3, 1],
    ["$ld64", 5, 3, 0],
+   ["$ld64", 5, 5, 0],
    ["$add", 5, 5, 5],
    ["ret", 5]]
 

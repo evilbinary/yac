@@ -312,11 +312,11 @@ let extsym_names_set(xs) = box_set(extsym_box, xs)
 let extsym_bind_set(xs) = box_set(extsym_bind_box, xs)
 
 /* 112 GC + 8 jit_map (G+112) + 8 prof cell (G+120) + 8 prof busy (G+128)
- * + 10x8 host-table slots (G+136..G+216) + 20x8 host cimport address table
- * (G+216..G+376, win_need order, baked by emit_program_* at build time)
- * + extern slots (G+376+8*i). glob 3/4 must not sit on G+48/56/64. */
+ * + 10x8 host-table slots (G+136..G+216) + 28x8 host cimport address table
+ * (G+216..G+440, win_need order = 21 k32 + 7 crt, baked by emit_program_*)
+ * + extern slots (G+440+8*i). glob 3/4 must not sit on G+48/56/64. */
 let emit_glob_data(b) =
-  let lim = 376 + bshl(extsym_n(0), 3) in
+  let lim = 440 + bshl(extsym_n(0), 3) in
   let fill(i) =
     if i >= lim then 0
     else let _ = bytes_append(b, 0) in fill(i + 1) in
@@ -623,7 +623,9 @@ let cimport_win_need(_) =
    "GetComputerNameA", "GetModuleHandleA", "GetProcAddress",
    "CreateProcessA", "WaitForSingleObject", "GetExitCodeProcess",
    "LoadLibraryA", "GetSystemTimeAsFileTime",
-   "QueryPerformanceFrequency", "QueryPerformanceCounter"]
+   "QueryPerformanceFrequency", "QueryPerformanceCounter",
+   "putchar", "fflush", "getenv", "strncpy", "strlen", "strtod",
+   "sprintf"]
 
 /* JIT: no ld.so. Windows: for any fixed win_need API read the HOST image's
  * own GOT slot (wid = index inside win_need) — the host GOT was filled by
@@ -849,11 +851,11 @@ let emit_resolve_patch(st, p) =
   else if tag == 20 then
     apply_patch(b, nth(p, 1), box_get(pe_unimp_off_box))
   else if tag == 21 then
-    /* host leaves: G+136+8*id (id<10); extsym id=10+i: G+376+8*i
-     * (G+216..G+376 is the host cimport address table, 12.13 B3+). */
+    /* host leaves: G+136+8*id (id<10); extsym id=10+i: G+440+8*i
+     * (G+216..G+440 is the host cimport address table, 12.13 B3+). */
     apply_u64_rel(b, nth(p, 1),
       if nth(p, 2) < 10 then globbase + 136 + bshl(nth(p, 2), 3)
-      else globbase + 376 + bshl(nth(p, 2) - 10, 3))
+      else globbase + 440 + bshl(nth(p, 2) - 10, 3))
   else
     0
 
