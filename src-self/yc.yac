@@ -1,5 +1,5 @@
 import rt.os {host_arch, host_format}
-import back.backend {compile_native, dump_anf, dump_ast, dump_cps, dump_uncps, eval_cps_src, pkg_set, link_set}
+import back.backend {compile_native, dump_anf, dump_ast, dump_cps, dump_lir, dump_lex, dump_uncps, eval_cps_src, pkg_set, link_set}
 import back.jit {compile_jit, compile_uncps, jit_dump_live, jit_load_yjit}
 import back.pack.elf {elf_int_set, syms_enable}
 import back.pack.target {mk_jit_target, mk_target, parse_arch_name, parse_format_name, target_shared}
@@ -13,7 +13,9 @@ let usage(_) =
   let _ = print("usage: yc [options] file.yac...") in
   let _ = print("options:") in
   let _ = print("  --cps            compile to machine code and run (in-process)") in
+  let _ = print("  --dump-lex       print the token stream and exit") in
   let _ = print("  --dump-anf       print the ANF and exit") in
+  let _ = print("  --dump-lir       print the LIR insn list per top-level item and exit") in
   let _ = print("  --dump-cps       print ANF->CPS and exit") in
   let _ = print("  --eval-cps       evaluate CPS with the native trampoline") in
   let _ = print("  --both           ANF->CPS->ANF, then compile and run") in
@@ -170,7 +172,9 @@ let parse_args(i, argc, out, pos, spec) =
       if i + 1 >= argc then [out, pos, 2, spec]
       else parse_args(i + 2, argc, out, pos, spec)
     else if a == "--cps" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "cps"))
+    else if a == "--dump-lex" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "dump-lex"))
     else if a == "--dump-anf" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "dump-anf"))
+    else if a == "--dump-lir" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "dump-lir"))
     else if a == "--dump-cps" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "dump-cps"))
     else if a == "--eval-cps" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "eval-cps"))
     else if a == "--both" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "both"))
@@ -315,7 +319,9 @@ let run_cli(pr) =
           if bad_scm then
             let _ = print(src) in 1
           else if fl(spec, "ast") then dump_ast(src)
+          else if fl(spec, "dump-lex") then dump_lex(src)
           else if fl(spec, "dump-anf") then dump_anf(src)
+          else if fl(spec, "dump-lir") then dump_lir(src)
           else if fl(spec, "dump-cps") then dump_cps(src, fl(spec, "opt"))
           else if fl(spec, "eval-cps") then eval_cps_src(src, fl(spec, "opt"))
           else if fl(spec, "dump-uncps") then dump_uncps(src, fl(spec, "opt"))

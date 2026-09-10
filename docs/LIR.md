@@ -652,16 +652,19 @@ emit_callee_ref(name) -> 寄存器        ; 内部调 fn_entry
 
 ## 9. 缺陷清单
 
-### 9.1 三处静默兜底（必须改成报错）
+### 9.1 ~~三处静默兜底~~ → 已改成报错（本轮）
 
-| 位置 | 现状 | 后果 |
+| 位置 | 原状 | 现在 |
 |---|---|---|
-| `lir_atom` 的 `else` | 返回槽 `0` | 未知 atom → 静默产出垃圾值 |
-| `lir_expr_i` 的 `else` | `pack_i(st, i + 1)`，跳过 | 未知 bind → 静默漏掉一段计算。**ANF 已预留 `letrec`，更必须报错** |
-| `emit_insn_go` 的 `else st` | 什么都不做 | 未知指令 → 静默忽略 |
+| `lir_atom` 的 `else` | 返回槽 `0` | `log_fatal("LIR: unknown ANF atom …")` |
+| `lir_expr_i` 的 `else` | `pack_i(st, i + 1)`，静默跳过 | `log_fatal("LIR: unknown ANF bind …")` |
+| `emit_insn_go` 的 `else` | `st`，静默忽略 | `log_fatal("emit: unknown LIR insn …")` |
 
-三者合起来：**任何"用了但没实现"的形式都会静默产出错误代码而不是报错** ——
-这也是下面那些漂移长期没被发现的原因。
+`log_fatal`（`lib/log.yac`）= `print("error: " + msg)` + `exit(2)` ——
+**IR 构建与 emit 分派都没有返回值通道**，所以只能打印并停下。退出码约定：
+**1 = 用户错误**（语法 / unbound），**2 = 编译器内部不变量违反**。
+
+> ⚠️ 只改了 `emit_x86_64`。`emit_arm64` / `emit_riscv64` 各有自己的 `else st`，待同改。
 
 ### 9.2 `lir_clos_atom` 的 0 捕获
 
@@ -682,26 +685,35 @@ emit_callee_ref(name) -> 寄存器        ; 内部调 fn_entry
 
 **改法**：静态名集合作为**参数**传入 `lir_all`，LIR 内部不认识"顶层"。
 
-### 9.4 `--dump-lir` 不忠实
+### 9.4 ~~`--dump-lir` 不忠实~~ → 已修（本轮）
 
-`dump_lir`（`backend.yac:857`）+ `lir_dump_items`（`:845`）与真实路径 `pass_lir`（`:767`）
-有**四处语义差异**：
+原 `dump_lir` 与真实路径 `pass_lir` 有**四处语义差异**：
 
 | 缺什么 | 后果 |
 |---|---|
 | `topfn_scan(anf, 0)` | `topfn_has` 恒 false → **顶层函数不 flat** |
 | 跨 item 累积 `st` | Σ 不累积 → 引用前一个 item 定义的函数落到 **`xcall`** |
 | `sigma_of_rt(rt0)` | Σ 里没有 runtime proc → runtime 名解析不到 |
-| `start_proc` + `tco_prog` | 看不到 `gset` 发布序列，**完全看不到 `tcall` / `$tco`** |
+| `start_proc` + `tco_prog` | 看不到顶层发布序列，**看不到 `tcall` / `$tco`** |
 
-实测证据（`yc_l1 --dump-lir`，输入 `let f(n) = if n<=0 then 0 else n+f(n-1)` + `f(10)`）：
+**前三处已修**：`dump_lir` 现在走 `pass_lir` 的同一套设置。修前 / 修后
+（输入 `let f(n) = if n <= 0 then 0 else n + f(n-1)` + `print f(10)`）：
 
 ```
-[[closure, 1, f, []]]                        ← f 本应 flat（ncap=0），却发了 closure 分配
-[[mov_imm, 1, 20], [xcall, 2, 3, f, [1]]]    ← 同单元调用落到了 xcall
+修前  [[closure, 1, f, []]]                        ← f 本应 flat（ncap=0），却发了 closure
+      [[mov_imm, 1, 20], [xcall, 2, 3, f, [1]]]    ← 同单元调用落到了 xcall
+修后  [[mov_imm, 2, 0]]
+      [[mov_imm, 2, 0], [mov_imm, 3, 20], [fcall, 4, f, [3]],
+       [mov_imm, 5, 2], [fcall, 6, print, [4, 5]]]  ← 无 closure、无 xcall
 ```
 
-**修法**：`dump_lir` 直接复用 `pass_lir`。
+`tests/compiler/lir/` 的 9 个 golden **全部不变** —— 说明旧 dump 只在这类
+"顶层函数 + 跨 item 引用"的程序上撒谎。
+
+> **第四处仍是缺口。** `dump_lir` 打印**逐 item** 的 LIR，不打印合成出来的 `_start`，
+> 所以看不到顶层发布序列与 `tcall` / `$tco`。**不能**简单地改成打印 `pass_lir` 的完整
+> 输出 —— 那含**全部 runtime proc**，会淹掉 golden。修法：加一个 `--dump-lir-start`
+> （只打 `_start`）更合适。
 
 ### 9.5 死代码：幽灵 6 条 + 死 handler 33 条
 
@@ -747,13 +759,17 @@ emit_callee_ref(name) -> 寄存器        ; 内部调 fn_entry
 | 步 | 内容 | 为什么 |
 |---|---|---|
 | **1** | **决策 §4.10**（内联原语 vs `call yac_*`） | 决定指令集大小，后面全依赖 |
-| **2** | 修 `--dump-lir`（§9.4） | 后面每一步的验收都要它 |
-| **3** | 三处静默兜底改报错（§9.1）+ `--verify-lir`（§8） | 让不符合规范的东西**立刻暴露** |
+| **2** | ~~修 `--dump-lir`（§9.4）~~ ✅ **本轮完成** | 后面每一步的验收都要它 |
+| **3** | 三处静默兜底改报错（§9.1）✅ **完成** · `--verify-lir`（§8）**待做** | 让不符合规范的东西**立刻暴露** |
 | **4** | 定死 `$` 家族契约（§9.6） + 清死 handler（§9.5） | 规范立起来后清死代码才有依据 |
 | **5** | `fvs` 落进 `proc` 头（§2 / §5.5 S2）+ 删 `maybe_tcall`（§5.5 S1） | 小改动，解锁"读 fv 表"的验证 |
 | **6** | 指令集收敛（§5 全部） | 纯重构 |
 | **7** | `topfn_has` 出 LIR（S3）+ `fn_entry`（§7.6） | 消除概念泄漏与重复 |
 | **8** | 性能（§11） | 独立，可并行 |
+
+> **本轮的验证方式**：用 9-07 的 `y.exe` 重建 `build/test_tmp/yc_l1.exe`（约 20s），
+> 跑 `fact` / 闭包 / `l4_42` 三个基准 + `tests/compiler/cases/` 全部编译 +
+> `tests/compiler/lir/` 的 9 个 golden。**自举链（第 0 步）按计划放在后面**。
 
 **关键约束**：2 → 3 → 4 必须在 5 / 6 之前。5、6 都是"改 IR 形状"的事，而现在的
 `--dump-lir` 报的是假象、三处静默兜底会掩盖错误。**先有可信的观测和严格的报错，再改 IR。**
