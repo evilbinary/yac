@@ -1,1 +1,1 @@
-[[if, [var, a], [call, [cont, #k0, [let, t0, [var, #k0], [halt, [var, t0]]]], [[int, 1]]], [call, [cont, #k0, [let, t0, [var, #k0], [halt, [var, t0]]]], [[int, 2]]]]]
+[[let, a, [bool, true], [if, [var, a], [call, [cont, #k0, [let, t0, [var, #k0], [halt, [var, t0]]]], [[int, 1]]], [call, [cont, #k0, [let, t0, [var, #k0], [halt, [var, t0]]]], [[int, 2]]]]]]
