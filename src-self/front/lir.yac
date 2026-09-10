@@ -1016,9 +1016,14 @@ let lir_let(b, s) =
    * read it with `gval` and capture nothing. */
   let i1 =
     if sigma_kind(nth(s, 3), nm) == 2 then
+      /* The cell is keyed by the name a READER will use, i.e. the same
+       * resolve_call(nm) `lir_var` resolves a `gval` with. In a package file
+       * that is the package-qualified name: emitting the bare ANF name here
+       * would fill one cell while every read looked at another (still zero). */
+      let rn = resolve_call(nm) in
       let li = lit_imm(nth(b, 2)) in
-      if li >= 0 then insn_push(i0, ["gset", nm, 0, ["imm", li]])
-      else insn_push(i0, ["gset", nm, 0, nth(r, 1)])
+      if li >= 0 then insn_push(i0, ["gset", rn, 0, ["imm", li]])
+      else insn_push(i0, ["gset", rn, 0, nth(r, 1)])
     else i0 in
   [i1, env_bind(nth(r, 2), nm, nth(r, 1), 0), nth(r, 3),
    nth(r, 4), nth(r, 5), nth(s, 5)]
