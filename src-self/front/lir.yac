@@ -14,7 +14,7 @@
  */
 
 package front.lir
-export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, sigma_new, st_no, ub_prog, topfn_reset, topfn_add, topfn_has, topfn_scan, topfn_names
+export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, sigma_new, sigma_tlfns, sigma_kind, toplevel_seed, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, st_no, ub_prog
 import lib.map
 import lib.log {log_fatal}
 
@@ -262,11 +262,27 @@ let fv_acc_add(a, k) = fv_acc_add_h(a, k, hash_str(k))
 let sigma_new(nrt) =
   let m = fmap_new(0) in
   let _ = fmap_init_n(m, 2048) in
-  [[], m, nrt]
+  let tm = fmap_new(0) in
+  let _ = fmap_init_n(tm, 4096) in
+  [[], m, nrt, [list_new(), tm]]
 
 let sigma_list(fs) = nth(fs, 0)
 let sigma_map(fs) = nth(fs, 1)
 let fun_src(f) = if len(f) > 5 then nth(f, 5) else nth(f, 1)
+
+/* Field 3 carries this compile unit's TOP-LEVEL names as [fn_list, map].
+ * It lives inside Σ -- which is already threaded as a parameter -- instead of
+ * a global box, so no pass has to remember to `reset` it (a forgotten reset
+ * used to silently pollute the set; see toplevel_seed / FLAT_ABI.md 1).
+ * Kinds: 1 = top-level letfun, 2 = top-level `let` value. */
+let sigma_tlfns(fs) = nth(nth(fs, 3), 0)
+let sigma_tlk(fs) = nth(nth(fs, 3), 1)
+
+let sigma_kind_h(fs, name, h) =
+  if len(fs) < 4 then 0
+  else fmap_get_h(sigma_tlk(fs), name, h)
+
+let sigma_kind(fs, name) = sigma_kind_h(fs, name, hash_str(name))
 
 let sigma_cons(fs, f) =
   let m = sigma_map(fs) in
@@ -278,7 +294,7 @@ let sigma_cons(fs, f) =
   let ent = [nth(f, 1), nth(f, 3), idx] in
   let _ = fmap_put(m, g, ent) in
   let _ = if src == g then 0 else fmap_put(m, src, ent) in
-  [cons(f, sigma_list(fs)), m, nth(fs, 2)]
+  [cons(f, sigma_list(fs)), m, nth(fs, 2), nth(fs, 3)]
 
 /* Load linked stdlib procs into Σ (kernel+num, plus os/ffi if imported).
  * Unexported lets (os_has) are not in ub_prog scope. */
@@ -318,7 +334,7 @@ let sigma_host_seed(fs) =
   let xs = box_get(imap_box) in
   let m0 = sigma_map(fs) in
   let put(i, m) =
-    if i >= len(xs) then [sigma_list(fs), m, nth(fs, 2)]
+    if i >= len(xs) then [sigma_list(fs), m, nth(fs, 2), nth(fs, 3)]
     else
       let v = nth(nth(xs, i), 1) in
       let m2 =
@@ -328,6 +344,43 @@ let sigma_host_seed(fs) =
         else m in
       put(i + 1, m2) in
   put(0, m0)
+
+/* Register this compile unit's TOP-LEVEL names into Σ's field 3 (kinds:
+ * 1 = letfun, 2 = `let` value).
+ *
+ * The set comes straight from the ANF structure (FLAT_ABI.md 1): each
+ * top-level item is one ANF body, so `nth(nth(items, i), 0)` is that item's
+ * DIRECT bind list -- we never descend into nested bodies and never guess
+ * from the name's shape. A top-level `let x = 5` and a compiler temp `t0`
+ * are indistinguishable in ANF and do not need to be told apart.
+ *
+ * Only `letfun` / `let` are registered. The other bind kinds bind compiler
+ * temporaries, and the ANF aliases (["let","y",["var","t0"]]) guarantee a
+ * temp never reaches a `fvs`, so they need no entry.
+ *
+ * PURE: returns Σ with the map and fn-list filled. There is no global box
+ * and nothing to `reset` -- the caller just hands the result to lir_all. */
+let toplevel_seed(items, i, fs) =
+  if i >= len(items) then fs
+  else
+    let binds = nth(nth(items, i), 0) in
+    let tm = sigma_tlk(fs) in
+    let fl = sigma_tlfns(fs) in
+    let put(j) =
+      if j >= len(binds) then 0
+      else
+        let b = nth(binds, j) in
+        let k = nth(b, 0) in
+        let nm = nth(b, 1) in
+        let _ =
+          if k == "letfun" then
+            let _ = fmap_put(tm, nm, 1) in
+            list_push(fl, nm)
+          else if k == "let" then fmap_put(tm, nm, 2)
+          else 0 in
+        put(j + 1) in
+    let _ = put(0) in
+    toplevel_seed(items, i + 1, fs)
 
 let str_to_int(s) =
   let n = str_len(s) in
@@ -611,56 +664,6 @@ let ub_prog(p, i, sc) =
  * lets of the current compile unit. Flat functions compile with no captured
  * environment (ncap=0); free refs to them skip the caps chain (fcall rel32
  * inside the image, xcall via the entry table across images). */
-let topfns_box =
-  let b = box_new() in
-  let m = fmap_new(0) in
-  let _ = fmap_init_n(m, 4096) in
-  let _ = box_set(b, m) in
-  b
-
-let topfn_names_box =
-  let b = box_new() in
-  let _ = box_set(b, list_new()) in
-  b
-
-let topfn_reset() =
-  let m = nth(box_get(topfns_box), 0) in
-  let _ = fmap_init_n(m, 4096) in
-  let _ = box_set(topfns_box, m) in
-  box_set(topfn_names_box, list_new())
-
-let topfn_add(nm) =
-  let m = box_get(topfns_box) in
-  let _ = fmap_put(m, intern(nm), 1) in
-  let _ = list_push(box_get(topfn_names_box), nm) in
-  0
-
-let topfn_names() = box_get(topfn_names_box)
-
-let topfn_has(nm) =
-  let m = box_get(topfns_box) in
-  fmap_get(m, intern(nm)) != 0
-
-/* Register this compile unit's top-level FUNCTIONS. Only a top-level
- * letfun is flat (no capture env; its value is the code entry). Every
- * other bind is an ordinary value reached through the normal caps
- * chain, so this scan never needs to tell a source-level `let x`
- * apart from a compiler temp (t0/_): it only looks at `letfun`.
- * Used by the AOT pass (backend.pass_lir) and the blob pass
- * (jit.pass_lir_eval). */
-let topfn_scan(items, i) =
-  if i >= len(items) then 0
-  else
-    let binds = nth(nth(items, i), 0) in
-    let go(j) =
-      if j >= len(binds) then 0
-      else
-        let b = nth(binds, j) in
-        let _ = if nth(b, 0) == "letfun" then topfn_add(nth(b, 1)) else 0 in
-        go(j + 1) in
-    let _ = go(0) in
-    topfn_scan(items, i + 1)
-
 let free_vars(fnbody, params, funs) =
   let fv(anf, acc, shdw) =
     let atom_vars(atom, a, sh) =
@@ -671,14 +674,14 @@ let free_vars(fnbody, params, funs) =
         let ch = fmap_get_h(nth(sh, 0), nm, h) in
         let g = resolve_call(nm) in
         if ch == 0 then
-          if topfn_has(nm) or topfn_has(g) then a
+          if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hash_str(g)) != 0 then a
           else
             let se = sigma_ent_h(funs, g, hash_str(g)) in
             if se == 0 then fv_acc_add_h(a, nm, h)
             else if nth(se, 1) == 0 then a
             else fv_acc_add_h(a, nm, h)
         else if sh_has_chain(ch, nth(sh, 1)) then a
-        else if topfn_has(nm) or topfn_has(g) then a
+        else if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hash_str(g)) != 0 then a
         else
           let se = sigma_ent_h(funs, g, hash_str(g)) in
           if se == 0 then fv_acc_add_h(a, nm, h)
@@ -761,14 +764,21 @@ let lir_var(atom, st) =
   else
     let g = resolve_call(nm) in
     let se = sigma_ent_h(nth(st, 3), g, hash_str(g)) in
-    if se != 0 then
-      if topfn_has(nm) or topfn_has(g) then
-        /* Flat function value (12.14): the entry address itself. In-image
-         * compile bakes the entry; a blob gets a patch slot the jit layer
-         * fills from the host's entry table. */
-        let i1 = insn_push(nth(st, 0), ["gvar", nth(st, 2), g]) in
-        [i1, nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
-      else lir_clos_atom(st, nth(se, 0))
+    let k1 = sigma_kind_h(nth(st, 3), nm, h) in
+    let kind = if k1 != 0 then k1 else sigma_kind_h(nth(st, 3), g, hash_str(g)) in
+    if kind == 2 then
+      /* Top-level value: load [cell + 0]. The cell is published by the
+       * `gvst` that lir_let emits for this name. Checked BEFORE the sigma
+       * lookup -- top-level values are not procs and are absent from Σ. */
+      let i1 = insn_push(nth(st, 0), ["gvld", nth(st, 2), g]) in
+      [i1, nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
+    else if kind == 1 then
+      /* Flat function value (12.14): the stub cell's address. In-image
+       * compile bakes the entry; a blob gets a patch slot the jit layer
+       * fills from the host's entry table. */
+      let i1 = insn_push(nth(st, 0), ["gvar", nth(st, 2), g]) in
+      [i1, nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
+    else if se != 0 then lir_clos_atom(st, nth(se, 0))
     else if is_prim_name(nm) then lir_clos_atom(st, "print")
     else
       /* Not in Γ or sigma: a first-class cross-image reference. Flat ABI
@@ -988,8 +998,17 @@ let st_no(st5) = st_self(st5, "F")
 let pack_i(st, i) = [st, i]
 
 let lir_let(b, s) =
+  let nm = nth(b, 1) in
   let r = lir_atom(nth(b, 2), s) in
-  [nth(r, 0), env_bind(nth(r, 2), nth(b, 1), nth(r, 1), 0), nth(r, 3),
+  let i0 = nth(r, 0) in
+  /* Publish a top-level value into its static cell (FLAT_ABI.md 2.2). This is
+   * what lets a nested function read it through `gvld` with zero captures --
+   * and it runs in source order inside _start, before any call. */
+  let i1 =
+    if sigma_kind(nth(s, 3), nm) == 2 then
+      insn_push(i0, ["gvst", nm, nth(r, 1)])
+    else i0 in
+  [i1, env_bind(nth(r, 2), nm, nth(r, 1), 0), nth(r, 3),
    nth(r, 4), nth(r, 5), nth(s, 5)]
 
 let lir_letbin(b, s) =
@@ -1150,7 +1169,11 @@ let lir_letfun_prep(b, s) =
   let st5 = [list_new(), p_env,
              if need_self then self_slot + 1 else ntot + 1,
              fs1, uid + 1] in
-  [body, st5, name, ncap, ntot, gname, fvs, need_self, self_slot]
+  /* Is this letfun one of the unit's top-level names? Answered by the set
+   * carried in Σ (toplevel_seed), never by name shape. Recorded as field 9
+   * so lir_letfun_finish reaches the SAME answer the reference sites use. */
+  let is_top = sigma_kind(nth(s, 3), name) == 1 in
+  [body, st5, name, ncap, ntot, gname, fvs, need_self, self_slot, is_top]
 
 let cap_list(n, j, acc) =
   if j >= n then acc
@@ -1236,10 +1259,11 @@ let lir_letfun_finish(s, p, br) =
   let f_insns2 = insn_push(f_insns1, ["label", "$tco"]) in
   let f_insns = prof_wrap_insns(nth(p, 2), f_insns2, nth(br, 0), nth(br, 1), nslots) in
   let f = ["proc", gname, ntot, ncap, f_insns, nth(p, 2)] in
-  /* Flat ABI: a top-level letfun is flat only when it captures nothing.
-   * If it reads a top-level value, it keeps a closure (caps chain) --
-   * the flat value registry (L2) is what would remove that exception. */
-  let flat = topfn_has(nth(p, 2)) and nth(p, 3) == 0 in
+  /* Flat ABI (FLAT_ABI.md 1): flat <=> captures nothing. Because free_vars no
+   * longer counts a top-level name (function or value) as a capture, a
+   * top-level letfun necessarily has ncap == 0 -- and the reference sites
+   * (lir_var) decide by the same set, so the two can no longer disagree. */
+  let flat = nth(p, 9) and nth(p, 3) == 0 in
   let finish_insns =
     if flat then nth(s, 0)
     else
@@ -1354,15 +1378,16 @@ let lir_all(i, items, st, n) =
     lir_all(i + 1, items,
       [nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5), nth(r, 0), nth(r, 1)], n)
 
-let start_proc(nslots, result_slot, body) =
+let start_proc(nslots, result_slot, body, fs) =
   /* Publish every top-level function's entry into the runtime registry
    * (G+448 list) before the package body runs: a REPL blob resolves its
    * cross-image refs against this list (jit.gref_fill). This must come
    * AFTER the entry prologue `["local", ...]`, which is where the ELF/PE
-   * entry stub reads argc/argv and installs rbp + the GC stack bound. */
+   * entry stub reads argc/argv and installs rbp + the GC stack bound.
+   * The names come from Σ's fn list (toplevel_seed), not a global box. */
   let pubs(i, acc) =
-    if i >= len(topfn_names()) then acc
-    else pubs(i + 1, insn_push(acc, ["gfnst", nth(topfn_names(), i)])) in
+    if i >= len(sigma_tlfns(fs)) then acc
+    else pubs(i + 1, insn_push(acc, ["gfnst", nth(sigma_tlfns(fs), i)])) in
   let head = pubs(0, insn_push(list_new(), ["local", nslots, 0])) in
   ["proc", "_start", 0, 0, insn_push(
       insn_push(

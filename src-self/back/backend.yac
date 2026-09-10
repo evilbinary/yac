@@ -9,7 +9,7 @@ import back.pack.pe {pack_pe_target, pe_finish_dll, pe_finish_imports}
 import back.pack.pack {pack_image}
 import lib.map
 import back.emit.emit {cimport_buf, cimport_got, cimport_n, cimport_names, cimport_set, emit_abi_win, emit_jsess, emit_jsess_set, extsym_add, extsym_bind_add, extsym_bind_list, extsym_bind_set, extsym_names, extsym_names_set, host_names, yjit_layout_get, yjit_layout_set}
-import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, lir_expr, malias_box, pkg_prefix_get, pkg_prefix_set, pkg_qn, sigma_host_seed, sigma_list, sigma_new, sigma_of_rt, start_proc, st_no, tco_prog, topfn_reset, topfn_scan, ub_prog}
+import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, lir_expr, malias_box, pkg_prefix_get, pkg_prefix_set, pkg_qn, sigma_host_seed, sigma_list, sigma_new, sigma_of_rt, start_proc, st_no, tco_prog, toplevel_seed, ub_prog}
 import front.lexer {tok_ident_line, tokenize}
 import front.parser {parse_program, prog_has_err, report_syntax}
 import front.anf {anf_all}
@@ -762,26 +762,27 @@ let rt_for_link(_) =
       else rec(i + 1, lir_extend(p, pkg_src(p), acc)) in
   runtime_add(rec(0, rt_base(0)))
 
-/* Flat ABI (12.14): register every top-level letfun name so lir compiles
- * them environment-free (ncap=0; sibling refs via rel32/entry table). */
+/* Flat ABI (12.14): seed Σ with this unit's top-level names so lir compiles
+ * them environment-free and resolves references to them without captures.
+ * The set travels INSIDE Σ (toplevel_seed) -- there is no global box, so
+ * there is nothing a caller could forget to reset. */
 let pass_lir(anf_list) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
-  let _ = topfn_reset() in
-  let _ = topfn_scan(anf_list, 0) in
+  let fs0 = toplevel_seed(anf_list, 0, sigma_of_rt(rt0)) in
   let st = lir_all(0, anf_list,
-             [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
+             [env_new(0), 1, fs0, 0, list_new(), 0],
              len(anf_list)) in
-  let entry = start_proc(nth(st, 1), nth(st, 5), nth(st, 4)) in
+  let entry = start_proc(nth(st, 1), nth(st, 5), nth(st, 4), nth(st, 2)) in
   tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
 
 /* In-process image: _eval + print, not OS _start. */
 let pass_lir_yjit(anf_list) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
-  let _ = topfn_scan(anf_list, 0) in
+  let fs0 = toplevel_seed(anf_list, 0, sigma_of_rt(rt0)) in
   let st = lir_all(0, anf_list,
-             [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
+             [env_new(0), 1, fs0, 0, list_new(), 0],
              len(anf_list)) in
   let nslots = nth(st, 1) in
   let pslot = nth(st, 5) in
@@ -852,8 +853,8 @@ let lir_dump_items(anf, i, n, st) =
       [nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5), nth(r, 0), nth(r, 1)])
 
 /* --dump-lir: per top-level ANF item, the LIR insn list (item-level view of
- * ANF -> LIR). Same setup as pass_lir — topfn scan, Σ seeded from the linked
- * runtime, st accumulated across items — so the dump is faithful (flatness
+ * ANF -> LIR). Same setup as pass_lir — top-level names seeded into Σ, st
+ * accumulated across items — so the dump is faithful (flatness
  * decisions and name resolution match the real pipeline).
  *
  * It does NOT print the whole prog: pass_lir's output carries every linked
@@ -869,10 +870,9 @@ let dump_lir(src) =
     let anf = pass_anf(ast) in
     let rt0 = rt_for_link(0) in
     let _ = pkg_prefix_set("") in
-    let _ = topfn_reset() in
-    let _ = topfn_scan(anf, 0) in
+    let fs0 = toplevel_seed(anf, 0, sigma_of_rt(rt0)) in
     lir_dump_items(anf, 0, len(anf),
-      [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0])
+      [env_new(0), 1, fs0, 0, list_new(), 0])
 
 /* ---------- --verify-lir: machine-check the LIR invariants (docs/LIR.md §8) ----
  *

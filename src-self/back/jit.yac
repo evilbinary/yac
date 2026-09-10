@@ -9,7 +9,7 @@ package back.jit
 export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
 import back.emit.emit {apply_u64, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref_base, host_names, yjit_layout_get}
-import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog, topfn_reset, topfn_scan}
+import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog, toplevel_seed}
 import back.backend {ast_imports, fun_off, link_from_ast, link_need_box, pass_anf, pass_lex, pass_parse, report_unbound, rewrite_imports, rt_for_link}
 import back.lower {emit_apply_unres, lower_expr}
 import back.pack.target {JIT_VADDR, target_arch}
@@ -223,10 +223,9 @@ let start_proc_eval(nslots, result_slot, body, name, quiet) =
 let pass_lir_eval(anf_list, bind_name, quiet) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
-  let _ = topfn_reset() in
-  let _ = topfn_scan(anf_list, 0) in
+  let fs0 = toplevel_seed(anf_list, 0, sigma_of_rt(rt0)) in
   let st = lir_all(0, anf_list,
-             [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
+             [env_new(0), 1, fs0, 0, list_new(), 0],
              len(anf_list)) in
   let pslot =
     if bind_name == "" then nth(st, 5)
