@@ -1,0 +1,1 @@
+[[[[letfun, f, [n], [[[letbin, t0, ==, [var, n], [int, 0]], [letif, t3, [var, t0], [[], [int, 0]], [[[letbin, t1, -, [var, n], [int, 1]], [letcall, t2, [var, f], [[var, t1]]]], [var, t2]]]], [var, t3]]]], [unit]]]

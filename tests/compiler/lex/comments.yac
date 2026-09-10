@@ -1,0 +1,1 @@
+/* block */ let a = 1 /* nested /* inner */ */ let b = 2

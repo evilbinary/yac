@@ -1,0 +1,1 @@
+[[kw, fun, 1], [lparen, (, 1], [ident, a, 1], [comma, ,, 1], [ident, b, 1], [rparen, ), 1], [op, ->, 1], [ident, a, 1], [op, >=, 1], [num, 3.14, 1], [kw, and, 1], [kw, not, 1], [lparen, (, 1], [ident, a, 1], [op, <, 1], [ident, b, 1], [rparen, ), 1], [eof, , 2]]

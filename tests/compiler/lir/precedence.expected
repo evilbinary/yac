@@ -1,0 +1,1 @@
+[[mov_imm, 1, 4], [mov_imm, 2, 6], [fcall, 3, yac_num_mul, [1, 2]], [mov_imm, 4, 2], [fcall, 5, yac_num_add, [4, 3]]]

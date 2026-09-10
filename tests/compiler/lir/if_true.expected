@@ -1,0 +1,1 @@
+[[mov_imm, 1, 2], [cmpjmp, 1, LIF0, LIF1], [label, LIF0], [mov_imm, 3, 2], [mov, 2, 3], [jmp, LIF2], [label, LIF1], [mov_imm, 3, 4], [mov, 2, 3], [label, LIF2]]

@@ -1,0 +1,1 @@
+[[kw, if, 1], [ident, x, 1], [op, ==, 1], [num, 0, 1], [kw, then, 1], [str, zero, 1], [kw, else, 1], [num, 1e10, 1], [eof, , 2]]
