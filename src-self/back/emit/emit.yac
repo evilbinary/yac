@@ -329,8 +329,12 @@ let gref_alloc(g) =
   if e != 0 then e - 1
   else
     let idx = nth(st, 1) in
-    let _ = box_set(gref_box,
-              [fmap_put(m, intern(g), idx + 1), idx + 1, cons(g, nth(st, 2))]) in
+    /* fmap_put mutates `m` in place and returns a status. Store the MAP --
+     * not its return value -- or the next lookup misses and every reference
+     * to the same name gets a fresh cell, so a `gset` and the `gval` that
+     * reads it end up on different cells. */
+    let _ = fmap_put(m, intern(g), idx + 1) in
+    let _ = box_set(gref_box, [m, idx + 1, cons(g, nth(st, 2))]) in
     idx
 
 let gref_count() = nth(box_get(gref_box), 1)
