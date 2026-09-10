@@ -1165,11 +1165,12 @@ let emit_x86_i_raw(st, insn) =
       let _ = or_rax_1(b) in
       let _ = emit_store_rax_slot(b, nth(insn, 1)) in
       emit_st4(st, b, cur, labels, ps2)
-  else if k == "gvld" then
-    /* Top-level value (12.14 flat ABI): load [cobj+0], where cobj is the
-     * name's 32-byte gref slot in the globals area (value at +0, fn stub
-     * entry at +16). _start/_eval publish values there via gvst; a blob's
-     * slots for foreign values are filled by the jit layer. */
+  else if k == "gval" then
+    /* Read a top-level value: load [cell + 0], where cell is the name's
+     * 32-byte unit in the globals area (value at +0, function stub entry at
+     * +16). `gset` filled it -- baked at link time for a literal, written in
+     * source order otherwise. A blob's slots for foreign values are patched
+     * to the host's same cell (FLAT_ABI.md 2.4). */
     let goff = gref_base() + bshl(gref_alloc(nth(insn, 2)), 5) in
     let _ = mov_rax_imm64(b, 0) in
     let gpat = bytes_len(b) - 8 in
@@ -1177,51 +1178,50 @@ let emit_x86_i_raw(st, insn) =
     let _ = mov_rax_mem_rax(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, ps1)
-  else if k == "gvst" then
-    /* Publish a top-level value: [cobj+0] = value (fast local path), then
-     * AOT-only: yac_gval_pub(name, value) conses [name, value] onto the
-     * G+440 registry so the jit layer can fill later blobs and the GC
-     * roots the value. */
+  else if k == "gset" then
+    /* Target name-unit write: ["gset", name, off, src] (LIR.md 4.5).
+     * off = 0 is the value, off = 16 the function entry.
+     *
+     * An IMMEDIATE source is BAKED into the cell's data at link time: zero
+     * runtime action, and that is the common case for a top-level `let`
+     * (FLAT_ABI.md 2.2 row 1). A blob cannot bake into the host's cell
+     * (that cell is the host's, reached through a patch slot), so it stores
+     * at run time instead.
+     *
+     * A non-immediate source is stored at run time and published via
+     * yac_gval_pub so the cell counts as a GC root (FLAT_ABI.md 2.3). */
     let nm = nth(insn, 1) in
-    let goff = gref_base() + bshl(gref_alloc(nm), 5) in
-    let _ = mov_r64_imm64(b, 3, 0) in
-    let gpat = bytes_len(b) - 8 in
-    let ps1 = cons([22, gpat, goff], patches) in
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = mov_mem_rbx_disp32_rax(b, 0) in
-    let st1 = emit_st4(st, b, cur, labels, ps1) in
-    if emit_jit_blob(0) then st1
+    let off = nth(insn, 2) in
+    let src = nth(insn, 3) in
+    let goff = gref_base() + bshl(gref_alloc(nm), 5) + off in
+    if nth(src, 0) == "imm" and not emit_jit_blob(0) then
+      emit_st4(st, b, cur, labels, cons([24, goff, nth(src, 1)], patches))
     else
-      let b1 = nth(st1, 0) in
-      let _ = mov_rax_imm64(b1, 0) in
-      let spos = bytes_len(b1) - 8 in
-      let _ = mov_rdi_rax(b1) in
-      let _ = emit_load_rax_slot(b1, nth(insn, 2)) in
-      let _ = mov_rsi_rax(b1) in
-      let acall = bytes_len(b1) in
-      let _ = call_user(b1) in
-      emit_st4(st1, b1, nth(st1, 1), nth(st1, 2),
-        emit_patch_rel(nth(st1, 4),
-          emit_patch_strlit(nth(st1, 3), spos, strlit_off(nm)),
-          acall + 1, "yac_gval_pub"))
-  else if k == "gfnst" then
-
-    /* AOT _start prologue: publish a top-level function's raw entry into
-     * the G+448 registry via yac_gfn_pub(name, entry). */
-    let fnm = nth(insn, 1) in
-    let _ = mov_rax_imm64(b, 0) in
-    let fpat = bytes_len(b) - 8 in
-    let _ = mov_rsi_rax(b) in
-    let _ = mov_rax_imm64(b, 0) in
-    let spos = bytes_len(b) - 8 in
-    let _ = mov_rdi_rax(b) in
-    let acall = bytes_len(b) in
-    let _ = call_user(b) in
-    emit_st4(st, b, cur, labels,
-      emit_patch_rel(nth(st, 4),
-        emit_patch_strlit(cons([2, fpat, emit_map_get(nth(st, 4), fnm)], patches),
-                          spos, strlit_off(fnm)),
-        acall + 1, "yac_gfn_pub"))
+      let _ = mov_r64_imm64(b, 3, 0) in
+      let gpat = bytes_len(b) - 8 in
+      let ps1 = cons([22, gpat, goff], patches) in
+      let _ =
+        if nth(src, 0) == "imm" then mov_rax_imm64(b, nth(src, 1))
+        else emit_load_rax_slot(b, src) in
+      let _ = mov_mem_rbx_disp32_rax(b, 0) in
+      let st1 = emit_st4(st, b, cur, labels, ps1) in
+      if emit_jit_blob(0) then st1
+      else
+        let b1 = nth(st1, 0) in
+        let _ = mov_rax_imm64(b1, 0) in
+        let spos = bytes_len(b1) - 8 in
+        let _ = mov_rdi_rax(b1) in
+        let _ =
+          if nth(src, 0) == "imm" then
+            let _ = mov_rax_imm64(b1, nth(src, 1)) in mov_rsi_rax(b1)
+          else
+            let _ = emit_load_rax_slot(b1, src) in mov_rsi_rax(b1) in
+        let acall = bytes_len(b1) in
+        let _ = call_user(b1) in
+        emit_st4(st1, b1, nth(st1, 1), nth(st1, 2),
+          emit_patch_rel(nth(st1, 4),
+            emit_patch_strlit(nth(st1, 3), spos, strlit_off(nm)),
+            acall + 1, "yac_gval_pub"))
   else if emit_host_win(0) then win_syscall(st, insn)
   else linux_syscall(st, insn)
 
@@ -1751,8 +1751,8 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
       emit_x86_i_core(st, insn, is_entry, is_raw)
     else if k == "untag" or k == "syscall" then
       emit_x86_i_sys(st, insn)
-    else if is_raw_op(k) or k == "gvar" or k == "gvld"
-         or k == "gvst" or k == "gfnst" then
+    else if is_raw_op(k) or k == "gvar" or k == "gval"
+         or k == "gset" then
       emit_x86_i_raw(st, insn)
     else if k == "obj_kind" or k == "mref" or k == "mset" or k == "tag"
          or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"

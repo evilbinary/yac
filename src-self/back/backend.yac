@@ -773,7 +773,7 @@ let pass_lir(anf_list) =
   let st = lir_all(0, anf_list,
              [env_new(0), 1, fs0, 0, list_new(), 0],
              len(anf_list)) in
-  let entry = start_proc(nth(st, 1), nth(st, 5), nth(st, 4), nth(st, 2)) in
+  let entry = start_proc(nth(st, 1), nth(st, 5), nth(st, 4)) in
   tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
 
 /* In-process image: _eval + print, not OS _start. */
@@ -897,7 +897,7 @@ let vops(_) =
    "$f64binop", "$f64rel", "$f64print", "$and", "$addi", "$add", "$sub",
    "$bts", "$bt", "$or", "$clamp0", "$st64", "$st8", "$ld64", "$ld8", "$sp",
    "$fp", "$smap", "$gbase", "$glob", "$icmp", "$jcc", "$memcpy", "$memset",
-   "$shr", "$carg", "$icall", "gvar", "gvld", "gvst", "gfnst", "obj_kind",
+   "$shr", "$carg", "$icall", "gvar", "gval", "gset", "obj_kind",
    "mref", "mset", "tag", "is_int", "alloc", "obj_sti", "obj_st_int",
    "alloc_s", "mref8", "mset8", "ld64", "st64", "write1", "clock", "glob",
    "gst", "time_ms", "time_str", "argc", "argv", "closure", "apply", "icall",

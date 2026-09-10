@@ -912,6 +912,12 @@ let emit_resolve_patch(st, p) =
      * globals-area address + offset (12.14 flat ABI). Used by gvar (blob
      * stub cells), gvld/gvst (top-level value cells), gcall and xcall. */
     apply_u64_rel(b, nth(p, 1), globbase + nth(p, 2))
+  else if tag == 24 then
+    /* Bake a tagged immediate into a name cell: [globbase+goff] = value.
+     * p = [24, goff, value]. Emitted for `gset` with an immediate source, so
+     * a literal top-level `let` costs zero runtime instructions
+     * (FLAT_ABI.md 2.2 row 1). */
+    apply_u64(b, (globbase - codebase) + nth(p, 1), nth(p, 2))
   else if tag == 23 then
     /* Bake a gvar stub cell's ENTRY field: [globbase+goff+16] =
      * codebase+offs[fid]. p = [23, fid, goff]. */

@@ -32,7 +32,7 @@ let fold(i, st) =
     fold(i + 1, [nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5), nth(r, 0), nth(r, 1)])
 let st = fold(0, st0)
 let lir = tco_prog(["prog",
-  cons(start_proc(nth(st, 1), nth(st, 5), nth(st, 4), nth(st, 2)),
+  cons(start_proc(nth(st, 1), nth(st, 5), nth(st, 4)),
        append(rt0, reverse(sigma_list(nth(st, 2))))), "_start"]);
 let r = lower_program(lir);
 let elf = pack_elf(nth(r, 0));
