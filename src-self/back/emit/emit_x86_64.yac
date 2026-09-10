@@ -1140,18 +1140,22 @@ let emit_x86_i_raw(st, insn) =
      * in the image's globals area, one per referenced name (32 bytes).
      * AOT bakes entry via abs64; blob's jit layer fills it from the host's
      * name-keyed table. Value = the stub's address (tagged), so icall's
-     * standard nenv=0 expansion calls entry with the plain args. */
+     * standard nenv=0 expansion calls entry with the plain args.
+     * Order matters: movabs placeholder FIRST, then tag it, then the or1 +
+     * store run after the resolver has filled the immediate. */
     let goff = 16824 + bshl(extsym_n(0), 3) + bshl(gref_alloc(nth(insn, 2)), 5) in
     let _ = mov_rax_imm64(b, 0) in
     let gpat = bytes_len(b) - 8 in
-    let _ = or_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     if emit_jit_blob(0) then
-      emit_st4(st, b, cur, labels, cons([22, gpat, goff], patches))
-    else
+      let ps1 = cons([22, gpat, goff], patches) in
       let _ = or_rax_1(b) in
-      emit_st4(st, b, cur, labels,
-        cons([2, gpat, emit_map_get(nth(st, 4), nth(insn, 2))], patches))
+      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+      emit_st4(st, b, cur, labels, ps1)
+    else
+      let ps1 = cons([2, gpat, emit_map_get(nth(st, 4), nth(insn, 2))], patches) in
+      let _ = or_rax_1(b) in
+      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+      emit_st4(st, b, cur, labels, ps1)
   else if emit_host_win(0) then win_syscall(st, insn)
   else linux_syscall(st, insn)
 
@@ -1904,15 +1908,16 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
       let args = nth(insn, 4) in
       /* Load the callee's stub closure address (tagged) into tmp, then
        * reuse the icall path: it unpacks the stub's nenv=0 (no caps) and
-       * calls the entry with the plain args. */
+       * calls the entry with the plain args. Tag the value AFTER the
+       * resolver has filled the movabs immediate. */
       let _ = mov_rax_imm64(b, 0) in
       let gpat = bytes_len(b) - 8 in
+      let ps1 = cons([22, gpat,
+              16824 + bshl(extsym_n(0), 3) + bshl(gref_alloc(g), 5)],
+             nth(st, 3)) in
       let _ = or_rax_1(b) in
       let _ = emit_store_rax_slot(b, tmp) in
-      let st1 = emit_st4(st, b, cur, nth(st, 2),
-        cons([22, gpat,
-              16824 + bshl(extsym_n(0), 3) + bshl(gref_alloc(g), 5)],
-             nth(st, 3))) in
+      let st1 = emit_st4(st, b, cur, nth(st, 2), ps1) in
       emit_insn_go(st1, ["icall", dst, tmp, args], is_entry, is_raw)
     else if k == "closure" or k == "apply" or k == "icall"
          or k == "tailapply" or k == "ticall" then
