@@ -770,9 +770,11 @@ let lir_var(atom, st) =
       [i1, nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
     else if kind == 1 then
       /* Flat function value (12.14): the stub cell's address. In-image
-       * compile bakes the entry; a blob gets a patch slot the jit layer
-       * fills from the host's entry table. */
-      let i1 = insn_push(nth(st, 0), ["gvar", nth(st, 2), g]) in
+       * compile bakes the entry through emit_map_get, which is keyed by the
+       * proc's CODE name (package-qualified) -- so resolve the name through
+       * Σ instead of passing the bare ANF name, or the lookup misses and
+       * silently bakes offs[0], i.e. the wrong function's entry. */
+      let i1 = insn_push(nth(st, 0), ["gvar", nth(st, 2), sigma_code(nth(st, 3), g)]) in
       [i1, nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
     else if se != 0 then lir_clos_atom(st, nth(se, 0))
     else if is_prim_name(nm) then lir_clos_atom(st, "print")
