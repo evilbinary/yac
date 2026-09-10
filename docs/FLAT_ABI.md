@@ -1,8 +1,10 @@
-# FLAT_ABI.md — Flat ABI 与目标 IR（rev3）
+# FLAT_ABI.md — Flat ABI 与目标 IR
 
 > **本文档只描述待实现的目标。** 已落地的部分（顶层函数 flat：`gvar` + 静态
 > stub cell + `fcall` rel32）不再展开，仅在建立上下文时用一句话带过。
-> 目标 IR 的完整清单见 **附录 A**，与新指令的对照见 **附录 B**。
+>
+> **本文只管「flat / 静态化」这一件事。** IR 的权威定义在 `docs/LIR.md`
+> —— 指令集、迁移表、后端契约都在那里，本文只留指针。
 
 ## 目标
 
@@ -14,7 +16,7 @@
 |---|---|---|
 | **1** | **值也静态化** | 顶层 `let x` 有静态单元；引用它就是一次 load，不再走 caps 链。这是"顶层函数真捕获数 = 0"成立的前提 |
 | **2** | **闭包表示成阶梯** | 从"零分配静态"到"堆闭包"共五档；判据与"是否顶层"**无关** |
-| **3** | **IR 收敛** | call 家族 10 条 → 3 条；名字/值访问统一（附录 A） |
+| **3** | **IR 收敛** | call 家族 10 条 → 3 条；名字/值访问统一（方案见 `LIR.md` §3 / §5，摘要见 §4） |
 
 ### 没有 1 会怎样
 
@@ -34,7 +36,7 @@
 3. **lir 不认识槽位 / 镜像边界。** lir 只发**名字**；槽位分配、跨镜像解析、
    打补丁全是 emit 的事（策略点 `fn_entry`）。
 4. **call 只有一个**（+ 尾位置 + C 调用）。目标解析方式、caps 布局、ABI 家族
-   是**字段**，不是 opcode。
+   是**字段**，不是 opcode。（这条准则的完整展开见 `LIR.md` §3 的 KISS / OCP）
 5. **判据必须是结构事实。** 判定"是不是顶层名"只能用"该名字是不是某个顶层
    item 的**直接绑定**"——**不能靠名字形态猜**（`t0` / `_` 这类编译器临时
    会污染结果）。
@@ -96,24 +98,21 @@ flat ⇔ ncap == 0
 
 ## 2. 名字单元（值静态化）
 
-### 2.1 布局
+### 2.1 布局与三种访问
 
-顶层每个名字一个 32B 单元，放在 globals 数据区（**不在 GC 堆**）。
-函数与值**共用同一布局**，只是使用不同的偏移：
+**cell 的完整布局与访问指令见 `docs/LIR.md` §4.5**（32B，放在 globals 数据区，
+**不在 GC 堆**）。函数与值**共用同一布局**，只是访问不同的偏移：
 
-```
-cell + 0   : value        ← 顶层 let x 的值        (gval 读这里)
-cell + 8   : mark
-cell + 16  : entry        ← 顶层 letfun 的入口     (gvar 的值经这里)
-cell + 24  : nenv = 0     ← 常量 0
-cell + 32… : env…          (本形态下为空)
-```
+| 用途 | 读 / 写 cell 的哪里 |
+|---|---|
+| 函数当值 | **单元地址本身**（tagged）—— 直接当闭包对象用 |
+| 顶层值 | `cell + 0` |
+| 发布 | `cell + 0`（值）或 `cell + 16`（函数入口） |
 
 **关键点：`nenv = 0` 让这个单元本身就是一个合法的零捕获闭包对象。** 于是：
 
-- 函数：`gvar` 装 `cell | 1`（tagged）。`call` / 间接调用读 `[+16]` / `[+24]`，
-  **通用闭包路径零改动**。
-- 值：`gval` 读 `[+0]`。
+- 函数：`call` / 间接调用读 `[+16]` / `[+24]`，**通用闭包路径零改动**。
+- 值：读 `[+0]`。
 - 「函数值」和「值的容器」是同一种东西 → 值传递 / 返回 / 存容器**全不用改**。
 
 ### 2.2 值的三类初始化
@@ -130,8 +129,8 @@ cell + 32… : env…          (本形态下为空)
 
 1. **顶层发布顺序是契约**，不是实现细节。
 2. **cell 必须登记为 GC root**，否则值会被回收。
-3. **`["local", …]` 必须排在所有 `gset` 之前** —— `local` 才是读 argc/argv、
-   建帧、写 GC `stack_hi` 的地方。
+3. **帧指令必须排在所有发布之前** —— 它才是读 argc/argv、建帧、写 GC `stack_hi`
+   的地方（`LIR.md` §2 已把这条写成语法约束：指令序列必须以帧指令开头）。
 4. **槽位分配必须幂等。** `gref_alloc(name)` 对同一名字恒返回同一下标；
    索引表单一来源，读写两侧不可能不配对。
 
@@ -179,7 +178,7 @@ cell 表是**共享**的，不是拷贝：
 |---|---|---|
 | 空 `free*` → 零分配 | 顶层值静态化（§2） | 第 2 步 |
 | 判据下沉到任意 lambda | 同上 | 第 3 步 |
-| `singleton` / `borrowed` / `pair` / `vector` | **需要调用图**：算出每个 lambda 的调用点集合，全部静态可知才算 well-known | 第 6 步 |
+| `singleton` / `borrowed` / `pair` / `vector` | **需要调用图**：算出每个 lambda 的调用点集合，全部静态可知才算 well-known | 第 7 步 |
 
 **yac 缺的两块：**
 
@@ -196,112 +195,23 @@ cell 表是**共享**的，不是拷贝：
 
 ---
 
-## 4. call 收敛与 IR 简化
+## 4. IR 简化的两个前提
 
-### 4.1 真实的正交维度
+IR 收敛的完整方案（KISS / OCP 准则、六类维度泄漏、逐条迁移表、`fn_entry`）
+全在 `docs/LIR.md` —— 索引见文末附录。**本文不写任何指令形态。**
 
-现在有 10 条活跃的 call：`fcall` / `xcall` / `icall` / `apply` / `tcall` / `ticall` /
-`tailapply` / `ccall` / `iccall` / `$icall`。另有一条**已无生产者**的 `gcall`
-（rev1 遗留，见第 6 节清理清单）。
+对 flat 而言，IR 收敛有**两个前提**必须先行：
 
-真正的正交维度只有 **3 个**：
+1. **`caps` 必须带标签，不能用魔法值。** 现在 `apply_ncap` 用 `-1` 表示"动态"，
+   这正是"该做成显式字段"的信号。目标是把 caps 布局做成调用指令的一个**字段**
+   （编译期已知 n 个前导捕获 / 运行期动态 / `raw` 直调），而不是多条独立 opcode。
+2. **尾位置必须先变成结构。** 现在 LIR 用 `maybe_tcall`（`lir.yac:832-839`）事后
+   把 `fcall` 改写成 `tcall` —— 这正是"尾位置不是结构"的直接后果，也是尾位置
+   变成 3 个 opcode 的根因。ANF 改成 `body = [bind*, tail]` 后（`ANF.md` §4.1），
+   尾位置由语法给出，`maybe_tcall` 与 `ticall` / `tailapply` 一并消失（第 4 步）。
 
-| 维度 | 取值 |
-|---|---|
-| callee 静态性 | 静态名字 / 运行期值 |
-| caps 布局 | 无（flat）/ 编译期已知 n / 运行期取 |
-| 是否尾位置 | 是 / 否 |
-
-外加**一个不同的 ABI 家族**（C 调用）。3 个维度 + 1 个家族被展开成了 10 个
-opcode。被泄漏进 opcode 的还有第四类信息——**linker 的问题**：
-
-- `fcall` / `xcall` 的区别是"名字怎么解析"（本镜像 label / 全局槽 / 跨镜像补丁槽）。
-  这是 `lower` / `link` 阶段的事，不该出现在 IR 里。
-
-### 4.2 目标形态：3 条 opcode
-
-```
-["call",  dst, target, args, caps]     ; 结果 → dst
-["tcall", target, args, caps]          ; 尾位置；无 dst，控制转移（形状不同，独立成条）
-["ccall", dst, name, args]             ; 调用 C
-```
-
-两个字段取代 opcode：
-
-```
-target ::= ["name", nm]    静态名字 —— emit 经 fn_entry(nm) 解析为
-                           rel32 / 全局槽 / cell / 补丁槽
-         | ["slot", s]     运行期值（栈槽）
-
-caps   ::= ["static", n]   编译期已知 n 个前导 caps；n = 0 即 flat（无前导）
-         | ["dyn"]         运行期从 [obj+24] 取
-```
-
-这样：
-
-- `xcall` 消失 —— "名字怎么解析"收进 `fn_entry` 策略点（§4.3）
-- `icall` / `apply` 合并 —— 区别变成 `caps` 字段（`["dyn"]` vs `["static", n]`）
-- `ticall` / `tailapply` 消失 —— 只留 `tcall`
-- `iccall` 并入 `ccall`（`ccall` 保留原名，`iccall` 成为它的动态变体）
-- `gcall` 消失 —— 就是 `call(target=["name", …])`
-- `$icall` 保留 —— 它是 `rt/runtime.yac` 手写 LIR 的内部原语，属 raw 家族
-
-> 注意 `caps` 用带标签的形式而不是 `-1` 这样的魔法整数 —— 现有的
-> `apply_ncap` 用 `-1` 表示"动态"，正是"该做成显式字段"的信号。
-
-**前置条件：尾位置必须先变成结构。** 现在 LIR 层用 `maybe_tcall`（`lir.yac:832-839`）
-事后把 `fcall` 改写成 `tcall` / `ticall` / `tailapply` —— 这正是"尾位置不是结构"
-的直接后果，也是 §4.1 里"tail 变成 3 个 opcode"的根因。
-
-ANF 改成 `body = [binds, tail]`、`tail = ["atom", a] | ["call", f, as]` 之后
-（见 `docs/DESIGN.md` §2.1），**尾位置由语法给出**：`maybe_tcall` 可以删除，
-`ticall` / `tailapply` 随之消失，`letif` 两支的死代码也一并消失。
-
-### 4.3 `fn_entry` 策略点（OCP 落点）
-
-emit 侧只留**一个**解析名字的地方：
-
-```
-fn_entry(name) -> 绝对地址 | 桩槽
-  AOT  = 布局期 bake
-  yjit = 布局期填
-  blob = jsess patch
-```
-
-新增镜像形态 = 加一个 `fn_entry` 分支 + 一个填表者，**不动 lir**。
-
-这也是去重的抓手：现在"装一个 callee 地址再间接调用"这段逻辑在 emit 里
-**写了三遍**（`gvar` handler、`xcall` handler、`fcall` 的 `via_slot` 分支），
-都是 `movabs 0 占位 → 记 patch → tag/store → 间接 call`。合并成
-`emit_callee_ref(name) -> 寄存器` 一处即可。
-
-**顺序建议：先做 `fn_entry`，再删 opcode。** 三份重复代码合并之后，
-`xcall` 会自然退化成 `call` 的一个分支，而不是被强行删除。
-
-### 4.4 内存访问族（候选合并，差异已核实）
-
-现在有 8 条内存指令：`mref` / `mset` / `mref8` / `mset8` / `ld64` / `st64` /
-`obj_sti` / `obj_st_int`。
-
-emit 实现显示它们的**差异只有三个维度**：
-
-| 维度 | 取值 | 证据 |
-|---|---|---|
-| 偏移形式 | 静态 disp32 / 动态索引（槽号） | `mref` 用 `mov rax,[rax+disp32]`；`ld64` / `mref8` 先从槽取索引再 `sar 1` |
-| 访问宽度 | 64 / 8 | `mref8` 用 `movzx`，`ld64` 用 `mov rax,[...]` |
-| 结果是否重新打 tag | 是 / 否 | `mref` 直接存（已 tagged）；`mref8` 有 `shl rax,1`；`ld64` 无 |
-
-所以可以合并成 2 条：
-
-```
-["mref", dst, obj, off, w, retag]    ; off = imm | 槽号；w ∈ {64, 8}
-["mset", obj, off, src, w]
-```
-
-`obj_sti` / `obj_st_int` 是 `mset` 的"源是槽 / 立即数"变体，用同一个字段区分即可。
-
-> 这条**不必和第 5 步一起做**：它是独立的重构，验收方式同样是"各阶段 golden 不变"。
-> 收益是可维护性，不是性能。
+> **顺序：先做 `fn_entry`，再删 opcode。** 三份重复代码合并之后，`xcall` 会自然
+> 退化成 `call` 的一个分支，而不是被强行删除（已列入 `LIR.md` §10 的顺序表）。
 
 ---
 
@@ -313,18 +223,18 @@ emit 实现显示它们的**差异只有三个维度**：
 | **1** | 单镜像 flat 基线收尾（顶层函数 flat） | 两遍自举、`make yc-iso`、`tests/compiler` 各阶段 |
 | **2** | **顶层值静态化**（§2）：`scan_toplevel` 判据、`gval` / `gset`、发布时序、GC root | 顶层 letfun **全部** `ncap = 0`；LIR dump 里 `gval` 条数 == 顶层 `let` 条数 |
 | **3** | **判据下沉**（§1）：`flat ⇔ 真捕获数 == 0`，作用域扩到所有 lambda | 函数体内无捕获的 `fun` 也生成静态 cell；各阶段测试 |
-| **4** | **ANF 修正**（`DESIGN.md` §2.1）：尾位置结构化 `body = [bind*, tail]`；`letcallcc` 多值形状；`anf_expr` 兜底改为编译期报错 | 各阶段 golden 不变；删掉 `tail(x)` 谓词与 `maybe_tcall`；不再出现 `ticall`/`tailapply` 生成 |
+| **4** | **ANF 修正**（`ANF.md` §4.1）：尾位置结构化 `body = [bind*, tail]`；`letcallcc` 多值形状；`anf_expr` 兜底改为编译期报错 | 各阶段 golden 不变；删掉 `tail(x)` 谓词与 `maybe_tcall`；不再出现 `ticall` / `tailapply` 生成 |
 | **5** | **L2 跨镜像**（§2.4）：cell 共享（jsess patch）+ `fn_entry` 策略点 | link 13 PASS、repl 26/26、`import compiler` + `compile("1+2")` e2e、`blob_len > 0` |
-| **6** | **IR 收敛**（§4）：`call` / `tcall` / `ccall` + `caps` 字段 | 每阶段 golden 不变（纯重构：IR 形状变、语义不变） |
+| **6** | **IR 收敛**（`LIR.md` §5）：`call` / `tcall` / `ccall` + `caps` 字段 | 每阶段 golden 不变（纯重构：IR 形状变、语义不变） |
 | **7** | **调用图 + well-known + lift**（§3.3） | 分配计数下降；`map` / `foldl` + 无捕获回调不再产出 `closure` 指令 |
 
 第 2、3 步做完，"非顶层也能静态化"就成立了。第 7 步才是真正消灭分配的地方。
 
 **暂不列入的：`letrec`（互递归函数组）。** ANF 已预留
-`["letrec", [fnbind*], body]`（见 `docs/DESIGN.md` §2.1 「预留：`letrec`」），
-但**现在不实现**。它的前置正好是上面几项：顶层名字预扫描（第 2 步）、
-`calli` 对非 self 目标发 `tcall`（**跨函数 TCO**，后端 ≤6 参数的兄弟调用已就绪）、
-绑定检查放开前向引用。缺了跨函数 TCO，互递归只是"能编译但长链爆栈"。
+`["letrec", [fnbind*], body]`（见 `docs/ANF.md` §5.3），但**现在不实现**。
+它的前置正好是上面几项：顶层名字预扫描（第 2 步）、`calli` 对非 self 目标发
+`tcall`（**跨函数 TCO**，后端 ≤6 参数的兄弟调用已就绪）、绑定检查放开前向引用。
+缺了跨函数 TCO，互递归只是"能编译但长链爆栈"。
 
 顶层互递归**不需要** `letrec` —— `scan_toplevel` 放行即可（两个 flat 函数、
 入口是编译期常量，组协议是空操作）；真正需要它的只有**嵌套**互递归组。
@@ -335,7 +245,7 @@ emit 实现显示它们的**差异只有三个维度**：
 
 - **静态化名字数**（应等于顶层 `letfun` + 顶层 `let` 数）
 - **每个 lambda 的真捕获数**（`--dump-lir` 里 `proc` 头的 `ncap`）
-- **分配计数**（第 6 步后应下降）
+- **分配计数**（第 7 步后应下降）
 
 ### 验证载体
 
@@ -362,10 +272,11 @@ emit 实现显示它们的**差异只有三个维度**：
 | `yjit` clos_list / `host_tab_fill` 残留 | 首会话槽拷贝 |
 | `gcall` | rev1 的调用指令 |
 | `pass_lir` 的 `TOPVALS` 打印、`gvst_push` 的 `GVST?` 打印 | 调试残留 |
-| 第 5 步收敛掉的 opcode | `xcall` / `apply` / `ticall` / `tailapply` / `iccall` / `gvld` / `gvst` / `gfnst` |
+| 第 6 步收敛掉的 opcode | `xcall` / `apply` / `ticall` / `tailapply` / `iccall` / `$icall` / `gvld` / `gvst` / `gfnst` |
 
 **能力不删，只改形态**：`apply` / 间接调用的**能力**保留（嵌套闭包 +
-call/cc 式动态调用），但不再是独立 opcode —— 变成 `call` 的 `caps = ["dyn"]`。
+call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令的「运行期动态 caps」
+那一种布局（`LIR.md` §4.4）。
 
 ---
 
@@ -392,21 +303,11 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成 `call` 的 
 |---|---|---|
 | `Γ ⊢ ["let", x, a]` | 一律 `Γ[x ↦ s]`（`_start` 的 frame slot） | **顶层**时 `Γ[x ↦ cell(x)]` |
 | `Γ ⊢ ["letfun", …]` 的 `I_out` | 一律 `[["closure", …]]` | 真捕获数 = 0 时不分配，`Γ[f ↦ cell(f)]` |
-| `⊢ program`（`_start`） | 直接跑各顶层 body | 顶层 `let` 要发 `gpub`（发布）+ 处理前向引用 |
+| `⊢ program`（`_start`） | 直接跑各顶层 body | 顶层 `let` 要发 `gset`（发布）+ 处理前向引用 |
 
-**本轮已完成**：
-
-1. §4.1 与 §2.1 的**两份 ANF 定义已合并为 §2.1 一份**（§4.1 只保留"与经典 ANF
-   的差异"）；§2.1 的语法按 §1 更新（尾位置结构化 + `float` / `qvar` +
-   `letcallcc` 多值形状 + 兜底报错），§2 的 `letif` / `callι` 规则与 §4.3、
-   §7.1 的伪码同步改完。
-2. **§2.1 的 LIR 语法已删除**，改为只保留 ANF→LIR 的翻译约定，并指向
-   `docs/LIR.md`（LIR 权威定义）。`LIR.md` 同时是一份清点报告：32 条无生产者的
-   死 handler、三处静默兜底、`--dump-lir` 不忠实、5 处闭包落点等。
-
-**仍未处理**：上面表格里的三条规则。另注意 `emit_insn_go` 的兜底是 `else st`
-（**静默跳过未知指令**）——这正是漂移长期没被发现的原因，也是 §6 清理时要更
-谨慎的理由。
+> **实现侧的两个前提**：`emit_insn_go` 的兜底是 `else st`（**静默跳过未知指令**），
+> `lir_atom` / `lir_expr_i` 也有静默兜底 —— 这正是漂移长期没被发现的原因。
+> 改法与执行顺序见 `LIR.md` §9.1 / §10。
 
 ### 7.3 DESIGN.md §8.2 需要补一条
 
@@ -420,167 +321,26 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成 `call` 的 
 
 ---
 
-# 附录 A：目标 IR 摘要（**权威定义见 `docs/LIR.md`**）
+# 附录：到 `LIR.md` 的索引
 
-> **本文不是 LIR 的权威定义。** `docs/LIR.md` 是唯一权威：完整指令集、逐条标注
-> 生产者、`$` 家族规格、定位与不变量、后端契约、校验规则、一致性问题清单。
->
-> 下面只保留**与 flat / 静态化相关的那部分摘要**，方便在本文内对照 §4 的收敛方案。
-> 指令的完整语义与现状**以 `docs/LIR.md` 为准**。
+**本文不定义任何指令** —— 语法、形态、语义、现状与迁移**全部**以 `docs/LIR.md`
+为准。需要什么，去那里看：
 
-语法：指令是 list，首元素是名字。`s` = 栈槽号，`imm` = 立即数，`lbl` = label，
-`nm` = 名字（字符串），`[x*]` = 列表。
-
-程序结构：
-
-```
-["prog", [proc*], entry]
-["proc",  name, nparams, ncap, [insn*], srcname]    ; ncap = 真捕获数
-["$proc", name, nparams, ncap, [insn*], srcname]    ; 原生过程（rt/runtime.yac 手写）
-```
-
-## A.1 帧与栈
-
-| 指令 | 形态 | 说明 |
-|---|---|---|
-| `local` | `["local", nslots, nparams]` | 建帧、读 argc/argv、写 GC `stack_hi`。**必须排在所有 `gset` 之前** |
-| `$local` | `["$local", nslots, nparams]` | 原生帧（`$proc` 或首条 `$local` → 原生槽） |
-| `$sp` | `["$sp", dst, k]` | 栈指针相对取址 |
-| `$fp` | `["$fp", dst, k]` | 帧指针相对取址 |
-| `$carg` | `["$carg", dst, i]` | 取 C 调用参数 |
-| `$smap` | `["$smap", …]` | 栈图（GC 扫描用） |
-
-## A.2 搬运与算术
-
-| 指令 | 形态 |
+| 需要什么 | 位置 |
 |---|---|
-| `mov_imm` | `["mov_imm", dst, imm]` |
-| `mov` | `["mov", dst, src]` |
-| `add` / `sub` / `mul` / `div` / `rem` | `["add", dst, a, b]` |
-| `shl` / `sal` / `shr` / `sar` | `["shl", dst, a, b]` |
-| `land` / `lor` / `xor` / `bnot` | `["land", dst, a, b]` |
-| `$and` / `$or` / `$add` / `$addi` / `$sub` / `$shr` | raw 算术（不做 tag 处理） |
-| `$lea` | `["$lea", dst, base, off]` |
-| `$clamp0` | 夹到 0 |
-| `$bt` / `$bts` | 位测试 / 置位 |
+| 语法（`prog` / `proc` / `insn` / `operand`；`proc` 头的 `[fvs]`） | `LIR.md` §2 |
+| 定位与 8 条不变量 | `LIR.md` §1 |
+| KISS / OCP 准则 + 六类被泄漏进 opcode 的维度（带 `emit` 行号证据） | `LIR.md` §3 |
+| **完整目标指令集**（含形态与语义） | `LIR.md` §4 |
+| **名字单元 cell 布局**（32B，`nenv = 0` 即零捕获闭包） | `LIR.md` §4.5 |
+| **现状 → 目标迁移表**（call 10→3、名字单元 5→3、内存 8→2；含死代码与幽灵） | `LIR.md` §5 |
+| 闭包在 LIR 的 5 处落点 | `LIR.md` §6 |
+| 后端契约、patch 语言、TCO 三条路径、`fn_entry` 策略点 | `LIR.md` §7 |
+| 应实现的 `--verify-lir` 校验规则 | `LIR.md` §8 |
+| 缺陷清单（静默兜底 / `topfn_has` / `--dump-lir` / `$` 契约） | `LIR.md` §9 |
+| 落地顺序 | `LIR.md` §10 |
 
-## A.3 比较与分支
-
-| 指令 | 形态 | 说明 |
-|---|---|---|
-| `cmp` | `["cmp", op, dst, a, b]` | 带 tag 的数值比较，`op` ∈ `< <= > >= == !=` |
-| `icmp` | `["icmp", op, dst, a, b]` | 整数比较 |
-| `$icmp` | raw 整数比较 |
-| `label` | `["label", lbl]` | |
-| `jmp` | `["jmp", lbl]` | |
-| `cmpjmp` | `["cmpjmp", cond, then, else]` | 条件为 0 跳 `else` |
-| `$jcc` | raw 条件跳转 |
-
-## A.4 调用（目标 3 条 + 1 raw）
-
-| 指令 | 形态 | 说明 |
-|---|---|---|
-| `call` | `["call", dst, target, args, caps]` | `target` = `["name", nm]` 或 `["slot", s]` |
-| `tcall` | `["tcall", target, args, caps]` | 尾位置，无 `dst` |
-| `ccall` | `["ccall", dst, name, args]` | 调用 C；`iccall` 的形态是其动态变体 |
-| `$icall` | `["$icall", dst, slot]` | raw 内部原语：直接 `call` 槽内指针，不做解包 |
-
-```
-caps ::= ["static", n]   ; n = 0 即 flat（无前导 caps）
-       | ["dyn"]         ; 运行期 nenv，从 [obj+24] 取，caps 从 [obj+32+i*8] 取
-```
-
-## A.5 名字单元（静态化）
-
-| 指令 | 形态 | 说明 |
-|---|---|---|
-| `gvar` | `["gvar", dst, nm]` | `dst = cell \| 1`（tagged）—— 函数当值用 |
-| `gval` | `["gval", dst, nm]` | `dst = [cell + 0]` —— 读顶层值 |
-| `gset` | `["gset", nm, off, src]` | `[cell + off] = src`，`off` ∈ `{0: 值, 16: 函数入口}` |
-
-`gset` 同时取代旧 `gvst`（值）与 `gfnst`（函数入口）—— 两者只是 `off` 不同。
-
-## A.6 闭包与对象
-
-| 指令 | 形态 | 说明 |
-|---|---|---|
-| `closure` | `["closure", dst, fnName, [capSlots]]` | 堆闭包：`[next][mark][fnptr][nenv][env…]` |
-| `alloc` | `["alloc", dst, bytes]` | 分配（GC 堆） |
-| `alloc_s` | `["alloc_s", dst, bytes]` | 分配（跳过 GC 链表登记） |
-| `obj_kind` | `["obj_kind", dst, obj]` | 取对象种类 |
-| `obj_sti` | `["obj_sti", obj, off, src]` | 存字段（槽号源） |
-| `obj_st_int` | `["obj_st_int", obj, off, imm]` | 存字段（立即数源） |
-| `mref` | `["mref", dst, obj, off]` | 读字段 |
-| `mset` | `["mset", obj, off, src]` | 写字段 |
-| `mref8` / `mset8` | `["mref8", dst, obj, off]` | 按 8 位访问 |
-| `is_int` | `["is_int", dst, v]` | 整数判定 |
-| `tag` / `untag` | `["tag", dst, src]` / `["untag", dst, src]` | 打 / 去 tag |
-
-## A.7 原生内存与系统
-
-| 指令 | 形态 |
-|---|---|
-| `ld64` / `st64` | `["ld64", dst, addr]` / `["st64", addr, src]` |
-| `$ld64` / `$st64` / `$ld8` / `$st8` | raw 64 / 8 位存取 |
-| `$memcpy` / `$memset` / `memcpy` | 内存块操作 |
-| `write1` | 写一个字节到 fd |
-| `syscall` / `$syscall` | 系统调用 |
-| `$glob` / `$gbase` | globals 区基址 / 偏移 |
-
-## A.8 内联原语
-
-| 类别 | 指令 |
-|---|---|
-| 列表 | `nil` `cons` `len` `nth` `tail` `append` `drop` `list_new` `list_push` `list_rev` `map` `foldl` |
-| 字符串 | `strlit` `str_len` `str_ref` `str_cat` `str_slice` `int_to_str` |
-| bytes | `bytes_new` `bytes_len` `bytes_ref` `bytes_put` `bytes_append` `bytes_extend` `bytes_to_str` |
-| 浮点 | `$f64fromstr` `$f64binop` `$f64rel` `$f64print` |
-
-> 这些是"内联原语"：语义上是过程调用，但 emit 直接展开，不走 `call`。
-> 若某条最终没有内联实现，就退化成 `call(target=["name", "yac_xxx"])`。
-
-## A.9 控制与运行时
-
-| 指令 | 形态 | 说明 |
-|---|---|---|
-| `ret` | `["ret", slot]` | 返回（entry 过程是裸 `ret`，普通过程补 `leave`） |
-| `exit` | `["exit", slot]` | 进程退出（`sar rax,1` 后走 OS） |
-| `throwk` | `["throwk", k, v]` | 抛给续延 |
-| `mkcont` / `cc_recv` | | 一等续延 |
-| `clock` / `time_ms` / `time_str` | `["time_ms", dst]` | 时间 |
-| `glob` / `gst` | | globals 读写 |
-| `argc` / `argv` | `["argc", dst]` / `["argv", dst, i]` | 命令行 |
-| `read_file` / `write_file` | | 文件 |
-
----
-
-# 附录 B：指令对照表（旧 → 新）
-
-| 旧 | 新 | 说明 |
-|---|---|---|
-| `fcall` | `call(target=["name", nm], caps=["static", 0])` | 同镜像静态调用 |
-| `xcall` | `call(target=["name", nm], …)` | 名字解析交给 `fn_entry`（跨镜像 → 补丁槽） |
-| `icall` | `call(target=["slot", s], caps=["dyn"])` | 运行期值，动态 nenv |
-| `apply` | `call(target=["slot", s], caps=["static", n])` | 运行期值，caps 数编译期已知 |
-| `tcall` / `ticall` / `tailapply` | `tcall` | 三条合一条，caps 走字段 |
-| `ccall` / `iccall` | `ccall` | `ccall` 保留原名，`iccall` 为其动态变体 |
-| `gcall` | `call(target=["name", nm], …)` | 消失 |
-| `$icall` | `$icall` | **保留**（raw 家族，`rt/runtime.yac` 手写） |
-| `gvar` | `gvar` | **不变** |
-| `gvld` | `gval` | 改名（读 `[cell+0]`） |
-| `gvst` | `gset(nm, 0, src)` | 合并进 `gset` |
-| `gfnst` | `gset(nm, 16, src)` | 合并进 `gset` |
-| `mref8` / `ld64` | `mref(dst, obj, off, w, retag)` | 宽度 / 偏移形式 / 是否重打 tag 走字段（§4.4） |
-| `mset8` | `mset(obj, off, src, w)` | 同上 |
-| `obj_sti` | `mset(obj, off, src, w)` | 源是槽的变体 |
-| `obj_st_int` | `mset(obj, off, src, w)` | 源是立即数的变体 |
-
-**结果：**
-
-| 家族 | 现在 | 目标 |
-|---|---|---|
-| call | 10 条（+ 1 条死代码 `gcall`） | **3 条**（`call` / `tcall` / `ccall`） |
-| 名字单元 | 4 条（`gvar` / `gvld` / `gvst` / `gfnst`） | **3 条**（`gvar` / `gval` / `gset`） |
-| 内存访问 | 8 条 | **2 条**（`mref` / `mset`） |
-
-全部改动都是**纯重构**：IR 形状变、语义不变，验收方式统一为"各阶段 golden 不变"。
+> **为什么这里没有指令表。** 本附录曾抄过一份完整指令表，**已经漂移**：
+> `$sp` / `$carg` 的签名与 `emit` 不符、`obj_sti` / `obj_st_int` 的源写反、
+> 已合并的 `$local` / `mov_imm` / `alloc_s` 仍列成独立指令。
+> 教训：**一份"以别处为准"的抄件，迟早会变成第二份真相。**

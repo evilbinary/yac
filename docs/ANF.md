@@ -131,7 +131,7 @@ bin("or",s,a,b) = ["lor",  s, a, b]          ; 不短路
 bin(cop,s,a,b)  = ["cmp",  cop, s, a, b]     ; cop ∈ {==,!=,<,<=,>,>=}
 ```
 
-> ⚠️ `+ - * /` 现在每次都走一次运行时过程调用（→ 见 `LIR.md` §8.C2，将来要做
+> ⚠️ `+ - * /` 现在每次都走一次运行时过程调用（→ 见 `LIR.md` §11 C2，将来要做
 > 内联的 int 快路径 + 溢出检查）。
 
 ```
@@ -203,20 +203,20 @@ rt("foldl")="yac_foldl"  rt("map")="yac_map"  rt("argc")="yac_argc"  …
 **尾位置由结构给出**：`tail?` 为真当且仅当该调用出现在 `tail` 非终结符里
 （即 `["call", f, as]`）。因此旧的 `tail(x)` 谓词（"最后一条 `letcall` + 尾原子是
 它"）**不再需要**，LIR 层的 `maybe_tcall` 事后改写**也不再需要**
-（见 `LIR.md` §8.B1）。
+（见 `LIR.md` §5.5 S1）。
 
 TCO 规则：只对 self 做 TCO；`ccall`（C）不做 TCO。self `tcall` 在 prologue 之后的
 `$tco` 回跳（槽搬运，不拆帧），arity 不限。命名 self 走第一条（`fcall`/`tcall` +
 捕获槽），**不要**把所有尾 `icall` 收成 `ticall` —— `twice(f,x)=f(f(x))` 会错。
 
-> ⚠️ **现状 vs 目标**：上面的 `callι` 产出的是 `LIR.md` §3.4 的**现状**形态
+> ⚠️ **现状 vs 目标**：上面的 `callι` 产出的是 `LIR.md` §5.1 的**现状**形态
 > （`fcall`/`xcall`/`icall`/`apply`/`ticall`/`tailapply`）。指令集收敛（`LIR.md`
-> §8.A1）之后，这张表会简化成 `call` / `tcall` / `ccall` + `caps` 字段：
+> §5.1）之后，这张表会简化成 `call` / `tcall` / `ccall` + `caps` 字段：
 > `fcall`/`xcall` → `call(["name",·])`；`icall` → `call(["slot",·], caps=["dyn"])`；
 > `apply` → `call(["slot",·], caps=["static",n])`；`ticall`/`tailapply` → `tcall`。
 >
 > 另：`xcall` 现在是"Σ 里找不到名字"的兜底，这会把**同单元的前向引用**误判为
-> 跨镜像引用。修法见 `LIR.md` §7.5（`topfn_has` 应作为参数传入，`calli` 补分支）。
+> 跨镜像引用。修法见 `LIR.md` §9.3（`topfn_has` 应作为参数传入，`calli` 补分支）。
 
 ### 3.5 `letfun`
 
@@ -245,7 +245,7 @@ TCO 规则：只对 self 做 TCO；`ccall`（C）不做 TCO。self `tcall` 在 p
 
 **`caps`（= `fvs`）是本节的核心**：它是"这个函数捕获了哪几个名字"。目前
 `lir.yac` 算出来只用一次就丢掉，`proc` 里只剩一个数字 `ncap`。轻量版改动是把
-它落进 `proc` 的末尾（见 `LIR.md` §4）。
+它落进 `proc` 的末尾（见 `LIR.md` §6）。
 
 > ⚠️ **`I_out` 与 `flat` 的关系**：现在是 `flat = topfn_has(f) and ncap == 0` ——
 > flat 时不发 `closure`、不 `env_bind`。**目标**是把 `ncap` 的语义从"自由变量总数"
@@ -270,7 +270,7 @@ self ; Γ ⊢ [ b1, …, bn ], tail  ⇒  s  ▹  I₁ · … · Iₙ · I_tail 
 ```
 
 `runtime` 是 `yac_*` 等过程，**不从 ANF 来**。内部 yac ABI：x86_64 前 6 个寄存器
-其余入栈；arm64/riscv64 前 8 个寄存器其余入栈（见 `LIR.md` §5）。
+其余入栈；arm64/riscv64 前 8 个寄存器其余入栈（见 `LIR.md` §7.4）。
 
 **顶层关键性质**：所有顶层 item 编进**同一个 `_start` 过程**，`Γ` 线性向下传。
 所以顶层 `let x = 5` 的"静态"实现是 **`_start` 的一个 frame slot**，不是 globals 区
@@ -296,7 +296,7 @@ LIR:  ["proc", "_start", 0, 0,
 ```
 
 （注：现状 `+` 走 `fcall yac_num_add`；上例用 `add` 是为了展示形状。`x` 与 `t`
-共享槽的话槽号会更少 —— 槽复用尚未实现，见 `LIR.md` §8.C1。）
+共享槽的话槽号会更少 —— 槽复用尚未实现，见 `LIR.md` §11 C1。）
 
 ## 4. 本次修正（相对旧版 ANF）
 
@@ -319,7 +319,7 @@ LIR:  ["proc", "_start", 0, 0,
 **静默跳过**。两者合起来会**静默产出一段错误代码而不报错**。
 
 改成编译期报错；同时 `lir_expr_i` / `lir_atom` 的兜底也要改成报错
-（`LIR.md` §7.3）。
+（`LIR.md` §9.1）。
 
 ### 4.3 `letcallcc` 的多值形状
 
@@ -439,7 +439,7 @@ yac 的三处**有意**偏离：
 | L4.875 `np-recognize-loops`（`loop` 形式） | **无** |
 | L4.9375 `np-recognize-attachment`（续延附件） | 对应 yac 的 `letcallcc` / `letthrow` |
 | L5 `lambda`，**无自由变量信息** | ANF 的 `letfun`，**无 fv 信息** ✅ 同一位置 |
-| `np-convert-closures` L5→L6（引入显式 `closures`） | **无对应层** —— 压进 `lir_letfun_*`（见 `LIR.md` §4） |
+| `np-convert-closures` L5→L6（引入显式 `closures`） | **无对应层** —— 压进 `lir_letfun_*`（见 `LIR.md` §6） |
 | `np-expand/optimize-closures` L6→L7（决定闭包表示） | 一行 `flat = topfn_has(name) and ncap == 0` |
 
 **yac 的 ANF 大致相当于 Chez 的 L4.9–L5**：赋值已消（本来就不可变）、`letrec`

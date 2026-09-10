@@ -163,7 +163,7 @@ atom      ::= int | float | str | bool | unit | nil | var | qvar
 > ⚠️ **上面"不是 LIR 指令，一律 `fcall yac_*`"这条与 emit 现状矛盾**：emit 里有
 > 一整套内联原语实现（`cons` / `len` / `nth` / `map` / `str_cat` / `bytes_*` …
 > 共 26 条），但**全仓没有任何生产者**。这是一个必须先做的决策 ——
-> 见 `docs/LIR.md` §3.10。
+> 见 `docs/LIR.md` §4.10。
 
 #### ANF → LIR（`lir.yac` 的 `lir_expr`，对标 `anf_expr`）
 
@@ -188,7 +188,7 @@ atom      ::= int | float | str | bool | unit | nil | var | qvar
 **尾位置由结构给出** —— `tail?` 为真当且仅当该调用出现在 `tail` 非终结符里，因此旧
 的 `tail(x)` 谓词与 LIR 层的 `maybe_tcall` 事后改写**都不再需要**（见 `ANF.md` §4.1）。
 
-三处待改（细节在 `ANF.md` §3.4 与 `LIR.md` §3.4 / §7.5 / §8.C2）：
+三处待改（细节在 `ANF.md` §3.4 与 `LIR.md` §5.1 / §9.3 / §11 C2）：
 
 - `callι` 现在还产出 `fcall` / `xcall` / `icall` / `apply` / `ticall` / `tailapply`
   六种形态；**目标是收敛成 `call` / `tcall` / `ccall` + `caps` 字段**。
@@ -200,7 +200,7 @@ atom      ::= int | float | str | bool | unit | nil | var | qvar
 
 #### 机器码（不是第三种 IR）
 
-> **完整内容见 `docs/LIR.md` §5「LIR → 机器码」**：三段流水线（指令选择 + 框架 →
+> **完整内容见 `docs/LIR.md` §7「LIR → 机器码」**：三段流水线（指令选择 + 框架 →
 > patch 求解 → 容器打包）、编码层的语法范式、**patch 语言（tag 1–23）**、
 > 指令选择表、**TCO 的三条路径**、`fn_entry` 策略点。
 >
@@ -208,7 +208,7 @@ atom      ::= int | float | str | bool | unit | nil | var | qvar
 > TEXT/RODATA/DATA/LINK 段、Reloc、冷启动 / 追加、W^X）；**链接模式**
 > → `docs/BOOTSTRAP_LINK.md`。
 
-三条最容易踩的约定（细节以 `LIR.md` §5.4 为准）：
+三条最容易踩的约定（细节以 `LIR.md` §7.4 为准）：
 
 - 槽 `s` → 帧上 8 字节格；临时值走返回寄存器（x86 `rax`，arm `x0`，riscv `a0`）。
 - 内部 yac ABI：x86_64 前 6 个寄存器（`rdi rsi rdx rcx r8 r9`）其余入栈

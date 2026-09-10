@@ -56,6 +56,9 @@ throw k 42                        -- 只有 CPS 机器能跑：yac --cps file.ya
 ## 文档
 
 - [docs/DESIGN.md](docs/DESIGN.md) — 语言与 IR 的完整设计
+- [docs/ANF.md](docs/ANF.md) — **ANF 权威定义**（语法 / 不变量 / ANF → LIR）
+- [docs/LIR.md](docs/LIR.md) — **LIR 权威定义**（指令集 / 不变量 / LIR → 机器码 / 校验规则）
+- [docs/FLAT_ABI.md](docs/FLAT_ABI.md) — Flat ABI 与静态化、闭包表示阶梯、call 收敛
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 模块结构、管线、测试、里程碑
 
 ## 编辑器
