@@ -155,18 +155,41 @@ pkg/             客常见库（path / str / io / …；查找默认 ./pkg）
 
 ### 6.1 LIR（低级中间表示，跨架构共享）
 
-ISA 以 `docs/DESIGN.md` §2.1 为准。构造器与 emit 同一套标签（`local`/`add`/`cmpjmp`/`fcall`/`mref`/…）。手写 boot LIR 可带 `exit` 糖。
+> **ISA 的权威定义见 `docs/LIR.md`**（指令集、不变量、`$` 家族规格、
+> LIR → 机器码、校验规则、一致性问题清单）。**ANF → LIR 的完整规则见
+> `docs/ANF.md` §3**。本节只记与本路线相关的取舍。
 
-槽机：值为栈槽，临时值走返回寄存器。没有独立寄存器分配。`nth`/`cons`/`len`/`str_cat` 不是 LIR 指令，走 `fcall yac_*`。`ccall("name", …)` 走 C ABI PLT；`ccall(ptr, …)` 走间接调用。C 参数按 arch ABI：x86_64 6 个寄存器 + 栈，arm64/riscv64 8 个寄存器 + 栈。`-g`/`--syms` 时 ELF 带 `.symtab`。客库 `import ffi`（`pkg/ffi.yac`：`load`/`sym`/`zbuf`/`cstr`）；`cload`/`csym` 仍在 `rt/ffi.yac`。
+- **共享方式**：LIR 跨架构共享；每个架构只实现 `emit-<arch>.yac`（LIR 指令 → 字节
+  序列）与一个 `Target` 描述（寄存器集 / 参数寄存器序 / 帧对齐 / 链接寄存器），
+  见 §6.3。手写 boot LIR 可带 `exit` 糖。
+- **槽机，无独立寄存器分配**：值为栈槽，临时值走返回寄存器。
+- **原语边界**：`nth` / `cons` / `len` / `str_cat` **不是 LIR 指令**，走 `fcall yac_*`。
+  ⚠️ 但 `emit` 里存在整套内联原语的**死 handler** —— 这是必须先做的待决策项，
+  见 `docs/LIR.md` §3.10。
+- **C 调用**：`ccall("name", …)` 走 C ABI PLT；`ccall(ptr, …)` 走间接调用。C 参数按
+  arch ABI：x86_64 6 个寄存器 + 栈，arm64/riscv64 8 个寄存器 + 栈。`-g`/`--syms` 时
+  ELF 带 `.symtab`。
+- **FFI**：客库 `import ffi`（`pkg/ffi.yac`：`load` / `sym` / `zbuf` / `cstr`）；
+  `cload` / `csym` 仍在 `rt/ffi.yac`。
 
 ### 6.2 后端流程
 
+**计划中的分层**：
+
 ```
-ANF（[bindings, tailExpr]）→ lower（指令选择，绑定展开成栈槽 load/store）
-    → regalloc（M3 用栈槽 [rbp+off]，临时值走 rax；后续再引物理寄存器）
+ANF（[bindings, tail]）→ lower（指令选择，绑定展开成栈槽 load/store）
+    → regalloc（M3 用槽 [rbp+off]，临时值走 rax；后续再引物理寄存器）
     → emit-<arch>（每指令一个字节编码函数，编码库 encode_x64.yac）
     → link（入口 _start → elf.yac 打包 ELF）
 ```
+
+> ⚠️ **现状与上面的分层不同**：`lower` / `regalloc` 两个独立模块**尚不存在** ——
+> 指令选择与建帧都发生在 `emit_<arch>.yac` 一个模块里（它同时调用
+> `back/encode/encode_<arch>.yac` 的逐条编码器）。
+>
+> 实际的三段流水线见 `docs/LIR.md` §5：**① 指令选择 + 框架 → ② patch 求解 →
+> ③ 容器打包**。上面的 `lower` / `regalloc` 是"把**槽复用**做起来"
+> （`LIR.md` §8.C1）之后的目标分层。
 
 - **M3 简化**：值为栈槽（`[rbp+off]`），临时值走 `rax`，函数用 rbp 栈帧，
 返回 rax。无需寄存器分配（正确性优先，后续再优化）。
