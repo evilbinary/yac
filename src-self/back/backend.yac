@@ -9,7 +9,7 @@ import back.pack.pe {pack_pe_target, pe_finish_dll, pe_finish_imports}
 import back.pack.pack {pack_image}
 import lib.map
 import back.emit.emit {cimport_buf, cimport_got, cimport_n, cimport_names, cimport_set, emit_abi_win, emit_jsess, emit_jsess_set, extsym_add, extsym_bind_add, extsym_bind_list, extsym_bind_set, extsym_names, extsym_names_set, host_names, yjit_layout_get, yjit_layout_set}
-import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, malias_box, pkg_prefix_get, pkg_prefix_set, pkg_qn, sigma_host_seed, sigma_list, sigma_of_rt, start_proc, tco_prog, ub_prog}
+import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, malias_box, pkg_prefix_get, pkg_prefix_set, pkg_qn, sigma_host_seed, sigma_list, sigma_of_rt, start_proc, tco_prog, topfn_add, topfn_reset, ub_prog}
 import front.lexer {tok_ident_line, tokenize}
 import front.parser {parse_program, prog_has_err, report_syntax}
 import front.anf {anf_all}
@@ -762,9 +762,27 @@ let rt_for_link(_) =
       else rec(i + 1, lir_extend(p, pkg_src(p), acc)) in
   runtime_add(rec(0, rt_base(0)))
 
+/* Flat ABI (12.14): register every top-level letfun name so lir compiles
+ * them environment-free (ncap=0; sibling refs via rel32/entry table). */
+let topfn_scan(items, i) =
+  if i >= len(items) then 0
+  else
+    let binds = nth(nth(items, i), 0) in
+    let go(j) =
+      if j >= len(binds) then 0
+      else
+        let b = nth(binds, j) in
+        let _ =
+          if nth(b, 0) == "letfun" then topfn_add(nth(b, 1)) else 0 in
+        go(j + 1) in
+    let _ = go(0) in
+    topfn_scan(items, i + 1)
+
 let pass_lir(anf_list) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
+  let _ = topfn_reset() in
+  let _ = topfn_scan(anf_list, 0) in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
              len(anf_list)) in
@@ -775,6 +793,7 @@ let pass_lir(anf_list) =
 let pass_lir_yjit(anf_list) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
+  let _ = topfn_scan(anf_list, 0) in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
              len(anf_list)) in

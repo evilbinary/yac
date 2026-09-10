@@ -14,7 +14,7 @@
  */
 
 package front.lir
-export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, sigma_new, st_no, ub_prog
+export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, sigma_new, st_no, ub_prog, topfn_reset, topfn_add, topfn_has
 import lib.map
 
 let reverse(xs) = list_rev(xs)
@@ -606,6 +606,31 @@ let ub_prog(p, i, sc) =
   let _ = seed(sc) in
   ub_prog_i(p, len(p), i, m)
 
+/* Top-level function registry (12.14 flat ABI): names defined as top-level
+ * lets of the current compile unit. Flat functions compile with no captured
+ * environment (ncap=0); free refs to them skip the caps chain (fcall rel32
+ * inside the image, xcall via the entry table across images). */
+let topfns_box =
+  let b = box_new() in
+  let m = fmap_new(0) in
+  let _ = fmap_init_n(m, 4096) in
+  let _ = box_set(b, m) in
+  b
+
+let topfn_reset() =
+  let m = nth(box_get(topfns_box), 0) in
+  let _ = fmap_init_n(m, 4096) in
+  box_set(topfns_box, m)
+
+let topfn_add(nm) =
+  let m = box_get(topfns_box) in
+  let _ = fmap_put(m, intern(nm), 1) in
+  0
+
+let topfn_has(nm) =
+  let m = box_get(topfns_box) in
+  fmap_get(m, intern(nm)) != 0
+
 let free_vars(fnbody, params, funs) =
   let fv(anf, acc, shdw) =
     let atom_vars(atom, a, sh) =
@@ -616,11 +641,14 @@ let free_vars(fnbody, params, funs) =
         let ch = fmap_get_h(nth(sh, 0), nm, h) in
         let g = resolve_call(nm) in
         if ch == 0 then
-          let se = sigma_ent_h(funs, g, hash_str(g)) in
-          if se == 0 then fv_acc_add_h(a, nm, h)
-          else if nth(se, 1) == 0 then a
-          else fv_acc_add_h(a, nm, h)
+          if topfn_has(nm) or topfn_has(g) then a
+          else
+            let se = sigma_ent_h(funs, g, hash_str(g)) in
+            if se == 0 then fv_acc_add_h(a, nm, h)
+            else if nth(se, 1) == 0 then a
+            else fv_acc_add_h(a, nm, h)
         else if sh_has_chain(ch, nth(sh, 1)) then a
+        else if topfn_has(nm) or topfn_has(g) then a
         else
           let se = sigma_ent_h(funs, g, hash_str(g)) in
           if se == 0 then fv_acc_add_h(a, nm, h)
@@ -703,10 +731,21 @@ let lir_var(atom, st) =
   else
     let g = resolve_call(nm) in
     let se = sigma_ent_h(nth(st, 3), g, hash_str(g)) in
-    if se != 0 then lir_clos_atom(st, nth(se, 0))
+    if se != 0 then
+      if topfn_has(nm) or topfn_has(g) then
+        /* Flat function value (12.14): the entry address itself. In-image
+         * compile bakes the entry; a blob gets a patch slot the jit layer
+         * fills from the host's entry table. */
+        let i1 = insn_push(nth(st, 0), ["gvar", nth(st, 2), g]) in
+        [i1, nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
+      else lir_clos_atom(st, nth(se, 0))
     else if is_prim_name(nm) then lir_clos_atom(st, "print")
     else
-      [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
+      /* Not in Γ or sigma: a first-class cross-image reference. Flat ABI
+       * (12.14): the value is the callee's entry address, loaded from a
+       * patch slot the jit layer fills via the host's entry table. */
+      let i1 = insn_push(nth(st, 0), ["gvar", nth(st, 2), g]) in
+      [i1, nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
 
 let lir_qvar(atom, st) =
   let g = qvar_key(nth(atom, 1), nth(atom, 2)) in
@@ -894,8 +933,13 @@ let calli(g0, dst, ss, env, funs, self, tail) =
     if se != 0 then ["fcall", dst, nth(se, 0), ss]
     else
       let p = lir_rt(g0, dst, ss) in
-      if p == 0 then ["fcall", dst, g, ss]
-      else p
+      if p != 0 then p
+      else if str_slice(g, 0, 4) == "yac_" then ["fcall", dst, g, ss]
+      else
+        /* Cross-image call (12.14 flat ABI): the callee's entry address is
+         * loaded from a patch slot the jit layer fills from the host's
+         * name-keyed entry table, then called with the plain arg layout. */
+        ["xcall", dst, dst + 1, g, ss]
 
 let lir_loadargs(args, p, slots_rev) =
   if nth(p, 0) >= len(args) then
@@ -1062,6 +1106,7 @@ let lir_letfun_prep(b, s) =
   let fvs_raw = free_vars(body, params, nth(s, 3)) in
   let is_rec = in_list(name, fvs_raw) in
   let fvs = if is_rec then fv_skip(fvs_raw, name) else fvs_raw in
+  let fvs = if topfn_has(name) then [] else fvs in
   let ncap = len(fvs) in
   let need_self = is_rec and ncap > 0 in
   let self_slot = ncap + nparams + 1 in
@@ -1161,9 +1206,17 @@ let lir_letfun_finish(s, p, br) =
   let f_insns2 = insn_push(f_insns1, ["label", "$tco"]) in
   let f_insns = prof_wrap_insns(nth(p, 2), f_insns2, nth(br, 0), nth(br, 1), nslots) in
   let f = ["proc", gname, ntot, ncap, f_insns, nth(p, 2)] in
-  [insn_push(nth(s, 0),
-     ["closure", nth(s, 2), gname, outer_caps(nth(s, 1), nth(p, 6), ncap, 0, list_new())]),
-   env_bind(nth(s, 1), nth(p, 2), nth(s, 2), ncap),
+  let flat = topfn_has(nth(p, 2)) in
+  let finish_insns =
+    if flat then nth(s, 0)
+    else
+      insn_push(nth(s, 0),
+        ["closure", nth(s, 2), gname, outer_caps(nth(s, 1), nth(p, 6), ncap, 0, list_new())]) in
+  let bind_env =
+    if flat then nth(s, 1)
+    else env_bind(nth(s, 1), nth(p, 2), nth(s, 2), ncap) in
+  [finish_insns,
+   bind_env,
    nth(s, 2) + 1, sigma_cons(nth(br, 4), f), nth(br, 5), nth(s, 5)]
 
 let lir_letif_prep(b, s) =

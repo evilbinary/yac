@@ -19,19 +19,28 @@ import front.parser {prog_has_err, report_syntax}
 import front.uncps {uncps_all, uncps_is_err}
 import lib.log {log_get_hush, log_set_hush}
 import rt.os {host_arch}
+import rt.runtime {yac_gtab_get}
 
 let reverse(xs) = list_rev(xs)
 
-/* REPL first-session blob: bake the host image's own host-leaf addresses
- * (read via runtime yac_host_sym) into this guest blob's G+136..G+216.
- * data_start (yjit_layout[2]) is the globals area offset in the blob. */
-let host_tab_fill(code, id) =
-  if id >= len(host_names(0)) then 0
-  else
-    let lay = yjit_layout_get(0) in
-    let data_start = nth(lay, 2) in
-    let _ = apply_u64(code, data_start + 136 + bshl(id, 3), yac_host_sym(id)) in
-    host_tab_fill(code, id + 1)
+/* Flat ABI (12.14): after a blob compiles, resolve every cross-image
+ * reference it emitted (gvar/xcall patch slots in the blob's globals area,
+ * at G+16824+extsym*8+8*i) against the host image's name-keyed entry table
+ * (via the runtime helper yac_gtab_get, host side), and fill each slot with
+ * the entry address (tagged). data_start (yjit_layout[2]) is the globals
+ * area offset in the blob. */
+let gref_fill(code) =
+  let lay = yjit_layout_get(0) in
+  let ds = nth(lay, 2) in
+  let go(names, i) =
+    if i >= len(names) then 0
+    else
+      let nm = nth(names, i) in
+      let entry = yac_gtab_get(intern(nm)) in
+      let _ = apply_u64(code,
+                ds + 16824 + bshl(extsym_n(0), 3) + bshl(i, 3), entry + 1) in
+      go(names, i + 1) in
+  go(gref_names(), 0)
 
 let jit_lets_box =
   let b = box_new() in
@@ -294,7 +303,7 @@ let compile_jit(src, t, named) =
         let _ =
           if jit_run_ok(t) then
             let _ = if dest == 0 then cimport_jit_bind(code) else 0 in
-            let _ = if dest == 0 then host_tab_fill(code, 0) else 0 in
+            let _ = gref_fill(code) in
             jit_run(code, fun_off(fo, "_eval"), dest)
           else 0 in
         let _ =

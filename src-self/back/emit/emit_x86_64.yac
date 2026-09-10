@@ -1,7 +1,7 @@
 package back.emit.emit_x86_64
 export emit_program, emit_program_x86_64
 import rt.os {host_os}
-import back.emit.emit {apply_args, apply_ncap, apply_patch, apply_u64, cimport_buf, cimport_got, cimport_index, cimport_names, cimport_reset, cimport_win_need, clos_bytes, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, cabi_skip, fun_is_raw, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {apply_args, apply_ncap, apply_patch, apply_u64, cimport_buf, cimport_got, cimport_index, cimport_names, cimport_reset, cimport_win_need, clos_bytes, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jit_blob, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, funsz_get, funsz_set, cabi_skip, fun_is_raw, gref_alloc, gref_reset, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {emit_cabi_all}
 import back.emit.linux_x86_64 {call_rbx_user, call_user, cc_of, emit_lea_rax_slot, emit_load_rax_slot, emit_load_rbx_slot, emit_load_rdi_slot, emit_obj_load_argreg, emit_obj_load_rax, emit_obj_store_rdi, emit_store_param, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_unalign, emit_x86_c_untag, linux_begin, linux_cc_marshal, linux_ccall_patch, linux_clock, linux_entry, linux_exit, linux_finish, linux_num_syscall, linux_syscall, linux_write1}
 import back.emit.win_x86_64 {win_begin, win_cc_marshal, win_ccall_patch, win_clock, win_entry, win_exit, win_finish, win_num_syscall, win_syscall, win_write1}
@@ -1135,6 +1135,23 @@ let emit_x86_i_raw(st, insn) =
     let _ = call_rbx_user(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "gvar" then
+    /* Flat function value (12.14): a static stub closure [0, 0, entry, 0]
+     * in the image's globals area, one per referenced name (32 bytes).
+     * AOT bakes entry via abs64; blob's jit layer fills it from the host's
+     * name-keyed table. Value = the stub's address (tagged), so icall's
+     * standard nenv=0 expansion calls entry with the plain args. */
+    let goff = 16824 + bshl(extsym_n(0), 3) + bshl(gref_alloc(nth(insn, 2)), 5) in
+    let _ = mov_rax_imm64(b, 0) in
+    let gpat = bytes_len(b) - 8 in
+    let _ = or_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    if emit_jit_blob(0) then
+      emit_st4(st, b, cur, labels, cons([22, gpat, goff], patches))
+    else
+      let _ = or_rax_1(b) in
+      emit_st4(st, b, cur, labels,
+        cons([2, gpat, emit_map_get(nth(st, 4), nth(insn, 2))], patches))
   else if emit_host_win(0) then win_syscall(st, insn)
   else linux_syscall(st, insn)
 
@@ -1877,7 +1894,27 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
   let k = nth(insn, 0) in
   let len0 = bytes_len(b) in
   let done =
-    if k == "closure" or k == "apply" or k == "icall"
+    if k == "xcall" then
+      /* Cross-image call (12.14 flat ABI): load the callee's entry from a
+       * patch slot the jit layer fills from the host's entry table, then
+       * call it with the plain arg layout (no leading caps). */
+      let dst = nth(insn, 1) in
+      let tmp = nth(insn, 2) in
+      let g = nth(insn, 3) in
+      let args = nth(insn, 4) in
+      /* Load the callee's stub closure address (tagged) into tmp, then
+       * reuse the icall path: it unpacks the stub's nenv=0 (no caps) and
+       * calls the entry with the plain args. */
+      let _ = mov_rax_imm64(b, 0) in
+      let gpat = bytes_len(b) - 8 in
+      let _ = or_rax_1(b) in
+      let _ = emit_store_rax_slot(b, tmp) in
+      let st1 = emit_st4(st, b, cur, nth(st, 2),
+        cons([22, gpat,
+              16824 + bshl(extsym_n(0), 3) + bshl(gref_alloc(g), 5)],
+             nth(st, 3))) in
+      emit_insn_go(st1, ["icall", dst, tmp, args], is_entry, is_raw)
+    else if k == "closure" or k == "apply" or k == "icall"
          or k == "tailapply" or k == "ticall" then
       emit_x86_i_clos(st, insn, is_entry)
     else if is_frame_op(k) or k == "mov_imm" or k == "mov" or is_arith(k)
@@ -1938,10 +1975,13 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
       if fmt == "pe" then true
       else if load_vaddr == JIT_VADDR then host_os(0) == "windows"
       else false) in
+  let _ = emit_jit_blob_set(load_vaddr == JIT_VADDR) in
+  let _ = gref_reset() in
   let _ = if emit_abi_win(0) then win_begin(0) else linux_begin(0) in
   let ckeep = cimport_buf(0) in
   let funs = nth(prog, 1) in
   let nfun = len(funs) in
+  let _ = funsz_set(nfun) in
   let _ = log_i("emit", "nfun", nfun) in
   let entry = nth(prog, 2) in
   let out = bytes_new() in
@@ -2104,6 +2144,26 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
                     LOAD_VADDR + TEXT_OFF + slot) in
       rec_bake(i + 1) in
   let _ = if T != 0 then 0 else rec_bake(0) in
+  /* Bake the name-keyed entry table (12.14 flat ABI): one 16-byte entry
+   * [intern(gname), entry] per function, at G+440, followed by a [0,0]
+   * sentinel. This is the runtime lookup table for cross-image calls:
+   * the jit layer queries it (via yac_gtab_get, host side) to fill a
+   * blob's patch slots. AOT-only; blobs reference through patch slots. */
+  let _ =
+    if T != 0 then 0
+    else
+      let gtb(i) =
+        if i >= nfun then
+          let _ = apply_u64(b, data_start + 440 + i * 16, 0) in
+          apply_u64(b, data_start + 440 + i * 16 + 8, 0)
+        else
+          let nm = nth(nth(funOffsRev, i), 0) in
+          let off = nth(nth(funOffsRev, i), 1) in
+          let _ = apply_u64(b, data_start + 440 + i * 16, intern(nm)) in
+          let _ = apply_u64(b, data_start + 440 + i * 16 + 8,
+                            LOAD_VADDR + TEXT_OFF + off) in
+          gtb(i + 1) in
+      gtb(0) in
   /* Extern package-symbol slots (G+376+8*i) default to the stub too, so an
    * AOT call before the --link loader fills them prints instead of call [0].
    * The loader (12.4.C) overwrites these at startup. */
@@ -2115,7 +2175,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
       let rec_fe(i) =
         if i >= extsym_n(0) then 0
         else
-          let _ = apply_u64(b, data_start + 440 + bshl(i, 3),
+          let _ = apply_u64(b, data_start + 16824 + bshl(i, 3),
                             LOAD_VADDR + TEXT_OFF + stub) in
           rec_fe(i + 1) in
       rec_fe(0) in

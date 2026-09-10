@@ -9,7 +9,7 @@
  */
 
 package back.emit.emit
-export cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, apply_args, apply_i32, apply_ncap, apply_patch, apply_u64, apply_u64_rel, cabi_should, cabi_skip, cimport_buf, cimport_id, cimport_index, cimport_reset, cimport_set, cimport_win_need, clos_bytes, emit_arch, emit_cplt_a64, emit_cplt_rv, emit_glob_data, emit_ids_new, emit_jsess, emit_jsess_set, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, fun_is_raw, host_id, host_names, extsym_add, extsym_bind_add, extsym_bind_list, extsym_names, extsym_names_set, extsym_bind_set, extsym_find, extsym_n, extsym_reset, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_get, yjit_layout_set, reverse
+export cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, apply_args, apply_i32, apply_ncap, apply_patch, apply_u64, apply_u64_rel, cabi_should, cabi_skip, cimport_buf, cimport_id, cimport_index, cimport_reset, cimport_set, cimport_win_need, clos_bytes, emit_arch, emit_cplt_a64, emit_cplt_rv, emit_glob_data, emit_ids_new, emit_jsess, emit_jsess_set, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, fun_is_raw, host_id, host_names, extsym_add, extsym_bind_add, extsym_bind_list, extsym_names, extsym_names_set, extsym_bind_set, extsym_find, extsym_n, extsym_reset, emit_jit_blob, emit_jit_blob_set, funsz_get, funsz_set, gref_alloc, gref_count, gref_names, gref_reset, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_get, yjit_layout_set, reverse
 import back.pack.elf {elf_note_abs64}
 import rt.runtime {yac_cimport_host_sym}
 import back.pack.pe {pe_iat_off, pe_iat_qwords}
@@ -311,12 +311,67 @@ let extsym_reset(_) =
 let extsym_names_set(xs) = box_set(extsym_box, xs)
 let extsym_bind_set(xs) = box_set(extsym_bind_box, xs)
 
+/* Cross-image patch slots (12.14 flat ABI): one 8-byte slot per gvar/xcall
+ * reference a blob makes to an outside function. The jit layer fills each
+ * slot with the callee's entry address (looked up in the host's entry
+ * table via yac_gtab_get) before running the blob. Layout:
+ * G+440 : GTAB [intern(name), entry] x nfun (baked, host image only)
+ * G+440+nfun*16 + 8*j : patch slot j
+ * (blob only; the host's own slots come right after its extsym block). */
+let gref_box =
+  let b = box_new() in
+  let m = fmap_new(0) in
+  let _ = fmap_init_n(m, 1024) in
+  let _ = box_set(b, [m, 0, []]) in
+  b
+
+let gref_alloc(g) =
+  let st = box_get(gref_box) in
+  let m = nth(st, 0) in
+  let e = fmap_get(m, intern(g)) in
+  if e != 0 then e - 1
+  else
+    let idx = nth(st, 1) in
+    let _ = box_set(gref_box,
+              [fmap_put(m, intern(g), idx + 1), idx + 1, cons(g, nth(st, 2))]) in
+    idx
+
+let gref_count() = nth(box_get(gref_box), 1)
+let gref_names() = reverse(nth(box_get(gref_box), 2))
+
+let gref_reset() =
+  let m = fmap_new(0) in
+  let _ = fmap_init_n(m, 1024) in
+  box_set(gref_box, [m, 0, []])
+
+/* True while emitting an in-process JIT blob (load_vaddr == JIT_VADDR).
+ * Host-leaf fcalls inside a blob must go through the yac_host_call bridge
+ * (the leaf's code lives in the host image, not the blob). */
+let emit_jit_blob_box =
+  let b = box_new() in
+  let _ = box_set(b, false) in
+  b
+
+let emit_jit_blob_set(v) = box_set(emit_jit_blob_box, v)
+
+let emit_jit_blob(_) = box_get(emit_jit_blob_box)
+
+let funsz_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let funsz_set(n) = box_set(funsz_box, n)
+let funsz_get() = box_get(funsz_box)
+
 /* 112 GC + 8 jit_map (G+112) + 8 prof cell (G+120) + 8 prof busy (G+128)
  * + 10x8 host-table slots (G+136..G+216) + 28x8 host cimport address table
  * (G+216..G+440, win_need order = 21 k32 + 7 crt, baked by emit_program_*)
- * + extern slots (G+440+8*i). glob 3/4 must not sit on G+48/56/64. */
+ * + GTAB [intern, entry] x nfun (G+440.., 16KB fixed budget, baked; host
+ * image only) + extern slots (G+16824+8*i) + cross-image patch slots
+ * (G+16824+extsym*8+8*j, blob only). glob 3/4 must not sit on G+48/56/64. */
 let emit_glob_data(b) =
-  let lim = 440 + bshl(extsym_n(0), 3) in
+  let lim = 16824 + bshl(extsym_n(0), 3) + bshl(gref_count(), 5) in
   let fill(i) =
     if i >= lim then 0
     else let _ = bytes_append(b, 0) in fill(i + 1) in
