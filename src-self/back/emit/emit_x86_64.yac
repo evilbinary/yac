@@ -1,7 +1,7 @@
 package back.emit.emit_x86_64
 export emit_program, emit_program_x86_64
 import rt.os {host_os}
-import back.emit.emit {apply_args, apply_ncap, apply_patch, apply_u64, cimport_buf, cimport_got, cimport_index, cimport_names, cimport_reset, cimport_win_need, clos_bytes, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jit_blob, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, funsz_get, funsz_set, cabi_skip, fun_is_raw, gref_alloc, gref_reset, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {apply_args, apply_ncap, apply_patch, apply_u64, cimport_buf, cimport_got, cimport_index, cimport_names, cimport_reset, cimport_win_need, clos_bytes, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jit_blob, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, funsz_get, funsz_set, gtab_end, cabi_skip, fun_is_raw, gref_alloc, gref_reset, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {emit_cabi_all}
 import back.emit.linux_x86_64 {call_rbx_user, call_user, cc_of, emit_lea_rax_slot, emit_load_rax_slot, emit_load_rbx_slot, emit_load_rdi_slot, emit_obj_load_argreg, emit_obj_load_rax, emit_obj_store_rdi, emit_store_param, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_unalign, emit_x86_c_untag, linux_begin, linux_cc_marshal, linux_ccall_patch, linux_clock, linux_entry, linux_exit, linux_finish, linux_num_syscall, linux_syscall, linux_write1}
 import back.emit.win_x86_64 {win_begin, win_cc_marshal, win_ccall_patch, win_clock, win_entry, win_exit, win_finish, win_num_syscall, win_syscall, win_write1}
@@ -1143,7 +1143,7 @@ let emit_x86_i_raw(st, insn) =
      * standard nenv=0 expansion calls entry with the plain args.
      * Order matters: movabs placeholder FIRST, then tag it, then the or1 +
      * store run after the resolver has filled the immediate. */
-    let goff = 16824 + bshl(extsym_n(0), 3) + bshl(gref_alloc(nth(insn, 2)), 5) in
+    let goff = gtab_end() + bshl(extsym_n(0), 3) + bshl(gref_alloc(nth(insn, 2)), 5) in
     let _ = mov_rax_imm64(b, 0) in
     let gpat = bytes_len(b) - 8 in
     if emit_jit_blob(0) then
@@ -1913,7 +1913,7 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
       let _ = mov_rax_imm64(b, 0) in
       let gpat = bytes_len(b) - 8 in
       let ps1 = cons([22, gpat,
-              16824 + bshl(extsym_n(0), 3) + bshl(gref_alloc(g), 5)],
+              gtab_end() + bshl(extsym_n(0), 3) + bshl(gref_alloc(g), 5)],
              nth(st, 3)) in
       let _ = or_rax_1(b) in
       let _ = emit_store_rax_slot(b, tmp) in
