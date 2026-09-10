@@ -1,1 +1,0 @@
-let f(a, b) = a + b in f(1, 2)
