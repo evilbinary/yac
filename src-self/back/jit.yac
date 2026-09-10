@@ -8,8 +8,8 @@
 package back.jit
 export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
-import back.emit.emit {apply_u64, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, host_names, yjit_layout_get}
-import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog}
+import back.emit.emit {apply_u64, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref_base, host_names, yjit_layout_get}
+import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog, topfn_reset, topfn_scan}
 import back.backend {ast_imports, fun_off, link_from_ast, link_need_box, pass_anf, pass_lex, pass_parse, report_unbound, rewrite_imports, rt_for_link}
 import back.lower {emit_apply_unres, lower_expr}
 import back.pack.target {JIT_VADDR, target_arch}
@@ -19,28 +19,73 @@ import front.parser {prog_has_err, report_syntax}
 import front.uncps {uncps_all, uncps_is_err}
 import lib.log {log_get_hush, log_set_hush}
 import rt.os {host_arch}
-import rt.runtime {yac_gtab_get}
+import rt.runtime {yac_gfn_list, yac_gval_list}
 
 let reverse(xs) = list_rev(xs)
 
 /* Flat ABI (12.14): after a blob compiles, resolve every cross-image
- * reference it emitted (gvar/xcall patch slots in the blob's globals area,
- * at G+16824+extsym*8+8*i) against the host image's name-keyed entry table
- * (via the runtime helper yac_gtab_get, host side), and fill each slot with
- * the entry address (tagged). data_start (yjit_layout[2]) is the globals
- * area offset in the blob. */
+ * reference it emitted (gvar/gvld/xcall/gcall patch slots in the blob's
+ * globals area) against the host image's runtime registries: the function
+ * entry list (G+448, via yac_gfn_list) and the top-level value list
+ * (G+440, via yac_gval_list). Both are [name, payload] pair lists; name
+ * matching is a content compare in yac code, so nothing is baked.
+ * data_start (yjit_layout[2]) is the globals area offset in the blob.
+ * The blob's gref slot layout is snapshotted right after its emit (the
+ * emit state still belongs to the blob at that point): [gref_base, names]. */
+let gref_snap_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let glist_len(l, n) =
+  if l == 0 or l == 1 then n else glist_len(nth(l, 1), n + 1)
+
+let gfn_lookup(lst, nm) =
+  if lst == 0 then 0
+  else if lst == 1 then 0
+  else
+    let pair = nth(lst, 0) in
+    if nth(pair, 0) == nm then nth(pair, 1)
+    else gfn_lookup(nth(lst, 1), nm)
+
+let gval_lookup(lst, nm) =
+  if lst == 0 then 0
+  else if lst == 1 then 0
+  else
+    let pair = nth(lst, 0) in
+    if nth(pair, 0) == nm then nth(pair, 1)
+    else gval_lookup(nth(lst, 1), nm)
+
 let gref_fill(code) =
+  let snap = box_get(gref_snap_box) in
+  let base = nth(snap, 0) in
+  let names = nth(snap, 1) in
   let lay = yjit_layout_get(0) in
   let ds = nth(lay, 2) in
-  let go(names, i) =
+  let fnl = yac_gfn_list(0) in
+  let vall = yac_gval_list(0) in
+  let _ = print(int_to_str(len(names))) in
+  let _ = print("\n") in
+  let _ = print(int_to_str(glist_len(fnl, 0))) in
+  let _ = print("\n") in
+  let _ = print(int_to_str(glist_len(vall, 0))) in
+  let _ = print("\n") in
+  let go(i) =
     if i >= len(names) then 0
     else
       let nm = nth(names, i) in
-      let entry = yac_gtab_get(intern(nm)) in
-      let _ = apply_u64(code,
-                ds + 16824 + bshl(extsym_n(0), 3) + bshl(i, 3), entry + 1) in
-      go(names, i + 1) in
-  go(gref_names(), 0)
+      let cobj = ds + base + bshl(i, 5) in
+      let entry = gfn_lookup(fnl, nm) in
+      let _ =
+        if entry != 0 then
+          /* Function: write the raw entry into the stub's entry field. */
+          apply_u64(code, cobj + 16, entry)
+        else
+          /* Top-level value: copy the host's current value into [cobj+0]. */
+          let v = gval_lookup(vall, nm) in
+          if v == 0 then 0 else apply_u64(code, cobj, v) in
+      go(i + 1) in
+  go(0)
 
 let jit_lets_box =
   let b = box_new() in
@@ -178,6 +223,8 @@ let start_proc_eval(nslots, result_slot, body, name, quiet) =
 let pass_lir_eval(anf_list, bind_name, quiet) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
+  let _ = topfn_reset() in
+  let _ = topfn_scan(anf_list, 0) in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
              len(anf_list)) in
@@ -273,6 +320,8 @@ let jit_run_ok(t) = target_arch(t) == host_arch(0)
 let jit_sess_ok(t) = target_arch(t) == "x86_64"
 
 let compile_jit(src, t, named) =
+  let _ = print("\n") in
+  let _ = print("\n") in
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then
     let _ = report_syntax(ast) in 1
@@ -296,6 +345,9 @@ let compile_jit(src, t, named) =
         let dest = if live == 0 then 0 else nth(live, 0) in
         let r = lower_expr(pass_lir_eval(pass_anf(ast1), bn, q), t) in
         let _ = emit_apply_unres(dest) in
+        /* Snapshot the blob's gref slot layout before any later emit
+         * (AOT or next REPL line) reuses the emit state. */
+        let _ = box_set(gref_snap_box, [gref_base(), gref_names()]) in
         let _ = log_set_hush(hush0) in
         let _ = emit_jsess_set(0) in
         let code = nth(r, 0) in

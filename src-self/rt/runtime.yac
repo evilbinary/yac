@@ -19,7 +19,7 @@
  * with runtime_add; backend chooses what to hang.
  */
 package rt.runtime
-export runtime_funs, runtime_add, yac_cimport_host_sym, yac_gtab_get
+export runtime_funs, runtime_add, yac_cimport_host_sym, yac_gval_pub, yac_gval_list, yac_gfn_pub, yac_gfn_list
 
 let rt_cons_ins(_) =
   [["local", 6, 2],
@@ -1322,6 +1322,20 @@ let rt_gc_collect_ins(_) =
    ["label", "gc_pmark"],
    ["fcall", 12, "yac_gc_mark", [5]],
    ["label", "gc_pnone"],
+   ["$ld64", 5, 1, 440],
+   ["$and", 9, 5, 7],
+   ["mov_imm", 10, 1],
+   ["$jcc", "==", 9, 10, "gc_vmark", "gc_vnone"],
+   ["label", "gc_vmark"],
+   ["fcall", 12, "yac_gc_mark", [5]],
+   ["label", "gc_vnone"],
+   ["$ld64", 5, 1, 448],
+   ["$and", 9, 5, 7],
+   ["mov_imm", 10, 1],
+   ["$jcc", "==", 9, 10, "gc_fmark", "gc_fnone"],
+   ["label", "gc_fmark"],
+   ["fcall", 12, "yac_gc_mark", [5]],
+   ["label", "gc_fnone"],
    ["$ld64", 2, 1, 24],
    ["$smap", 21],
    ["$jcc", "==", 21, 8, "gc_cons", "gc_smp"],
@@ -2121,27 +2135,41 @@ let rt_host_sym_ins(_) =
  * emit at G+440 as [intern(gname), entry] x nfun plus a [0,0] sentinel.
  * arg1 = tagged intern; returns the raw entry address, or 0 when absent.
  * jit.yac calls the host copy to resolve a blob's cross-image refs. */
-let rt_gtab_get_ins(_) =
-  [["$local", 16, 1],
-   ["$shr", 2, 1, 1],
+/* Top-level registries (12.14 flat ABI). Two association lists rooted in
+ * this image's G area: G+440 = [ [name, value] ... ] published by gvst
+ * (top-level values), G+448 = [ [name, entry] ... ] published by _start's
+ * gfnst prologue (top-level function entries). Both are GC roots (marked
+ * in yac_gc_collect); name matching happens in host yac code (content
+ * compare) - no keys are baked, so nothing breaks across processes. */
+let rt_gval_pub_ins(_) =
+  [["$local", 24, 2],
+   ["$gbase", 3],
+   ["$ld64", 4, 3, 440],
+   ["fcall", 5, "yac_cons", [1, 2]],
+   ["fcall", 6, "yac_cons", [5, 4]],
+   ["$st64", 6, 3, 440],
+   ["ret", 2]]
+
+let rt_gval_list_ins(_) =
+  [["$local", 16, 0],
    ["$gbase", 1],
-   ["mov_imm", 3, 440],
-   ["$add", 3, 3, 1],
-   ["mov_imm", 4, 16],
-   ["$label", "gtl"],
-   ["$ld64", 6, 3, 0],
-   ["$jcc", "==", 6, 2, "gt_hit", "gt_n"],
-   ["$label", "gt_n"],
-   ["$jcc", "==", 6, 0, "gt_end", "gt_next"],
-   ["$label", "gt_next"],
-   ["$add", 3, 3, 4],
-   ["jmp", "gtl"],
-   ["$label", "gt_hit"],
-   ["$ld64", 7, 3, 8],
-   ["ret", 7],
-   ["$label", "gt_end"],
-   ["mov_imm", 7, 0],
-   ["ret", 7]]
+   ["$ld64", 2, 1, 440],
+   ["ret", 2]]
+
+let rt_gfn_pub_ins(_) =
+  [["$local", 24, 2],
+   ["$gbase", 3],
+   ["$ld64", 4, 3, 448],
+   ["fcall", 5, "yac_cons", [1, 2]],
+   ["fcall", 6, "yac_cons", [5, 4]],
+   ["$st64", 6, 3, 448],
+   ["ret", 2]]
+
+let rt_gfn_list_ins(_) =
+  [["$local", 16, 0],
+   ["$gbase", 1],
+   ["$ld64", 2, 1, 448],
+   ["ret", 2]]
 
 /* Host cimport address table direct read (12.13 B3+ crash fix):
  * G+216..G+432 holds absolute runtime addresses (win_need order) of this
@@ -2364,7 +2392,10 @@ let runtime_funs(_) =
    ["$proc", "yac_jit_run", 3, 0, rt_jit_run_ins(0), "yac_jit_run"],
     ["$proc", "yac_host_sym", 1, 0, rt_host_sym_ins(0), "yac_host_sym"],
     ["$proc", "yac_cimport_host_sym", 1, 0, rt_cimport_host_sym_ins(0), "yac_cimport_host_sym"],
-   ["$proc", "yac_gtab_get", 1, 0, rt_gtab_get_ins(0), "yac_gtab_get"],
+   ["$proc", "yac_gval_pub", 2, 0, rt_gval_pub_ins(0), "yac_gval_pub"],
+   ["$proc", "yac_gval_list", 0, 0, rt_gval_list_ins(0), "yac_gval_list"],
+   ["$proc", "yac_gfn_pub", 2, 0, rt_gfn_pub_ins(0), "yac_gfn_pub"],
+   ["$proc", "yac_gfn_list", 0, 0, rt_gfn_list_ins(0), "yac_gfn_list"],
    ["proc", "yac_host_unimpl", 0, 0, rt_host_unimpl_ins(0), "yac_host_unimpl"],
    ["$proc", "yac_jslot_get", 1, 0, rt_jslot_get_ins(0), "yac_jslot_get"],
    ["$proc", "yac_jslot_set", 2, 0, rt_jslot_set_ins(0), "yac_jslot_set"],

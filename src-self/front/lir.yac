@@ -14,8 +14,9 @@
  */
 
 package front.lir
-export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, sigma_new, st_no, ub_prog, topfn_reset, topfn_add, topfn_has
+export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, sigma_new, st_no, ub_prog, topfn_reset, topfn_add, topfn_has, topfn_scan, topfn_names
 import lib.map
+import lib.log {log_fatal}
 
 let reverse(xs) = list_rev(xs)
 
@@ -617,19 +618,48 @@ let topfns_box =
   let _ = box_set(b, m) in
   b
 
+let topfn_names_box =
+  let b = box_new() in
+  let _ = box_set(b, list_new()) in
+  b
+
 let topfn_reset() =
   let m = nth(box_get(topfns_box), 0) in
   let _ = fmap_init_n(m, 4096) in
-  box_set(topfns_box, m)
+  let _ = box_set(topfns_box, m) in
+  box_set(topfn_names_box, list_new())
 
 let topfn_add(nm) =
   let m = box_get(topfns_box) in
   let _ = fmap_put(m, intern(nm), 1) in
+  let _ = list_push(box_get(topfn_names_box), nm) in
   0
+
+let topfn_names() = box_get(topfn_names_box)
 
 let topfn_has(nm) =
   let m = box_get(topfns_box) in
   fmap_get(m, intern(nm)) != 0
+
+/* Register this compile unit's top-level FUNCTIONS. Only a top-level
+ * letfun is flat (no capture env; its value is the code entry). Every
+ * other bind is an ordinary value reached through the normal caps
+ * chain, so this scan never needs to tell a source-level `let x`
+ * apart from a compiler temp (t0/_): it only looks at `letfun`.
+ * Used by the AOT pass (backend.pass_lir) and the blob pass
+ * (jit.pass_lir_eval). */
+let topfn_scan(items, i) =
+  if i >= len(items) then 0
+  else
+    let binds = nth(nth(items, i), 0) in
+    let go(j) =
+      if j >= len(binds) then 0
+      else
+        let b = nth(binds, j) in
+        let _ = if nth(b, 0) == "letfun" then topfn_add(nth(b, 1)) else 0 in
+        go(j + 1) in
+    let _ = go(0) in
+    topfn_scan(items, i + 1)
 
 let free_vars(fnbody, params, funs) =
   let fv(anf, acc, shdw) =
@@ -785,6 +815,7 @@ let lir_atom(atom, st) =
   else if k == "qvar" then
     lir_qvar(atom, st)
   else
+    let _ = log_fatal(str_cat("LIR: unknown ANF atom '", str_cat(k, "'"))) in
     [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
 
 /* tail(x): last bind, tail atom is ["var", x], self TCO allowed. */
@@ -1106,7 +1137,6 @@ let lir_letfun_prep(b, s) =
   let fvs_raw = free_vars(body, params, nth(s, 3)) in
   let is_rec = in_list(name, fvs_raw) in
   let fvs = if is_rec then fv_skip(fvs_raw, name) else fvs_raw in
-  let fvs = if topfn_has(name) then [] else fvs in
   let ncap = len(fvs) in
   let need_self = is_rec and ncap > 0 in
   let self_slot = ncap + nparams + 1 in
@@ -1206,7 +1236,10 @@ let lir_letfun_finish(s, p, br) =
   let f_insns2 = insn_push(f_insns1, ["label", "$tco"]) in
   let f_insns = prof_wrap_insns(nth(p, 2), f_insns2, nth(br, 0), nth(br, 1), nslots) in
   let f = ["proc", gname, ntot, ncap, f_insns, nth(p, 2)] in
-  let flat = topfn_has(nth(p, 2)) in
+  /* Flat ABI: a top-level letfun is flat only when it captures nothing.
+   * If it reads a top-level value, it keeps a closure (caps chain) --
+   * the flat value registry (L2) is what would remove that exception. */
+  let flat = topfn_has(nth(p, 2)) and nth(p, 3) == 0 in
   let finish_insns =
     if flat then nth(s, 0)
     else
@@ -1305,7 +1338,9 @@ let lir_expr_i(ast, pack) =
       let br = lir_expr_i(nth(p, 0),
         pack_i([list_new(), envk, rslot + 1, nth(fr, 4), nth(fr, 5), nth(st, 5)], 0)) in
       lir_expr_i(ast, pack_i(lir_letcallcc_finish(st, p, br, rslot), i + 1))
-    else lir_expr_i(ast, pack_i(st, i + 1))
+    else
+      let _ = log_fatal(str_cat("LIR: unknown ANF bind '", str_cat(k, "'"))) in
+      lir_expr_i(ast, pack_i(st, i + 1))
 
 /* ast = ANF body [binds, atom]. st = [insns, Γ, ctr, Σ, uid, self]. */
 let lir_expr(ast, st) = lir_expr_i(ast, pack_i(st, 0))
@@ -1320,8 +1355,17 @@ let lir_all(i, items, st, n) =
       [nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5), nth(r, 0), nth(r, 1)], n)
 
 let start_proc(nslots, result_slot, body) =
+  /* Publish every top-level function's entry into the runtime registry
+   * (G+448 list) before the package body runs: a REPL blob resolves its
+   * cross-image refs against this list (jit.gref_fill). This must come
+   * AFTER the entry prologue `["local", ...]`, which is where the ELF/PE
+   * entry stub reads argc/argv and installs rbp + the GC stack bound. */
+  let pubs(i, acc) =
+    if i >= len(topfn_names()) then acc
+    else pubs(i + 1, insn_push(acc, ["gfnst", nth(topfn_names(), i)])) in
+  let head = pubs(0, insn_push(list_new(), ["local", nslots, 0])) in
   ["proc", "_start", 0, 0, insn_push(
       insn_push(
-        insn_extend(insn_push(list_new(), ["local", nslots, 0]), body),
+        insn_extend(head, body),
         ["untag", nslots, result_slot]),
       ["syscall", 0, 60, [nslots]]), "_start"]

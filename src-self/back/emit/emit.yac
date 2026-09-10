@@ -9,7 +9,7 @@
  */
 
 package back.emit.emit
-export cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, apply_args, apply_i32, apply_ncap, apply_patch, apply_u64, apply_u64_rel, cabi_should, cabi_skip, cimport_buf, cimport_id, cimport_index, cimport_reset, cimport_set, cimport_win_need, clos_bytes, emit_arch, emit_cplt_a64, emit_cplt_rv, emit_glob_data, emit_ids_new, emit_jsess, emit_jsess_set, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, fun_is_raw, host_id, host_names, extsym_add, extsym_bind_add, extsym_bind_list, extsym_names, extsym_names_set, extsym_bind_set, extsym_find, extsym_n, extsym_reset, emit_jit_blob, emit_jit_blob_set, funsz_get, funsz_set, gref_alloc, gref_count, gref_names, gref_reset, gtab_end, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_get, yjit_layout_set, reverse
+export cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, apply_args, apply_i32, apply_ncap, apply_patch, apply_u64, apply_u64_rel, cabi_should, cabi_skip, cimport_buf, cimport_id, cimport_index, cimport_reset, cimport_set, cimport_win_need, clos_bytes, emit_arch, emit_cplt_a64, emit_cplt_rv, emit_glob_data, emit_ids_new, emit_jsess, emit_jsess_set, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, fun_is_raw, host_id, host_names, extsym_add, extsym_bind_add, extsym_bind_list, extsym_names, extsym_names_set, extsym_bind_set, extsym_find, extsym_n, extsym_reset, emit_jit_blob, emit_jit_blob_set, funsz_get, funsz_set, gref_alloc, gref_count, gref_names, gref_reset, gref_base, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_get, yjit_layout_set, reverse
 import back.pack.elf {elf_note_abs64}
 import rt.runtime {yac_cimport_host_sym}
 import back.pack.pe {pe_iat_off, pe_iat_qwords}
@@ -33,9 +33,7 @@ let is_arith(k) =
   else if k == "mul" then true
   else if k == "div" then true
   else if k == "rem" then true
-  else if k == "sar" then true
   else if k == "shr" then true
-  else if k == "sal" then true
   else if k == "shl" then true
   else if k == "land" then true
   else if k == "lor" then true
@@ -152,7 +150,6 @@ let is_raw_op(k) =
   else if k == "$gbase" then true
   else if k == "$icmp" then true
   else if k == "$memcpy" then true
-  else if k == "$lea" then true
   else if k == "$shr" then true
   else if k == "$carg" then true
   else if k == "$icall" then true
@@ -367,13 +364,16 @@ let funsz_get() = box_get(funsz_box)
 /* 112 GC + 8 jit_map (G+112) + 8 prof cell (G+120) + 8 prof busy (G+128)
  * + 10x8 host-table slots (G+136..G+216) + 28x8 host cimport address table
  * (G+216..G+440, win_need order = 21 k32 + 7 crt, baked by emit_program_*)
- * + GTAB [intern, entry] x nfun + [0,0] sentinel (G+440.., baked; host
- * image only) + extern slots + cross-image patch slots (blob only, 32B
- * stub closures). glob 3/4 must not sit on G+48/56/64. */
-let gtab_end() = 440 + bshl(funsz_get() + 1, 4)
+ * + 8 registry roots: G+440 = top-level value list, G+448 = top-level
+ * function entry list (both runtime-published via yac_gval_pub/yac_gfn_pub,
+ * GC-marked in yac_gc_collect; name matching is content-based in host yac
+ * code, so nothing is baked)
+ * + extern slots (8B each) + cross-image patch slots (32B stub closures /
+ * value cells, one per referenced name). glob 3/4 must not sit on G+48/56/64. */
+let gref_base() = 456 + bshl(extsym_n(0), 3)
 
 let emit_glob_data(b) =
-  let lim = gtab_end() + bshl(extsym_n(0), 3) + bshl(gref_count(), 5) in
+  let lim = gref_base() + bshl(gref_count(), 5) in
   let fill(i) =
     if i >= lim then 0
     else let _ = bytes_append(b, 0) in fill(i + 1) in
@@ -907,12 +907,22 @@ let emit_resolve_patch(st, p) =
     apply_patch(b, nth(p, 1), box_get(pe_dlopen_off_box))
   else if tag == 20 then
     apply_patch(b, nth(p, 1), box_get(pe_unimp_off_box))
+  else if tag == 22 then
+    /* abs64 globbase + disp: movabs imm64 placeholder filled with the final
+     * globals-area address + offset (12.14 flat ABI). Used by gvar (blob
+     * stub cells), gvld/gvst (top-level value cells), gcall and xcall. */
+    apply_u64_rel(b, nth(p, 1), globbase + nth(p, 2))
+  else if tag == 23 then
+    /* Bake a gvar stub cell's ENTRY field: [globbase+goff+16] =
+     * codebase+offs[fid]. p = [23, fid, goff]. */
+    apply_u64(b, (globbase - codebase) + nth(p, 2) + 16,
+              codebase + nth(offs, nth(p, 1)))
   else if tag == 21 then
-    /* host leaves: G+136+8*id (id<10); extsym id=10+i: G+440+8*i
-     * (G+216..G+440 is the host cimport address table, 12.13 B3+). */
+    /* host leaves: G+136+8*id (id<10); extsym id=10+i: the extern slots
+     * right before the gref slots (gref_base - extsym*8 + 8*i = 456+8*i). */
     apply_u64_rel(b, nth(p, 1),
       if nth(p, 2) < 10 then globbase + 136 + bshl(nth(p, 2), 3)
-      else globbase + 440 + bshl(nth(p, 2) - 10, 3))
+      else globbase + 456 + bshl(nth(p, 2) - 10, 3))
   else
     0
 
