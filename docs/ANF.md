@@ -224,7 +224,7 @@ TCO 规则：只对 self 做 TCO；`ccall`（C）不做 TCO。self `tcall` 在 p
 Γ ⊢ ["letfun", f, ps, body]  ⇒  Γ[f ↦ s]  ▹  I_out  ▹  {proc} ∪ P
   where  caps = FV(body) \ ({f} ∪ ps)                    ; ← fvs：捕获清单
          ncap = |caps|
-         Γ_f  = { caps_i ↦ i+1 } ∪ { ps_j ↦ ncap+j+1 }
+         Γ_f  = { caps_i ↦ ["cap", i] } ∪ { ps_j ↦ j+1 }   ; capRef：捕获不占槽（LIR.md §4.4.7）
                 ∪ (ncap>0 ∧ f ∈ FV(body)  ?  {f ↦ ncap+|ps|+1}  :  ∅)
          f ; Γ_f ⊢ body  ⇒  s_r  ▹  I_b  ▹  P
          proc = ["proc", f, ncap+|ps|, ncap,

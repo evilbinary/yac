@@ -46,6 +46,10 @@
    callee 的 `proc` 头，运行期捕获数在对象的 `nenv`（`[+24]`）。这是取消 `caps`
    的目的地（`LIR.md` §4.4）—— 把"前导槽位"与"对象"两条取捕获的路**合成一条**。
    **硬约束：无对象可传的 C ABI 导出（`--shared` / `--shared-int`）必须 `ncap == 0`。**
+   落地（`LIR.md` §4.4.7）：调用点按被调方种类发 `ycall`（yac 过程，对象 ABI，参数从
+   `rsi` 起）或 `fcall`（运行时 `$proc`，SysV，参数从 `rdi` 起）；种类由 Σ 表项第 4 字段
+   显式携带，emit 端不推断。yac 过程的序言以 `["local", nslots, nparams, 1]` 的尾字段
+   标记对象 ABI，并把 self 存入保留寄存器 `r13`。
 
 ---
 

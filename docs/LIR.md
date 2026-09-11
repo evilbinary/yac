@@ -62,7 +62,7 @@ op        ::= "local" | "$sp" | "$fp" | "$carg" | "$smap"                    ; �
             | "land" | "lor" | "xor" | "shl" | "shr" | "bnot"
             | "$clamp0" | "$bt" | "$bts"
             | "cmp" | "icmp" | "label" | "jmp" | "cmpjmp" | "$jcc"          ; §4.3
-            | "call" | "tcall" | "ccall"                        ; §4.4
+            | "ycall" | "fcall" | "tcall" | "xcall" | "icall" | "ccall"  ; §4.4 / §4.4.7
             | "gvar" | "gval" | "gset" | "glob" | "gst" | "$gbase"          ; §4.5
             | "closure" | "alloc" | "obj_kind" | "mref" | "mset"            ; §4.6
             | "tag" | "untag" | "is_int"
@@ -74,7 +74,7 @@ op        ::= "local" | "$sp" | "$fp" | "$carg" | "$smap"                    ; �
             ; 共 67 条。§4.10 那一族内联原语
             ; **已决定全删**（三个后端都在清理）—— 它们不是"暂不入列"，而是**不存在**。
 
-operand   ::= slot | imm | nameRef | slotRef | slotList | label | enum | capRef
+operand   ::= slot | imm | nameRef | slotRef | slotList | label | enum | capRef | selfRef
 slot      ::= 正整数                 ; 从 1 起；"0" 不是合法槽号（不变量 2）
 imm       ::= ["imm", n]            ; 已编码的 64 位模式（int 已 <<1，不再补 tag）
 nameRef   ::= ["name", nm] | ["fn", nm]     ; callee 位置的静态名字
@@ -85,6 +85,7 @@ slotList  ::= [operand*]                      ; 实参/槽列表 —— `call` /
 label     ::= 字符串                 ; 本 proc 内唯一
 enum      ::= 裸符号 | 裸整数        ; 如 off = 16、which = 1..4、w = 8、conv = untag
 capRef    ::= ["cap", i]            ; 第 i 个捕获 —— [self + 32 + i*8]（§4.4）
+selfRef   ::= ["self"]              ; 递归过程自身的对象 —— 即 r13（§4.4.7）
 ; ⚠️ 原 `caps ::= ["static", n] | ["dyn"] | ["raw"]` 已删除 —— 见 §4.4。
 ```
 
@@ -279,7 +280,7 @@ args   ::= [operand*]      ; 真正的实参 —— 【不含捕获】
 
 ```
 ["proc", name, nparams, ncap,
- [ ["local", nslots, nparams],  ; ① 建帧 —— 帧里【没有】捕获槽
+ [ ["local", nslots, nparams, 1],  ; ① 建帧 —— 帧里【没有】捕获槽；尾字段 1 = 对象 ABI（§4.4.7）
    ["label", "$tco"],           ; ② 尾调用入口
    …body… ,
    ["ret", retslot] ],
@@ -379,6 +380,40 @@ self  ← 对象                 ; flat = 静态 cell（cell|1）；其余 = 堆
 
 ⇒ **`apply` / `icall` / `tailapply` / `$icall` 全部删除** —— 它们是 `caps` 维度的产物 ✓。
 对象与裸入口**同形**（不变量 5 ✓）⇒ 间接调用**一律按对象**处理 ✓，调用点无需区分 ✗。
+（落地现状见 §4.4.7：`apply`/`icall` 的 emit 保留为对象 ABI 序列，前端的发码点已收敛。）
+
+#### 4.4.7 落地：两套调用 ABI 与 `ycall`（实现现状）
+
+§4.4.6 的"调用只有一种"是**机器级**约定（对象为首实参）；在 **opcode 层**，被调方按其
+序言约定分两档，由**前端显式选择**，emit 端不做任何推断：
+
+| opcode | 被调方 | 参数寄存器 | 被调方序言 |
+|---|---|---|---|
+| `fcall` | 运行时 `$proc`（`yac_num_add`、`print_int`…）与宿主符号 | SysV：`rdi` 起（6 槽） | `$local` 按 SysV spill |
+| **`ycall`** | Σ 解析到的本镜像 yac 过程（种类 `"proc"`） | **对象 ABI**：`rdi`=对象（flat 忽略），真参 `rsi`..`r9`（**5** 槽），第 6 个起走栈 `[rbp+16+8*(j-5)]` | `["local", nslots, nparams, 1]` |
+| `xcall` | 跨镜像（入口表补丁） | 对象 ABI | 同上 |
+
+**三条落地机制（缺一不可，均经实证）**：
+
+1. **显式 ABI 标记** —— `lir_letfun_finish` 发 `["local", nslots, nparams, 1]`，尾字段
+   `1` = 对象 ABI。emit **只认这个标记**：`_start` 与运行时 `$procs` 共用 `"local"`
+   这个拼写但约定不同，从指令种类或 `is_raw` 推断**已被实证不可靠**（推断错会把
+   SysV 参数按对象 ABI 读，参数静默丢失、结果变成垃圾）。
+2. **Σ 表项携带种类** —— `sigma_cons` 把 stub 的第 0 字段（`"proc"` / `"$proc"`）追加为
+   表项第 4 字段；调用 lowering 据此发 `ycall`（yac 过程）或 `fcall`（运行时）。运行时
+   stub 因此统一标为 `"$proc"`（语义本就如此：raw / SysV；`vproc` 的 is_raw 判定不变）。
+   参数在 Γ 中绑定于槽 `j+1`（捕获不再占前导槽，`bind_params` 与序言 spill 一致）。
+3. **TCO 覆盖** —— `tco_find` / `tco_one` 同时识别 `fcall` 与 `ycall`，尾位置的 `ycall`
+   照常改写为 `tcall`（§4.4 尾调用约定不变）；`emit` 分发白名单必须收录 `ycall`，
+   否则该指令被**静默丢弃**（已实证 ✗）。
+
+**self 寄存器 = `r13`**（`encode_x64` 明文保留 r12–r15 给 yac；r12 被 ccall 的 SP 保存
+占用）。对象 ABI 序言一次性 `r13 ← rdi`；专用装载原语 `mov_rax_r13` / `mov_rbx_r13` /
+`mov_rdi_r13` / `mov_r13_rdi` 自带正确 REX —— 通用 `mov_r64_r64` 只发 `REX=0x48`，
+reg>7 会**静默折叠**（`13&7=5 → rbp`，把帧指针毁掉，已实证 ✗）。
+
+**`["self"]` 操作数**：递归过程对自身名字的值引用解析为 `["self"]`（Γ 中以负数哨兵
+槽位标记），装载即 `rax ← r13` —— 自闭包（self-closure）随之删除。
 
 **Chez 对照**：
 
@@ -646,6 +681,7 @@ cell + 32… : env…
 | # | 现状 | 目标 | 依据 |
 |---|---|---|---|
 | S1 | `maybe_tcall` 事后改写 `fcall`→`tcall` | **删** —— ANF 的 `tail` 结构已给出尾位置 | §4.4 |
+|    | （落地现状：`tco_find`/`tco_one` 改写 `fcall`/`ycall`→`tcall`，见 §4.4.7） | | |
 | S2 | `proc` 头的 `ncap` 是"自由变量数"，`fvs` 本身被丢弃 | `proc` / `$proc` **末尾追加** `[fvs]`（形状见 §2） | 落地后 `ncap == len(fvs)` 可机器校验（§8 规则 8） |
 | S3 | `topfn_has` 全局 box 进 LIR | 静态名集合作为**参数**传入 | 不变量 4 |
 | S4 | 三处静默兜底 | 改成编译期报错 | K3 |
