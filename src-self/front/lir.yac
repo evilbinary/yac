@@ -967,8 +967,19 @@ let calli(g0, dst, ss, env, funs, self, tail) =
   let g = resolve_call(g0) in
   let h = hash_str(g) in
   if e != 0 then
+    let slf = nth(e, 0) == 0 - 1000000 in
     let ncap = nth(e, 1) in
-    if ncap > 0 then
+    if slf and ncap == 0 then
+      /* Flat self-recursion (capRef): direct ycall -- the callee ignores the
+       * object register, and tco_find still matches it for the tloop. */
+      let se = sigma_ent_h(funs, g, h) in
+      let code = if se == 0 then g else nth(se, 0) in
+      ["ycall", dst, code, ss]
+    else if slf then
+      /* Non-flat self-recursion (capRef): the object is the incoming self
+       * itself; apply through ["self"] so the callee reads caps from r13. */
+      ["apply", dst, ["self"], ncap, ss]
+    else if ncap > 0 then
       let se = sigma_ent_h(funs, g, h) in
       let code = if se == 0 then g else nth(se, 0) in
       if code == self then
