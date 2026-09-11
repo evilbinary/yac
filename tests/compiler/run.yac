@@ -210,7 +210,13 @@ let lower_cases(_) = [
   ["lit42", "rc", "42"],
   ["arith", "rc", "5"],
   ["if_else", "rc", "40"],
-  ["fact", "rc", "120"], ["capture_shadow", "rc", "17"]
+  ["fact", "rc", "120"], ["capture_shadow", "rc", "17"],
+  /* capRef 回归（见各用例头注释）*/
+  ["cap_selfrec", "rc", "300"],
+  ["cap_cross_scope", "rc", "25"],
+  ["cap_captured_closure", "rc", "42"],
+  ["cap_args6_obj", "rc", "31"],
+  ["cap_chain3", "rc", "17"]
 ]
 
 let lower_one(st, yc, c) =
@@ -234,6 +240,26 @@ let lower_one(st, yc, c) =
 let lower_all(st, yc) =
   let _ = banner("compiler/lower", nth(yc, 0)) in
   foldl(fun(s, c) -> lower_one(s, yc, c), st, lower_cases(0))
+
+/* ---- negative：必须被编译器拒绝的源 ---- */
+
+let negative_cases(_) = [
+  ["dup_def", "rejected"]
+]
+
+let negative_one(st, yc, c) =
+  let name = nth(c, 0) in
+  let want = nth(c, 1) in
+  let bin = str_cat(TMP, str_cat("/neg_", name)) in
+  let cr = run(append(append(yc, [case_src("lower", name)]),
+                      append(PKG, ["-o", bin]))) in
+  let rc = nth(cr, 0) in
+  check(st, str_cat("neg ", name), want,
+        if rc == 0 then "compiled (should have failed)" else "rejected")
+
+let negative_all(st, yc) =
+  let _ = banner("compiler/negative", nth(yc, 0)) in
+  foldl(fun(s, c) -> negative_one(s, yc, c), st, negative_cases(0))
 
 /* ---- pack：镜像头魔术字节 ---- */
 
@@ -302,5 +328,6 @@ let main =
       let want_lower = filt == "lower" or filt == "" in
       let want_pack = filt == "pack" or filt == "" in
       let st2 = if want_lower then lower_all(st1, yc) else st1 in
-      let st3 = if want_pack then pack_all(st2, yc) else st2 in
-      suite_done(st3)
+      let st3 = if want_lower then negative_all(st2, yc) else st2 in
+      let st4 = if want_pack then pack_all(st3, yc) else st3 in
+      suite_done(st4)

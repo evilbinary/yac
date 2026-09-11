@@ -361,22 +361,36 @@ let sigma_host_seed(fs) =
  * PURE: returns Σ with the map and fn-list filled. There is no global box
  * and nothing to `reset` -- the caller just hands the result to lir_all. */
 let toplevel_seed(items, i, fs) =
-  if i >= len(items) then fs
-  else
-    let binds = nth(nth(items, i), 0) in
-    let tm = sigma_tl(fs) in
-    let put(j) =
-      if j >= len(binds) then 0
-      else
-        let b = nth(binds, j) in
-        let k = nth(b, 0) in
-        let _ =
-          if k == "letfun" then fmap_put(tm, nth(b, 1), 1)
-          else if k == "let" then fmap_put(tm, nth(b, 1), 2)
-          else 0 in
-        put(j + 1) in
-    let _ = put(0) in
-    toplevel_seed(items, i + 1, fs)
+  /* 同单元内重复的顶层同名定义必须报错。yac 的 let 后绑定生效，
+   * 第二个定义会静默覆盖第一个（emit_load_rax/rbx_slot 双定义事故：
+   * 带操作数分发的新装载器被文件后段的旧定义覆盖，查了两天）。
+   * 只守单元顶层；函数体内的 let* 顺序重绑是合法作用域规则，不受影响。 */
+  let seen = fmap_new64(0) in
+  let walk(i) =
+    if i >= len(items) then fs
+    else
+      let binds = nth(nth(items, i), 0) in
+      let tm = sigma_tl(fs) in
+      let put(j) =
+        if j >= len(binds) then walk(i + 1)
+        else
+          let b = nth(binds, j) in
+          let k = nth(b, 0) in
+          let nm = nth(b, 1) in
+          let h = hash_str(nm) in
+          let _ =
+            if fmap_get_h(seen, nm, h) != 0 then
+              log_fatal(str_cat("LIR: duplicate top-level definition '",
+                                str_cat(nm, "'")))
+            else 0 in
+          let _ = fmap_put_h(seen, nm, h, 1) in
+          let _ =
+            if k == "letfun" then fmap_put(tm, nm, 1)
+            else if k == "let" then fmap_put(tm, nm, 2)
+            else 0 in
+          put(j + 1) in
+      put(0) in
+  walk(0)
 
 let str_to_int(s) =
   let n = str_len(s) in
@@ -980,13 +994,13 @@ let calli(g0, dst, ss, env, funs, self, tail) =
        * itself; apply through ["self"] so the callee reads caps from r13. */
       ["apply", dst, ["self"], ncap, ss]
     else if ncap > 0 then
-      let se = sigma_ent_h(funs, g, h) in
-      let code = if se == 0 then g else nth(se, 0) in
-      if code == self then
-        if tail or ncap + len(ss) <= 6 then
-          ["fcall", dst, code, list_ext(cap_slots(ncap, 1, list_new()), ss, 0, len(ss))]
-        else ["apply", dst, nth(e, 0), ncap, ss]
-      else ["apply", dst, nth(e, 0), ncap, ss]
+      /* The callee is a captured closure: capRef binds its Gamma slot to a
+       * NEGATIVE marker, so it must become the ["cap", j] operand (same
+       * conversion as lir_var/outer_caps) before it can be applied. The
+       * old fcall-with-caps-as-args path is gone under the object ABI. */
+      let cs = nth(e, 0) in
+      let clo = if cs < 0 then ["cap", 0 - cs - 1] else cs in
+      ["apply", dst, clo, ncap, ss]
     else
       let se = sigma_ent_h(funs, g, h) in
       if se != 0 then
@@ -1254,7 +1268,11 @@ let lir_letfun_prep(b, s) =
   let p_env0 = bind_params(params, nparams, ncap, 0,
                  bind_caps(fvs, ncap, env, 0, env_new(0))) in
   let p_env =
-    if is_rec then env_bind(p_env0, name, 0 - 1000000, 0) else p_env0 in
+    /* The Gamma entry keeps the REAL ncap: calli (lir.yac "calli") uses it
+     * to pick ycall (flat self, object ignored) vs apply-through-["self"]
+     * (caps read from r13). Losing it sent cap-bearing self-calls down the
+     * flat ycall path with no object in the 0th arg register. */
+    if is_rec then env_bind(p_env0, name, 0 - 1000000, ncap) else p_env0 in
   let stub = ["proc", gname, nparams, ncap, list_new(), name] in
   let fs1 = sigma_cons(nth(s, 3), stub) in
   let st5 = [list_new(), p_env, nparams + 1, fs1, uid + 1] in
@@ -1262,6 +1280,7 @@ let lir_letfun_prep(b, s) =
    * carried in Σ (toplevel_seed), never by name shape. Recorded as field 9
    * so lir_letfun_finish reaches the SAME answer the reference sites use. */
   let is_top = sigma_kind(nth(s, 3), name) == 1 in
+  let _ = if ncap > 0 then print(["dbg_nf", name, ncap, fvs]) else 0 in
   let saved_tlv = box_get(lir_tlv_box) in
   let _ = box_set(lir_tlv_box, 0) in
   [body, st5, name, ncap, nparams, gname, fvs, false, 0, is_top, saved_tlv != 0]
