@@ -24,6 +24,7 @@ let alloc_home(s) = s
 let insn_callee(ins) =
   let k = nth(ins, 0) in
   if k == "fcall" then intern(nth(ins, 2))
+  else if k == "ycall" then intern(nth(ins, 2))
   else if k == "tcall" then intern(nth(ins, 2))
   else if k == "closure" then intern(nth(ins, 2))
   else 0
