@@ -210,7 +210,7 @@ let lower_cases(_) = [
   ["lit42", "rc", "42"],
   ["arith", "rc", "5"],
   ["if_else", "rc", "40"],
-  ["fact", "rc", "120"]
+  ["fact", "rc", "120"], ["capture_shadow", "rc", "17"]
 ]
 
 let lower_one(st, yc, c) =

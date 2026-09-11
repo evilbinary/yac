@@ -1,0 +1,10 @@
+let a0() = 0
+let a1() = 1
+let a2() = 2
+let a3() = 3
+let a4() = 4
+let a5() = 5
+let a6() = 6
+let a7() = 7
+let outer(n) = let a5 = 70 in let inner(x) = a5 + x in inner(n)
+outer(10)

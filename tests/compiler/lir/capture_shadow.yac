@@ -1,0 +1,3 @@
+let f() = 1
+let outer(n) = let f = 7 in let inner(x) = f + x in inner(n)
+outer(10)

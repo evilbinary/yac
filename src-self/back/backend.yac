@@ -871,8 +871,19 @@ let dump_lir(src) =
     let rt0 = rt_for_link(0) in
     let _ = pkg_prefix_set("") in
     let fs0 = toplevel_seed(anf, 0, sigma_of_rt(rt0)) in
-    lir_dump_items(anf, 0, len(anf),
-      [env_new(0), 1, fs0, 0, list_new(), 0])
+    let _ = lir_dump_items(anf, 0, len(anf),
+      [env_new(0), 1, fs0, 0, list_new(), 0]) in
+    /* Then the procs of THIS unit. Item-level LIR cannot express captures,
+     * self closures or TCO rewrites -- those live in a proc body, so without
+     * this the lir suite cannot see them at all. sigma_list is newest-first
+     * and starts with the runtime procs (sigma_of_rt), so cutting at
+     * len(ps) - len(rt0) drops those. */
+    let ps = sigma_list(nth(pass_lir(anf), 2)) in
+    let nps = len(ps) - len(rt0) in
+    let dump_ps(i, n) =
+      if i >= n then 0
+      else let _ = print(nth(ps, i)) in dump_ps(i + 1, n) in
+    dump_ps(0, nps)
 
 /* ---------- --verify-lir: machine-check the LIR invariants (docs/LIR.md §8) ----
  *
