@@ -1,1 +1,2 @@
 [[strlit, 1, abc], [str_len, 2, 1]]
+[proc, _start, 0, 0, [[local, 3, 0], [strlit, 1, abc], [str_len, 2, 1], [untag, 3, 2], [syscall, 0, 60, [3]]], _start]

@@ -1,1 +1,2 @@
 [[mov_imm, 1, 10], [gset, x, 0, [imm, 10]], [mov_imm, 2, 2], [fcall, 3, yac_num_add, [1, 2]]]
+[proc, _start, 0, 0, [[local, 4, 0], [mov_imm, 1, 10], [gset, x, 0, [imm, 10]], [mov_imm, 2, 2], [fcall, 3, yac_num_add, [1, 2]], [untag, 4, 3], [syscall, 0, 60, [4]]], _start]

@@ -1,1 +1,2 @@
 [[strlit, 1, a], [strlit, 2, b], [fcall, 3, yac_str_cat, [1, 2]]]
+[proc, _start, 0, 0, [[local, 4, 0], [strlit, 1, a], [strlit, 2, b], [fcall, 3, yac_str_cat, [1, 2]], [untag, 4, 3], [syscall, 0, 60, [4]]], _start]
