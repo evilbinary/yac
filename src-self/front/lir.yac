@@ -674,7 +674,11 @@ let free_vars(fnbody, params, funs, env) =
         let g = resolve_call(nm) in
         if ch == 0 then
           if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hash_str(g)) != 0 then
-            if env_rec_h(env, nm, h) != 0 then fv_acc_add_h(a, nm, h) else a
+            /* Only a top-level LETFUN (kind 1) can coincide with a nested closure
+             * of the same name. A top-level `let` VALUE (kind 2) is bound in Γ as
+             * well, but it is reached statically (gval) -- capturing it would make
+             * a flat function non-flat and desync it from its gvar entry. */
+            if sigma_kind_h(funs, nm, h) == 1 and env_rec_h(env, nm, h) != 0 then fv_acc_add_h(a, nm, h) else a
           else
             let se = sigma_ent_h(funs, g, hash_str(g)) in
             if se == 0 then fv_acc_add_h(a, nm, h)

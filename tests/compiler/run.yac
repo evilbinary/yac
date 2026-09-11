@@ -9,7 +9,7 @@
  *   cps    ANF    -> CPS               yc --dump-cps
  *   opt    CPS    -> CPS（--opt 化简）   yc --opt --dump-cps
  *   uncps  CPS    -> ANF               yc --dump-uncps
- *   lir    ANF    -> LIR 指令            yc --dump-lir
+ *   lir    ANF    -> LIR 指令            yc --dump-lir（顶层项 + 本单元 proc）
  *   lower  ANF -> LIR -> 机器码 -> 可执行  yc -o out; 运行
  *   pack   机器码 -> ELF/PE/Mach-O/yjit  yc --format … -o out; 查首字节
  *
