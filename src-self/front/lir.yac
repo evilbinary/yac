@@ -659,7 +659,11 @@ let ub_prog(p, i, sc) =
  * lets of the current compile unit. Flat functions compile with no captured
  * environment (ncap=0); free refs to them skip the caps chain (fcall rel32
  * inside the image, xcall via the entry table across images). */
-let free_vars(fnbody, params, funs) =
+/* `env` is the enclosing Γ where this letfun is defined. A name that a
+ * top-level entry also claims may still be a VISIBLE ENCLOSING LOCAL, and
+ * then it must be captured: the top-level table only says the name exists
+ * somewhere, never that this occurrence refers to it. Γ wins. */
+let free_vars(fnbody, params, funs, env) =
   let fv(anf, acc, shdw) =
     let atom_vars(atom, a, sh) =
       let k = nth(atom, 0) in
@@ -669,19 +673,16 @@ let free_vars(fnbody, params, funs) =
         let ch = fmap_get_h(nth(sh, 0), nm, h) in
         let g = resolve_call(nm) in
         if ch == 0 then
-          if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hash_str(g)) != 0 then a
+          if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hash_str(g)) != 0 then
+            let e = env_rec_h(env, nm, h) in
+            if e != 0 and nth(e, 2) > 0 then fv_acc_add_h(a, nm, h) else a
           else
             let se = sigma_ent_h(funs, g, hash_str(g)) in
             if se == 0 then fv_acc_add_h(a, nm, h)
             else if nth(se, 1) == 0 then a
             else fv_acc_add_h(a, nm, h)
         else if sh_has_chain(ch, nth(sh, 1)) then a
-        else if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hash_str(g)) != 0 then a
-        else
-          let se = sigma_ent_h(funs, g, hash_str(g)) in
-          if se == 0 then fv_acc_add_h(a, nm, h)
-          else if nth(se, 1) == 0 then a
-          else fv_acc_add_h(a, nm, h)
+        else fv_acc_add_h(a, nm, h)
       else if k == "qvar" then a
       else if k == "fun" then nth(fv(nth(atom, 2), a, sh), 0)
       else a in
@@ -1170,7 +1171,7 @@ let lir_letfun_prep(b, s) =
       str_cat(base, str_cat("#", int_to_str(uid)))
     else base in
   let gname = intern(gname0) in
-  let fvs_raw = free_vars(body, params, nth(s, 3)) in
+  let fvs_raw = free_vars(body, params, nth(s, 3), env) in
   let is_rec = in_list(name, fvs_raw) in
   let fvs = if is_rec then fv_skip(fvs_raw, name) else fvs_raw in
   let ncap = len(fvs) in

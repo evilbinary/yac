@@ -1156,7 +1156,15 @@ let emit_x86_i_raw(st, insn) =
       let _ = emit_store_rax_slot(b, nth(insn, 1)) in
       emit_st4(st, b, cur, labels, ps1)
     else
-      let fid = emit_map_get(nth(st, 4), nth(insn, 2)) in
+      let nm = nth(insn, 2) in
+      let fid = emit_map_get(nth(st, 4), nm) in
+      /* A miss used to bake offs[0] -- the image's FIRST procedure -- with no
+       * error at all, so a call through this stub jumped into unrelated code.
+       * Fail loudly instead (LIR.md 9.1: no silent fallbacks). */
+      let _ =
+        if fid == 0 then
+          log_fatal(str_cat("emit: gvar: no such procedure '", str_cat(nm, "'")))
+        else 0 in
       /* Two patches: tag22 fills the movabs imm with the stub cell address
        * (globbase+goff); tag23 bakes the stub's ENTRY field [cell+16] =
        * codebase+offs[fid] directly into the globals data. */
