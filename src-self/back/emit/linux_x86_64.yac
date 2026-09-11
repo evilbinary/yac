@@ -48,7 +48,6 @@ let emit_load_rdi_slot(b, k) =
   else if k0 == "imm" then mov_rdi_imm(b, nth(k, 1))
   else mov_r64_mem_rbp32(b, 7, slot_off(k))
 let emit_store_rax_slot(b, k) = mov_mem_rbp32_r64(b, slot_off(k), 0)
-let emit_load_rbx_slot(b, k) = mov_r64_mem_rbp32(b, 3, slot_off(k))
 let emit_store_param(b, j, k) =
   let off = slot_off(k) in
   if j == 0 then mov_mem_rbp32_r64(b, off, 7)

@@ -62,10 +62,10 @@ app/llm/snapshot/remote_train.sh
 tools/__pycache__/fill_imports.cpython-310.pyc
 zhistory-doc/
 perf.data
-t1.yac
-t2.yac
 a.txt
 tmp_tests/e3.yac
 tmp_tests/v1.yac
 tmp_tests/y1t.yac
-t1.asm
+*.asm
+*.lir
+*.yac
