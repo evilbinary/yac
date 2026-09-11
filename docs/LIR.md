@@ -45,8 +45,12 @@ prog      ::= ["prog", [proc*], entryName]
 proc      ::= ["proc",  name, nparams, ncap, [insn*], srcname, [fvs]]
               ; 客过程。name = 码名（可能带包前缀 / #uid 后缀），srcname = 源级名（profiler 用）
               ; ncap = 真捕获数；nparams = 形参个数
-              ; 槽布局：1..ncap 捕获，ncap+1..ncap+nparams 形参，之后是局部
+              ; 槽布局：1..nparams 形参，之后是局部 —— 捕获【不住槽】，
+              ;         经 ["cap", i] 从对象读（§4.4）
               ; [fvs] = 自由变量表（free_vars 的输出），恒有 ncap == len(fvs)
+              ;   元素是【源级名字】（字符串），按 free_vars 的顺序排列；
+              ;   fvs[i] 与 ["cap", i] 的 i、与定义点 ["closure",…,capSlots] 的
+              ;   第 i 个槽位一一对应 —— 例：inner 的 fvs = ["f"]，ncap = 1
 
 $proc     ::= ["$proc", name, nparams, ncap, [insn*], srcname, [fvs]]
               ; 原生过程（rt/runtime.yac 手写）。帧不做 GC 扫描；用 $ 家族指令
@@ -58,7 +62,7 @@ op        ::= "local" | "$sp" | "$fp" | "$carg" | "$smap"                    ; �
             | "land" | "lor" | "xor" | "shl" | "shr" | "bnot"
             | "$clamp0" | "$bt" | "$bts"
             | "cmp" | "icmp" | "label" | "jmp" | "cmpjmp" | "$jcc"          ; §4.3
-            | "call" | "tcall" | "ccall"                                    ; §4.4
+            | "call" | "tcall" | "ccall"                        ; §4.4
             | "gvar" | "gval" | "gset" | "glob" | "gst" | "$gbase"          ; §4.5
             | "closure" | "alloc" | "obj_kind" | "mref" | "mset"            ; §4.6
             | "tag" | "untag" | "is_int"
@@ -67,19 +71,21 @@ op        ::= "local" | "$sp" | "$fp" | "$carg" | "$smap"                    ; �
             | "$f64fromstr" | "$f64binop" | "$f64rel" | "$f64print"         ; §4.8
             | "ret" | "exit" | "throwk" | "mkcont" | "cc_recv" | "syscall"  ; §4.9
             | "strlit" | "str_len" | "str_ref" | "bytes_len" | "write1" | "clock"
-            ; 共 66 条。§4.10 的 26 条内联原语**暂不入列** —— 去留是待决策项：
-            ; 决定走 `call yac_*` 就整族不存在，决定内联则补进这张表。
+            ; 共 67 条。§4.10 那一族内联原语
+            ; **已决定全删**（三个后端都在清理）—— 它们不是"暂不入列"，而是**不存在**。
 
-operand   ::= slot | imm | nameRef | slotRef | slotList | label | caps | enum
+operand   ::= slot | imm | nameRef | slotRef | slotList | label | enum | capRef
 slot      ::= 正整数                 ; 从 1 起；"0" 不是合法槽号（不变量 2）
 imm       ::= ["imm", n]            ; 已编码的 64 位模式（int 已 <<1，不再补 tag）
 nameRef   ::= ["name", nm] | ["fn", nm]     ; callee 位置的静态名字
 slotRef   ::= ["slot", s]                   ; callee 位置的运行期值
-slotList  ::= [slot*]                       ; 槽列表 —— `call` / `tcall` 的 args、
+slotList  ::= [operand*]                      ; 实参/槽列表 —— `call` / `tcall` 的 args、
                                             ; `closure` 的 capSlots、`$syscall` 的 srcSlots
+                                            ; ⚠️ 元素可以是 ["cap", i] ✓（捕获直接当实参 ✓）
 label     ::= 字符串                 ; 本 proc 内唯一
-caps      ::= ["static", n] | ["dyn"] | ["raw"]
 enum      ::= 裸符号 | 裸整数        ; 如 off = 16、which = 1..4、w = 8、conv = untag
+capRef    ::= ["cap", i]            ; 第 i 个捕获 —— [self + 32 + i*8]（§4.4）
+; ⚠️ 原 `caps ::= ["static", n] | ["dyn"] | ["raw"]` 已删除 —— 见 §4.4。
 ```
 
 > **`slot` 与 `enum` 在文法上是同一形状，只有 §4 的表能区分。** `["imm", n]` 有标签
@@ -91,6 +97,27 @@ enum      ::= 裸符号 | 裸整数        ; 如 off = 16、which = 1..4、w = 8
 > 元组返回（`nth(p, 6)`），到 `:1236` 构造 `proc` 时被丢掉，只剩 `ncap` 这个数字。
 > 落地时**只能追加到末尾，不能插入**：`fun_is_raw` 读 `nth(f, 4)`（insns），
 > 插入会顶掉所有下标。迁移与影响面见 §5.5 S2。
+
+> **flat 形态（统一表示）。** `ncap == 0` 的过程**只有一种表示**：它的名字就是一个
+> **静态 cell**（布局见 §4.5）—— `cell + 16` 是代码入口，`cell + 0` 是"函数当值"
+> 时的单元地址本身，且 `nenv = 0` 使它**本身即一个合法的零捕获闭包对象**
+> （不变量 5）。于是各处的形态是确定的：
+>
+> | 场景 | 形态 |
+> |---|---|
+> | 定义点 | **不发** `closure` 指令；名字即 cell |
+> | 调用 | 只传**对象**作首实参；每次捕获引用经 `["cap", i]` 从对象读（§4.4） |
+> | 名字当值 | `gvar`（`dst = cell \| 1`） |
+> | 读顶层值 | `gval`（`dst = [cell + 0]`） |
+>
+> **判据只有 `ncap == 0` 这一条，与"是否顶层"无关**（`FLAT_ABI.md` 准则 2）；
+> 表示判定**不得依赖名字表**（准则 5：判据必须是结构事实）。
+>
+> ⚠️ **落地状态**：现状只有**顶层** letfun 走 flat —— `lir_letfun_finish` 仍写着
+> `flat = is_top and ncap == 0`（`lir.yac:1307`）。把判据**下沉到所有 lambda** 是
+> `FLAT_ABI.md` 第 3 步；**定义点与引用点必须一起改**（`flat` 一放宽，
+> `lir_var` 对非顶层的零捕获函数也必须改走静态名字，否则引用解析不到），
+> 因此这两处**不可分开落地**。
 
 > **LIR 没有"闭包转换层"（`clos`）的语法 —— 这是有意的。** 闭包的痕迹散在 LIR 的
 > 5 个位置：`proc` 头的 `ncap` / `[fvs]`、`closure` 指令、`call` 的 `caps` 字段、
@@ -224,32 +251,147 @@ enum      ::= 裸符号 | 裸整数        ; 如 off = 16、which = 1..4、w = 8
 | `cmpjmp` | `["cmpjmp", cond, then, else]` | `cond` 槽非 0 → `then` |
 | `$jcc` | `["$jcc", op, a, b, then, else]` | `op ∈ {>=u, ==, <, else}`；两槽比较后跳转 |
 
-### 4.4 调用
+### 4.4 调用与过程序言
 
-**3 条 opcode**（现状 10 条，见 §5.1）：
+**3 条 opcode**：
 
 | 指令 | 形态 | 角色 |
 |---|---|---|
-| `call` | `["call", dst, callee, args, caps]` | **求值型**：产生一个值，写入 `dst` |
-| `tcall` | `["tcall", callee, args, caps]` | **转移型**：**无 `dst`**，是 body 的结尾（与 `ret` 同类） |
-| `ccall` | `["ccall", dst, callee, args]` | **C ABI 家族**：不同寄存器约定、要 marshal、结果打 tag |
+| `call` | `["call", dst, callee, args]` | **求值型**：调用，结果写 `dst` |
+| `tcall` | `["tcall", callee, args]` | **转移型**：**无 `dst`**，body 结尾（与 `ret` 同类） |
+| `ccall` | `["ccall", dst, callee, args]` | **C ABI 家族**：独立寄存器约定、marshal、结果打 tag |
+
+**捕获不是指令 ✗ —— 是一种操作数** ✓：`["cap", i]`（第 i 个捕获，即 `[self + 32 + i*8]` ✓），
+可以出现在**任何**读值的位置（`fcall` 的实参 ✓、`cmp` 的操作数 ✓、`["closure", …, capSlots]` ✓）。
 
 ```
-callee ::= ["name", nm]    ; 静态名字 —— 怎么变成地址交给 fn_entry（§7.6）
+callee ::= ["name", nm]    ; 静态名字（fn_entry 负责变成地址，§7.6）
          | ["slot", s]     ; 运行期值（栈槽）
-
-caps   ::= ["static", n]   ; 编译期已知 n 个前导捕获；n = 0 即 flat（无前导）
-         | ["dyn"]         ; 运行期：个数读 [obj+24]，第 i 个读 [obj+32+i*8]
-         | ["raw"]         ; 槽里直接就是代码入口：不解包、不传 caps（原 `$icall`）
+                           ; 两者都表示【过程对象】本身
+args   ::= [operand*]      ; 真正的实参 —— 【不含捕获】
 ```
 
-**`caps` 是什么。** 闭包 = 代码 + 捕获的环境。yac 的 ABI **把捕获值当作参数传**
-（而不是让被调者从闭包对象里现取），所以每个过程有**两段形参**：
+**对象即环境入口；捕获住在对象里，从不进槽。** 被调者（`callee`）就是过程对象：flat 时是
+静态 cell、否则是堆闭包（§4.5）。调用点只传 **对象 + 真参** —— `caps` 字段**已删除**，
+也**不需要任何序言载入指令**（`bindcaps` 已取消）：对捕获的**每一次引用**直接从对象读 ✓。
+
+#### 4.4.1 槽布局与 Γ
 
 ```
-slot 1      .. ncap           ← 前导捕获（caps）   bind_caps:   fvs[j] ↦ j+1
-slot ncap+1 .. ncap+nparams   ← 真正的形参          bind_params: ps[j]  ↦ ncap+j+1
+["proc", name, nparams, ncap,
+ [ ["local", nslots, nparams],  ; ① 建帧 —— 帧里【没有】捕获槽
+   ["label", "$tco"],           ; ② 尾调用入口
+   …body… ,
+   ["ret", retslot] ],
+ srcname]
+
+slot 1 .. nparams   ← 形参        bind_params: ps[j] ↦ j+1
 ```
+
+- **Γ 对捕获的映射从"槽"改为"操作数"**：`fvs[j] ↦ ["cap", j]` ✓ —— `lir_var` **不发指令** ✓，
+  直接把这个操作数交给使用它的那条指令 ✓
+- **自递归不需要自闭包**：`self` 就是**传入的对象** ✓ ⇒ `need_self` / `self_slot` /
+  序言里的 `["closure", self_slot, …]` **全部退役** ✓
+
+#### 4.4.2 `["cap", i]` 的具体内容
+
+```
+对象 = self（第 0 个实参寄存器，即 callee 位置）
+
+["cap", 0]  ≡  [对象 + 32]          ; fvs[0]
+["cap", 1]  ≡  [对象 + 40]          ; fvs[1]
+["cap", i]  ≡  [对象 + 32 + i*8]    ; fvs[i]
+```
+
+- 对象布局：`+24` = `nenv`，`+32 + i*8` = 第 i 个自由变量（§4.5）
+- **`i` 与 `free_vars` 的 `fvs` 下标一一对应**，与定义点 `["closure", …, capSlots]`
+  的填充顺序一致 ✓
+- **它不是指令** ✗ —— 是操作数 ✓：emit 在**装载该操作数的那条指令**里完成这一次
+  访存 ✓（统一入口 `emit_load_operand` ✓：slot / cap / imm 三种 ✓）
+
+**性能（vs `cval` 拆两条 ✗）** —— 以 `inner(x) = f + x` 为例：
+
+```
+cval 两条：  6 条机器指令 / 3 次访存   ✗（读对象 → 写临时槽 → 再读槽，两次纯往返 ✗）
+capRef 一条：4 条机器指令 / 1 次访存   ✓（捕获直接进实参寄存器 ✓）
+旧 caps 槽： 5 条机器指令 / 4 次访存   ✗（调用点每次还要搬 2n ✗）
+```
+
+**⇒ `capRef` 指令最少、访存最少 ✓；捕获用 k 次就是 k 次访存 ✓（`cval` 是 3k ✗）✓。**
+帧里没有捕获槽 ✓（帧更小 ✓）、LIR 更短 ✓。
+
+#### 4.4.3 完整例子：同一个 proc 的三处形态
+
+源：`let f() = 1` / `let outer(n) = let f = 7 in let inner(x) = f + x in inner(n)` / `outer(10)`
+（`inner` 的 `ncap = 1`，`fvs = [f]`）
+
+```
+① 定义点（outer 体内）    [mov_imm, 2, 14]                 ; 槽2 = 7
+                          [closure, 3, inner, [2]]          ; 对象 ← 外层槽2   （不动 ✓）
+
+② 调用点   现在：          [apply, 4, 3, 1, [1]]             ; 第3操作数 1 = ncap ⇒ 由调用方搬 ✗
+           改后：          [call, 4, ["slot", 3], [1]]      ; 只传对象 + 真参 ✓
+
+③ callee   现在：          [local, 6, 2]                    ; ntot=2：槽1=f(捕获) 槽2=x ✗
+           改后：          [local, 4, 1]                    ; 只有形参 x（槽1）✓
+                          …
+                          [fcall, 3, yac_num_add, [["cap", 0], 1]]  ; f + x —— 一条 ✓
+```
+
+**⇒ 数据流：捕获值只搬一次（定义点进对象 ✓），之后每次引用直接从对象读 ✓。**
+
+#### 4.4.4 三档归宿与硬约束
+
+| 原 `caps` | 归宿 | 说明 |
+|---|---|---|
+| `["static", n]` | **callee 的 `proc` 头**（`ncap`） | 调用点不再需要知道 n |
+| `["dyn"]` | **无需** | 调用点不需要捕获个数 |
+| `["raw"]` | **被调符号的导出属性**（C ABI 导出） | 不再是调用点字段 |
+
+**入参位置必须与 `ncap` 无关**：**对象固定占第 0 个实参寄存器**，真参依次其后 ✓。
+**硬约束**：无对象可传的 C ABI 导出（`--shared` / `--shared-int`）**必须 `ncap == 0`**；
+**编译期强制检查，违反即报错** ✓。
+
+#### 4.4.5 `--verify-lir` 不变量
+
+1. `["cap", i]` 的 `i` 必须 `< proc` 头的 `ncap`
+2. `proc` 头 `ncap` 必须等于 `len([fvs])`（§5.5 S2 落地后可机器校验 ✓）
+3. proc 内**不得**引用"捕获槽" —— 槽 `1..nparams` 全是形参 ✓
+
+#### 4.4.6 统一调用形态（Chez 式：表示分档，调用只有一种）
+
+**机器级约定** —— 所有调用形态共享，无一例外：
+
+```
+self  ← 对象                 ; flat = 静态 cell（cell|1）；其余 = 堆闭包 —— 两者同形（不变量 5）
+真参  ← 其后的实参寄存器
+入口  = [对象 + 16]           ; 与 cell 布局一致（§4.5）
+```
+
+**四种情形的机器码** —— 同一个约定，没有任何一种需要 `caps`：
+
+| 情形 | 调用点 | 机器码 |
+|---|---|---|
+| 直接调用、`ncap == 0` | `["name", nm]` | `mov rdi,<cell>` ; `call <label>`（静态已知，可省一次 `[+16]` load）|
+| 直接调用、`ncap > 0` | `["name", nm]` | `mov rdi,<cell>` ; `call <label>` |
+| 间接调用 | `["slot", s]` | `mov rax,[s]` ; `mov rdi,rax` ; `call [rax+16]` |
+| 尾调用 | `["tcall", …]` | 同上，`jmp` 代替 `call` |
+
+⇒ **`apply` / `icall` / `tailapply` / `$icall` 全部删除** —— 它们是 `caps` 维度的产物 ✓。
+对象与裸入口**同形**（不变量 5 ✓）⇒ 间接调用**一律按对象**处理 ✓，调用点无需区分 ✗。
+
+**Chez 对照**：
+
+| Chez | 本设计 |
+|---|---|
+| `(call f a b)` 单一形态 | `["call", dst, callee, args]` |
+| 过程对象 = 第 1 实参（self） | `self ← 对象` |
+| 入口代码从对象 load 自由变量 | `["cap", i]`（捕获不进槽 ✓） |
+| `constant`（`free* = ∅`）= 带 tag 代码指针 | flat cell `cell\|1`，`nenv = 0` 同形 |
+| well-known 直接调用 | `["name", nm]` → 静态入口 |
+
+> ⚠️ **下面这一段描述的是已删除的 `caps` 字段（历史，保留作背景）。** 现行 ABI 见
+> §4.4：调用点只传**对象**作首实参，捕获不住槽，引用经 `["cap", i]` 从对象读。
 
 调用一个闭包时，调用方必须知道**要传几个前导捕获、值从哪来** —— 这就是 `caps`：
 
@@ -546,7 +688,9 @@ cell + 32… : env…
 | 5 | 名字当值 | `lir_clos_atom` → `["closure", dst, fnName, []]` | **0 捕获**闭包（见 §9.2） |
 
 **四件事挤在 `lir_letfun_*` 里**：自由变量分析 / 闭包分配 / 调用约定 / 表示判定。
-其中**表示判定只有一行**：`flat = topfn_has(name) and ncap == 0`。
+其中**表示判定只有一行**：`flat = ncap == 0` —— **与"是否顶层"无关**（`FLAT_ABI.md`
+准则 2）。⚠️ **现状代码比这条窄**：`flat = is_top and ncap == 0`（`lir.yac:1307`），
+即只有顶层函数才可能 flat —— 属待收敛的偏差，见 §2 末"flat 形态"。
 
 **近期改动（轻量版）**：给 `proc` 头**末尾追加** `[fvs]` —— 自由变量表（`free_vars`
 的输出），现在算出来被丢掉、只剩 `ncap` 这个数字。

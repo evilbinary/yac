@@ -674,11 +674,12 @@ let free_vars(fnbody, params, funs, env) =
         let g = resolve_call(nm) in
         if ch == 0 then
           if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hash_str(g)) != 0 then
-            /* Only a top-level LETFUN (kind 1) can coincide with a nested closure
-             * of the same name. A top-level `let` VALUE (kind 2) is bound in Γ as
-             * well, but it is reached statically (gval) -- capturing it would make
-             * a flat function non-flat and desync it from its gvar entry. */
-            if sigma_kind_h(funs, nm, h) == 1 and env_rec_h(env, nm, h) != 0 then fv_acc_add_h(a, nm, h) else a
+            /* The name also names a top-level binding -- but if it is visible in
+             * the enclosing Γ it is a TRUE LOCAL of an enclosing lambda and must
+             * be captured (FLAT_ABI.md 1: ncap counts true locals only, top-level
+             * names are reached statically). Top-level values no longer enter Γ
+             * (see lir_let), so a Γ hit here is always a real capture. */
+            if env_rec_h(env, nm, h) != 0 then fv_acc_add_h(a, nm, h) else a
           else
             let se = sigma_ent_h(funs, g, hash_str(g)) in
             if se == 0 then fv_acc_add_h(a, nm, h)
@@ -1018,8 +1019,21 @@ let lir_let(b, s) =
    * link time -- zero runtime action. Anything else is written at run time,
    * in source order, before any call. Either way a nested function can then
    * read it with `gval` and capture nothing. */
+  /* Partial structural test for "this bind IS the unit's own top-level value"
+   * (FLAT_ABI.md 1 准则 5). A top-level value never enters Γ (see below), so a
+   * name already VISIBLE in Γ is an enclosing lambda's local that merely
+   * shares the name -- treating it as top-level would emit a spurious `gset`
+   * (plus a publish call) inside a function body and clobber live registers.
+   *
+   * KNOWN GAP: this only catches the shadowed case. For the FIRST bind of a
+   * colliding name inside a function the name is not yet in Γ, so it is still
+   * misread as top-level -- Γ cannot tell "binds of a top-level item" from
+   * "first local bind of the same name". Closing it needs the "am I compiling
+   * a top-level item" fact threaded in explicitly (see lir_all vs branch_st). */
+  let is_tv =
+    sigma_kind(nth(s, 3), nm) == 2 and env_rec_h(nth(s, 1), nm, hash_str(nm)) == 0 in
   let i1 =
-    if sigma_kind(nth(s, 3), nm) == 2 then
+    if is_tv then
       /* The cell is keyed by the name a READER will use, i.e. the same
        * resolve_call(nm) `lir_var` resolves a `gval` with. In a package file
        * that is the package-qualified name: emitting the bare ANF name here
@@ -1029,8 +1043,14 @@ let lir_let(b, s) =
       if li >= 0 then insn_push(i0, ["gset", rn, 0, ["imm", li]])
       else insn_push(i0, ["gset", rn, 0, nth(r, 1)])
     else i0 in
-  [i1, env_bind(nth(r, 2), nm, nth(r, 1), 0), nth(r, 3),
-   nth(r, 4), nth(r, 5), nth(s, 5)]
+  /* A top-level value has its static cell and is read with `gval`
+   * (FLAT_ABI.md 1). It must NOT enter Γ: capture analysis would then see it
+   * as a true local, ncap would become > 0 and the function would lose flat --
+   * exactly the failure FLAT_ABI.md 1 "没有 1 会怎样" describes. */
+  let e1 =
+    if is_tv then nth(r, 2)
+    else env_bind(nth(r, 2), nm, nth(r, 1), 0) in
+  [i1, e1, nth(r, 3), nth(r, 4), nth(r, 5), nth(s, 5)]
 
 let lir_letbin(b, s) =
   let ra = lir_atom(nth(b, 3), s) in
