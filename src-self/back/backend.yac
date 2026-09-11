@@ -905,7 +905,7 @@ let dump_lir(src) =
 let vops(_) =
   ["local", "$local", "mov_imm", "mov", "add", "sub", "mul", "land", "lor",
    "xor", "bnot", "shl", "shr", "div", "rem", "cmp", "icmp", "label", "fcall",
-   "ccall", "iccall", "tcall", "jmp", "cmpjmp", "ret", "exit", "$f64fromstr",
+   "ccall", "iccall", "tcall", "ycall", "jmp", "cmpjmp", "ret", "exit", "$f64fromstr",
    "$f64binop", "$f64rel", "$f64print", "$and", "$addi", "$add", "$sub",
    "$bts", "$bt", "$or", "$clamp0", "$st64", "$st8", "$ld64", "$ld8", "$sp",
    "$fp", "$smap", "$gbase", "$glob", "$icmp", "$jcc", "$memcpy", "$memset",

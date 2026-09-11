@@ -639,6 +639,38 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
         else add_rsp_imm32(b, bshl(nstack, 3)) in
       let _ = emit_store_rax_slot(b, dst) in
       emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, callstart + 1, fn))
+  else if k == "ycall" then
+    /* Direct call to an in-image yac proc (object ABI, LIR.md 4.4.4):
+     * params to arg registers 1..5 (the 0th is the object register, unset
+     * here -- flat callees ignore it), 5+ on the stack; rel32-patched like
+     * fcall. */
+    let dst = nth(insn, 1) in
+    let fn = nth(insn, 2) in
+    let args = nth(insn, 3) in
+    let nargs = len(args) in
+    let nstack = if nargs > 5 then nargs - 5 else 0 in
+    let pushsa(i) =
+      if i < 5 then 0
+      else
+        let _ = emit_load_operand(b, nth(args, i)) in
+        let _ = push_r64(b, 0) in
+        pushsa(i - 1) in
+    let _ = pushsa(nargs - 1) in
+    let ldarg(j) =
+      if j >= nargs or j >= 5 then 0
+      else
+        let _ = emit_load_operand(b, nth(args, j)) in
+        let _ = mov_rax_to_argreg(b, j + 1) in
+        ldarg(j + 1) in
+    let _ = ldarg(0) in
+    let _ = emit_zero_sysv_args(b, nargs + 1) in
+    let callstart = bytes_len(b) in
+    let _ = call_user(b) in
+    let _ =
+      if nstack == 0 then 0
+      else add_rsp_imm32(b, bshl(nstack, 3)) in
+    let _ = emit_store_rax_slot(b, dst) in
+    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, callstart + 1, fn))
   else if k == "ccall" then
     let dst = nth(insn, 1) in
     let fn = nth(insn, 2) in
@@ -1840,8 +1872,8 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
       emit_x86_i_apply(st, insn, is_entry)
     else if is_frame_op(k) or k == "mov_imm" or k == "mov" or is_arith(k)
          or k == "cmp" or k == "icmp" or k == "label" or k == "fcall" or k == "ccall"
-         or k == "iccall" or k == "tcall" or k == "jmp" or k == "cmpjmp" or k == "ret"
-         or k == "exit" then
+         or k == "iccall" or k == "tcall" or k == "ycall" or k == "jmp"
+         or k == "cmpjmp" or k == "ret" or k == "exit" then
       emit_x86_i_core(st, insn, is_entry, is_raw)
     else if k == "untag" or k == "syscall" then
       emit_x86_i_sys(st, insn)

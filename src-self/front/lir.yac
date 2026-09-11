@@ -171,12 +171,13 @@ let tco_find(insns, i, slot, gname) =
   if nth(nth(insns, i), 1) == slot then
       tco_find(insns, i - 1, nth(nth(insns, i), 2), gname)
     else 0 - 1
-  else if nth(nth(insns, i), 0) == "fcall" then
+  else if nth(nth(insns, i), 0) == "fcall"
+       or nth(nth(insns, i), 0) == "ycall" then
     tco_hit(nth(insns, i), slot, gname, i)
   else 0 - 1
 
 let tco_one(ins) =
-  if nth(ins, 0) == "fcall" then
+  if nth(ins, 0) == "fcall" or nth(ins, 0) == "ycall" then
     ["tcall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
   else if nth(ins, 0) == "apply" then
     ["tailapply", nth(ins, 1), nth(ins, 2), nth(ins, 3), nth(ins, 4)]
@@ -290,7 +291,7 @@ let sigma_cons(fs, f) =
     else len(sigma_list(fs)) in
   let g = intern(nth(f, 1)) in
   let src = intern(fun_src(f)) in
-  let ent = [nth(f, 1), nth(f, 3), idx] in
+  let ent = [nth(f, 1), nth(f, 3), idx, nth(f, 0)] in
   let _ = fmap_put(m, g, ent) in
   let _ = if src == g then 0 else fmap_put(m, src, ent) in
   [cons(f, sigma_list(fs)), m, nth(fs, 2), nth(fs, 3)]
@@ -977,11 +978,17 @@ let calli(g0, dst, ss, env, funs, self, tail) =
       else ["apply", dst, nth(e, 0), ncap, ss]
     else
       let se = sigma_ent_h(funs, g, h) in
-      if se != 0 then ["fcall", dst, nth(se, 0), ss]
+      if se != 0 then
+        let ci = if len(se) > 3 and nth(se, 3) == "proc" then ["ycall", dst, nth(se, 0), ss]
+                 else ["fcall", dst, nth(se, 0), ss] in
+        ci
       else ["icall", dst, nth(e, 0), ss]
   else
     let se = sigma_ent_h(funs, g, h) in
-    if se != 0 then ["fcall", dst, nth(se, 0), ss]
+    if se != 0 then
+      let ci = if len(se) > 3 and nth(se, 3) == "proc" then ["ycall", dst, nth(se, 0), ss]
+               else ["fcall", dst, nth(se, 0), ss] in
+      ci
     else
       let p = lir_rt(g0, dst, ss) in
       if p != 0 then p
