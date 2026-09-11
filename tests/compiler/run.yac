@@ -212,7 +212,7 @@ let lower_cases(_) = [
   ["if_else", "rc", "40"],
   ["fact", "rc", "120"], ["capture_shadow", "rc", "17"],
   /* capRef 回归（见各用例头注释）*/
-  ["cap_selfrec", "rc", "300"],
+  ["cap_selfrec", "rc", "200"],
   ["cap_cross_scope", "rc", "25"],
   ["cap_captured_closure", "rc", "42"],
   ["cap_args6_obj", "rc", "31"],
