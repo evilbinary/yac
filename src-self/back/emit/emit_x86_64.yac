@@ -6,7 +6,7 @@ import back.emit.emit {apply_args, apply_ncap, apply_patch, apply_u64, cimport_b
 import back.emit.emit_cabi {emit_cabi_all}
 import back.emit.linux_x86_64 {call_rbx_user, call_user, cc_of, emit_load_rax_slot, emit_load_rbx_slot, emit_load_rdi_slot, emit_obj_load_argreg, emit_obj_load_rax, emit_obj_store_rdi, emit_store_param, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_unalign, emit_x86_c_untag, linux_begin, linux_cc_marshal, linux_ccall_patch, linux_clock, linux_entry, linux_exit, linux_finish, linux_num_syscall, linux_syscall, linux_write1}
 import back.emit.win_x86_64 {win_begin, win_cc_marshal, win_ccall_patch, win_clock, win_entry, win_exit, win_finish, win_num_syscall, win_syscall, win_write1}
-import back.encode.encode_x64 {add_rax_imm32, add_rax_imm8, add_rax_rbx, add_rdi_rax, add_rsi_rax, add_rsp_imm32, addsd_xmm0_xmm1, and_eax_imm32, and_rax_1, and_rax_imm8, and_rax_rbx, bt_mem_rdx_rcx, bts_mem_rdx_rcx, call_r11, call_rel32, cld, cmp_r11_imm8, cmp_rax_imm8, cmp_rax_rbx, cmp_rbx_imm32, cqo, cvtsi2sd_xmm0_rax, divsd_xmm0_xmm1, e8, idiv_rbx, imul_rax_rbx, jcc_rel32, jmp_mem_rbx_disp32, jmp_rbx, jmp_rel32, lea_r9_rsp_disp8, lea_rax_rip, lea_rcx_rsp_disp32, lea_rdi_rsp_disp32, lea_rdx_rip, lea_rdx_rsp_disp32, lea_rsi_rip, lea_rsi_rsp, mov_eax_imm, mov_mem_rax_rbp, mov_mem_rax_rdi, mov_mem_rax_rsi, mov_mem_rbp32_r64, mov_mem_rbx_disp32_rax, mov_mem_rbx_rdx_rax, mov_mem_rsp_disp32_rax, mov_mem_rsp_disp8_rax, mov_r11_rax, mov_r11d_rax_disp32, mov_r64_imm, mov_r64_imm64, mov_r64_mem_rbp32, mov_r64_r64, mov_r8_rax, mov_r9_rax, mov_rax_disp32_imm32, mov_rax_disp32_imm8, mov_rax_disp32_rdi, mov_rax_imm64, mov_rax_mem_rax, mov_rax_mem_rax_rdx, mov_rax_mem_rsp, mov_rax_mem_rsp8, mov_rax_rax_disp32, mov_rax_rbp, mov_rax_rbx, mov_rax_rdx_dil, mov_rax_rsp, mov_rax_to_argreg, mov_rbp_rbx_disp32, mov_rbp_rsp, mov_rbx_mem_rsp, mov_rbx_rax, mov_rbx_rax_disp32, mov_rcx_rax, mov_rcx_rbx, mov_rdi_imm, mov_rdi_rax, mov_rdx_rax, mov_rsi_rax, mov_rsp_rbp, mov_rsp_rbx_disp32, movq_rax_xmm0, movq_xmm0_rax, movq_xmm1_rax, movq_xmm2_rax, movzx_eax_al, movzx_eax_rax_disp32, movzx_eax_rax_rdx, mulsd_xmm0_xmm1, not_rax, or_rax_1, or_rax_rbx, pop_argreg, pop_r64, pop_rbp, popfq, push_r64, push_rbp, pushfq, rep_movsb, rep_stosb, ret, sar_rax_1, sar_rbx_1, sar_rdi_1, sar_rdx_1, setcc_r8, shl_rax_1, shl_rax_cl, shr_rax_cl, shr_rax_imm8, sub_rax_rbx, sub_rbx_imm32, sub_rsp_imm32, sub_rsp_rbx, subsd_xmm0_xmm1, syscall, test_rax_1, test_rax_rax, ucomisd_xmm0_xmm1, xor_edx_edx, xor_rax_rax, xor_rax_rbx}
+import back.encode.encode_x64 {add_rax_imm32, add_rax_imm8, add_rax_rbx, add_rdi_rax, add_rsi_rax, add_rsp_imm32, addsd_xmm0_xmm1, and_eax_imm32, and_rax_1, and_rax_imm8, and_rax_rbx, bt_mem_rdx_rcx, bts_mem_rdx_rcx, call_r11, call_rel32, cld, cmp_r11_imm8, cmp_rax_imm8, cmp_rax_rbx, cmp_rbx_imm32, cqo, cvtsi2sd_xmm0_rax, divsd_xmm0_xmm1, e8, idiv_rbx, imul_rax_rbx, jcc_rel32, jmp_mem_rbx_disp32, jmp_rbx, jmp_rel32, lea_r9_rsp_disp8, lea_rax_rip, lea_rcx_rsp_disp32, lea_rdi_rsp_disp32, lea_rdx_rip, lea_rdx_rsp_disp32, lea_rsi_rip, lea_rsi_rsp, mov_eax_imm, mov_mem_rax_rbp, mov_mem_rax_rdi, mov_mem_rax_rsi, mov_mem_rbp32_r64, mov_mem_rbx_disp32_rax, mov_mem_rbx_rdx_rax, mov_mem_rsp_disp32_rax, mov_mem_rsp_disp8_rax, mov_r11_rax, mov_r11d_rax_disp32, mov_r64_imm, mov_r64_imm64, mov_r64_mem_rbp32, mov_r64_r64, mov_r8_rax, mov_r9_rax, mov_rax_r13, mov_r13_rdi, mov_rax_disp32_imm32, mov_rax_disp32_imm8, mov_rax_disp32_rdi, mov_rax_imm64, mov_rax_mem_rax, mov_rax_mem_rax_rdx, mov_rax_mem_rsp, mov_rax_mem_rsp8, mov_rax_rax_disp32, mov_rax_rbp, mov_rax_rbx, mov_rax_rdx_dil, mov_rax_rsp, mov_rax_to_argreg, mov_rbp_rbx_disp32, mov_rbp_rsp, mov_rbx_mem_rsp, mov_rbx_rax, mov_rbx_rax_disp32, mov_rcx_rax, mov_rcx_rbx, mov_rdi_imm, mov_rdi_rax, mov_rdx_rax, mov_rsi_rax, mov_rsp_rbp, mov_rsp_rbx_disp32, movq_rax_xmm0, movq_xmm0_rax, movq_xmm1_rax, movq_xmm2_rax, movzx_eax_al, movzx_eax_rax_disp32, movzx_eax_rax_rdx, mulsd_xmm0_xmm1, not_rax, or_rax_1, or_rax_rbx, pop_argreg, pop_r64, pop_rbp, popfq, push_r64, push_rbp, pushfq, rep_movsb, rep_stosb, ret, sar_rax_1, sar_rbx_1, sar_rdi_1, sar_rdx_1, setcc_r8, shl_rax_1, shl_rax_cl, shr_rax_cl, shr_rax_imm8, sub_rax_rbx, sub_rbx_imm32, sub_rsp_imm32, sub_rsp_rbx, subsd_xmm0_xmm1, syscall, test_rax_1, test_rax_rax, ucomisd_xmm0_xmm1, xor_edx_edx, xor_rax_rax, xor_rax_rbx}
 import back.pack.elf {elf_dynexp_set, elf_int, elf_pic, funsym_set}
 import back.pack.pe {pe_iat_off}
 import back.pack.target {JIT_VADDR}
@@ -118,9 +118,17 @@ let emit_load_operand(b, op) =
   let k0 = nth(op, 0) in
   if k0 == "imm" then mov_rax_imm64(b, nth(op, 1))
   else if k0 == "cap" then
-    let _ = mov_r64_r64(b, 0, 13) in
+    let _ = mov_rax_r13(b) in
     mov_rax_rax_disp32(b, 32 + bshl(nth(op, 1), 3))
   else emit_load_rax_slot(b, op)
+
+/* Runtime $procs keep the SysV layout (they are reached from C paths as
+ * well); every runtime proc is named yac_*. Anything else reached through
+ * fcall is a flat in-image yac proc and uses the capRef layout. */
+let is_yac_proc_name(nm) =
+  let n = str_len(nm) in
+  n >= 4 and str_ref(nm, 0) == 121 and str_ref(nm, 1) == 97
+    and str_ref(nm, 2) == 99 and str_ref(nm, 3) == 95
 
 let emit_x86_load_reg_args(b, args, nargs) =
   let nreg = if nargs < 6 then nargs else 6 in
@@ -604,6 +612,9 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let _ = emit_store_rax_slot(b, dst) in
       emit_st4(st, b, cur, labels, cons([21, hpat, id], patches))
     else
+      /* fcall is the SysV channel only: runtime $procs and host externals.
+       * In-image yac procs are reached through closures (apply) or tcall,
+       * both of which carry the capRef ABI. */
       let callstart = bytes_len(b) in
       let _ = call_user(b) in
       let _ =
@@ -1392,6 +1403,47 @@ let emit_x86_i_heap(st, insn) =
     let gkind = if which == 3 then 7 else 8 in
     emit_st4(st, b, cur, labels, cons([gkind, gpat], patches))
   else st
+
+/* capRef closure call (LIR.md 4.4.4): object -> rdi, params -> rsi.. (5
+ * register slots), stack args pushed highest-first. Replaces i_clos's
+ * cap-repacking arms: the callee reads its captures from the object itself,
+ * so nothing is unpacked or re-passed here. Works for ["self"] callees too
+ * (emit_load_operand maps that to r13). */
+let emit_x86_i_apply(st, insn, is_entry) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let dst = nth(insn, 1) in
+  let clos = nth(insn, 2) in
+  let args = apply_args(insn) in
+  let nargs = len(args) in
+  let nstack = if nargs > 5 then nargs - 5 else 0 in
+  let pushsa(i) =
+    if i < 5 then 0
+    else
+      let _ = emit_load_operand(b, nth(args, i)) in
+      let _ = push_r64(b, 0) in
+      pushsa(i - 1) in
+  let _ = pushsa(nargs - 1) in
+  let _ = emit_load_operand(b, clos) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rdi_rax(b) in
+  let ldarg(j) =
+    if j >= nargs or j >= 5 then 0
+    else
+      let _ = emit_load_operand(b, nth(args, j)) in
+      let _ = mov_rax_to_argreg(b, j + 1) in
+      ldarg(j + 1) in
+  let _ = ldarg(0) in
+  let _ = emit_load_operand(b, clos) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rbx_rax_disp32(b, 16) in
+  let _ = call_rbx_user(b) in
+  let _ =
+    if nstack == 0 then 0
+    else add_rsp_imm32(b, bshl(nstack, 3)) in
+  let _ = emit_store_rax_slot(b, dst) in
+  emit_st4(st, b, cur, labels, nth(st, 3))
 
 let emit_x86_i_clos(st, insn, is_entry) =
   let b = nth(st, 0) in
