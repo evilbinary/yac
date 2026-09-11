@@ -6,7 +6,7 @@
 package back.emit.linux_x86_64
 export call_rbx_user, call_user, cc_of, emit_load_rax_slot, emit_load_rbx_slot, emit_load_rdi_slot, emit_obj_load_argreg, emit_obj_load_rax, emit_obj_store_rdi, emit_store_param, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_unalign, emit_x86_c_untag, linux_begin, linux_cc_marshal, linux_ccall_patch, linux_clock, linux_entry, linux_exit, linux_finish, linux_num_syscall, linux_syscall, linux_write1
 import back.emit.emit {apply_patch, emit_patch_cimport, emit_st4, smap_note}
-import back.encode.encode_x64 {add_rax_imm8, add_rsp_imm32, and_rax_1, call_rbx, call_rel32, e8, jcc_rel32, jmp_rel32, lea_rax_rbp32, lea_rsi_rsp, lea_rsi_rsp8, mov_argreg_rax_disp32, mov_mem_rbp32_r64, mov_mem_rsp_al, mov_r10_rax, mov_r12_rsp, mov_r13_rdi, mov_rdi_r13, mov_r64_imm, mov_r64_imm64, mov_r64_mem_rbp32, mov_r64_r64, mov_r8_rax, mov_r9_rax, mov_rax_r13, mov_rax_disp32_rdi, mov_rax_mem_rsp, mov_rax_mem_rsp8, mov_rax_rax_disp32, mov_rcx_rax, mov_rdi_imm, mov_rdi_mem_rsp, mov_rdi_rax, mov_rdx_imm, mov_rdx_rax, mov_rsi_rax, mov_rsi_rsp, mov_rsp_r12, pop_r12, push_r12, push_r64, sar_rax_1, shl_rax_1, sub_rsp_imm32, sub_rsp_imm8, syscall, test_rax_1}
+import back.encode.encode_x64 {add_rax_imm8, add_rsp_imm32, and_rax_1, call_rbx, call_rel32, e8, jcc_rel32, jmp_rel32, lea_rax_rbp32, lea_rsi_rsp, lea_rsi_rsp8, mov_argreg_rax_disp32, mov_mem_rbp32_r64, mov_mem_rsp_al, mov_r10_rax, mov_r12_rsp, mov_r13_rdi, mov_rbx_r13, mov_rdi_r13, mov_r64_imm, mov_r64_imm64, mov_r64_mem_rbp32, mov_r64_r64, mov_r8_rax, mov_r9_rax, mov_rax_r13, mov_rax_disp32_rdi, mov_rax_mem_rsp, mov_rax_mem_rsp8, mov_rax_rax_disp32, mov_rcx_rax, mov_rdi_imm, mov_rdi_mem_rsp, mov_rdi_rax, mov_rdx_imm, mov_rdx_rax, mov_rsi_rax, mov_rsi_rsp, mov_rsp_r12, pop_r12, push_r12, push_r64, sar_rax_1, shl_rax_1, sub_rsp_imm32, sub_rsp_imm8, syscall, test_rax_1}
 
 let slot_off(k) = 0 - bshl(k + 1, 3)
 
@@ -18,8 +18,35 @@ let emit_obj_load_argreg(b, reg, off) = mov_argreg_rax_disp32(b, reg, off)
  * ["imm", n] a constant; ["cap", i] the i-th capture, at [r13 + 32 + i*8]
  * (r13 = self, set once by the prologue); ["self"] the object itself.
  * yac's nth() on an int is a safe non-string read, so dispatch is total. */
-let emit_load_rax_slot(b, k) = mov_r64_mem_rbp32(b, 0, slot_off(k))
-let emit_load_rdi_slot(b, k) = mov_r64_mem_rbp32(b, 7, slot_off(k))
+/* Total operand loads (LIR.md 4.4.2): a bare int k is a frame slot;
+ * ["imm", n] a constant; ["cap", i] the i-th capture, at [r13 + 32 + i*8]
+ * (r13 = self, stashed by the object-ABI prologue); ["self"] the object
+ * itself. yac's nth() on an int is a safe non-string read, so the dispatch
+ * is total. */
+let emit_load_rax_slot(b, k) =
+  let k0 = nth(k, 0) in
+  if k0 == "cap" then
+    let _ = mov_rax_r13(b) in
+    mov_rax_rax_disp32(b, 32 + bshl(nth(k, 1), 3))
+  else if k0 == "self" then mov_rax_r13(b)
+  else if k0 == "imm" then mov_r64_imm64(b, 0, nth(k, 1))
+  else mov_r64_mem_rbp32(b, 0, slot_off(k))
+let emit_load_rbx_slot(b, k) =
+  let k0 = nth(k, 0) in
+  if k0 == "cap" then
+    let _ = mov_rbx_r13(b) in
+    mov_rbx_rax_disp32(b, 32 + bshl(nth(k, 1), 3))
+  else if k0 == "self" then mov_rbx_r13(b)
+  else if k0 == "imm" then mov_r64_imm64(b, 3, nth(k, 1))
+  else mov_r64_mem_rbp32(b, 3, slot_off(k))
+let emit_load_rdi_slot(b, k) =
+  let k0 = nth(k, 0) in
+  if k0 == "cap" then
+    let _ = mov_rdi_r13(b) in
+    mov_argreg_rax_disp32(b, 7, 32 + bshl(nth(k, 1), 3))
+  else if k0 == "self" then mov_rdi_r13(b)
+  else if k0 == "imm" then mov_rdi_imm(b, nth(k, 1))
+  else mov_r64_mem_rbp32(b, 7, slot_off(k))
 let emit_store_rax_slot(b, k) = mov_mem_rbp32_r64(b, slot_off(k), 0)
 let emit_load_rbx_slot(b, k) = mov_r64_mem_rbp32(b, 3, slot_off(k))
 let emit_store_param(b, j, k) =

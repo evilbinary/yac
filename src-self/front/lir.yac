@@ -759,7 +759,14 @@ let lir_var(atom, st) =
   let h = hash_str(nm) in
   let e = env_rec_h(nth(st, 1), nm, h) in
   if e != 0 then
-    [nth(st, 0), nth(e, 0),
+    let sl = nth(e, 0) in
+    /* Negative slot = capture marker from bind_caps; the self sentinel is
+     * the incoming object. Both become operands, not slots (LIR.md 4.4.2). */
+    let op =
+      if sl == 0 - 1000000 then ["self"]
+      else if sl < 0 then ["cap", 0 - sl - 1]
+      else sl in
+    [nth(st, 0), op,
      nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
   else
     let g = resolve_call(nm) in
@@ -1167,15 +1174,22 @@ let lir_letcall(b, pack) =
      env_bind(nth(lr, 2), nth(b, 1), dst, 0), dst + 1,
      nth(s, 3), nth(s, 4), nth(s, 5)]
 
+/* capRef ABI (LIR.md 4.4.4): captures no longer occupy frame slots. Gamma
+ * binds fv j to the NEGATIVE marker -(j+1); lir_var turns that into the
+ * ["cap", j] operand and outer_caps chains it through the object. env_slot
+ * has exactly one other consumer (outer_caps), both capRef-aware. */
 let bind_caps(fvs, ncap, env, j, e) =
   if j >= ncap then e
   else bind_caps(fvs, ncap, env, j + 1,
-        env_bind(e, nth(fvs, j), j + 1, env_ncap(env, nth(fvs, j))))
+        env_bind(e, nth(fvs, j), 0 - (j + 1), env_ncap(env, nth(fvs, j))))
 
+/* capRef (LIR.md 4.4.4): caps no longer precede params in the frame, so
+ * param j lives in slot j+1 -- matching the prologue's spill of the incoming
+ * arg registers. The ncap argument is kept for call-site compatibility. */
 let bind_params(ps, nparams, ncap, j, e) =
   if j >= nparams then e
   else bind_params(ps, nparams, ncap, j + 1,
-        env_bind(e, nth(ps, j), ncap + j + 1, 0))
+        env_bind(e, nth(ps, j), j + 1, 0))
 
 let lir_letfun_prep(b, s) =
   let env = nth(s, 1) in
@@ -1198,23 +1212,21 @@ let lir_letfun_prep(b, s) =
   let is_rec = in_list(name, fvs_raw) in
   let fvs = if is_rec then fv_skip(fvs_raw, name) else fvs_raw in
   let ncap = len(fvs) in
-  let need_self = is_rec and ncap > 0 in
-  let self_slot = ncap + nparams + 1 in
+  /* capRef (LIR.md 4.4.4): no capture slots, no self-closure slot. A value
+   * reference to a recursive proc resolves to ["self"] via the sentinel;
+   * the proc's second field is nparams (params only, object comes first). */
   let p_env0 = bind_params(params, nparams, ncap, 0,
                  bind_caps(fvs, ncap, env, 0, env_new(0))) in
   let p_env =
-    if need_self then env_bind(p_env0, name, self_slot, ncap) else p_env0 in
-  let ntot = ncap + nparams in
-  let stub = ["proc", gname, ntot, ncap, list_new(), name] in
+    if is_rec then env_bind(p_env0, name, 0 - 1000000, 0) else p_env0 in
+  let stub = ["proc", gname, nparams, ncap, list_new(), name] in
   let fs1 = sigma_cons(nth(s, 3), stub) in
-  let st5 = [list_new(), p_env,
-             if need_self then self_slot + 1 else ntot + 1,
-             fs1, uid + 1] in
+  let st5 = [list_new(), p_env, nparams + 1, fs1, uid + 1] in
   /* Is this letfun one of the unit's top-level names? Answered by the set
    * carried in Σ (toplevel_seed), never by name shape. Recorded as field 9
    * so lir_letfun_finish reaches the SAME answer the reference sites use. */
   let is_top = sigma_kind(nth(s, 3), name) == 1 in
-  [body, st5, name, ncap, ntot, gname, fvs, need_self, self_slot, is_top]
+  [body, st5, name, ncap, nparams, gname, fvs, false, 0, is_top]
 
 let cap_list(n, j, acc) =
   if j >= n then acc
@@ -1222,10 +1234,15 @@ let cap_list(n, j, acc) =
     let _ = list_push(acc, j + 1) in
     cap_list(n, j + 1, acc)
 
+/* capRef: a captured value lives either in an outer frame slot (bare int)
+ * or in the outer proc's own object (negative marker -> ["cap", k]); the
+ * closure insn accepts both operand shapes (LIR.md 4.4.2). */
 let outer_caps(env, fvs, ncap, j, acc) =
   if j >= ncap then acc
   else
-    let _ = list_push(acc, env_slot(env, nth(fvs, j))) in
+    let sl = env_slot(env, nth(fvs, j)) in
+    let _ = list_push(acc,
+      if sl < 0 then ["cap", 0 - sl - 1] else sl) in
     outer_caps(env, fvs, ncap, j + 1, acc)
 
 /* Skip profiler helpers only. Runtime yac_* never pass letfun_finish. */
@@ -1288,18 +1305,17 @@ let prof_wrap_insns(name, head, body, retslot, nslots) =
 
 let lir_letfun_finish(s, p, br) =
   let ncap = nth(p, 3) in
-  let ntot = nth(p, 4) in
+  let nparams = nth(p, 4) in
   let gname = nth(p, 5) in
-  let need_self = nth(p, 7) in
   let nslots = nth(br, 3) + 2 in
-  let f_insns0 = insn_push(list_new(), ["local", nslots, ntot]) in
-  let f_insns1 =
-    if need_self then
-      insn_push(f_insns0, ["closure", nth(p, 8), gname, cap_list(ncap, 0, list_new())])
-    else f_insns0 in
-  let f_insns2 = insn_push(f_insns1, ["label", "$tco"]) in
+  /* capRef prologue (LIR.md 4.4.4): params only, object in the 0th arg
+   * register. The trailing 1 marks the OBJECT ABI explicitly -- the emit
+   * must not infer it from the insn kind (runtime $procs and _start share
+   * the "local" spelling with different conventions). */
+  let f_insns0 = insn_push(list_new(), ["local", nslots, nparams, 1]) in
+  let f_insns2 = insn_push(f_insns0, ["label", "$tco"]) in
   let f_insns = prof_wrap_insns(nth(p, 2), f_insns2, nth(br, 0), nth(br, 1), nslots) in
-  let f = ["proc", gname, ntot, ncap, f_insns, nth(p, 2)] in
+  let f = ["proc", gname, nparams, ncap, f_insns, nth(p, 2)] in
   /* Flat ABI (FLAT_ABI.md 1): flat <=> captures nothing. Because free_vars no
    * longer counts a top-level name (function or value) as a capture, a
    * top-level letfun necessarily has ncap == 0 -- and the reference sites

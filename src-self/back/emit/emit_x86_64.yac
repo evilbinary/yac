@@ -151,12 +151,26 @@ let emit_x86_tcall_other(st, insn, is_entry) =
   let fn = nth(insn, 2) in
   let args = nth(insn, 3) in
   let nargs = len(args) in
-  if nargs > 6 then
-    /* Cross-fun + stack args: call then return (leave/ret). Not a jmp. */
-    let nstack = nargs - 6 in
-    let _ = emit_x86_push_stack_args(b, args, nargs) in
-    let _ = emit_x86_load_reg_args(b, args, nargs) in
-    let _ = emit_zero_sysv_args(b, nargs) in
+  /* Object ABI (LIR.md 4.4.4): targets are flat yac procs; params go to
+   * arg registers 1..5 (the 0th is the object register, unused by flat
+   * callees), 5+ on the stack. */
+  if nargs > 5 then
+    let nstack = nargs - 5 in
+    let pushsa(i) =
+      if i < 5 then 0
+      else
+        let _ = emit_load_operand(b, nth(args, i)) in
+        let _ = push_r64(b, 0) in
+        pushsa(i - 1) in
+    let _ = pushsa(nargs - 1) in
+    let ldarg(j) =
+      if j >= 5 then 0
+      else
+        let _ = emit_load_operand(b, nth(args, j)) in
+        let _ = mov_rax_to_argreg(b, j + 1) in
+        ldarg(j + 1) in
+    let _ = ldarg(0) in
+    let _ = emit_zero_sysv_args(b, nargs + 1) in
     let callstart = bytes_len(b) in
     let _ = call_user(b) in
     let _ = add_rsp_imm32(b, bshl(nstack, 3)) in
@@ -169,20 +183,14 @@ let emit_x86_tcall_other(st, insn, is_entry) =
     emit_st4(st, b, nth(st, 1), nth(st, 2),
       emit_patch_rel(nth(st, 4), nth(st, 3), callstart + 1, fn))
   else
-    let loadarg(j) =
+    let ldarg(j) =
       if j >= nargs then 0
       else
-        let _ = emit_load_rax_slot(b, nth(args, j)) in
-        let _ =
-          if j == 0 then mov_rdi_rax(b)
-          else if j == 1 then mov_rsi_rax(b)
-          else if j == 2 then mov_rdx_rax(b)
-          else if j == 3 then mov_rcx_rax(b)
-          else if j == 4 then mov_r8_rax(b)
-          else mov_r9_rax(b) in
-        loadarg(j + 1) in
-    let _ = loadarg(0) in
-    let _ = emit_zero_sysv_args(b, nargs) in
+        let _ = emit_load_operand(b, nth(args, j)) in
+        let _ = mov_rax_to_argreg(b, j + 1) in
+        ldarg(j + 1) in
+    let _ = ldarg(0) in
+    let _ = emit_zero_sysv_args(b, nargs + 1) in
     let _ = mov_rsp_rbp(b) in
     let _ = pop_rbp(b) in
     let jmpstart = bytes_len(b) in
@@ -501,18 +509,27 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let _ = mov_rbp_rsp(b) in
       let nbytes = bshl(nlocals + 1, 3) in
       let _ = emit_chkstk(b, nbytes) in
+      /* Object ABI (LIR.md 4.4.4): marked EXPLICITLY by a 4th local field
+       * from lir_letfun_finish -- never inferred here. Params spill from
+       * the 1st arg register (the 0th carries the object, stashed in r13);
+       * param 5+ sit on the stack at [rbp + 16 + 8*(j-5)]. Unmarked locals
+       * (_start, runtime $procs) keep the plain SysV layout. */
+      let selfabi = len(insn) > 3 in
+      let nregargs = if selfabi then 5 else 6 in
       let storeparams(j) =
         if j >= nparams then 0
-        else if j < 6 then
-          let _ = emit_store_param(b, j, j + 1) in
+        else if j < nregargs then
+          let _ = if selfabi then emit_store_param(b, j + 1, j + 1)
+                  else emit_store_param(b, j, j + 1) in
           storeparams(j + 1)
         else
-          /* stack arg: [rbp + 16 + 8*(j-6)] */
-          let off = 16 + bshl(j - 6, 3) in
+          /* stack arg: [rbp + 16 + 8*(j - nregargs)] */
+          let off = 16 + bshl(j - nregargs, 3) in
           let _ = mov_r64_mem_rbp32(b, 0, off) in
           let _ = emit_store_rax_slot(b, j + 1) in
           storeparams(j + 1) in
       let _ = storeparams(0) in
+      let _ = if selfabi then mov_r13_rdi(b) else 0 in
       let _ = emit_tco_set(bytes_len(b)) in
       let labs = label_put(labels, tco_lab(0), bytes_len(b)) in
       emit_st4(st, b, cur, labs, patches)
@@ -1816,9 +1833,11 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
       let _ = emit_store_rax_slot(b, tmp) in
       let st1 = emit_st4(st, b, cur, nth(st, 2), ps1) in
       emit_insn_go(st1, ["icall", dst, tmp, args], is_entry, is_raw)
-    else if k == "closure" or k == "apply" or k == "icall"
-         or k == "tailapply" or k == "ticall" then
+    else if k == "closure" then
       emit_x86_i_clos(st, insn, is_entry)
+    else if k == "apply" or k == "icall"
+         or k == "tailapply" or k == "ticall" then
+      emit_x86_i_apply(st, insn, is_entry)
     else if is_frame_op(k) or k == "mov_imm" or k == "mov" or is_arith(k)
          or k == "cmp" or k == "icmp" or k == "label" or k == "fcall" or k == "ccall"
          or k == "iccall" or k == "tcall" or k == "jmp" or k == "cmpjmp" or k == "ret"
