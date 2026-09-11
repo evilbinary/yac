@@ -1081,10 +1081,19 @@ let lir_let(b, s) =
    * (FLAT_ABI.md 1). It must NOT enter Γ: capture analysis would then see it
    * as a true local, ncap would become > 0 and the function would lose flat --
    * exactly the failure FLAT_ABI.md 1 "没有 1 会怎样" describes. */
+  /* capRef (LIR.md 4.4.7): an atom result may be an OPERAND (["cap", i] /
+   * ["self"]) rather than a bare slot. Gamma stays INT-ONLY -- materialize
+   * such an operand into a fresh slot with a mov, or every consumer that
+   * does slot arithmetic on Gamma values (env_slot, slot_off) explodes. */
+  let opnd = nth(r, 1) in
+  let i2 = if is_tv or is_int(opnd) then i1
+           else insn_push(i1, ["mov", nth(r, 3), opnd]) in
   let e1 =
     if is_tv then nth(r, 2)
-    else env_bind(nth(r, 2), nm, nth(r, 1), 0) in
-  [i1, e1, nth(r, 3), nth(r, 4), nth(r, 5), nth(s, 5)]
+    else if is_int(opnd) then env_bind(nth(r, 2), nm, opnd, 0)
+    else env_bind(nth(r, 2), nm, nth(r, 3), 0) in
+  let nxt = if is_tv or is_int(opnd) then nth(r, 3) else nth(r, 3) + 1 in
+  [i2, e1, nxt, nth(r, 4), nth(r, 5), nth(s, 5)]
 
 let lir_letbin(b, s) =
   let ra = lir_atom(nth(b, 3), s) in

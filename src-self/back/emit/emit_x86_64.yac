@@ -1982,6 +1982,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let r1 = emit_fun(0, glob, []) in
   let _ =
     if asm_dump_get(0) != 0 then
+      let _ = asm_dump_set(0) in
       let nout = bytes_len(out) in
       let hd(n) = if n < 10 then str_chr(48 + n) else str_chr(87 + n) in
       let hx(bb) = str_cat(hd(bshr(band(bb, 255), 4)), hd(band(bb, 15))) in
@@ -1992,13 +1993,14 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
           let nm = nth(nth(funs, i), 1) in
           let st0 = nth(offs, i) in
           let en0 = stof(i + 1) in
-          let en = if en0 > st0 and en0 <= nout then en0 else nout in
+          let en1 = if en0 > st0 and en0 <= nout then en0 else nout in
+          let en = if en1 - st0 > 256 then st0 + 256 else en1 in
           let _ =
-            if len(nth(nth(funs, i), 4)) == 0 then go(i + 1)
+            if len(nth(nth(funs, i), 4)) == 0 then 0
             else
               let _ = print(str_cat("=== asm: ", str_cat(nm,
                         str_cat(" @", str_cat(int_to_str(st0),
-                        str_cat(" (", str_cat(int_to_str(en - st0), " bytes)"))))))) in
+                        str_cat(" (", str_cat(int_to_str(en1 - st0), " bytes)"))))))) in
               let row(j, k, acc) =
                 if j >= en then (if acc != "" then print(acc) else 0)
                 else if k >= 16 then (let _ = print(acc) in row(j, 0, ""))
