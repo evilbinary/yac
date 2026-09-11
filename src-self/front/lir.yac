@@ -14,7 +14,7 @@
  */
 
 package front.lir
-export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, sigma_new, sigma_kind, toplevel_seed, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, st_no, ub_prog
+export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, sigma_new, sigma_kind, toplevel_seed, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, st_no, ub_prog, lir_tlv_set
 import lib.map
 import lib.log {log_fatal}
 
@@ -1035,6 +1035,14 @@ let lit_imm(atom) =
   else if k == "unit" then 0
   else 0 - 1
 
+/* "Am I compiling a top-level item?" -- the explicit fact lir_let needs to
+ * decide gset (the KNOWN GAP in its is_tv comment). Set to 1 by pass_lir
+ * before lir_all; lir_letfun_prep clears it on entering a function body and
+ * lir_letfun_finish restores the saved value, so nesting is safe. Boxes are
+ * the established idiom here (imap_box, pkg_prefix, emit_self). */
+let lir_tlv_box = let b = box_new() in let _ = box_set(b, 1) in b
+let lir_tlv_set(v) = box_set(lir_tlv_box, v)
+
 let lir_let(b, s) =
   let nm = nth(b, 1) in
   let r = lir_atom(nth(b, 2), s) in
@@ -1056,7 +1064,8 @@ let lir_let(b, s) =
    * "first local bind of the same name". Closing it needs the "am I compiling
    * a top-level item" fact threaded in explicitly (see lir_all vs branch_st). */
   let is_tv =
-    sigma_kind(nth(s, 3), nm) == 2 and env_rec_h(nth(s, 1), nm, hash_str(nm)) == 0 in
+    sigma_kind(nth(s, 3), nm) == 2 and env_rec_h(nth(s, 1), nm, hash_str(nm)) == 0
+    and box_get(lir_tlv_box) != 0 in
   let i1 =
     if is_tv then
       /* The cell is keyed by the name a READER will use, i.e. the same
@@ -1244,7 +1253,9 @@ let lir_letfun_prep(b, s) =
    * carried in Σ (toplevel_seed), never by name shape. Recorded as field 9
    * so lir_letfun_finish reaches the SAME answer the reference sites use. */
   let is_top = sigma_kind(nth(s, 3), name) == 1 in
-  [body, st5, name, ncap, nparams, gname, fvs, false, 0, is_top]
+  let saved_tlv = box_get(lir_tlv_box) in
+  let _ = box_set(lir_tlv_box, 0) in
+  [body, st5, name, ncap, nparams, gname, fvs, false, 0, is_top, saved_tlv != 0]
 
 let cap_list(n, j, acc) =
   if j >= n then acc
@@ -1325,6 +1336,7 @@ let lir_letfun_finish(s, p, br) =
   let ncap = nth(p, 3) in
   let nparams = nth(p, 4) in
   let gname = nth(p, 5) in
+  let _ = box_set(lir_tlv_box, if nth(p, 10) then 1 else 0) in
   let nslots = nth(br, 3) + 2 in
   /* capRef prologue (LIR.md 4.4.4): params only, object in the 0th arg
    * register. The trailing 1 marks the OBJECT ABI explicitly -- the emit
