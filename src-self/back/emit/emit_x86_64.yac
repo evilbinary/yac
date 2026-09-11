@@ -1980,6 +1980,33 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
       let s2 = [b, nth(s1, 1), [], nth(st, 3), nth(st, 4)] in
       emit_fun(i + 1, s2, cons([name, fstart], fo)) in
   let r1 = emit_fun(0, glob, []) in
+  let _ =
+    if asm_dump_get(0) != 0 then
+      let nout = bytes_len(out) in
+      let hd(n) = if n < 10 then str_chr(48 + n) else str_chr(87 + n) in
+      let hx(bb) = str_cat(hd(bshr(band(bb, 255), 4)), hd(band(bb, 15))) in
+      let stof(i) = if i >= nfun then nout else nth(offs, i) in
+      let go(i) =
+        if i >= nfun then 0
+        else
+          let nm = nth(nth(funs, i), 1) in
+          let st0 = nth(offs, i) in
+          let en0 = stof(i + 1) in
+          let en = if en0 > st0 and en0 <= nout then en0 else nout in
+          let _ =
+            if len(nth(nth(funs, i), 4)) == 0 then go(i + 1)
+            else
+              let _ = print(str_cat("=== asm: ", str_cat(nm,
+                        str_cat(" @", str_cat(int_to_str(st0),
+                        str_cat(" (", str_cat(int_to_str(en - st0), " bytes)"))))))) in
+              let row(j, k, acc) =
+                if j >= en then (if acc != "" then print(acc) else 0)
+                else if k >= 16 then (let _ = print(acc) in row(j, 0, ""))
+                else row(j + 1, k + 1, str_cat(acc, str_cat(hx(bytes_ref(out, j)), " "))) in
+              row(st0, 0, "") in
+          go(i + 1) in
+      go(0)
+    else 0 in
   let _ = log("emit", "funs done") in
   let st = nth(r1, 0) in
   let funOffsRev = nth(r1, 1) in
