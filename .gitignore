@@ -65,3 +65,7 @@ perf.data
 t1.yac
 t2.yac
 a.txt
+tmp_tests/e3.yac
+tmp_tests/v1.yac
+tmp_tests/y1t.yac
+t1.asm

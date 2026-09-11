@@ -845,12 +845,23 @@ let dump_anf(src) =
   else
     let _ = print(pass_anf(ast)) in 0
 
+let lir_slice_list(l, i, n, acc) =
+  if i >= n then reverse(acc)
+  else lir_slice_list(l, i + 1, n, cons(nth(l, i), acc))
+
 let lir_dump_items(anf, i, n, st) =
   if i >= n then 0
   else
     let r = lir_expr(nth(anf, i),
               st_no([nth(st, 4), nth(st, 0), nth(st, 1), nth(st, 2), nth(st, 3)])) in
-    let _ = print(nth(r, 0)) in
+    /* Print only THIS item's insns (the delta), not the accumulated list --
+     * the cumulative form is O(n^2) text and unusable on large units.
+     * Items with an empty delta (e.g. a top-level letfun: its body lives in
+     * a separate proc) print nothing at all. */
+    let _ =
+      if len(nth(r, 0)) > len(nth(st, 4)) then
+        print(lir_slice_list(nth(r, 0), len(nth(st, 4)), len(nth(r, 0)), []))
+      else 0 in
     lir_dump_items(anf, i + 1, n,
       [nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5), nth(r, 0), nth(r, 1)])
 

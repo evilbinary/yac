@@ -1,2 +1,2 @@
-[[mov_imm, 1, 84]]
+[]
 [proc, _start, 0, 0, [[local, 2, 0], [mov_imm, 1, 84], [untag, 2, 1], [syscall, 0, 60, [2]]], _start]

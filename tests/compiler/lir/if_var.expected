@@ -1,2 +1,2 @@
-[[mov_imm, 1, 2], [gset, x, 0, [imm, 2]], [cmpjmp, 1, LIF0, LIF1], [label, LIF0], [mov_imm, 3, 2], [mov, 2, 3], [jmp, LIF2], [label, LIF1], [mov_imm, 3, 4], [mov, 2, 3], [label, LIF2]]
-[proc, _start, 0, 0, [[local, 4, 0], [mov_imm, 1, 2], [gset, x, 0, [imm, 2]], [cmpjmp, 1, LIF0, LIF1], [label, LIF0], [mov_imm, 3, 2], [mov, 2, 3], [jmp, LIF2], [label, LIF1], [mov_imm, 3, 4], [mov, 2, 3], [label, LIF2], [untag, 4, 2], [syscall, 0, 60, [4]]], _start]
+[]
+[proc, _start, 0, 0, [[local, 5, 0], [mov_imm, 1, 2], [gset, x, 0, [imm, 2]], [gval, 2, x], [cmpjmp, 2, LIF0, LIF1], [label, LIF0], [mov_imm, 4, 2], [mov, 3, 4], [jmp, LIF2], [label, LIF1], [mov_imm, 4, 4], [mov, 3, 4], [label, LIF2], [untag, 5, 3], [syscall, 0, 60, [5]]], _start]
