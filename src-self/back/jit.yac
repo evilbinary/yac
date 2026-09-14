@@ -376,7 +376,7 @@ let jit_run_ok(t) = target_arch(t) == host_arch(0)
 
 let jit_sess_ok(t) = target_arch(t) == "x86_64"
 
-let compile_jit(src, t, named) =
+let compile_jit_go(src, t, named) =
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then
     let _ = report_syntax(ast) in 1
@@ -448,6 +448,34 @@ let compile_jit(src, t, named) =
         jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0)
       else 0 in
     0
+
+/* Reentrancy guard (BOOTSTRAP_LINK 12.11 遗留 1 / 12.12 minimal half): a REPL
+ * line's own code can call a host leaf that compiles and runs ANOTHER image in
+ * this same process -- `compiler.run` / `compiler.compile_it`. That inner
+ * session overwrites this one's live image and session lets, and the outer REPL
+ * then continued on a foreign image: `let b = compile_it("1+2"); b()` printed 3
+ * and the process died with SIGILL (or SIGSEGV) at the next prompt / exit.
+ * Save and restore the session boxes around any NESTED call; the outermost call
+ * is the session itself and must keep its updates. */
+let jit_busy_box =
+  let b = box_new() in
+  let _ = box_set(b, false) in
+  b
+
+let compile_jit(src, t, named) =
+  if box_get(jit_busy_box) then
+    let st = [box_get(jit_live_box), box_get(jit_lets_box),
+              box_get(gref_snap_box)] in
+    let r = compile_jit_go(src, t, named) in
+    let _ = box_set(jit_live_box, nth(st, 0)) in
+    let _ = box_set(jit_lets_box, nth(st, 1)) in
+    let _ = box_set(gref_snap_box, nth(st, 2)) in
+    r
+  else
+    let _ = box_set(jit_busy_box, true) in
+    let r = compile_jit_go(src, t, named) in
+    let _ = box_set(jit_busy_box, false) in
+    r
 
 let compile_jit_anf(anf, t, bn) =
   let hush0 = log_get_hush(0) in

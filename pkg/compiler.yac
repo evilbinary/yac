@@ -15,11 +15,24 @@
  *   load(path)                     path -> run it as a yjit guest
  */
 package compiler
-export compile_file, compile, load
+export compile_file, compile, load, run, compile_it
 import back.backend {@compile_native}
 import back.pack.target {@mk_jit_target, @mk_target}
 import back.jit {@compile_jit}
 import rt.os {@host_arch, @host_format}
+
+/* Every entry here takes yac SOURCE. Non-strings (an int, a list, a compiled
+ * image...) used to slip through: `compile_it(2)` lexed an int, failed inside,
+ * and returned 0 with no message -- the same silent-garbage shape as calling a
+ * function with the wrong argument count. Say it out loud instead. is_int is
+ * the only type predicate the language exposes, and the codebase's idiom is
+ * "not an int => a string" (see pkg/map.yac), which is what makes this enough
+ * to catch the realistic mistake. */
+let want_src(src, who) =
+    if src == 0 then 0
+    else if is_int(src) then
+      let _ = print(str_cat("error: ", str_cat(who, " needs a source string"))) in 1
+    else 0
 
 let compile_file(inpath, outpath) =
    let src = read_file(inpath) in
@@ -34,6 +47,23 @@ let load(path) =
     if src == 0 then 1
     else compile_jit(src, mk_jit_target(host_arch(0)), true)
 
+/* compile + run a source STRING in this process (what `load` does after
+ * read_file): the REPL/JIT path, so the last top-level value is printed and
+ * the session keeps running. `compile(src)` only returns the machine blob --
+ * the entry offset it would need is not part of that value, so running an
+ * image needs this instead. */
+let run(src) =
+    if want_src(src, "run") != 0 then 0
+    else compile_jit(src, mk_jit_target(host_arch(0)), true)
+
+/* `let a = compile_it("1+2") in a()`: a closure that runs the source when
+ * called. It re-compiles on every call (the host leaf API compiles and runs in
+ * one step, and we can only hand back a closure, not the image's entry), so
+ * treat it as "callable source", not "callable image" -- see
+ * docs/BOOTSTRAP_LINK.md 12.12 for what a real callable image would need
+ * (in-process loader + session isolation). */
+let compile_it(src) = fun(x) -> run(src)
+
 let compile(src) =
-    if src == 0 then 0
+    if want_src(src, "compile") != 0 then 0
     else compile_native(src, mk_target(host_arch(0), host_format(0), "exec"))
