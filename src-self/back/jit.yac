@@ -64,12 +64,6 @@ let gref_fill(code) =
   let ds = nth(lay, 2) in
   let fnl = yac_gfn_list(0) in
   let vall = yac_gval_list(0) in
-  let _ = print(int_to_str(len(names))) in
-  let _ = print("\n") in
-  let _ = print(int_to_str(glist_len(fnl, 0))) in
-  let _ = print("\n") in
-  let _ = print(int_to_str(glist_len(vall, 0))) in
-  let _ = print("\n") in
   let go(i) =
     if i >= len(names) then 0
     else
@@ -214,7 +208,11 @@ let start_eval_ins(nslots, pslot, body, name, quiet) =
     let b4 = insn_push(b3, ["mov_imm", nslots + 3, 2]) in
     let b5 = insn_push(b4, ["fcall", nslots + 4, "print", [nslots, nslots + 2]]) in
     let b6 = insn_push(b5, ["fcall", nslots + 5, "print", [nslots + 1, nslots + 2]]) in
-    let b7 = insn_push(b6, ["fcall", nslots + 6, "print", [pslot, nslots + 3]]) in
+    /* Echo the BOUND NAME's value, read back from its static cell: pslot is
+     * the item's result slot, which for `let a = 1` is unit (0), not 1 --
+     * the repl tests expect "a = 1". */
+    let b6b = insn_push(b6, ["gval", nslots + 7, name]) in
+    let b7 = insn_push(b6b, ["fcall", nslots + 6, "print", [nslots + 7, nslots + 3]]) in
     insn_push(b7, ["ret", pslot])
 
 let start_proc_eval(nslots, result_slot, body, name, quiet) =
@@ -320,8 +318,6 @@ let jit_run_ok(t) = target_arch(t) == host_arch(0)
 let jit_sess_ok(t) = target_arch(t) == "x86_64"
 
 let compile_jit(src, t, named) =
-  let _ = print("\n") in
-  let _ = print("\n") in
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then
     let _ = report_syntax(ast) in 1
