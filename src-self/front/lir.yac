@@ -153,6 +153,17 @@ let bin(op, d, a, b) =
   else if op == "~" then ["bnot", d, a, b]
   else ["add", d, a, b]
 
+/* An apply/icall whose callee operand is the ["self"] sentinel: a tail call
+ * to the enclosing proc itself. Such a call must loop (tloop), not recurse:
+ * the object register already holds this proc's own object, so the args only
+ * need shuffling into slots 1..n. This is the shape a self-tail-call takes
+ * whenever the proc has captures or >6 params (calli routes those through
+ * apply), and it is why tco_cap / tco_7args blew the stack. */
+let tco_self_op(op) =
+  if is_int(op) then false
+  else if len(op) == 0 then false
+  else nth(op, 0) == "self"
+
 let tco_hit(ins, slot, gname, i) =
   if nth(ins, 1) == slot then
     if nth(ins, 2) == gname then
@@ -173,23 +184,42 @@ let tco_find(insns, i, slot, gname) =
     else 0 - 1
   else if nth(nth(insns, i), 0) == "fcall"
        or nth(nth(insns, i), 0) == "ycall" then
-    tco_hit(nth(insns, i), slot, gname, i)
+    /* The profiler epilogue (yac_prof_leave) sits between the tail call and
+     * the ret: it is instrumentation, not a value producer, so step over it
+     * instead of giving up. Without this EVERY proc with captures or >6
+     * params lost its loop (they tail-call through apply/icall), and deep
+     * self-recursion blew the stack. */
+    let tgt = nth(nth(insns, i), 2) in
+    if tgt == "yac_prof_leave" or tgt == "yac_prof_enter" then
+      tco_find(insns, i - 1, slot, gname)
+    else tco_hit(nth(insns, i), slot, gname, i)
+  else if nth(nth(insns, i), 0) == "apply"
+       or nth(nth(insns, i), 0) == "icall" then
+    let ins = nth(insns, i) in
+    if nth(ins, 1) == slot and tco_self_op(nth(ins, 2)) then i
+    else 0 - 1
   else 0 - 1
 
-let tco_one(ins) =
+let tco_one(ins, gname) =
   if nth(ins, 0) == "fcall" or nth(ins, 0) == "ycall" then
     ["tcall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
   else if nth(ins, 0) == "apply" then
-    ["tailapply", nth(ins, 1), nth(ins, 2), nth(ins, 3), nth(ins, 4)]
+    /* self -> tcall (tloop: same object, args shuffled, no new frame).
+     * non-self keeps the legacy tailapply spelling. */
+    if tco_self_op(nth(ins, 2)) then
+      ["tcall", nth(ins, 1), gname, nth(ins, 4)]
+    else ["tailapply", nth(ins, 1), nth(ins, 2), nth(ins, 3), nth(ins, 4)]
   else if nth(ins, 0) == "icall" then
-    ["ticall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+    if tco_self_op(nth(ins, 2)) then
+      ["tcall", nth(ins, 1), gname, nth(ins, 3)]
+    else ["ticall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
   else ins
 
 let tco_fun_at(f, idx) =
   if idx == 0 - 1 then f
   else
     let insns = nth(f, 4) in
-    let _ = list_set(insns, idx, tco_one(nth(insns, idx))) in
+    let _ = list_set(insns, idx, tco_one(nth(insns, idx), nth(f, 1))) in
     f
 
 let tco_fun(f) =
