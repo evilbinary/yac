@@ -97,14 +97,23 @@ let drop_unreachable(funs) =
       rec_keep(i + 1) in
   rec_keep(0)
 
-/* --shared 导出本单元**全部** C-ABI 过程，所以不可达剪枝对它整体让路：
- * dylib_add.yac 的 `let add(a, b) = a + b` 没有任何 export 声明，只被尾部
- * 的那个 `0` 陪着，从 _start 看就是死的。剪掉后 add 既不在镜像里也不在
- * 导出表里——python ctypes 直接 "function 'add' not found"，yac 侧
- * ffi sym/ls 也拿不到。可执行文件保持剪枝（这是它的本意：只丢不可达的
- * stdlib）。 */
-let alloc_prog_for(prog, shared) =
-  if shared then ["prog", nth(prog, 1), nth(prog, 2)]
+/* 两种编译单元必须让不可达剪枝整体让路，可执行文件保持剪枝（这才是它的
+ * 本意：只丢不可达的 stdlib）。
+ *
+ * 1. --shared 导出本单元**全部** C-ABI 过程：dylib_add.yac 的
+ *    `let add(a, b) = a + b` 没有任何 export 声明，只被尾部那个 `0` 陪着，
+ *    从 _start 看就是死的。剪掉后 add 既不在镜像里也不在导出表里——python
+ *    ctypes 直接 "function 'add' not found"，yac 侧 ffi sym/load 也拿不到。
+ * 2. REPL 的一行自己就是一次求值：`let f(x) = x + 1` 单独一行时 f 在被求
+ *    值的这一行里当然没人调用，可它是**下一行**要用的定义，所以必须留下。
+ *    会话里已发射过的过程由 emit_jsess/jit_live 跳过，所以这里不剪不会让
+ *    blob 变大。
+ *    注意这只是必要条件：跨行调用还要求新名字在会话槽里有**可调用的闭包
+ *    值**，而顶层 `letfun` 目前不物化闭包（AOT 靠静态名/直接 ycall，不需要
+ *    它）。所以 REPL 里 `let f(x) = ..` 后跨行 `f(2)` 仍会取到 0——这一项
+ *    未在本轮修复，别把这里当成已修好。 */
+let alloc_prog_for(prog, keep_all) =
+  if keep_all then ["prog", nth(prog, 1), nth(prog, 2)]
   else ["prog", drop_unreachable(nth(prog, 1)), nth(prog, 2)]
 
 let alloc_prog(prog) = alloc_prog_for(prog, false)
@@ -151,6 +160,7 @@ let emit_by_target(ast, t) =
   let _ = if target_live(t) then 0 else emit_apply_unres(0) in
   r
 
-let lower_expr(ast, t) = emit_by_target(alloc_prog_for(ast, target_shared(t)), t)
+let lower_expr(ast, t) =
+  emit_by_target(alloc_prog_for(ast, target_shared(t) or target_live(t)), t)
 
 let lower_program(ast) = lower_expr(ast, mk_target("x86_64", "elf", "exec"))
