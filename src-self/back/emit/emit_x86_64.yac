@@ -1532,21 +1532,32 @@ let emit_x86_i_heap(st, insn) =
  * Defined before emit_x86_i_apply/emit_x86_i_clos: plain lets resolve
  * downward only. */
 let emit_call_guard(b, st, patches, dst) =
+  /* Small tagged values (int / nil) are below any heap pointer, so one
+   * unsigned compare rules them out before the deref -- otherwise
+   * `let a = 5; a()` read [10+16] and faulted inside the guard itself. */
+  let _ = mov_r64_imm64(b, 3, 131072) in
+  let _ = cmp_rax_rbx(b) in
+  let _ = jcc_rel32(b, 2, 0) in
+  let j1 = bytes_len(b) - 4 in
   let _ = mov_r11d_rax_disp32(b, 16) in
   let _ = cmp_r11_imm8(b, 16) in
   let _ = jcc_rel32(b, 2, 0) in
-  let jbad = bytes_len(b) - 4 in
+  let j2 = bytes_len(b) - 4 in
+  let _ = mov_rbx_rax_disp32(b, 16) in
   let _ = jmp_rel32(b, 0) in
-  let jjoin = bytes_len(b) - 4 in
+  let jover = bytes_len(b) - 4 in
+  let bad = bytes_len(b) in
+  let _ = apply_patch(b, j1, bad) in
+  let _ = apply_patch(b, j2, bad) in
   let acall = bytes_len(b) in
   let _ = call_user(b) in
   let ps = emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_not_fn") in
   let _ = emit_store_rax_slot(b, dst) in
-  let join = bytes_len(b) in
-  let _ = apply_patch(b, jbad, join) in
-  let _ = apply_patch(b, jjoin, join) in
-  let _ = mov_rbx_rax_disp32(b, 16) in
-  ps
+  let _ = jmp_rel32(b, 0) in
+  let jend = bytes_len(b) - 4 in
+  let over = bytes_len(b) in
+  let _ = apply_patch(b, jover, over) in
+  [ps, jend]
 
 /* Same check for a tail dynamic call (tailapply/ticall). There is no dst to
  * receive the 0, so the not-callable path puts yac_not_fn's address into rbx --
@@ -1597,12 +1608,15 @@ let emit_x86_i_apply(st, insn, is_entry) =
   let _ = ldarg(0) in
   let _ = emit_load_operand(b, clos) in
   let _ = and_rax_1(b) in
-  let patches = emit_call_guard(b, st, patches, dst) in
+  let g = emit_call_guard(b, st, patches, dst) in
+  let patches = nth(g, 0) in
+  let jend = nth(g, 1) in
   let _ = call_rbx_user(b) in
   let _ =
     if nstack == 0 then 0
     else add_rsp_imm32(b, bshl(nstack, 3)) in
   let _ = emit_store_rax_slot(b, dst) in
+  let _ = apply_patch(b, jend, bytes_len(b)) in
   emit_st4(st, b, cur, labels, patches)
 
 let emit_x86_i_clos(st, insn, is_entry) =
@@ -1670,7 +1684,9 @@ let emit_x86_i_clos(st, insn, is_entry) =
       let _ = push_flat(ntot - 1) in
       let _ = emit_load_rax_slot(b, clos) in
       let _ = and_rax_1(b) in
-      let patches = emit_call_guard(b, st, patches, dst) in
+      let g = emit_call_guard(b, st, patches, dst) in
+      let patches = nth(g, 0) in
+      let jend = nth(g, 1) in
       let _ = push_r64(b, 3) in
       let nreg = if ntot < 6 then ntot else 6 in
       let load_reg(i) =
@@ -1691,6 +1707,7 @@ let emit_x86_i_clos(st, insn, is_entry) =
         if nstack == 0 then 0
         else add_rsp_imm32(b, bshl(nstack, 3)) in
       let _ = emit_store_rax_slot(b, dst) in
+      let _ = apply_patch(b, jend, bytes_len(b)) in
       emit_st4(st, b, cur, labels, patches)
     else
       /* dynamic nenv: build jump table and patch local labels immediately */
@@ -1704,7 +1721,9 @@ let emit_x86_i_clos(st, insn, is_entry) =
       let _ = pushargs(nargs - 1) in
       let _ = emit_load_rax_slot(b, clos) in
       let _ = and_rax_1(b) in
-      let patches = emit_call_guard(b, st, patches, dst) in
+      let g = emit_call_guard(b, st, patches, dst) in
+      let patches = nth(g, 0) in
+      let jend = nth(g, 1) in
       let _ = mov_r11d_rax_disp32(b, 24) in
       let loadcap(i) =
         if i >= 6 then 0
@@ -1772,6 +1791,7 @@ let emit_x86_i_clos(st, insn, is_entry) =
       let lc = bytes_len(b) in
       let _ = call_rbx_user(b) in
       let _ = emit_store_rax_slot(b, dst) in
+      let _ = apply_patch(b, jend, bytes_len(b)) in
       /* patch all local rel32s now */
       let _ = apply_patch(b, r0, a0) in
       let _ = apply_patch(b, r1, a1) in
