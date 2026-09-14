@@ -914,10 +914,22 @@ let tco_name_ok(self) =
   if self == "parse_expr" then false
   else true
 
+/* Tail self-call -> tcall: emit_x86_tloop shuffles the args into slots 1..n
+ * and jumps back to $tco, so a loop stays a loop. BOTH call spellings must be
+ * accepted: `fcall` (host/runtime target) and `ycall` (an in-image yac proc --
+ * which is what a self-call IS since the object-ABI migration). Handling only
+ * fcall left every self-recursive yac proc (lex, lir_all, ...) recursing for
+ * real: small inputs passed, a big unit blew the stack -- gen-2 could never
+ * compile the bundle. `self` is the current proc's CODE name (st_self is set
+ * to gname), the same string resolve_call puts on the ycall. */
 let maybe_tcall(rest_tail, ins, self) =
   if not rest_tail then ins
   else if not tco_name_ok(self) then ins
   else if nth(ins, 0) == "fcall" then
+    if nth(ins, 2) == self then
+      ["tcall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+    else ins
+  else if nth(ins, 0) == "ycall" then
     if nth(ins, 2) == self then
       ["tcall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
     else ins
@@ -1334,7 +1346,6 @@ let lir_letfun_prep(b, s) =
    * carried in Σ (toplevel_seed), never by name shape. Recorded as field 9
    * so lir_letfun_finish reaches the SAME answer the reference sites use. */
   let is_top = sigma_kind(nth(s, 3), name) == 1 in
-  let _ = if ncap > 0 then print(["dbg_nf", name, ncap, fvs]) else 0 in
   let saved_tlv = box_get(lir_tlv_box) in
   let _ = box_set(lir_tlv_box, 0) in
   [body, st5, name, ncap, nparams, gname, fvs, false, 0, is_top, saved_tlv != 0]
