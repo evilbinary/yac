@@ -12,7 +12,7 @@ import back.emit.emit {apply_u64, cimport_got, cimport_jit_bind, cimport_jit_bin
 import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog, toplevel_seed, lir_tlv_set}
 import back.backend {ast_imports, fun_off, link_from_ast, link_need_box, pass_anf, pass_lex, pass_parse, report_unbound, rewrite_imports, rt_for_link}
 import back.lower {emit_apply_unres, lower_expr}
-import back.pack.target {JIT_VADDR, target_arch}
+import back.pack.target {JIT_VADDR, target_arch, target_text_off, target_vaddr}
 import back.pack.yjit {bytes_copy_range, pack_yjit_ex, yjit_arch_name, yjit_arch_num, yjit_export_dec, yjit_export_enc, yjit_imp_enc, yjit_imp_parse, yjit_read}
 import front.cps {cps_all, cps_maybe_opt}
 import front.parser {prog_has_err, report_syntax}
@@ -85,6 +85,35 @@ let jit_lets_box =
   let b = box_new() in
   let _ = box_set(b, 0) in
   b
+
+/* Make this line's own top-level functions visible to LATER lines.
+ *
+ * Inside a blob `gvar` emits only the stub cell's address (tag 22), never the
+ * tag 23 entry bake -- a blob cannot bake an absolute address. The entry is
+ * filled at run time by gref_fill out of the host-side registries, and the
+ * function half of those (yac_gfn_pub / yac_gfn_list, the consumer being
+ * gfn_lookup) had NO producer at all: nothing ever published [name, entry].
+ * Consequence: a function DEFINED on the session's first line worked (the
+ * emit-time fill happened to place it), but one defined on any later line
+ * kept entry 0 -- `print(f(2))` then called the yac_host_unimpl stub (printing
+ * "host fn unavailable" and returning 0) or jumped to address 0.
+ *
+ * fun_off returns 0 for names that are not procedures of this blob; plain
+ * values travel through the jslot registry instead, so they are skipped.
+ * base = the blob's absolute entry base (JIT_VADDR + text_off + append offset),
+ * i.e. exactly what the emit-time cell fill writes: LOAD_VADDR + TEXT_OFF + T
+ * + off with T == dest. */
+let gfn_publish(fo, base) =
+  let snap = box_get(gref_snap_box) in
+  let names = nth(snap, 1) in
+  let go(i) =
+    if i >= len(names) then 0
+    else
+      let nm = nth(names, i) in
+      let off = fun_off(fo, nm) in
+      let _ = if off == 0 then 0 else yac_gfn_pub(nm, base + off) in
+      go(i + 1) in
+  go(0)
 
 let jit_let_idx(nm) =
   let st = box_get(jit_lets_box) in
@@ -384,6 +413,7 @@ let compile_jit(src, t, named) =
         let _ =
           if jit_run_ok(t) then
             let _ = if dest == 0 then cimport_jit_bind(code) else 0 in
+            let _ = gfn_publish(fo, target_vaddr(t) + target_text_off(t) + dest) in
             let _ = gref_fill(code) in
             jit_run(code, fun_off(fo, "_eval"), dest)
           else 0 in
