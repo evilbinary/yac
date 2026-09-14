@@ -121,7 +121,18 @@ let emit_map_get(m, k) =
     else if is_int(h) then 0
     else
       let idx = emit_id_scan(nth(h, 0), intern(ik), 0, len(nth(h, 0))) in
-      if idx < 0 then 0 else idx
+      /* A miss here would silently bake offs[0] -- the FIRST proc's entry --
+       * as the patch target: the wrong function, called with the wrong ABI,
+       * and no trace of why. All procs are registered before any body is
+       * emitted, so a miss is a front/back naming bug: fail loudly.
+       * Exception: profiler helper patches dangle by design when the prof
+       * procs are not part of the image (profiling off) -- their call sites
+       * stay dormant, so keep the historical silent-0 for "pro*" names. */
+      if idx < 0 then
+        if str_len(k) >= 5 and str_ref(k, 0) == 112
+           and str_ref(k, 1) == 114 and str_ref(k, 2) == 111 then 0
+        else log_fatal(str_cat("EMIT: patch to unknown proc '", str_cat(k, "'")))
+      else idx
 
 let emit_map_put(m, k, v) =
   let _ = fmap_put(m, intern(k), v) in

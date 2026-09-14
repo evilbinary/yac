@@ -216,7 +216,8 @@ let lower_cases(_) = [
   ["cap_cross_scope", "rc", "25"],
   ["cap_captured_closure", "rc", "42"],
   ["cap_args6_obj", "rc", "31"],
-  ["cap_chain3", "rc", "17"]
+  ["cap_chain3", "rc", "17"],
+  ["topfun_value", "rc", "10"]
 ]
 
 let lower_one(st, yc, c) =

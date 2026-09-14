@@ -6,7 +6,7 @@ import back.emit.emit {apply_args, apply_ncap, apply_patch, apply_u64, cimport_b
 import back.emit.emit_cabi {emit_cabi_all}
 import back.emit.linux_x86_64 {call_rbx_user, call_user, cc_of, emit_load_rax_slot, emit_load_rbx_slot, emit_load_rdi_slot, emit_obj_load_argreg, emit_obj_load_rax, emit_obj_store_rdi, emit_store_param, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_unalign, emit_x86_c_untag, linux_begin, linux_cc_marshal, linux_ccall_patch, linux_clock, linux_entry, linux_exit, linux_finish, linux_num_syscall, linux_syscall, linux_write1}
 import back.emit.win_x86_64 {win_begin, win_cc_marshal, win_ccall_patch, win_clock, win_entry, win_exit, win_finish, win_num_syscall, win_syscall, win_write1}
-import back.encode.encode_x64 {add_rax_imm32, add_rax_imm8, add_rax_rbx, add_rdi_rax, add_rsi_rax, add_rsp_imm32, addsd_xmm0_xmm1, and_eax_imm32, and_rax_1, and_rax_imm8, and_rax_rbx, bt_mem_rdx_rcx, bts_mem_rdx_rcx, call_r11, call_rel32, cld, cmp_r11_imm8, cmp_rax_imm8, cmp_rax_rbx, cmp_rbx_imm32, cqo, cvtsi2sd_xmm0_rax, divsd_xmm0_xmm1, e8, idiv_rbx, imul_rax_rbx, jcc_rel32, jmp_mem_rbx_disp32, jmp_rbx, jmp_rel32, lea_r9_rsp_disp8, lea_rax_rip, lea_rcx_rsp_disp32, lea_rdi_rsp_disp32, lea_rdx_rip, lea_rdx_rsp_disp32, lea_rsi_rip, lea_rsi_rsp, mov_eax_imm, mov_mem_rax_rbp, mov_mem_rax_rdi, mov_mem_rax_rsi, mov_mem_rbp32_r64, mov_mem_rbx_disp32_rax, mov_mem_rbx_rdx_rax, mov_mem_rsp_disp32_rax, mov_mem_rsp_disp8_rax, mov_r11_rax, mov_r11d_rax_disp32, mov_r64_imm, mov_r64_imm64, mov_r64_mem_rbp32, mov_r64_r64, mov_r8_rax, mov_r9_rax, mov_rax_r13, mov_r13_rdi, mov_rax_disp32_imm32, mov_rax_disp32_imm8, mov_rax_disp32_rdi, mov_rax_imm64, mov_rax_mem_rax, mov_rax_mem_rax_rdx, mov_rax_mem_rsp, mov_rax_mem_rsp8, mov_rax_rax_disp32, mov_rax_rbp, mov_rax_rbx, mov_rax_rdx_dil, mov_rax_rsp, mov_rax_to_argreg, mov_rbp_rbx_disp32, mov_rbp_rsp, mov_rbx_mem_rsp, mov_rbx_rax, mov_rbx_rax_disp32, mov_rcx_rax, mov_rcx_rbx, mov_rdi_imm, mov_rdi_rax, mov_rdx_rax, mov_rsi_rax, mov_rsp_rbp, mov_rsp_rbx_disp32, movq_rax_xmm0, movq_xmm0_rax, movq_xmm1_rax, movq_xmm2_rax, movzx_eax_al, movzx_eax_rax_disp32, movzx_eax_rax_rdx, mulsd_xmm0_xmm1, not_rax, or_rax_1, or_rax_rbx, pop_argreg, pop_r64, pop_rbp, pop_r13, popfq, push_r64, push_r13, push_rbp, pushfq, rep_movsb, rep_stosb, ret, sar_rax_1, sar_rbx_1, sar_rdi_1, sar_rdx_1, setcc_r8, shl_rax_1, shl_rax_cl, shr_rax_cl, shr_rax_imm8, sub_rax_rbx, sub_rbx_imm32, sub_rsp_imm32, sub_rsp_rbx, subsd_xmm0_xmm1, syscall, test_rax_1, test_rax_rax, ucomisd_xmm0_xmm1, xor_edx_edx, xor_rax_rax, xor_rax_rbx}
+import back.encode.encode_x64 {add_rax_imm32, add_rax_imm8, add_rax_rbx, add_rdi_rax, add_rsi_rax, add_rsp_imm32, addsd_xmm0_xmm1, and_eax_imm32, and_rax_1, and_rax_imm8, and_rax_rbx, bt_mem_rdx_rcx, bts_mem_rdx_rcx, call_r11, call_rel32, cld, cmp_r11_imm8, cmp_rax_imm8, cmp_rax_rbx, cmp_rbx_imm32, cqo, cvtsi2sd_xmm0_rax, divsd_xmm0_xmm1, e8, idiv_rbx, imul_rax_rbx, jcc_rel32, jmp_mem_rbx_disp32, jmp_rbx, jmp_rel32, lea_r9_rsp_disp8, lea_rax_rip, lea_rcx_rsp_disp32, lea_rdi_rsp_disp32, lea_rdx_rip, lea_rdx_rsp_disp32, lea_rsi_rip, lea_rsi_rsp, mov_eax_imm, mov_mem_rax_rbp, mov_mem_rax_rdi, mov_mem_rax_rsi, mov_mem_rbp32_r64, mov_mem_rbp_r13, mov_mem_rbx_disp32_rax, mov_mem_rbx_rdx_rax, mov_mem_rsp_disp32_rax, mov_mem_rsp_disp8_rax, mov_r11_rax, mov_r11d_rax_disp32, mov_r13_mem_rbp, mov_r64_imm, mov_r64_imm64, mov_r64_mem_rbp32, mov_r64_r64, mov_r8_rax, mov_r9_rax, mov_rax_r13, mov_r13_rdi, mov_rax_disp32_imm32, mov_rax_disp32_imm8, mov_rax_disp32_rdi, mov_rax_imm64, mov_rax_mem_rax, mov_rax_mem_rax_rdx, mov_rax_mem_rsp, mov_rax_mem_rsp8, mov_rax_rax_disp32, mov_rax_rbp, mov_rax_rbx, mov_rax_rdx_dil, mov_rax_rsp, mov_rax_to_argreg, mov_rbp_rbx_disp32, mov_rbp_rsp, mov_rbx_mem_rsp, mov_rbx_rax, mov_rbx_rax_disp32, mov_rcx_rax, mov_rcx_rbx, mov_rdi_imm, mov_rdi_rax, mov_rdx_rax, mov_rsi_rax, mov_rsp_rbp, mov_rsp_rbx_disp32, movq_rax_xmm0, movq_xmm0_rax, movq_xmm1_rax, movq_xmm2_rax, movzx_eax_al, movzx_eax_rax_disp32, movzx_eax_rax_rdx, mulsd_xmm0_xmm1, not_rax, or_rax_1, or_rax_rbx, pop_argreg, pop_r64, pop_rbp, pop_r13, popfq, push_r64, push_r13, push_rbp, pushfq, rep_movsb, rep_stosb, ret, sar_rax_1, sar_rbx_1, sar_rdi_1, sar_rdx_1, setcc_r8, shl_rax_1, shl_rax_cl, shr_rax_cl, shr_rax_imm8, sub_rax_rbx, sub_rbx_imm32, sub_rsp_imm32, sub_rsp_rbx, subsd_xmm0_xmm1, syscall, test_rax_1, test_rax_rax, ucomisd_xmm0_xmm1, xor_edx_edx, xor_rax_rax, xor_rax_rbx}
 import back.pack.elf {elf_dynexp_set, elf_int, elf_pic, funsym_set}
 import back.pack.pe {pe_iat_off}
 import back.pack.target {JIT_VADDR}
@@ -146,18 +146,21 @@ let emit_x86_load_reg_args(b, args, nargs) =
       loadarg(j + 1) in
   loadarg(0)
 
-let emit_x86_tcall_other(st, insn, is_entry, is_raw) =
+let emit_x86_tcall_other(st, insn, is_entry, is_raw, traw) =
   let b = nth(st, 0) in
   let fn = nth(insn, 2) in
   let args = nth(insn, 3) in
   let nargs = len(args) in
-  /* Self tail-call: the target's ABI is the caller's own. RAW runtime procs
-   * keep SysV (params from rdi, 6 register slots, no r13 traffic);
-   * object-ABI procs pass params from rsi (5 slots, the 0th register is the
-   * object, unused by flat callees), 5+ on the stack, and restore the
-   * caller's r13 on the way out. */
-  let nreg = if is_raw then 6 else 5 in
-  let areg(j) = if is_raw then j else j + 1 in
+  /* Tail call. Two independent facts:
+   *   traw  -- the TARGET's ABI: raw runtime procs (including every non-self
+   *            tcall, which only hand-written runtime insns produce) keep
+   *            SysV (params from rdi, 6 register slots); object-ABI targets
+   *            take params from rsi (5 slots; the 0th register is the
+   *            object, unused by flat callees).
+   *   is_raw -- the CALLER's own frame: only non-raw callers saved r13 in
+   *            frame slot 0, so only they restore it on the way out. */
+  let nreg = if traw then 6 else 5 in
+  let areg(j) = if traw then j else j + 1 in
   if nargs > nreg then
     let nstack = nargs - nreg in
     let pushsa(i) =
@@ -174,17 +177,17 @@ let emit_x86_tcall_other(st, insn, is_entry, is_raw) =
         let _ = mov_rax_to_argreg(b, areg(j)) in
         ldarg(j + 1) in
     let _ = ldarg(0) in
-    let _ = emit_zero_sysv_args(b, if is_raw then nargs else nargs + 1) in
+    let _ = emit_zero_sysv_args(b, if traw then nargs else nargs + 1) in
     let callstart = bytes_len(b) in
     let _ = call_user(b) in
     let _ = add_rsp_imm32(b, bshl(nstack, 3)) in
     let _ =
       if is_entry then ret(b)
       else
+        let _ = if is_raw then 0 else mov_r13_mem_rbp(b, 0 - 8) in
         let _ = mov_rsp_rbp(b) in
         let _ = pop_rbp(b) in
-        let _ = if is_raw then 0 else pop_r13(b) in
-        ret(b) in
+        let _ = ret(b) in
     emit_st4(st, b, nth(st, 1), nth(st, 2),
       emit_patch_rel(nth(st, 4), nth(st, 3), callstart + 1, fn))
   else
@@ -195,10 +198,10 @@ let emit_x86_tcall_other(st, insn, is_entry, is_raw) =
         let _ = mov_rax_to_argreg(b, areg(j)) in
         ldarg(j + 1) in
     let _ = ldarg(0) in
-    let _ = emit_zero_sysv_args(b, if is_raw then nargs else nargs + 1) in
+    let _ = emit_zero_sysv_args(b, if traw then nargs else nargs + 1) in
+    let _ = if is_entry or is_raw then 0 else mov_r13_mem_rbp(b, 0 - 8) in
     let _ = mov_rsp_rbp(b) in
     let _ = pop_rbp(b) in
-    let _ = if is_entry or is_raw then 0 else pop_r13(b) in
     let jmpstart = bytes_len(b) in
     let _ = jmp_rel32(b, 0) in
     emit_st4(st, b, nth(st, 1), nth(st, 2),
@@ -511,15 +514,16 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
             cons([5, av_save],
                  cons([4, ac_save], pe_ps))))
     else
-      /* capRef: the caller's self lives in r13 -- preserve it across the
-       * call (SysV callee-saved). Without this, the callee's prologue
-       * (r13 <- rdi) destroys the caller's caps pointer and every later
-       * cap load in the caller reads garbage. */
-      let _ = if is_raw then 0 else push_r13(b) in
       let _ = push_rbp(b) in
       let _ = mov_rbp_rsp(b) in
       let nbytes = bshl(nlocals + 1, 3) in
       let _ = emit_chkstk(b, nbytes) in
+      /* capRef: preserve the caller's self (r13) in frame slot 0 -- slot 0
+       * is never allocated by the front, and keeping r13 out of the
+       * [rbp+8]/[rbp+16] header preserves the retaddr layout the GC stack
+       * maps walk. Without this save, any call destroys the caller's caps
+       * pointer (the callee's prologue does r13 <- rdi). */
+      let _ = if is_raw then 0 else mov_mem_rbp_r13(b, 0 - 8) in
       /* Object ABI (LIR.md 4.4.4): marked EXPLICITLY by a 4th local field
        * from lir_letfun_finish -- never inferred here. Params spill from
        * the 1st arg register (the 0th carries the object, stashed in r13);
@@ -534,10 +538,9 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
                   else emit_store_param(b, j, j + 1) in
           storeparams(j + 1)
         else
-          /* stack arg: [rbp + 16 + 8*(j - nregargs)] for SysV frames, +24
-           * for object-ABI frames (the prologue's saved caller r13 adds a
-           * slot between saved-rbp and the incoming stack args). */
-          let off = (if selfabi then 24 else 16) + bshl(j - nregargs, 3) in
+          /* stack arg: [rbp + 16 + 8*(j - nregargs)] -- standard layout for
+           * both ABIs (the r13 save lives in frame slot 0, [rbp-8]). */
+          let off = 16 + bshl(j - nregargs, 3) in
           let _ = mov_r64_mem_rbp32(b, 0, off) in
           let _ = emit_store_rax_slot(b, j + 1) in
           storeparams(j + 1) in
@@ -702,9 +705,9 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
   else if k == "iccall" then emit_x86_iccall(st, insn)
   else if k == "tcall" then
     if nth(insn, 2) == emit_self(0) then
-      if emit_tco_get(0) == 0 then emit_x86_tcall_other(st, insn, is_entry, is_raw)
+      if emit_tco_get(0) == 0 then emit_x86_tcall_other(st, insn, is_entry, is_raw, is_raw)
       else emit_x86_tloop(st, nth(insn, 3))
-    else emit_x86_tcall_other(st, insn, is_entry)
+    else emit_x86_tcall_other(st, insn, is_entry, is_raw, true)
   else if k == "jmp" then
     /* jmp_rel32: e9 + rel32; rel32 field at len0+1 */
     let jpos = bytes_len(b) in
@@ -726,9 +729,9 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     if is_entry then let _ = ret(b) in emit_st4(st, b, cur, labels, patches)
     else
+      let _ = if is_raw then 0 else mov_r13_mem_rbp(b, 0 - 8) in
       let _ = mov_rsp_rbp(b) in
       let _ = pop_rbp(b) in
-      let _ = if is_raw then 0 else pop_r13(b) in
       let _ = ret(b) in
       emit_st4(st, b, cur, labels, patches)
   else if k == "exit" then

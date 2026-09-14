@@ -813,13 +813,15 @@ let lir_var(atom, st) =
       let i1 = insn_push(nth(st, 0), ["gval", nth(st, 2), g]) in
       [i1, nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
     else if kind == 1 then
-      /* Flat function value (12.14): the stub cell's address. In-image
-       * compile bakes the entry through emit_map_get, which is keyed by the
-       * proc's CODE name (package-qualified) -- so resolve the name through
-       * Σ instead of passing the bare ANF name, or the lookup misses and
-       * silently bakes offs[0], i.e. the wrong function's entry. */
-      let i1 = insn_push(nth(st, 0), ["gvar", nth(st, 2), sigma_code(nth(st, 3), g)]) in
-      [i1, nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
+      /* Flat function used as a FIRST-CLASS value: wrap the entry in a
+       * 0-cap closure object (lir_clos_atom). A bare entry address flows
+       * into closure-call sites (icall/apply) which read [ptr+16] as the
+       * fnptr -- with a raw entry that read yields code bytes and the jump
+       * lands on garbage (the rip=2/7 crashes). Statically-called functions
+       * never reach here (calli uses ycall). The name is resolved through Σ
+       * because the patch/bake is keyed by the package-qualified code
+       * name. */
+      lir_clos_atom(st, sigma_code(nth(st, 3), g))
     else if se != 0 then lir_clos_atom(st, nth(se, 0))
     else if is_prim_name(nm) then lir_clos_atom(st, "print")
     else
@@ -1024,7 +1026,13 @@ let calli(g0, dst, ss, env, funs, self, tail) =
         let ci = if len(se) > 3 and nth(se, 3) == "proc" then ["ycall", dst, nth(se, 0), ss]
                  else ["fcall", dst, nth(se, 0), ss] in
         ci
-      else ["icall", dst, nth(e, 0), ss]
+      else
+        /* Same negative-marker conversion as the ncap>0 branch above: a
+         * captured callee's Gamma slot must become ["cap", j], or the emit
+         * treats -2 as a bare slot and reads [rbp+8] (the saved r13). */
+        let cs = nth(e, 0) in
+        let clo = if cs < 0 then ["cap", 0 - cs - 1] else cs in
+        ["icall", dst, clo, ss]
   else
     let se = sigma_ent_h(funs, g, h) in
     if se != 0 then
