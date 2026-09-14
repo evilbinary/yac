@@ -627,10 +627,17 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
     let _ = emit_zero_sysv_args(b, nargs) in
     let hid = host_id(intern(fn), 0) in
     let xid = extsym_find(intern(fn), 0) in
-    let local = emit_map_get(nth(st, 4), intern(fn)) != 0 in
     /* Host leaves and 12.5 external package symbols both call through a
-     * global slot (G+136+8*id; extern id = 10 + index → G+216+8*i). */
-    let via_slot = (hid >= 0 or xid >= 0) and local == false in
+     * global slot (G+136+8*id; extern id = 10 + index → G+216+8*i). They are
+     * NOT in-image procs, so keep the id lookup away from them: emit_map_get
+     * hard-fails on a miss, and a host leaf (@name binding, pkg/compiler.yac)
+     * is legitimately absent from the image -- asking about it aborted the
+     * whole emit with "patch to unknown proc 'host_format'". */
+    let via_slot0 = hid >= 0 or xid >= 0 in
+    let local =
+      if via_slot0 then false
+      else emit_map_get(nth(st, 4), intern(fn)) != 0 in
+    let via_slot = via_slot0 and local == false in
     if via_slot then
       let id = if hid >= 0 then hid else 10 + xid in
       let _ = mov_rax_imm64(b, 0) in
