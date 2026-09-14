@@ -2282,7 +2282,7 @@ let rt_host_unimpl_ins(_) =
 let rt_not_fn_ins(_) =
   [["local", 12, 0],
    ["strlit", 8, "error: not a function"],
-   ["mov_imm", 9, 0],
+   ["mov_imm", 9, 1],
    ["fcall", 10, "print", [8, 9]],
    ["mov_imm", 8, 0],
    ["ret", 8]]
