@@ -186,14 +186,39 @@ let jslot_rw_prog(p, i, sc, acc) =
 
 let jslot_rw_all(p) = jslot_rw_prog(p, 0, [], list_new())
 
-let start_eval_ins(nslots, pslot, body, name, quiet) =
+/* Is `name` bound by a top-level `letfun` anywhere in this ANF list? A line
+ * that DEFINES a function must register a callable closure, not a value. */
+let anf_letfun_p(p, name, i) =
+  if i >= len(p) then false
+  else
+    let binds = nth(nth(p, i), 0) in
+    let go(j) =
+      if j >= len(binds) then anf_letfun_p(p, name, i + 1)
+      else
+        let b = nth(binds, j) in
+        if nth(b, 0) == "letfun" and nth(b, 1) == name then true
+        else go(j + 1) in
+    go(0)
+
+let start_eval_ins(nslots, pslot, body, name, quiet, is_fun) =
   let b0 = insn_extend(insn_push(list_new(), ["local", nslots + 8, 0]), body) in
-  /* For a named bind, read the BOUND NAME's value out of its static cell:
-   * pslot is the item's result slot, which for `let a = 1` holds unit (0).
-   * Everything downstream (the echo and the yac_jslot_set registry that
-   * later REPL lines read through yac_jslot_get) needs the real value. */
+  /* For a named bind, put the BOUND NAME's value where the echo and the
+   * yac_jslot_set registry (later REPL lines read it through yac_jslot_get)
+   * can see it: pslot is the item's result slot, which for `let a = 1` holds
+   * unit (0).
+   *
+   * A function definition has no value in its static cell at all -- a
+   * top-level `letfun` never materialises a closure (AOT resolves the name
+   * statically as a direct ycall, so it does not need one). `gval name` there
+   * read 0, the session registered 0, and the next line's `f(2)` applied 0.
+   * `gvar name` builds the flat stub closure and, for an in-blob proc, bakes
+   * its entry through tag 23 -- which is exactly the callable value a later
+   * line needs. REPL-defined functions are always flat: the session-name
+   * rewrite turns captured session names into yac_jslot_get calls, so nothing
+   * is captured and nenv == 0 holds. */
   let b0g =
     if name == "" then b0
+    else if is_fun then insn_push(b0, ["gvar", nslots + 7, name])
     else insn_push(b0, ["gval", nslots + 7, name]) in
   let b0s =
     if name == "" then b0g
@@ -218,8 +243,9 @@ let start_eval_ins(nslots, pslot, body, name, quiet) =
     let b7 = insn_push(b6, ["fcall", nslots + 6, "print", [nslots + 7, nslots + 3]]) in
     insn_push(b7, ["ret", pslot])
 
-let start_proc_eval(nslots, result_slot, body, name, quiet) =
-  ["proc", "_eval", 0, 0, start_eval_ins(nslots, result_slot, body, name, quiet), "_eval"]
+let start_proc_eval(nslots, result_slot, body, name, quiet, is_fun) =
+  ["proc", "_eval", 0, 0,
+   start_eval_ins(nslots, result_slot, body, name, quiet, is_fun), "_eval"]
 
 let pass_lir_eval(anf_list, bind_name, quiet) =
   let rt0 = rt_for_link(0) in
@@ -234,7 +260,11 @@ let pass_lir_eval(anf_list, bind_name, quiet) =
     else
       let s = env_slot(nth(st, 0), bind_name) in
       if s == 0 then nth(st, 5) else s in
-  let entry = start_proc_eval(nth(st, 1), pslot, nth(st, 4), bind_name, quiet) in
+  let is_fun =
+    if bind_name == "" then false
+    else anf_letfun_p(anf_list, bind_name, 0) in
+  let entry =
+    start_proc_eval(nth(st, 1), pslot, nth(st, 4), bind_name, quiet, is_fun) in
   /* prog[2] is the Linux process entry (is_entry in emit). JIT jumps to
    * _eval by name; it must not be prog[2] or it would get _start's ABI. */
   tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
