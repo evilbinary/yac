@@ -97,8 +97,17 @@ let drop_unreachable(funs) =
       rec_keep(i + 1) in
   rec_keep(0)
 
-let alloc_prog(prog) =
-  ["prog", drop_unreachable(nth(prog, 1)), nth(prog, 2)]
+/* --shared 导出本单元**全部** C-ABI 过程，所以不可达剪枝对它整体让路：
+ * dylib_add.yac 的 `let add(a, b) = a + b` 没有任何 export 声明，只被尾部
+ * 的那个 `0` 陪着，从 _start 看就是死的。剪掉后 add 既不在镜像里也不在
+ * 导出表里——python ctypes 直接 "function 'add' not found"，yac 侧
+ * ffi sym/ls 也拿不到。可执行文件保持剪枝（这是它的本意：只丢不可达的
+ * stdlib）。 */
+let alloc_prog_for(prog, shared) =
+  if shared then ["prog", nth(prog, 1), nth(prog, 2)]
+  else ["prog", drop_unreachable(nth(prog, 1)), nth(prog, 2)]
+
+let alloc_prog(prog) = alloc_prog_for(prog, false)
 
 /* off = extra TEXT VA (REPL append dest). AOT / first map: 0. */
 let emit_apply_unres(off) =
@@ -142,6 +151,6 @@ let emit_by_target(ast, t) =
   let _ = if target_live(t) then 0 else emit_apply_unres(0) in
   r
 
-let lower_expr(ast, t) = emit_by_target(alloc_prog(ast), t)
+let lower_expr(ast, t) = emit_by_target(alloc_prog_for(ast, target_shared(t)), t)
 
 let lower_program(ast) = lower_expr(ast, mk_target("x86_64", "elf", "exec"))

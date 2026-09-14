@@ -481,7 +481,11 @@ let emit_arch_set(a) = box_set(emit_arch_box, a)
 
 let emit_arch(_) = box_get(emit_arch_box)
 
-let cabi_maxargs(_) = if emit_abi_win(0) then 4 else 6
+/* C-ABI export arg budget. The stub shifts params up one register (rdi is the
+ * callee's object, FLAT_ABI.md 7), so one register is lost: win64 has
+ * rcx/rdx/r8/r9 -> 4, SysV has rdi/rsi/rdx/rcx/r8 -> 5 (a 6th would have to be
+ * repushed onto the stack for the object ABI and is not implemented). */
+let cabi_maxargs(_) = if emit_abi_win(0) then 4 else 5
 
 let cabi_should(f) =
   if fun_is_raw(f) then false
