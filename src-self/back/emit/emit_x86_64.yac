@@ -1519,10 +1519,60 @@ let emit_x86_i_heap(st, insn) =
  * cap-repacking arms: the callee reads its captures from the object itself,
  * so nothing is unpacked or re-passed here. Works for ["self"] callees too
  * (emit_load_operand maps that to r13). */
+/* Guard a dynamic call target: only a closure is callable. Closure layout (see
+ * emit_x86_i_clos' "closure" case): fnptr@16 is a text address, while every GC
+ * object stores a small kind there (cons 2, str 3, BYTES 4, listbuf 5, float
+ * 7). Without this guard `let a = compile("1"); a()` did call [a+16] = 4 -- the
+ * BYTES kind -- and died with SIGSEGV and no message.
+ * On entry rax holds the UNTAGGED target and must stay so for the caller; the
+ * callable path leaves rbx = fnptr, which is exactly what the call sites load
+ * next. The not-callable path calls yac_not_fn (prints "error: not a
+ * function", returns int 0), stores that into dst and jumps over itself, so no
+ * external label is needed. Returns the patch list with the call registered.
+ * Defined before emit_x86_i_apply/emit_x86_i_clos: plain lets resolve
+ * downward only. */
+let emit_call_guard(b, st, patches, dst) =
+  let _ = mov_r11d_rax_disp32(b, 16) in
+  let _ = cmp_r11_imm8(b, 16) in
+  let _ = jcc_rel32(b, 2, 0) in
+  let jbad = bytes_len(b) - 4 in
+  let _ = jmp_rel32(b, 0) in
+  let jjoin = bytes_len(b) - 4 in
+  let acall = bytes_len(b) in
+  let _ = call_user(b) in
+  let ps = emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_not_fn") in
+  let _ = emit_store_rax_slot(b, dst) in
+  let join = bytes_len(b) in
+  let _ = apply_patch(b, jbad, join) in
+  let _ = apply_patch(b, jjoin, join) in
+  let _ = mov_rbx_rax_disp32(b, 16) in
+  ps
+
+/* Same check for a tail dynamic call (tailapply/ticall). There is no dst to
+ * receive the 0, so the not-callable path puts yac_not_fn's address into rbx --
+ * the register the tail sequence jumps through -- and the stub's own `ret`
+ * returns 0 to the original caller after printing the line. */
+let emit_call_guard_tail(b, st, patches) =
+  let _ = mov_r11d_rax_disp32(b, 16) in
+  let _ = cmp_r11_imm8(b, 16) in
+  let _ = jcc_rel32(b, 2, 0) in
+  let jbad = bytes_len(b) - 4 in
+  let _ = mov_rbx_rax_disp32(b, 16) in
+  let _ = jmp_rel32(b, 0) in
+  let jjoin = bytes_len(b) - 4 in
+  let _ = mov_r64_imm64(b, 3, 0) in
+  let fnpos = bytes_len(b) - 8 in
+  let ps = emit_patch_clos(nth(st, 4), patches, fnpos, "yac_not_fn") in
+  let join = bytes_len(b) in
+  let _ = apply_patch(b, jbad, join) in
+  let _ = apply_patch(b, jjoin, join) in
+  ps
+
 let emit_x86_i_apply(st, insn, is_entry) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
   let dst = nth(insn, 1) in
   let clos = nth(insn, 2) in
   let args = apply_args(insn) in
@@ -1547,13 +1597,13 @@ let emit_x86_i_apply(st, insn, is_entry) =
   let _ = ldarg(0) in
   let _ = emit_load_operand(b, clos) in
   let _ = and_rax_1(b) in
-  let _ = mov_rbx_rax_disp32(b, 16) in
+  let patches = emit_call_guard(b, st, patches, dst) in
   let _ = call_rbx_user(b) in
   let _ =
     if nstack == 0 then 0
     else add_rsp_imm32(b, bshl(nstack, 3)) in
   let _ = emit_store_rax_slot(b, dst) in
-  emit_st4(st, b, cur, labels, nth(st, 3))
+  emit_st4(st, b, cur, labels, patches)
 
 let emit_x86_i_clos(st, insn, is_entry) =
   let b = nth(st, 0) in
@@ -1620,7 +1670,7 @@ let emit_x86_i_clos(st, insn, is_entry) =
       let _ = push_flat(ntot - 1) in
       let _ = emit_load_rax_slot(b, clos) in
       let _ = and_rax_1(b) in
-      let _ = mov_rbx_rax_disp32(b, 16) in
+      let patches = emit_call_guard(b, st, patches, dst) in
       let _ = push_r64(b, 3) in
       let nreg = if ntot < 6 then ntot else 6 in
       let load_reg(i) =
@@ -1654,7 +1704,7 @@ let emit_x86_i_clos(st, insn, is_entry) =
       let _ = pushargs(nargs - 1) in
       let _ = emit_load_rax_slot(b, clos) in
       let _ = and_rax_1(b) in
-      let _ = mov_rbx_rax_disp32(b, 16) in
+      let patches = emit_call_guard(b, st, patches, dst) in
       let _ = mov_r11d_rax_disp32(b, 24) in
       let loadcap(i) =
         if i >= 6 then 0
@@ -1745,7 +1795,13 @@ let emit_x86_i_clos(st, insn, is_entry) =
     let nreg = if ntot < 6 then ntot else 6 in
     let _ = emit_load_rax_slot(b, clos) in
     let _ = and_rax_1(b) in
-    let _ = mov_rbx_rax_disp32(b, 16) in
+    /* A REPL line's trailing call is in tail position, so this -- not
+     * emit_x86_i_apply -- is the path `a()` takes; without the guard here the
+     * check in apply was dead for exactly the case that crashed. A tail call
+     * has no dst to receive 0, so the not-callable path loads yac_not_fn's
+     * address into rbx (the register this sequence jumps through): the stub
+     * prints "error: not a function" and returns 0 to the original caller. */
+    let patches = emit_call_guard_tail(b, st, patches) in
     let load_reg(i) =
       if i >= nreg then 0
       else if i < ncap then

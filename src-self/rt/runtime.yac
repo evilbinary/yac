@@ -2274,6 +2274,19 @@ let rt_host_unimpl_ins(_) =
    ["mov_imm", 1, 0],
    ["ret", 1]]
 
+/* A dynamic call (apply/icall) whose target is not a closure. The call sites
+ * used to do call [target+16] blindly; for a GC object that word is its small
+ * kind (cons 2 / str 3 / BYTES 4 / listbuf 5 / float 7), so `let a =
+ * compile("1"); a()` jumped to address 4 and died with SIGSEGV and no message.
+ * Prints a line and returns int 0 so the session survives. */
+let rt_not_fn_ins(_) =
+  [["local", 12, 0],
+   ["strlit", 8, "error: not a function"],
+   ["mov_imm", 9, 0],
+   ["fcall", 10, "print", [8, 9]],
+   ["mov_imm", 8, 0],
+   ["ret", 8]]
+
 /* REPL top-level lets: qword slots at JIT_VADDR+12MiB (same 16MiB map).
  * Must not use $gbase: this $proc is emitted into the JIT image, whose G
  * is guest DATA; the map pointer lives in the host G+112. */
@@ -2429,6 +2442,7 @@ let runtime_funs(_) =
    ["$proc", "yac_gfn_pub", 2, 0, rt_gfn_pub_ins(0), "yac_gfn_pub"],
    ["$proc", "yac_gfn_list", 0, 0, rt_gfn_list_ins(0), "yac_gfn_list"],
    ["$proc", "yac_host_unimpl", 0, 0, rt_host_unimpl_ins(0), "yac_host_unimpl"],
+   ["$proc", "yac_not_fn", 0, 0, rt_not_fn_ins(0), "yac_not_fn"],
    ["$proc", "yac_jslot_get", 1, 0, rt_jslot_get_ins(0), "yac_jslot_get"],
    ["$proc", "yac_jslot_set", 2, 0, rt_jslot_set_ins(0), "yac_jslot_set"],
    ["$proc", "yac_alloc", 1, 0, rt_alloc_ins(0), "yac_alloc"],
