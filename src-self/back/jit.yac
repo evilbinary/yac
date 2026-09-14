@@ -188,12 +188,19 @@ let jslot_rw_all(p) = jslot_rw_prog(p, 0, [], list_new())
 
 let start_eval_ins(nslots, pslot, body, name, quiet) =
   let b0 = insn_extend(insn_push(list_new(), ["local", nslots + 8, 0]), body) in
-  let b0s =
+  /* For a named bind, read the BOUND NAME's value out of its static cell:
+   * pslot is the item's result slot, which for `let a = 1` holds unit (0).
+   * Everything downstream (the echo and the yac_jslot_set registry that
+   * later REPL lines read through yac_jslot_get) needs the real value. */
+  let b0g =
     if name == "" then b0
+    else insn_push(b0, ["gval", nslots + 7, name]) in
+  let b0s =
+    if name == "" then b0g
     else
       let ix = jit_let_ensure(name) in
-      let b1 = insn_push(b0, ["mov_imm", nslots, ix + ix]) in
-      insn_push(b1, ["fcall", nslots + 1, "yac_jslot_set", [nslots, pslot]]) in
+      let b1 = insn_push(b0g, ["mov_imm", nslots, ix + ix]) in
+      insn_push(b1, ["fcall", nslots + 1, "yac_jslot_set", [nslots, nslots + 7]]) in
   if name == "" then
     if quiet then insn_push(b0s, ["ret", pslot])
     else
@@ -208,11 +215,7 @@ let start_eval_ins(nslots, pslot, body, name, quiet) =
     let b4 = insn_push(b3, ["mov_imm", nslots + 3, 2]) in
     let b5 = insn_push(b4, ["fcall", nslots + 4, "print", [nslots, nslots + 2]]) in
     let b6 = insn_push(b5, ["fcall", nslots + 5, "print", [nslots + 1, nslots + 2]]) in
-    /* Echo the BOUND NAME's value, read back from its static cell: pslot is
-     * the item's result slot, which for `let a = 1` is unit (0), not 1 --
-     * the repl tests expect "a = 1". */
-    let b6b = insn_push(b6, ["gval", nslots + 7, name]) in
-    let b7 = insn_push(b6b, ["fcall", nslots + 6, "print", [nslots + 7, nslots + 3]]) in
+    let b7 = insn_push(b6, ["fcall", nslots + 6, "print", [nslots + 7, nslots + 3]]) in
     insn_push(b7, ["ret", pslot])
 
 let start_proc_eval(nslots, result_slot, body, name, quiet) =
