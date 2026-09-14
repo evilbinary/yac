@@ -469,9 +469,12 @@ let repl_cases(_) = [
   ["print str after int", "1\nprint(\"hello\")\n:q\n", "hello"],
   /* REPL function definitions (FLAT_ABI 12.14 cross-line binding).
    * First line: works -- the emit-time gref fill places the stub entry.
-   * Second: KNOWN OPEN (BOOTSTRAP_LINK.md 12.14; see the gfn_publish notes in
-   * jit.yac history) -- a function defined on a later line still resolves to a
-   * wrong entry, so this case is the standing guard for that fix. */
+   * Second: KNOWN OPEN. A function defined on a LATER line is reached through
+   * the session slot (jslot), and the closure cell for it lives in that blob,
+   * where nothing fills the entry from host-side registries -- so the call
+   * still lands on a wrong entry (segfault). xcall is NOT involved (it was
+   * removed; FLAT_ABI.md 6): this is the jslot/closure half of 12.14, and this
+   * case is the standing guard for that fix. */
   ["let fn then call", "let f(x) = x + 1\nprint(f(2))\n:q\n", "3"],
   ["let fn after expr line", "1+1\nlet f(x) = x + 1\nprint(f(2))\n:q\n", "3"],
   ["import then printf d", "let a=42\nimport fmt\nprintf(\"%d\", [a])\n:q\n", "42"],

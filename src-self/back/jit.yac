@@ -81,6 +81,27 @@ let gref_fill(code) =
       go(i + 1) in
   go(0)
 
+/* BOOTSTRAP_LINK 3.2: a REPL session runs INSIDE the host, so the blob's host
+ * table (G+136+8*id, 10 slots) must hold the host image's own entries. The
+ * emitter's bake() only ever saw the blob's own procs -- none of the
+ * compiler's -- and wrote the yac_host_unimpl stub there, which is why a host
+ * leaf called from a REPL line answered "host fn unavailable" (or died when
+ * the call had been lowered to the cross-image xcall path instead).
+ * yac_host_sym(id) reads the RUNNING image's slot -- this session's host --
+ * and returns the address as a yac value, exactly what apply_u64 writes. */
+let host_tab_fill(code) =
+  let lay = yjit_layout_get(0) in
+  let ds = nth(lay, 2) in
+  let go(i) =
+    if i >= len(host_names(0)) then 0
+    else
+      let v = yac_host_sym(i) in
+      let _ =
+        if v == 0 then 0
+        else apply_u64(code, ds + 136 + bshl(i, 3), v) in
+      go(i + 1) in
+  go(0)
+
 let jit_lets_box =
   let b = box_new() in
   let _ = box_set(b, 0) in
@@ -250,7 +271,12 @@ let start_proc_eval(nslots, result_slot, body, name, quiet, is_fun) =
 let pass_lir_eval(anf_list, bind_name, quiet) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
-  let fs0 = toplevel_seed(anf_list, 0, sigma_of_rt(rt0)) in
+  /* Host bindings (@name) must be seeded exactly as the AOT path does it
+   * (backend.yac lir_all call): without the seed a REPL line's host call falls
+   * through to the cross-image `xcall` branch, whose entry comes from the
+   * host's gfn registry instead of the G+136 host slot the design prescribes
+   * (lir.yac sigma_host_seed comment). */
+  let fs0 = sigma_host_seed(toplevel_seed(anf_list, 0, sigma_of_rt(rt0))) in
   let _ = lir_tlv_set(1) in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, fs0, 0, list_new(), 0],
@@ -385,6 +411,7 @@ let compile_jit(src, t, named) =
           if jit_run_ok(t) then
             let _ = if dest == 0 then cimport_jit_bind(code) else 0 in
             let _ = gref_fill(code) in
+            let _ = host_tab_fill(code) in
             jit_run(code, fun_off(fo, "_eval"), dest)
           else 0 in
         let _ =

@@ -393,6 +393,15 @@ self  ← 对象                 ; flat = 静态 cell（cell|1）；其余 = 堆
 | **`ycall`** | Σ 解析到的本镜像 yac 过程（种类 `"proc"`） | **对象 ABI**：`rdi`=对象（flat 忽略），真参 `rsi`..`r9`（**5** 槽），第 6 个起走栈 `[rbp+16+8*(j-5)]` | `["local", nslots, nparams, 1]` |
 | `xcall` | 跨镜像（入口表补丁） | 对象 ABI | 同上 |
 
+> **`xcall` 已从 lir/emit 删除（2026-09）**：它是“Σ 里找不到名字”的兜底，靠宿主侧的
+> 名字→入口表填一个桩闭包单元（本文档 §856 预言它会被 `call` 的一个分支取代，§932/§941
+> 记录的“同单元前向引用被误判为跨镜像”就是它的病）。那张表从未实现（`yac_gtab_get` 只
+> 存在于文字里），所以单元恒空、调用跳 0。现在的分工：
+> - **宿主绑定 `@name`** → `sigma_host_seed` 预置 Σ → `fcall` → **G+136 宿主槽**
+>   （本文档 §4.4.7 与 BOOTSTRAP_LINK §3.1/3.2 的规定通路；REPL 由 `host_tab_fill` 转抄宿主槽）；
+> - **既不在 Σ、也不是 `yac_*`、也不是宿主叶的名字** → 前端直接报
+>   `LIR: call to undefined procedure '<名>'`，不再静默生成一次注定跳空的调用。
+
 **三条落地机制（缺一不可，均经实证）**：
 
 1. **显式 ABI 标记** —— `lir_letfun_finish` 发 `["local", nslots, nparams, 1]`，尾字段
@@ -929,7 +938,7 @@ emit_callee_ref(name) -> 寄存器        ; 内部调 fn_entry
 | 缺什么 | 后果 |
 |---|---|
 | `topfn_scan(anf, 0)` | `topfn_has` 恒 false → **顶层函数不 flat** |
-| 跨 item 累积 `st` | Σ 不累积 → 引用前一个 item 定义的函数落到 **`xcall`** |
+| 跨 item 累积 `st` | Σ 不累积 → 引用前一个 item 定义的函数**没有静态入口**；`xcall` 已移除，故现在直接报 `LIR: call to undefined procedure`（响亮化，尚未修好） |
 | `sigma_of_rt(rt0)` | Σ 里没有 runtime proc → runtime 名解析不到 |
 | `start_proc` + `tco_prog` | 看不到顶层发布序列，**看不到 `tcall` / `$tco`** |
 

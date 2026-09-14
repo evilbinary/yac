@@ -773,7 +773,11 @@ let rt_for_link(_) =
 let pass_lir(anf_list) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
-  let fs0 = toplevel_seed(anf_list, 0, sigma_of_rt(rt0)) in
+  /* sigma_host_seed too: a guest with host bindings (@name) must resolve them
+   * to the G+136 host slot (fcall), exactly like the package loop above and
+   * jit.yac's pass_lir_eval. Without it the call has no static entry and no
+   * registry, and lir now reports it instead of emitting xcall. */
+  let fs0 = sigma_host_seed(toplevel_seed(anf_list, 0, sigma_of_rt(rt0))) in
   let _ = lir_tlv_set(1) in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, fs0, 0, list_new(), 0],
@@ -785,7 +789,11 @@ let pass_lir(anf_list) =
 let pass_lir_yjit(anf_list) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
-  let fs0 = toplevel_seed(anf_list, 0, sigma_of_rt(rt0)) in
+  /* sigma_host_seed too: a guest with host bindings (@name) must resolve them
+   * to the G+136 host slot (fcall), exactly like the package loop above and
+   * jit.yac's pass_lir_eval. Without it the call has no static entry and no
+   * registry, and lir now reports it instead of emitting xcall. */
+  let fs0 = sigma_host_seed(toplevel_seed(anf_list, 0, sigma_of_rt(rt0))) in
   let _ = lir_tlv_set(1) in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, fs0, 0, list_new(), 0],

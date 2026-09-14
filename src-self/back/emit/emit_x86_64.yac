@@ -1905,28 +1905,10 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
   let k = nth(insn, 0) in
   let len0 = bytes_len(b) in
   let done =
-    if k == "xcall" then
-      /* Cross-image call (12.14 flat ABI): load the callee's entry from a
-       * patch slot the jit layer fills from the host's entry table, then
-       * call it with the plain arg layout (no leading caps). */
-      let dst = nth(insn, 1) in
-      let tmp = nth(insn, 2) in
-      let g = nth(insn, 3) in
-      let args = nth(insn, 4) in
-      /* Load the callee's stub closure address (tagged) into tmp, then
-       * reuse the icall path: it unpacks the stub's nenv=0 (no caps) and
-       * calls the entry with the plain args. Tag the value AFTER the
-       * resolver has filled the movabs immediate. */
-      let _ = mov_rax_imm64(b, 0) in
-      let gpat = bytes_len(b) - 8 in
-      let ps1 = cons([22, gpat,
-              gref_base() + bshl(gref_alloc(g), 5)],
-             nth(st, 3)) in
-      let _ = or_rax_1(b) in
-      let _ = emit_store_rax_slot(b, tmp) in
-      let st1 = emit_st4(st, b, cur, nth(st, 2), ps1) in
-      emit_insn_go(st1, ["icall", dst, tmp, args], is_entry, is_raw)
-    else if k == "closure" then
+    /* `xcall` handler deleted (FLAT_ABI.md 6): the LIR no longer emits it.
+     * Host leaves go fcall -> G+136 host slot; anything else undefined is a
+     * compile-time error in lir.yac. */
+    if k == "closure" then
       emit_x86_i_clos(st, insn, is_entry)
     else if k == "apply" or k == "icall"
          or k == "tailapply" or k == "ticall" then
@@ -2167,8 +2149,9 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let _ =
     if len(host_names(0)) == 0 then 0
     else bake(0, funOffsRev, stub) in
-  /* 12.14 flush: `xcall` reaches an out-of-image proc through a stub closure
-   * cell in the gref area, and icall unpacks that cell's ENTRY field (+16).
+  /* gref flush: a stub closure cell in the gref area is what `gvar` builds for
+   * a function value and `gset` writes for a top-level value; icall unpacks
+   * the cell's ENTRY field (+16).
    * In the REPL the jit layer fills those cells from the host entry table
    * (jit.yac gref_fill); for AOT nothing did, so the cell stayed 0 and
    * `import rt.os {@host_arch}` + host_arch() loaded 0 and did `call r11` to

@@ -749,7 +749,8 @@ let ub_prog(p, i, sc) =
 /* Top-level function registry (12.14 flat ABI): names defined as top-level
  * lets of the current compile unit. Flat functions compile with no captured
  * environment (ncap=0); free refs to them skip the caps chain (fcall rel32
- * inside the image, xcall via the entry table across images). */
+ * inside the image; there is no cross-image form any more (see the note at
+ * the fallthrough branch below). */
 /* `env` is the enclosing Γ where this letfun is defined. A name that a
  * top-level entry also claims may still be a VISIBLE ENCLOSING LOCAL, and
  * then it must be captured: the top-level table only says the name exists
@@ -1115,10 +1116,21 @@ let calli(g0, dst, ss, env, funs, self, tail) =
       if p != 0 then p
       else if str_slice(g, 0, 4) == "yac_" then ["fcall", dst, g, ss]
       else
-        /* Cross-image call (12.14 flat ABI): the callee's entry address is
-         * loaded from a patch slot the jit layer fills from the host's
-         * name-keyed entry table, then called with the plain arg layout. */
-        ["xcall", dst, dst + 1, g, ss]
+        /* `xcall` is gone (FLAT_ABI.md 6 lists it for deletion). It was the
+         * 12.14 stopgap for a name that is neither in Σ, nor a runtime yac_*
+         * proc, nor a host leaf: load the callee's entry from a stub-closure
+         * cell that the jit layer fills from the host's name-keyed entry
+         * table. That table was never implemented -- the emitter only left a
+         * comment where it belongs and yac_gtab_get exists in prose only -- so
+         * the cell stayed empty and the call went to address 0 (REPL: a
+         * segfault; AOT: whatever the stub held). Host bindings (@name) reach
+         * the host by the documented route instead: sigma_host_seed -> fcall
+         * -> G+136 host slot. Everything else that lands here is a name with
+         * no definition to call at all, so report it rather than emitting a
+         * jump into an empty slot. */
+        let _ = log_fatal(str_cat("LIR: call to undefined procedure '",
+                                  str_cat(g, "'"))) in
+        ["fcall", dst, g, ss]
 
 let lir_loadargs(args, p, slots_rev) =
   if nth(p, 0) >= len(args) then
