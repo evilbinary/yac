@@ -2,7 +2,7 @@ package back.emit.emit_x86_64
 export emit_program, emit_program_x86_64
 import rt.os {host_os}
 import lib.log {log_fatal}
-import back.emit.emit {apply_args, apply_ncap, apply_patch, apply_u64, cimport_buf, cimport_got, cimport_index, cimport_names, cimport_reset, cimport_win_need, clos_bytes, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jit_blob, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, funsz_get, funsz_set, gref_base, cabi_skip, fun_is_raw, gref_alloc, gref_reset, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {apply_args, apply_ncap, apply_patch, apply_u64, cimport_buf, cimport_got, cimport_index, cimport_names, cimport_reset, cimport_win_need, clos_bytes, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jit_blob, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, funsz_get, funsz_set, gref_base, cabi_skip, fun_is_raw, gref_alloc, gref_reset, gref_count, gref_names, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {emit_cabi_all}
 import back.emit.linux_x86_64 {call_rbx_user, call_user, cc_of, emit_load_rax_slot, emit_load_rbx_slot, emit_load_rdi_slot, emit_obj_load_argreg, emit_obj_load_rax, emit_obj_store_rdi, emit_store_param, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_unalign, emit_x86_c_untag, linux_begin, linux_cc_marshal, linux_ccall_patch, linux_clock, linux_entry, linux_exit, linux_finish, linux_num_syscall, linux_syscall, linux_write1}
 import back.emit.win_x86_64 {win_begin, win_cc_marshal, win_ccall_patch, win_clock, win_entry, win_exit, win_finish, win_num_syscall, win_syscall, win_write1}
@@ -142,6 +142,29 @@ let emit_x86_load_reg_args(b, args, nargs) =
         else if j == 2 then mov_rdx_rax(b)
         else if j == 3 then mov_rcx_rax(b)
         else if j == 4 then mov_r8_rax(b)
+        else mov_r9_rax(b) in
+      loadarg(j + 1) in
+  loadarg(0)
+
+/* Host leaves (G+136+8*hid) are NOT C functions: the bake writes the address
+ * of the same-named proc *inside the image* (emit_x86_64.yac bake()), and
+ * those are yac procs -- object ABI, formals from rsi, object in rdi
+ * (FLAT_ABI.md 7). Loading them into the SysV registers like a dlsym'd C
+ * symbol left the callee reading rdi as its object and rsi/rdx as formals:
+ * `import rt.os {@host_arch}` + host_arch() died in the callee's cap/frame
+ * setup. Mirrors emit_x86_load_reg_args one register up; 5 slots because rdi
+ * is spoken for (leaves never take 6+ args). */
+let emit_x86_load_obj_args(b, args, nargs) =
+  let nreg = if nargs < 5 then nargs else 5 in
+  let loadarg(j) =
+    if j >= nreg then 0
+    else
+      let _ = emit_load_operand(b, nth(args, j)) in
+      let _ =
+        if j == 0 then mov_rsi_rax(b)
+        else if j == 1 then mov_rdx_rax(b)
+        else if j == 2 then mov_rcx_rax(b)
+        else if j == 3 then mov_r8_rax(b)
         else mov_r9_rax(b) in
       loadarg(j + 1) in
   loadarg(0)
@@ -623,21 +646,35 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
     let nargs = len(args) in
     let nstack = if nargs > 6 then nargs - 6 else 0 in
     let _ = emit_x86_push_stack_args(b, args, nargs) in
-    let _ = emit_x86_load_reg_args(b, args, nargs) in
-    let _ = emit_zero_sysv_args(b, nargs) in
     let hid = host_id(intern(fn), 0) in
     let xid = extsym_find(intern(fn), 0) in
-    /* Host leaves and 12.5 external package symbols both call through a
-     * global slot (G+136+8*id; extern id = 10 + index → G+216+8*i). They are
-     * NOT in-image procs, so keep the id lookup away from them: emit_map_get
-     * hard-fails on a miss, and a host leaf (@name binding, pkg/compiler.yac)
-     * is legitimately absent from the image -- asking about it aborted the
-     * whole emit with "patch to unknown proc 'host_format'". */
+    /* Host leaves (G+136+8*hid) and 12.5 external package symbols (G+216+8*i)
+     * both call through a global slot, but their targets are different
+     * animals:
+     *  - a host leaf's slot is baked (bake()) to the same-named proc *in this
+     *    image*, i.e. a yac proc: object ABI, formals from rsi, object in rdi.
+     *    Pass 0 as the object -- leaves are flat (ncap == 0), nothing
+     *    dereferences it;
+     *  - an extern's slot holds a dlsym'd C address: SysV, formals from rdi.
+     * Loading both into the SysV registers made every real host-leaf call
+     * (AOT `import rt.os {@host_arch}` + host_arch(), REPL wrappers from
+     * pkg/compiler.yac) die inside the callee.
+     * Neither is an in-image proc for the id table: emit_map_get hard-fails on
+     * a miss and a host leaf is legitimately absent from it. */
     let via_slot0 = hid >= 0 or xid >= 0 in
     let local =
       if via_slot0 then false
       else emit_map_get(nth(st, 4), intern(fn)) != 0 in
     let via_slot = via_slot0 and local == false in
+    let _ =
+      if hid >= 0 then
+        let _ = emit_x86_load_obj_args(b, args, nargs) in
+        let _ = xor_rax_rax(b) in
+        let _ = mov_rdi_rax(b) in
+        emit_zero_sysv_args(b, nargs + 1)
+      else
+        let _ = emit_x86_load_reg_args(b, args, nargs) in
+        emit_zero_sysv_args(b, nargs) in
     if via_slot then
       let id = if hid >= 0 then hid else 10 + xid in
       let _ = mov_rax_imm64(b, 0) in
@@ -2130,6 +2167,33 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let _ =
     if len(host_names(0)) == 0 then 0
     else bake(0, funOffsRev, stub) in
+  /* 12.14 flush: `xcall` reaches an out-of-image proc through a stub closure
+   * cell in the gref area, and icall unpacks that cell's ENTRY field (+16).
+   * In the REPL the jit layer fills those cells from the host entry table
+   * (jit.yac gref_fill); for AOT nothing did, so the cell stayed 0 and
+   * `import rt.os {@host_arch}` + host_arch() loaded 0 and did `call r11` to
+   * address 0. Mirror bake(): a host leaf gets exactly what its host slot got
+   * (the in-image proc, or the yac_host_unimpl stub when the leaf is not in
+   * this image), an in-image proc its entry. T != 0 (REPL blob) is left to
+   * the jit layer. */
+  let find_gref(nm, fr, i) =
+    if i >= len(fr) then 0 - 1
+    else if intern(nth(nth(fr, i), 0)) == nm then nth(nth(fr, i), 1)
+    else find_gref(nm, fr, i + 1) in
+  let fill_gref(i, fr, stub) =
+    if i >= gref_count() then 0
+    else
+      let nm = intern(nth(gref_names(), i)) in
+      let off = find_gref(nm, fr, 0) in
+      let v =
+        if off >= 0 then LOAD_VADDR + TEXT_OFF + off
+        else if stub >= 0 then LOAD_VADDR + TEXT_OFF + stub
+        else 0 in
+      let _ = apply_u64(b, data_start + gref_base() + bshl(i, 5) + 16, v) in
+      fill_gref(i + 1, fr, stub) in
+  let _ =
+    if T != 0 then 0
+    else fill_gref(0, funOffsRev, stub) in
   /* Bake the host cimport address table (G+216..G+376, win_need order):
    * absolute runtime addresses of each fixed API's IAT/GOT slot, so
    * yac_cimport_host_sym(wid) resolves without a runtime GetProcAddress
