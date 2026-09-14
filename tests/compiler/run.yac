@@ -264,26 +264,22 @@ let negative_all(st, yc) =
 
 /* ---- pack：镜像头魔术字节 ---- */
 
+/* read_file 返回 NUL 结尾的字符串，二进制头（PE 以 4d 5a 00 开头）在其中
+ * 会被截断，因此这里改用 shell 的 od 把前几个字节转成十六进制文本再比对。
+ * 期望值 = 小写十六进制串（无分隔）。 */
 let pack_cases(_) = [
-  ["elf", ["--format", "elf", "--arch", "x86_64"], [127, 69, 76, 70]],
-  ["pe", ["--format", "pe", "--arch", "x86_64"], [77, 90]],
-  ["macho", ["--format", "macho", "--arch", "x86_64"], [207, 250]],
-  ["yjit", ["--format", "yjit", "--arch", "x86_64"], [89, 74, 73, 84]]
+  ["elf", ["--format", "elf", "--arch", "x86_64"], "7f454c46"],
+  ["pe", ["--format", "pe", "--arch", "x86_64"], "4d5a"],
+  ["macho", ["--format", "macho", "--arch", "x86_64"], "cffaedfe"],
+  ["yjit", ["--format", "yjit", "--arch", "x86_64"], "594a4954"]
 ]
 
-let head_matches(b, want, i, n) =
-  if i >= n then true
-  else if str_len(b) <= i then false
-  else if str_ref(b, i) != nth(want, i) then false
-  else head_matches(b, want, i + 1, n)
-
-let head_str(b, i, n, acc) =
+let hex_norm(s, i, n, acc) =
   if i >= n then acc
-  else if str_len(b) <= i then acc
   else
-    let sep = if i == 0 then "" else " " in
-    head_str(b, i + 1, n,
-      str_cat(acc, str_cat(sep, int_to_str(str_ref(b, i)))))
+    let c = str_ref(s, i) in
+    if c == 32 or c == 10 or c == 13 or c == 9 then hex_norm(s, i + 1, n, acc)
+    else hex_norm(s, i + 1, n, str_cat(acc, str_chr(c)))
 
 let pack_one(st, yc, c) =
   let name = nth(c, 0) in
@@ -292,13 +288,14 @@ let pack_one(st, yc, c) =
   let out = str_cat(TMP, str_cat("/pack_", name)) in
   let _ = run(append(append(yc, [case_src("pack", name)]),
                      append(PKG, append(flags, ["-o", out])))) in
-  let b = read_file(find_bin(out)) in
-  if b == 0 then
+  let b = find_bin(out) in
+  if exists(b) == false then
     check(st, str_cat("pack ", name), "wrote image", "missing")
   else
-    check(st, str_cat("pack ", name), "magic ok",
-          if head_matches(b, want, 0, len(want)) then "magic ok"
-          else head_str(b, 0, len(want), ""))
+    let nbytes = str_len(want) / 2 in
+    let r = run(["od", "-A", "n", "-t", "x1", "-N", int_to_str(nbytes), b]) in
+    check(st, str_cat("pack ", name), want,
+          hex_norm(nth(r, 1), 0, str_len(nth(r, 1)), ""))
 
 let pack_all(st, yc) =
   let _ = banner("compiler/pack", nth(yc, 0)) in
