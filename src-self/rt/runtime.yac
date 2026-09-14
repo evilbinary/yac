@@ -1053,7 +1053,34 @@ let rt_print_val_ins(_) =
    ["label", "pv_nc"],
    ["mov_imm", 6, 5 + 5],
    ["icmp", "==", 7, 5, 6],
-   ["cmpjmp", 7, "pv_buf", "pv_oth"],
+   ["cmpjmp", 7, "pv_buf", "pv_c4"],
+   /* kind 4 = BYTES (layout note at the top of this file): without this branch
+    * every bytes value fell through to pv_oth and printed "<fun>", so the
+    * compiler's own result -- compile() returns the packed image, exactly the
+    * bytes the CLI writes with -o -- looked like a closure. `a()` on it then
+    * jumped into the object header (rip=4) and crashed, which read as "it is a
+    * fun that cannot be called". */
+   ["label", "pv_c4"],
+   ["mov_imm", 6, 4 + 4],
+   ["icmp", "==", 7, 5, 6],
+   ["cmpjmp", 7, "pv_bytes", "pv_oth"],
+   ["label", "pv_bytes"],
+   ["mov_imm", 4, 60 + 60],
+   ["write1", 4],
+   ["mov_imm", 4, 98 + 98],
+   ["write1", 4],
+   ["mov_imm", 4, 121 + 121],
+   ["write1", 4],
+   ["mov_imm", 4, 116 + 116],
+   ["write1", 4],
+   ["mov_imm", 4, 101 + 101],
+   ["write1", 4],
+   ["mov_imm", 4, 115 + 115],
+   ["write1", 4],
+   ["mov_imm", 4, 62 + 62],
+   ["write1", 4],
+   ["mov_imm", 8, 0 + 0],
+   ["ret", 8],
    ["label", "pv_buf"],
    ["mref", 9, 1, 32],
    ["jmp", "pv_lbr"],
