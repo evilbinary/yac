@@ -410,16 +410,20 @@ let compile_jit_go(src, t, named) =
         let _ = emit_jsess_set(0) in
         let code = nth(r, 0) in
         let fo = nth(r, 1) in
+        /* Publish this line's place in the session BEFORE running it. A nested
+         * compile (compiler.run / compile_it, reached through a host leaf while
+         * this very line is executing) reads jit_live_box to find where to
+         * append its own image. With the bookkeeping only updated after
+         * jit_run returned, the nested image was laid down at THIS line's own
+         * dest -- measured: both reported dest 98980 -- so it overwrote the
+         * code this line was still executing; the outer continuation then
+         * jumped into the nested image and died (SIGSEGV). Publishing first
+         * makes the nested image land at dest + bytes_len(code) instead, and
+         * extending the accumulated bytes in the same order keeps :dump
+         * consistent with the mapping. */
         let _ =
-          if jit_run_ok(t) then
-            let _ = if dest == 0 then cimport_jit_bind(code) else 0 in
-            let _ = gref_fill(code) in
-            let _ = host_tab_fill(code) in
-            jit_run(code, fun_off(fo, "_eval"), dest)
-          else 0 in
-        let _ =
-          if live == 0 then
-            if jit_sess_ok(t) then
+          if jit_sess_ok(t) then
+            if live == 0 then
               let m = fmap_new(0) in
               let _ = fmap_init_n(m, 4096) in
               let _ = jsess_put_fo(m, fo) in
@@ -427,14 +431,21 @@ let compile_jit_go(src, t, named) =
               box_set(jit_live_box,
                 [bytes_len(code), JIT_VADDR + nth(lay, 2), m, code,
                  fun_off(fo, "_eval")])
-            else 0
-          else
-            let m = nth(live, 2) in
-            let _ = jsess_merge_fo(m, fo, dest) in
-            let _ = bytes_extend(nth(live, 3), code) in
-            box_set(jit_live_box,
-              [dest + bytes_len(code), nth(live, 1), m, nth(live, 3),
-               dest + fun_off(fo, "_eval")]) in
+            else
+              let m = nth(live, 2) in
+              let _ = jsess_merge_fo(m, fo, dest) in
+              let _ = bytes_extend(nth(live, 3), code) in
+              box_set(jit_live_box,
+                [dest + bytes_len(code), nth(live, 1), m, nth(live, 3),
+                 dest + fun_off(fo, "_eval")])
+          else 0 in
+        let _ =
+          if jit_run_ok(t) then
+            let _ = if dest == 0 then cimport_jit_bind(code) else 0 in
+            let _ = gref_fill(code) in
+            let _ = host_tab_fill(code) in
+            jit_run(code, fun_off(fo, "_eval"), dest)
+          else 0 in
         0
   else if report_unbound(src, ast) != 0 then 1
   else
@@ -454,12 +465,21 @@ let compile_jit_go(src, t, named) =
 
 /* Reentrancy guard (BOOTSTRAP_LINK 12.11 遗留 1 / 12.12 minimal half): a REPL
  * line's own code can call a host leaf that compiles and runs ANOTHER image in
- * this same process -- `compiler.run` / `compiler.compile_it`. That inner
- * session overwrites this one's live image and session lets, and the outer REPL
- * then continued on a foreign image: `let b = compile_it("1+2"); b()` printed 3
- * and the process died with SIGILL (or SIGSEGV) at the next prompt / exit.
- * Save and restore the session boxes around any NESTED call; the outermost call
- * is the session itself and must keep its updates. */
+ * this same process -- `compiler.run` / `compiler.compile_it`. Both sessions
+ * share the ONE live mapping (rt/runtime.yac rt_jit_run_ins maps 16MiB at
+ * JIT_VADDR once), so the nested image must be appended AFTER the line that is
+ * currently executing. compile_jit_go therefore publishes this run's place in
+ * jit_live_box (and extends the accumulated bytes) BEFORE calling jit_run, and
+ * the guard below must NOT roll that back -- a nested compile legitimately
+ * extends it. Only the emit-time scratch (gref slot snapshot, reloc table) is
+ * saved and restored here, because the outer emit state is still needed when
+ * the host leaf returns into the running line.
+ *
+ * Measured before the fix: the bookkeeping was updated only after jit_run
+ * returned, so a nested `compile_it` read the session length from BEFORE the
+ * running line and laid its image down at the very same dest (both reported
+ * dest 98980), overwriting the code the outer line was still executing -- the
+ * outer continuation jumped into the nested image and died with SIGSEGV. */
 let jit_busy_box =
   let b = box_new() in
   let _ = box_set(b, false) in
@@ -467,13 +487,13 @@ let jit_busy_box =
 
 let compile_jit(src, t, named) =
   if box_get(jit_busy_box) then
-    let st = [box_get(jit_live_box), box_get(jit_lets_box),
-              box_get(gref_snap_box), relocs_get(0)] in
+    /* Only the emit-time scratch is rolled back: the session record and the
+     * lets are NOT, because a nested compile legitimately extends them now
+     * (compile_jit_go publishes this run's place before jit_run). */
+    let st = [box_get(gref_snap_box), relocs_get(0)] in
     let r = compile_jit_go(src, t, named) in
-    let _ = box_set(jit_live_box, nth(st, 0)) in
-    let _ = box_set(jit_lets_box, nth(st, 1)) in
-    let _ = box_set(gref_snap_box, nth(st, 2)) in
-    let _ = relocs_set(nth(st, 3)) in
+    let _ = box_set(gref_snap_box, nth(st, 0)) in
+    let _ = relocs_set(nth(st, 1)) in
     r
   else
     let _ = box_set(jit_busy_box, true) in
