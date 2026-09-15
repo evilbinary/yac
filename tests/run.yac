@@ -788,10 +788,18 @@ let qemu_root(arch, qemu) =
     local
   else ""
 
+/* Windows' timeout.exe does not understand -s/-k, so prefer the workspace shim
+ * when it is there -- a plain `./harness qemu` (and `make test`) then behaves
+ * like `make test-qemu`, which exports build/bin into PATH instead. */
+let timeout_cmd(_) =
+  let p = str_cat("build/bin/", "timeout") in
+  if nth(run(["test", "-x", p]), 0) == 0 then p else "timeout"
+
 let qemu_exec(qemu, arch, bin) =
   let root = qemu_root(arch, qemu) in
-  if root == "" then run(["timeout", "-s", "KILL", "8", qemu, bin])
-  else run(["timeout", "-s", "KILL", "8", qemu, "-L", root, bin])
+  let t = timeout_cmd(0) in
+  if root == "" then run([t, "-s", "KILL", "8", qemu, bin])
+  else run([t, "-s", "KILL", "8", qemu, "-L", root, bin])
 
 let qemu_skip(st, tag, why) =
   let _ = print(str_cat("SKIP: ", str_cat(tag, str_cat(" (", str_cat(why, ")"))))) in
