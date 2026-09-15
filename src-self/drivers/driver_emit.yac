@@ -6,6 +6,7 @@ import back.pack.target {mk_target, target_format}
 import front.lexer {tokenize}
 import front.parser {parse_program}
 import rt.os {host_format}
+import rt.runtime {runtime_funs}
 
 /* driver_emit.yac — read a LIR list from emitin.yac, emit+pack host image.
  * Used by tests/boot/run.yac (native emit_run, compiled once).
@@ -45,7 +46,12 @@ let pack_host(t, code) =
 let src = read_file("build/test_tmp/emitin.yac")
 let toks = tokenize(src)
 let ast = nth(parse_program(toks, 0, []), 0)
-let prog = ast_to_val(ast)
+/* lower.yac:32 -- "Kernel runtime_funs stay": an image carries the kernel,
+ * so names the emitter itself references (the yac_host_unimpl_* host-slot
+ * stubs call `print` by NAME) always resolve. Without it the stub's patch
+ * was unresolvable and emit died with "patch to unknown proc 'print'". */
+let prog0 = ast_to_val(ast)
+let prog = ["prog", append(nth(prog0, 1), runtime_funs(0)), nth(prog0, 2)]
 let t = mk_target("x86_64", host_format(0), "exec")
 let img = pack_host(t, nth(lower_expr(prog, t), 0))
 let _ = write_file("build/test_tmp/emit.bin", img)
