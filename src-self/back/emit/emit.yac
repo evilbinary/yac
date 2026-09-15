@@ -107,6 +107,12 @@ let apply_u64(b, bytePos, val) =
   0
 
 let apply_u64_rel(b, bytePos, val) =
+  /* "rel" = the value is an address into this image, so the site is
+   * relocatable: record it for the .yjit rela table (docs/JIT_IMAGE.md 1).
+   * elf_note_abs64 does the same for the AOT packers' reloc tables but is
+   * gated on PIC; this list is unconditional so a live/JIT image carries it
+   * too, which is what b1 (BOOTSTRAP_LINK 12.7) is about. */
+  let _ = relocs_add(bytePos) in
   let _ = apply_u64(b, bytePos, val) in
   elf_note_abs64(bytePos)
 
