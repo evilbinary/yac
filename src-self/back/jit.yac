@@ -6,14 +6,14 @@
  */
 
 package back.jit
-export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live
+export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live, jit_reloc_apply
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
-import back.emit.emit {apply_u64, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref_base, host_names, yjit_layout_get}
+import back.emit.emit {apply_u64, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref_base, host_names, yjit_layout_get, relocs_get, relocs_reset, relocs_set}
 import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog, toplevel_seed, lir_tlv_set}
 import back.backend {ast_imports, fun_off, link_from_ast, link_need_box, pass_anf, pass_lex, pass_parse, report_unbound, rewrite_imports, rt_for_link}
 import back.lower {emit_apply_unres, lower_expr}
 import back.pack.target {JIT_VADDR, target_arch}
-import back.pack.yjit {bytes_copy_range, pack_yjit_ex, yjit_arch_name, yjit_arch_num, yjit_export_dec, yjit_export_enc, yjit_imp_enc, yjit_imp_parse, yjit_read}
+import back.pack.yjit {bytes_copy_range, pack_yjit_ex, yjit_arch_name, yjit_arch_num, yjit_export_dec, yjit_export_enc, yjit_imp_enc, yjit_imp_parse, yjit_read, yjit_reloc_enc}
 import front.cps {cps_all, cps_maybe_opt}
 import front.parser {prog_has_err, report_syntax}
 import front.uncps {uncps_all, uncps_is_err}
@@ -389,6 +389,9 @@ let compile_jit_go(src, t, named) =
       else
         let live0 = box_get(jit_live_box) in
         let live = if jit_sess_ok(t) then live0 else 0 in
+        /* A fresh image starts a fresh relocation table; later lines append to
+         * both (BOOTSTRAP_LINK 12.7 / JIT_IMAGE 1). */
+        let _ = if live == 0 then relocs_reset(0) else 0 in
         let _ = link_from_ast_repl(ast1) in
         let _ =
           if live == 0 then emit_jsess_set(0)
@@ -465,11 +468,12 @@ let jit_busy_box =
 let compile_jit(src, t, named) =
   if box_get(jit_busy_box) then
     let st = [box_get(jit_live_box), box_get(jit_lets_box),
-              box_get(gref_snap_box)] in
+              box_get(gref_snap_box), relocs_get(0)] in
     let r = compile_jit_go(src, t, named) in
     let _ = box_set(jit_live_box, nth(st, 0)) in
     let _ = box_set(jit_lets_box, nth(st, 1)) in
     let _ = box_set(gref_snap_box, nth(st, 2)) in
+    let _ = relocs_set(nth(st, 3)) in
     r
   else
     let _ = box_set(jit_busy_box, true) in
@@ -519,10 +523,41 @@ let jit_dump_live(path, arch) =
     let link = yjit_imp_enc(cimport_got(0), cimport_names(0)) in
     let _ = bytes_extend(link, yjit_export_enc(nth(live, 2))) in
     let img = pack_yjit_ex(nth(live, 3), yjit_arch_num(arch),
-                           [abi, JIT_VADDR, nth(live, 4), drel, link, 1]) in
+                           [abi, JIT_VADDR, nth(live, 4), drel, link, 1,
+                            yjit_reloc_enc(relocs_get(0))]) in
     let _ = write_file(path, img) in
     let _ = print(path) in
     0
+
+/* b1 relocation (docs/JIT_IMAGE.md 1, BOOTSTRAP_LINK.md 12.7): the emitter
+ * records every site holding an ABSOLUTE address, and a loader that maps the
+ * image anywhere other than the baked base adds (actual - baked) to each.
+ * Today the runtime maps .yjit at JIT_VADDR, so the delta here is 0 -- that is
+ * the point of b1: the TABLE was missing, and this is the function that a
+ * second image region (b2) will call with a real delta. */
+let jit_rd64(b, i) =
+  let l0 = bytes_ref(b, i) + bshl(bytes_ref(b, i + 1), 8) in
+  let l1 = l0 + bshl(bytes_ref(b, i + 2), 16) + bshl(bytes_ref(b, i + 3), 24) in
+  let l2 = l1 + bshl(bytes_ref(b, i + 4), 32) + bshl(bytes_ref(b, i + 5), 40) in
+  l2 + bshl(bytes_ref(b, i + 6), 48) + bshl(bytes_ref(b, i + 7), 56)
+
+let jit_wr64(b, i, v) =
+  let put(j) =
+    if j >= 8 then 0
+    else
+      let _ = bytes_put(b, i + j, band(bshr(v, bshl(j, 3)), 255)) in
+      put(j + 1) in
+  put(0)
+
+let jit_reloc_apply_list(code, offs, i, n, delta) =
+  if offs == 0 or i >= n then 0
+  else
+    let o = nth(offs, i) in
+    let _ = jit_wr64(code, o, jit_rd64(code, o) + delta) in
+    jit_reloc_apply_list(code, offs, i + 1, n, delta)
+
+let jit_reloc_apply(code, offs, delta) =
+  if offs == 0 then 0 else jit_reloc_apply_list(code, offs, 0, len(offs), delta)
 
 let jit_load_yjit(path, sess) =
   let im = yjit_read(path) in
@@ -534,6 +569,9 @@ let jit_load_yjit(path, sess) =
       let _ = print(str_cat("error: yjit arch ", an)) in 1
     else
       let code = nth(im, 4) in
+      let rels = if len(im) > 7 then nth(im, 7) else 0 in
+      let baked = if len(im) > 8 then nth(im, 8) else JIT_VADDR in
+      let _ = jit_reloc_apply(code, rels, JIT_VADDR - baked) in
       let ent = nth(im, 2) in
       let link = nth(im, 5) in
       let flags = if len(im) > 6 then nth(im, 6) else 0 in
