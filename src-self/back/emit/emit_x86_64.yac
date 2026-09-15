@@ -2072,7 +2072,10 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
                    ["ret", 3]] in
         mk(i + 1, cons(["proc", nm, 0, 0, ins, nm], acc)) in
     mk(0, []) in
-  let funs = append(nth(prog, 1), unstub_procs(0)) in
+  /* Only images that bake host slots themselves need these (T == 0: AOT and
+   * the host image). A REPL blob (T != 0) has its slots overwritten from the
+   * host at run time, so carrying ten stubs per line would be dead weight. */
+  let funs = append(nth(prog, 1), if T == 0 then unstub_procs(0) else []) in
   let nfun = len(funs) in
   let _ = funsz_set(nfun) in
   let _ = log_i("emit", "nfun", nfun) in
