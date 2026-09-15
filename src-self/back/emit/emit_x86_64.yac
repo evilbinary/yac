@@ -2052,7 +2052,27 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let _ = gref_reset() in
   let _ = if emit_abi_win(0) then win_begin(0) else linux_begin(0) in
   let ckeep = cimport_buf(0) in
-  let funs = nth(prog, 1) in
+  /* Every host leaf gets its OWN unimpl stub, with the leaf name baked in as a
+   * string literal. The shared yac_host_unimpl could only say "host fn
+   * unavailable": an unimpl slot is entered with the LEAF's own arguments
+   * through G+136+8*id, so it is never told which leaf it stands for. These
+   * are IR procs appended here rather than in the lowering pipeline, so the
+   * reachability pass cannot drop them, and bake() finds them in funOffsRev. */
+  let unstub_procs(_) =
+    let mk(i, acc) =
+      if i >= len(host_names(0)) then acc
+      else
+        let nm = str_cat("yac_host_unimpl_", int_to_str(i)) in
+        let msg = str_cat("host fn unavailable: ", nth(host_names(0), i)) in
+        let ins = [["local", 12, 0],
+                   ["strlit", 0, msg],
+                   ["mov_imm", 1, 2],
+                   ["fcall", 2, "print", [0, 1]],
+                   ["mov_imm", 3, 0],
+                   ["ret", 3]] in
+        mk(i + 1, cons(["proc", nm, 0, 0, ins, nm], acc)) in
+    mk(0, []) in
+  let funs = append(nth(prog, 1), unstub_procs(0)) in
   let nfun = len(funs) in
   let _ = funsz_set(nfun) in
   let _ = log_i("emit", "nfun", nfun) in
@@ -2221,7 +2241,15 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
     else false in
   let leaf_match(pnm, leaf) =
     if pnm == leaf then true else suffix_is(pnm, str_cat("/", leaf)) in
-  let bake(id, fr, stub) =
+  /* The name-carrying stub for one leaf, so the message says WHICH one. */
+  let unstub_off(id) =
+    let sn = intern(str_cat("yac_host_unimpl_", int_to_str(id))) in
+    let go(f, i) =
+      if i >= len(f) then 0 - 1
+      else if intern(nth(nth(f, i), 0)) == sn then nth(nth(f, i), 1)
+      else go(f, i + 1) in
+    go(funOffsRev, 0) in
+  let bake(id, fr, stub, own) =
     if id >= len(host_names(0)) then 0
     else
       let ln = nth(host_names(0), id) in
@@ -2240,16 +2268,20 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
           let _ = relocs_add(data_start + 136 + bshl(id, 3)) in
           apply_u64(b, data_start + 136 + bshl(id, 3),
                     LOAD_VADDR + TEXT_OFF + off)
+        else if own >= 0 then
+          let _ = relocs_add(data_start + 136 + bshl(id, 3)) in
+          apply_u64(b, data_start + 136 + bshl(id, 3),
+                    LOAD_VADDR + TEXT_OFF + own)
         else if stub >= 0 then
           let _ = relocs_add(data_start + 136 + bshl(id, 3)) in
           apply_u64(b, data_start + 136 + bshl(id, 3),
                     LOAD_VADDR + TEXT_OFF + stub)
         else 0 in
-      bake(id + 1, fr, stub) in
+      bake(id + 1, fr, stub, unstub_off(id + 1)) in
   let stub = stub_off(funOffsRev) in
   let _ =
     if len(host_names(0)) == 0 then 0
-    else bake(0, funOffsRev, stub) in
+    else bake(0, funOffsRev, stub, unstub_off(0)) in
   /* gref flush: a stub closure cell in the gref area is what `gvar` builds for
    * a function value and `gset` writes for a top-level value; icall unpacks
    * the cell's ENTRY field (+16).
