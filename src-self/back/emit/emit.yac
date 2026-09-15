@@ -41,6 +41,27 @@ let is_arith(k) =
   else if k == "bnot" then true
   else false
 
+let host_names_box =
+  let b = box_new() in
+  let _ = box_set(b, ["compile", "compile_file", "load", "compile_native",
+                      "compile_jit", "mk_target", "mk_jit_target",
+                      "target_live", "host_arch", "host_format"]) in
+  b
+
+let host_names_set(xs) = box_set(host_names_box, xs)
+
+let host_names(_) =
+  let v = box_get(host_names_box) in
+  if v == 0 then [] else v
+
+let host_id(name, i) =
+  if i >= len(host_names(0)) then 0 - 1
+  else
+    let n = intern(nth(host_names(0), i)) in
+    if n == name then i
+    else host_id(name, i + 1)
+
+
 /* icall/ticall have no ncap field; apply/tailapply do. */
 let apply_ncap(insn) =
   if nth(insn, 0) == "icall" then 0 - 1
@@ -168,6 +189,12 @@ let emit_map_get(m, k) =
       if idx < 0 then
         if str_len(k) >= 5 and str_ref(k, 0) == 112
            and str_ref(k, 1) == 114 and str_ref(k, 2) == 111 then 0
+        else if host_id(intern(k), 0) >= 0 then
+          /* A host leaf (@name). Only the host arch's emitter bakes the G+136
+           * host-slot table, so a CROSS target has nowhere to resolve it. Say
+           * that instead of leaving the user with "unknown proc". */
+          log_fatal(str_cat("EMIT: host leaf '", str_cat(k,
+            "' is not available for this target (host slots are baked only for the host arch)")))
         else log_fatal(str_cat("EMIT: patch to unknown proc '", str_cat(k, "'")))
       else idx
 
@@ -440,26 +467,6 @@ let emit_glob_data(b) =
 
 /* Host leaves: guest calls them at absolute runtime addresses. Settled in
  * jit.yac REPL from the host image's own baked G+136..G+216 slots. */
-let host_names_box =
-  let b = box_new() in
-  let _ = box_set(b, ["compile", "compile_file", "load", "compile_native",
-                      "compile_jit", "mk_target", "mk_jit_target",
-                      "target_live", "host_arch", "host_format"]) in
-  b
-
-let host_names_set(xs) = box_set(host_names_box, xs)
-
-let host_names(_) =
-  let v = box_get(host_names_box) in
-  if v == 0 then [] else v
-
-let host_id(name, i) =
-  if i >= len(host_names(0)) then 0 - 1
-  else
-    let n = intern(nth(host_names(0), i)) in
-    if n == name then i
-    else host_id(name, i + 1)
-
 let yjit_layout_box =
   let b = box_new() in
   let _ = box_set(b, 0) in
