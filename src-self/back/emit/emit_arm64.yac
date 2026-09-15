@@ -6,7 +6,7 @@ package back.emit.emit_arm64
 export emit_program_arm64, a64_resolve_loop
 import back.encode.encode_arm64
 import lib.log {log_fatal}
-import back.emit.emit {apply_args, apply_ncap, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {apply_args, apply_ncap, apply_u64, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {dlib_a64_va, emit_cabi_all}
 import back.pack.elf {elf_pic, funsym_set}
 import back.pack.target {JIT_VADDR}
@@ -1727,7 +1727,9 @@ let emit_program_arm64(prog, load_vaddr, text_off, fmt) =
   let _ = strlit_pool_reset(0) in
   let _ = cimport_reset(0) in
   let ckeep = cimport_buf(0) in
-  let funs = nth(prog, 1) in
+  /* Host slots: one named unimpl stub per leaf, so a missing @leaf says which
+   * one it was (see host_unstub_procs in emit.yac). */
+  let funs = append(nth(prog, 1), host_unstub_procs(0)) in
   let nfun = len(funs) in
   let entry = nth(prog, 2) in
   let out = bytes_new() in
@@ -1778,6 +1780,9 @@ let emit_program_arm64(prog, load_vaddr, text_off, fmt) =
   let _ = emit_cplt_a64(b) in
   let _ = ckeep in
   let GLOBALS_BASE = load_vaddr + text_off + data_start in
+  /* Bake the G+136 host-slot table (AOT): implemented leaves -> their entry,
+   * the rest -> their own stub that names the leaf. */
+  let _ = host_slot_bake(b, fo0, load_vaddr, text_off, data_start) in
   let extra = list_new() in
   let _ = patches_extend(extra, patches) in
   let rst = [b, offs, load_vaddr + text_off, GLOBALS_BASE, labels,
