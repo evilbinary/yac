@@ -590,9 +590,11 @@ let emit_rv_fcall(st, insn) =
     emit_st4(st, b, nth(st, 1), nth(st, 2),
       cons([12, hpos, 136 + bshl(hid, 3)], nth(st, 3)))
 
-/* Direct call to an in-image yac proc (object ABI, LIR.md 4.4.4): object
- * register a0 left unset, params from a1 (registers 11..), rest on the stack.
- * rel32 jal patched by name -- mirrors x86_64's ycall. */
+/* Direct call to an in-image yac proc (object ABI, LIR.md 4.4.4): the object
+ * register is left unset and params start at a0 (registers 10..) -- measured:
+ * a1-starting (11..) broke args7, which used to pass, because this backend's
+ * prologue reads param slot j+1 from register 10+j as well. The extra args on
+ * the stack start one lower than a flat call's, see rv_apply_push. */
 let emit_rv_ycall(st, insn) =
   let b = nth(st, 0) in
   let args = nth(insn, 3) in
@@ -605,7 +607,7 @@ let emit_rv_ycall(st, insn) =
   let load(j) =
     if j >= nreg then 0
     else
-      let _ = rv_slot(b, nth(args, j), false, 11 + j) in
+      let _ = rv_slot(b, nth(args, j), false, 10 + j) in
       load(j + 1) in
   let _ = load(0) in
   let pos = bytes_len(b) in
