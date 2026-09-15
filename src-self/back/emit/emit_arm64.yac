@@ -6,7 +6,7 @@ package back.emit.emit_arm64
 export emit_program_arm64, a64_resolve_loop
 import back.encode.encode_arm64
 import lib.log {log_fatal}
-import back.emit.emit {apply_args, apply_ncap, apply_u64, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {apply_args, apply_ncap, apply_u64, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {dlib_a64_va, emit_cabi_all}
 import back.pack.elf {elf_pic, funsym_set}
 import back.pack.target {JIT_VADDR}
@@ -603,6 +603,34 @@ let emit_a64_fcall(st, insn) =
     emit_st4(st, b, nth(st, 1), nth(st, 2),
       cons([12, hpos, 136 + bshl(hid, 3)], nth(st, 3)))
 
+/* Direct call to an in-image yac proc (object ABI, LIR.md 4.4.4): the object
+ * register (0) is left unset -- flat callees ignore it -- and the parameters
+ * go to 1... The call itself is a rel32 bl patched by name, exactly like
+ * fcall. Mirrors x86_64's ycall. */
+let emit_a64_ycall(st, insn) =
+  let b = nth(st, 0) in
+  let args = nth(insn, 3) in
+  let na = len(args) in
+  let nstack = if na > 7 then na - 7 else 0 in
+  let nreg = if na < 7 then na else 7 in
+  let pad = if nstack == 0 then 0 else if band(nstack, 1) == 0 then 0 else 8 in
+  let _ = if pad == 0 then 0 else a64_sub_imm(b, 31, 31, 8) in
+  let _ = if nstack == 0 then 0 else a64_apply_push(b, 0, args, na - 1) in
+  let load(j) =
+    if j >= nreg then 0
+    else
+      let _ = a64_slot(b, nth(args, j), false, j + 1) in
+      load(j + 1) in
+  let _ = load(0) in
+  let pos = bytes_len(b) in
+  let _ = a64_bl(b, 0) in
+  let _ =
+    if nstack == 0 then 0
+    else a64_add_imm(b, 31, 31, bshl(nstack, 3) + pad) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2),
+    emit_patch_rel(nth(st, 4), nth(st, 3), pos, nth(insn, 2)))
+
 let emit_a64_ccall(st, insn) =
   let b = nth(st, 0) in
   let args = nth(insn, 3) in
@@ -820,6 +848,7 @@ let emit_a64_i_core(st, insn, is_entry) =
      cons(["b26", pne, nth(insn, 2)],
           cons(["beq", peq, nth(insn, 3)], patches)))
   else if k == "fcall" then emit_a64_fcall(st, insn)
+  else if k == "ycall" then emit_a64_ycall(st, insn)
   else if k == "ccall" then emit_a64_ccall(st, insn)
   else if k == "iccall" then emit_a64_iccall(st, insn)
   else if k == "ret" then
@@ -1223,6 +1252,35 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_slot(b, nth(insn, 2), true, 0) in
     let _ = a64_add_imm(b, 31, 31, 16) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "gval" then
+    /* Read a top-level value: [unit + 0]. The unit is the name's 32-byte cell
+     * in the globals area (value at +0, function entry at +16), filled by
+     * gset. x86_64 does exactly this with its abs64 tag 22; here the same
+     * shape goes through tag 12 (globbase + displacement). */
+    let goff = gref_base() + bshl(gref_alloc(nth(insn, 2)), 5) in
+    let gpos = bytes_len(b) in
+    let _ = a64_mov_imm64(b, 0, 0) in
+    let _ = a64_ldur(b, 0, 0, 0) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels, cons([12, gpos, goff], patches))
+  else if k == "gset" then
+    /* ["gset", name, off, src]: off 0 = value, 16 = function entry.
+     * An immediate source is BAKED into the cell at link time (x86_64 tag 24,
+     * zero runtime action); anything else is stored at run time. The GC-root
+     * publish (yac_gval_pub) x86_64 does after a runtime store is not here
+     * yet -- TODO. */
+    let nm = nth(insn, 1) in
+    let off = nth(insn, 2) in
+    let src = nth(insn, 3) in
+    let goff = gref_base() + bshl(gref_alloc(nm), 5) + off in
+    if nth(src, 0) == "imm" then
+      emit_st4(st, b, cur, labels, cons([24, goff, nth(src, 1)], patches))
+    else
+      let gpos = bytes_len(b) in
+      let _ = a64_mov_imm64(b, 0, 0) in
+      let _ = a64_slot(b, src, false, 1) in
+      let _ = a64_stur(b, 1, 0, 0) in
+      emit_st4(st, b, cur, labels, cons([12, gpos, goff], patches))
   else if k == "glob" then
     let which = nth(insn, 2) in
     let gpos = bytes_len(b) in
@@ -1630,7 +1688,7 @@ let emit_insn_a64_go(st, insn, is_entry) =
   else if is_frame_op(k) or k == "mov_imm" or k == "mov" or is_arith(k)
        or k == "cmp" or k == "icmp" or k == "label" or k == "fcall" or k == "ccall"
        or k == "iccall" or k == "tcall" or k == "jmp" or k == "cmpjmp" or k == "ret"
-       or k == "exit" then
+       or k == "exit" or k == "ycall" then
     emit_a64_i_core(st, insn, is_entry)
   else if k == "untag" or k == "syscall" then
     emit_a64_i_sys(st, insn)
@@ -1639,7 +1697,8 @@ let emit_insn_a64_go(st, insn, is_entry) =
   else if k == "obj_kind" or k == "mref" or k == "mset" or k == "tag"
        or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
        or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64"
-       or k == "write1" or k == "clock" or k == "glob" or k == "gst" or k == "time_ms"
+       or k == "write1" or k == "clock" or k == "glob" or k == "gst"
+       or k == "gval" or k == "gset" or k == "time_ms"
        or k == "time_str" or k == "argc" or k == "argv" then
     emit_a64_i_heap(st, insn)
   else if k == "memcpy" then emit_a64_i_memcpy(st, insn)
@@ -1716,6 +1775,10 @@ let a64_resolve_patch(st, p) =
     dlib_a64_va(b, nth(p, 1), 0, globbase + 128, codebase)
   else if tag == 9 then
     a64_apply_b26(b, nth(p, 1), nth(offs, nth(p, 2)))
+  else if tag == 24 then
+    /* Link-time bake of a top-level value into its name unit (x86_64 uses the
+     * same tag): the cell is part of the data section, so write the bytes. */
+    apply_u64(b, globbase - codebase + nth(p, 1), nth(p, 2))
   else if tag == 12 then
     /* A host-leaf slot address: globbase + 136 + 8*id. Numeric tag on purpose:
      * a64_resolve_fun_patches only keeps NUMERIC (and cclab/beq) patches. */

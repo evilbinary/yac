@@ -4,7 +4,7 @@ package back.emit.emit_riscv64
 export emit_program_riscv64, rv_resolve_loop
 import back.encode.encode_riscv64
 import lib.log {log_fatal}
-import back.emit.emit {apply_args, apply_ncap, apply_u64, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_rv, emit_fmt_set, emit_glob_data, emit_ids_new, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {apply_args, apply_ncap, apply_u64, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_rv, emit_fmt_set, emit_glob_data, emit_ids_new, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {dlib_rv_va, emit_cabi_all}
 import back.pack.elf {elf_pic, funsym_set}
 import back.pack.target {JIT_VADDR}
@@ -588,6 +588,33 @@ let emit_rv_fcall(st, insn) =
     emit_st4(st, b, nth(st, 1), nth(st, 2),
       cons([12, hpos, 136 + bshl(hid, 3)], nth(st, 3)))
 
+/* Direct call to an in-image yac proc (object ABI, LIR.md 4.4.4): object
+ * register a0 left unset, params from a1 (registers 11..), rest on the stack.
+ * rel32 jal patched by name -- mirrors x86_64's ycall. */
+let emit_rv_ycall(st, insn) =
+  let b = nth(st, 0) in
+  let args = nth(insn, 3) in
+  let na = len(args) in
+  let nstack = if na > 7 then na - 7 else 0 in
+  let nreg = if na < 7 then na else 7 in
+  let pad = if nstack == 0 then 0 else if band(nstack, 1) == 0 then 0 else 8 in
+  let _ = if pad == 0 then 0 else rv_addi(b, 2, 2, 0 - 8) in
+  let _ = if nstack == 0 then 0 else rv_apply_push(b, 0, args, na - 1) in
+  let load(j) =
+    if j >= nreg then 0
+    else
+      let _ = rv_slot(b, nth(args, j), false, 10 + j) in
+      load(j + 1) in
+  let _ = load(0) in
+  let pos = bytes_len(b) in
+  let _ = rv_jal(b, 1, 0) in
+  let _ =
+    if nstack == 0 then 0
+    else rv_addi(b, 2, 2, bshl(nstack, 3) + pad) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2),
+    emit_patch_rel(nth(st, 4), nth(st, 3), pos, nth(insn, 2)))
+
 let emit_rv_ccall(st, insn) =
   let b = nth(st, 0) in
   let args = nth(insn, 3) in
@@ -814,6 +841,7 @@ let emit_rv_i_core(st, insn, is_entry) =
      cons(["jal", pt, nth(insn, 2)],
           cons(["jal", pf, nth(insn, 3)], patches)))
   else if k == "fcall" then emit_rv_fcall(st, insn)
+  else if k == "ycall" then emit_rv_ycall(st, insn)
   else if k == "ccall" then emit_rv_ccall(st, insn)
   else if k == "iccall" then emit_rv_iccall(st, insn)
   else if k == "ret" then
@@ -1233,6 +1261,30 @@ let emit_rv_i_heap(st, insn) =
     let _ = rv_slot(b, nth(insn, 2), true, 6) in
     let _ = rv_addi(b, 2, 2, 16) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "gval" then
+    /* Read a top-level value: [unit + 0] (name unit = 32B in the globals area,
+     * value at +0, entry at +16). Mirrors x86_64's abs64 tag 22 via tag 12. */
+    let goff = gref_base() + bshl(gref_alloc(nth(insn, 2)), 5) in
+    let gpos = bytes_len(b) in
+    let _ = rv_li32_pair(b, 6, 0) in
+    let _ = rv_ld(b, 6, 6, 0) in
+    let _ = rv_slot(b, nth(insn, 1), true, 6) in
+    emit_st4(st, b, cur, labels, cons([12, gpos, goff], patches))
+  else if k == "gset" then
+    /* ["gset", name, off, src]: immediate -> link-time bake (tag 24),
+     * otherwise a runtime store. GC publish (yac_gval_pub) TODO. */
+    let nm = nth(insn, 1) in
+    let off = nth(insn, 2) in
+    let src = nth(insn, 3) in
+    let goff = gref_base() + bshl(gref_alloc(nm), 5) + off in
+    if nth(src, 0) == "imm" then
+      emit_st4(st, b, cur, labels, cons([24, goff, nth(src, 1)], patches))
+    else
+      let gpos = bytes_len(b) in
+      let _ = rv_li32_pair(b, 6, 0) in
+      let _ = rv_slot(b, src, false, 7) in
+      let _ = rv_sd(b, 7, 6, 0) in
+      emit_st4(st, b, cur, labels, cons([12, gpos, goff], patches))
   else if k == "glob" then
     let which = nth(insn, 2) in
     let gpos = bytes_len(b) in
@@ -1648,7 +1700,7 @@ let emit_insn_rv_go(st, insn, is_entry) =
   else if is_frame_op(k) or k == "mov_imm" or k == "mov" or is_arith(k)
        or k == "cmp" or k == "icmp" or k == "label" or k == "fcall" or k == "ccall"
        or k == "iccall" or k == "tcall" or k == "jmp" or k == "cmpjmp" or k == "ret"
-       or k == "exit" then
+       or k == "exit" or k == "ycall" then
     emit_rv_i_core(st, insn, is_entry)
   else if k == "untag" or k == "syscall" then
     emit_rv_i_sys(st, insn)
@@ -1657,7 +1709,8 @@ let emit_insn_rv_go(st, insn, is_entry) =
   else if k == "obj_kind" or k == "mref" or k == "mset" or k == "tag"
        or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
        or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64"
-       or k == "write1" or k == "clock" or k == "glob" or k == "gst" or k == "time_ms"
+       or k == "write1" or k == "clock" or k == "glob" or k == "gst"
+       or k == "gval" or k == "gset" or k == "time_ms"
        or k == "time_str" or k == "argc" or k == "argv" then
     emit_rv_i_heap(st, insn)
   else if k == "memcpy" then emit_rv_i_memcpy(st, insn)
@@ -1718,6 +1771,9 @@ let rv_resolve_patch(st, p) =
     dlib_rv_va(b, nth(p, 1), 6, globbase + 128, codebase)
   else if tag == 9 then
     rv_apply_jal(b, nth(p, 1), nth(offs, nth(p, 2)), 0)
+  else if tag == 24 then
+    /* Link-time bake of a top-level value into its name unit (x86_64 tag 24). */
+    apply_u64(b, globbase - codebase + nth(p, 1), nth(p, 2))
   else if tag == 12 then
     /* Host-leaf slot address: globbase + 136 + 8*id (numeric tag: the per-fun
      * resolver only keeps numeric patches). */
