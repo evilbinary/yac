@@ -18,8 +18,16 @@
  * runtime_funs is the kernel. Extra LIR procs (e.g. num.yac lets) are attached
  * with runtime_add; backend chooses what to hang.
  */
+
+
 package rt.runtime
 export runtime_funs, runtime_add, yac_cimport_host_sym, yac_gval_pub, yac_gval_list, yac_gfn_pub, yac_gfn_list
+/* `intern` is used by the profiling/entry-table helpers below. This file is
+ * compiled BOTH concatenated into the bundle and standalone as package
+ * rt.runtime (drivers like driver_emit compose it), and only an explicit
+ * import binds the name in the package case -- sigma_host_seed only covers
+ * @name host bindings, which intern is not. */
+import lib.map {intern}
 
 let rt_cons_ins(_) =
   [["local", 6, 2],
