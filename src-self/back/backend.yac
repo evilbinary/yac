@@ -650,9 +650,17 @@ let lir_extend_go(pkg, src, acc, synth) =
           acc
         else
           let anf = pass_anf(ast) in
+          /* toplevel_seed, exactly like the AOT (lir_all call) and REPL paths:
+           * Σ's kind table is what lir_let's is_tv reads to recognise "this bind
+           * is a top-level value of the unit". Without it a package's own
+           * top-level `let` looks like a local, enters Γ, and free_vars counts
+           * it as a capture -- so the package's procs came out with ncap > 0
+           * and a by-name call (ycall, which leaves the object register unset)
+           * read [r13+32] with r13 == 0: the composed drivers died with
+           * SIGSEGV at startup. */
+          let fs = sigma_host_seed(toplevel_seed(anf, 0, sigma_of_rt(acc))) in
           let st = lir_all(0, anf,
-            [env_new(0), 1, sigma_host_seed(sigma_of_rt(acc)), 0,
-             list_new(), 0],
+            [env_new(0), 1, fs, 0, list_new(), 0],
             len(anf)) in
           let out = reverse(sigma_list(nth(st, 2))) in
           let _ = box_set(imap_box, saved_i) in
