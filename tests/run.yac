@@ -733,9 +733,11 @@ let compiler_all(st, yc) =
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
 
+/* A forwarding shim (see build/bin/qemu-*) can provide qemu-user on a host
+ * that has none, so the Windows short-circuit only applies when nothing on
+ * PATH answers: has_cmd() below is the real test now. */
 let qemu_cmd(arch) =
-  if on_win(0) then ""
-  else if arch == "arm64" then
+  if arch == "arm64" then
     if has_cmd("qemu-aarch64") then "qemu-aarch64"
     else if has_cmd("qemu-aarch64-static") then "qemu-aarch64-static"
     else ""
@@ -755,7 +757,12 @@ let qemu_root(arch) =
     if arch == "arm64" then "/usr/aarch64-linux-gnu"
     else if arch == "riscv64" then "/usr/riscv64-linux-gnu"
     else "" in
+  /* A workspace-local stand-in first: on a host without /usr/<triple> the
+   * shim ignores -L anyway and points qemu at the real root. */
+  let local = str_cat(TMP, str_cat("/sysroot-", arch)) in
   if dir == "" then ""
+  else if nth(run(["test", "-f", str_cat(local, qemu_interp(arch))]), 0) == 0 then
+    local
   else if nth(run(["test", "-f", str_cat(dir, qemu_interp(arch))]), 0) == 0 then
     dir
   else ""

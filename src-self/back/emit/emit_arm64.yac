@@ -6,7 +6,7 @@ package back.emit.emit_arm64
 export emit_program_arm64, a64_resolve_loop
 import back.encode.encode_arm64
 import lib.log {log_fatal}
-import back.emit.emit {apply_args, apply_ncap, apply_u64, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {apply_args, apply_ncap, apply_u64, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {dlib_a64_va, emit_cabi_all}
 import back.pack.elf {elf_pic, funsym_set}
 import back.pack.target {JIT_VADDR}
@@ -1252,6 +1252,26 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_slot(b, nth(insn, 2), true, 0) in
     let _ = a64_add_imm(b, 31, 31, 16) in
     emit_st4(st, b, cur, labels, patches)
+  else if k == "gvar" then
+    /* Flat function value (12.14): a static stub closure [0, 0, entry, 0] in
+     * the globals area, one per referenced name (32B). AOT bakes the entry
+     * into [cell+16] (tag 23) and yields the TAGGED cell address, so icall's
+     * nenv=0 expansion calls entry with the plain args. Mirrors x86_64: the
+     * placeholder goes down FIRST, the tag/or1 runs after the resolver has
+     * filled the immediate. */
+    let nm = nth(insn, 2) in
+    let goff = gref_base() + bshl(gref_alloc(nm), 5) in
+    let gpos = bytes_len(b) in
+    let _ = a64_mov_imm64(b, 0, 0) in
+    let fid = emit_map_get(nth(st, 4), nm) in
+    let _ =
+      if fid == 0 then
+        log_fatal(str_cat("emit: gvar: no such procedure '", str_cat(nm, "'")))
+      else 0 in
+    let _ = a64_tag(b, 0) in
+    let _ = a64_slot(b, nth(insn, 1), true, 0) in
+    emit_st4(st, b, cur, labels,
+      cons([23, fid, goff], cons([12, gpos, goff], patches)))
   else if k == "gval" then
     /* Read a top-level value: [unit + 0]. The unit is the name's 32-byte cell
      * in the globals area (value at +0, function entry at +16), filled by
@@ -1698,7 +1718,7 @@ let emit_insn_a64_go(st, insn, is_entry) =
        or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
        or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64"
        or k == "write1" or k == "clock" or k == "glob" or k == "gst"
-       or k == "gval" or k == "gset" or k == "time_ms"
+       or k == "gval" or k == "gset" or k == "gvar" or k == "time_ms"
        or k == "time_str" or k == "argc" or k == "argv" then
     emit_a64_i_heap(st, insn)
   else if k == "memcpy" then emit_a64_i_memcpy(st, insn)
@@ -1775,6 +1795,9 @@ let a64_resolve_patch(st, p) =
     dlib_a64_va(b, nth(p, 1), 0, globbase + 128, codebase)
   else if tag == 9 then
     a64_apply_b26(b, nth(p, 1), nth(offs, nth(p, 2)))
+  else if tag == 23 then
+    /* Bake a gvar stub's entry field: [cell+16] = codebase + offs[fid]. */
+    apply_u64(b, globbase - codebase + nth(p, 2) + 16, codebase + nth(offs, nth(p, 1)))
   else if tag == 24 then
     /* Link-time bake of a top-level value into its name unit (x86_64 uses the
      * same tag): the cell is part of the data section, so write the bytes. */
