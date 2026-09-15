@@ -10,7 +10,7 @@ export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live, 
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
 import back.emit.emit {apply_u64, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref_base, host_names, yjit_layout_get, relocs_get, relocs_reset, relocs_set}
 import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog, toplevel_seed, lir_tlv_set}
-import back.backend {ast_imports, fun_off, link_from_ast, link_need_box, pass_anf, pass_lex, pass_parse, report_unbound, rewrite_imports, rt_for_link}
+import back.backend {ast_imports, fun_off, link_from_ast, link_is_dylib, link_need_box, pass_anf, pass_lex, pass_parse, pkg_src, report_unbound, rewrite_imports, rt_for_link}
 import back.lower {emit_apply_unres, lower_expr}
 import back.pack.target {JIT_VADDR, target_arch}
 import back.pack.yjit {bytes_copy_range, pack_yjit_ex, yjit_arch_name, yjit_arch_num, yjit_export_dec, yjit_export_enc, yjit_imp_enc, yjit_imp_parse, yjit_read, yjit_reloc_enc}
@@ -317,10 +317,26 @@ let pkgs_append(dst, src, i) =
     if in_list(p, dst) then pkgs_append(dst, src, i + 1)
     else pkgs_append(cons(p, dst), src, i + 1)
 
+/* An import that resolves to nothing used to be silent: pkg_export_names()
+ * returns [] when pkg_src() finds no file, so the line just did nothing and
+ * the mistake only surfaced much later (or not at all). Say it where the
+ * import is. "rt.num" and anything in a --link dylib chain are legitimate
+ * without a .yac source, so they are skipped. */
+let repl_check_pkgs(xs, i) =
+  if i >= len(xs) then 0
+  else
+    let p = nth(xs, i) in
+    let _ =
+      if link_is_dylib(p) then 0
+      else if pkg_src(p) != 0 then 0
+      else print(str_cat("error: unknown package '", str_cat(p, "'"))) in
+    repl_check_pkgs(xs, i + 1)
+
 let link_from_ast_repl(ast) =
   let filled = rewrite_imports(ast, 0, []) in
   let more = ast_imports(ast, 0, []) in
   let _ = box_set(link_need_box, pkgs_append(box_get(link_need_box), more, 0)) in
+  let _ = repl_check_pkgs(more, 0) in
   let _ = imap_load_merge(filled, 0) in
   0
 
