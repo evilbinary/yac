@@ -736,23 +736,37 @@ let has_cmd(c) =
 /* A forwarding shim (see build/bin/qemu-*) can provide qemu-user on a host
  * that has none, so the Windows short-circuit only applies when nothing on
  * PATH answers: has_cmd() below is the real test now. */
+/* build/bin/<name> is usable as a command as-is, so a plain `./harness qemu`
+ * works without exporting PATH for the qemu shims (`make test-qemu` exports it
+ * for the timeout shim, which is a bare name inside run()). */
+let qemu_local(name) =
+  let p = str_cat("build/bin/", name) in
+  if nth(run(["test", "-x", p]), 0) == 0 then p else ""
+
+let qemu_pick(name, alt) =
+  if has_cmd(name) then name
+  else if has_cmd(alt) then alt
+  else qemu_local(name)
+
 let qemu_cmd(arch) =
-  if arch == "arm64" then
-    if has_cmd("qemu-aarch64") then "qemu-aarch64"
-    else if has_cmd("qemu-aarch64-static") then "qemu-aarch64-static"
-    else ""
-  else if arch == "riscv64" then
-    if has_cmd("qemu-riscv64") then "qemu-riscv64"
-    else if has_cmd("qemu-riscv64-static") then "qemu-riscv64-static"
-    else ""
+  if arch == "arm64" then qemu_pick("qemu-aarch64", "qemu-aarch64-static")
+  else if arch == "riscv64" then qemu_pick("qemu-riscv64", "qemu-riscv64-static")
   else ""
+
+/* The forwarding shim uploads the guest binary to a Linux box and swaps our -L
+ * for one that points at a real sysroot (see qemu_root). */
+let qemu_is_shim(q) =
+  let local = qemu_local(q) in
+  if contains(q, "build/bin") then true
+  else if local == "" then false
+  else contains(nth(run(["sh", "-c", str_cat("command -v ", q)]), 1), "build/bin")
 
 let qemu_interp(arch) =
   if arch == "arm64" then "/lib/ld-linux-aarch64.so.1"
   else if arch == "riscv64" then "/lib/ld-linux-riscv64-lp64d.so.1"
   else ""
 
-let qemu_root(arch) =
+let qemu_root(arch, qemu) =
   let dir =
     if arch == "arm64" then "/usr/aarch64-linux-gnu"
     else if arch == "riscv64" then "/usr/riscv64-linux-gnu"
@@ -765,16 +779,29 @@ let qemu_root(arch) =
     local
   else if nth(run(["test", "-f", str_cat(dir, qemu_interp(arch))]), 0) == 0 then
     dir
+  /* With the forwarding shim there is no local sysroot to find: the shim
+   * drops -L and points the real qemu-user at its own root. The stand-in only
+   * has to EXIST for the two gates below, so lay down an empty one. */
+  else if qemu_is_shim(qemu) then
+    let _ = run(["mkdir", "-p", str_cat(local, "/lib")]) in
+    let _ = write_file(str_cat(local, qemu_interp(arch)), "") in
+    local
   else ""
 
 let qemu_exec(qemu, arch, bin) =
-  let root = qemu_root(arch) in
+  let root = qemu_root(arch, qemu) in
   if root == "" then run(["timeout", "-s", "KILL", "8", qemu, bin])
   else run(["timeout", "-s", "KILL", "8", qemu, "-L", root, bin])
 
 let qemu_skip(st, tag, why) =
   let _ = print(str_cat("SKIP: ", str_cat(tag, str_cat(" (", str_cat(why, ")"))))) in
   st
+
+/* `-o NAME` comes back as NAME (elf/macho) or NAME.exe (host pe on Windows). */
+let qemu_out(p) =
+  if nth(run(["test", "-f", p]), 0) == 0 then p
+  else if nth(run(["test", "-f", native(p)]), 0) == 0 then native(p)
+  else ""
 
 let qemu_one(st, yc, qemu, arch, c) =
   let name = nth(c, 0) in
@@ -784,9 +811,13 @@ let qemu_one(st, yc, qemu, arch, c) =
   else
     let kind = nth(c, 1) in
     let want = nth(c, 2) in
-    let bin = str_cat(TMP, str_cat("/q_", str_cat(arch, str_cat("_", name)))) in
-    let cr = run(append(yc, [case_src(name), "-o", bin, "--arch", arch])) in
-    if nth(run(["test", "-f", bin]), 0) != 0 then
+    let out = str_cat(TMP, str_cat("/q_", str_cat(arch, str_cat("_", name)))) in
+    /* Guest code runs under qemu-user, so it has to be a Linux ELF -- ask for
+     * that format explicitly, the host default is pe on Windows / macho on mac. */
+    let cr = run(append(yc, [case_src(name), "-o", out, "--arch", arch,
+                             "--format", "elf"])) in
+    let bin = qemu_out(out) in
+    if bin == "" then
       check(st, tag, "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
     else
       let _ = run(["chmod", "+x", bin]) in
@@ -802,10 +833,12 @@ let qemu_shared(st, yc, qemu, arch) =
   let _ = write_file(pdrv,
     str_cat("import ffi\nlet h = load(\"",
       str_cat(so, "\")\nlet f = sym(h, \"add\")\nif ccall(f, 2, 3) == 5 then 42 else 0\n"))) in
-  let bin = str_cat(TMP, str_cat("/q_", str_cat(arch, "_dadd"))) in
+  let out = str_cat(TMP, str_cat("/q_", str_cat(arch, "_dadd"))) in
   let tag = str_cat(arch, " elf --shared ccall add") in
-  let cr = run(append(yc, [pdrv, "-o", bin, "--arch", arch])) in
-  if nth(run(["test", "-f", bin]), 0) != 0 then
+  let cr = run(append(yc, [pdrv, "-o", out, "--arch", arch,
+                           "--format", "elf"])) in
+  let bin = qemu_out(out) in
+  if bin == "" then
     check(st, tag, "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
   else
     let _ = run(["chmod", "+x", bin]) in
@@ -834,10 +867,16 @@ let qemu_arch(st, yc, arch) =
                  str_cat(nth(yc, 0), str_cat(" --arch ", arch))) in
   if q == "" then
     let _ = print(str_cat("SKIP: qemu ", arch)) in st
-  else if qemu_root(arch) == "" then qemu_skip_sysroot(st, arch)
+  else if qemu_root(arch, q) == "" then qemu_skip_sysroot(st, arch)
   else
-    qemu_shared(foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st,
-                      compiler_cases(0)), yc, q, arch)
+    let st1 = foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st,
+                    compiler_cases(0)) in
+    /* The shared run dlopens <TMP>/libdadd_<arch>.so by PATH, and the shim
+     * uploads only the executable -- the Linux box would look for a Windows
+     * path. Real qemu runs it where both files already are. */
+    if qemu_is_shim(q) then
+      qemu_skip(st1, str_cat(arch, " elf --shared ccall add"), "shim sends exe only")
+    else qemu_shared(st1, yc, q, arch)
 
 let exists_rc(p) = nth(run(["test", "-f", p]), 0)
 

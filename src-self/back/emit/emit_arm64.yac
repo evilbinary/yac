@@ -46,15 +46,19 @@ let a64_sp_push(b, rt) =
   let _ = a64_sub_imm(b, 31, 31, 8) in
   a64_stur(b, rt, 31, 0)
 
-/* Extra apply args: x0–x7 then stack (AAPCS). Clos stays in x17. */
-let a64_apply_push(b, ncap, args, i) =
-  if i < 8 then 0
+/* Extra apply args go on the stack in REVERSE (x8's slot pushed last, so it
+ * ends up at the lowest address). `nreg` is how many leading registers this
+ * convention has already filled: a flat call (fcall/tcall) fills x0-x7, while
+ * ycall leaves x0 as the object slot and so only fills x1-x7. Getting this
+ * wrong silently DROPS the 8th argument (measured: args9 summed 1+2+..+7+9+9). */
+let a64_apply_push(b, nreg, ncap, args, i) =
+  if i < nreg then 0
   else
     let _ =
       if i < ncap then a64_ldur(b, 1, 17, 32 + bshl(i, 3))
       else a64_slot(b, nth(args, i - ncap), false, 1) in
     let _ = a64_sp_push(b, 1) in
-    a64_apply_push(b, ncap, args, i - 1)
+    a64_apply_push(b, nreg, ncap, args, i - 1)
 
 let a64_apply_load(b, ncap, args, i, nreg) =
   if i >= nreg then 0
@@ -569,7 +573,7 @@ let emit_a64_fcall(st, insn) =
   let nreg = if na < 8 then na else 8 in
   let pad = if nstack == 0 then 0 else if band(nstack, 1) == 0 then 0 else 8 in
   let _ = if pad == 0 then 0 else a64_sub_imm(b, 31, 31, 8) in
-  let _ = if nstack == 0 then 0 else a64_apply_push(b, 0, args, na - 1) in
+  let _ = if nstack == 0 then 0 else a64_apply_push(b, 8, 0, args, na - 1) in
   /* Host leaf (@name): the slot address is materialised into x0 (the tag
    * writes rd=0, like x86_64's movabs) and the slot value parked in x16 BEFORE
    * the arguments are loaded -- x0..x7 belong to the call. */
@@ -615,7 +619,7 @@ let emit_a64_ycall(st, insn) =
   let nreg = if na < 7 then na else 7 in
   let pad = if nstack == 0 then 0 else if band(nstack, 1) == 0 then 0 else 8 in
   let _ = if pad == 0 then 0 else a64_sub_imm(b, 31, 31, 8) in
-  let _ = if nstack == 0 then 0 else a64_apply_push(b, 0, args, na - 1) in
+  let _ = if nstack == 0 then 0 else a64_apply_push(b, 7, 0, args, na - 1) in
   let load(j) =
     if j >= nreg then 0
     else
@@ -665,7 +669,7 @@ let emit_a64_tcall_other(st, insn, is_entry) =
     let nstack = na - 8 in
     let pad = if band(nstack, 1) == 0 then 0 else 8 in
     let _ = if pad == 0 then 0 else a64_sub_imm(b, 31, 31, 8) in
-    let _ = a64_apply_push(b, 0, args, na - 1) in
+    let _ = a64_apply_push(b, 8, 0, args, na - 1) in
     let load(j) =
       if j >= 8 then 0
       else
@@ -1410,7 +1414,7 @@ let emit_a64_i_clos(st, insn, is_entry) =
       let _ = a64_slot(b, clos, false, 17) in
       let _ = a64_untag_ptr(b, 17) in
       let _ = if pad == 0 then 0 else a64_sub_imm(b, 31, 31, 8) in
-      let _ = if nstack == 0 then 0 else a64_apply_push(b, ncap, args, ntot - 1) in
+      let _ = if nstack == 0 then 0 else a64_apply_push(b, 8, ncap, args, ntot - 1) in
       let _ = a64_ldur(b, 16, 17, 16) in
       let _ = a64_apply_load(b, ncap, args, 0, nreg) in
       let _ = a64_blr(b, 16) in

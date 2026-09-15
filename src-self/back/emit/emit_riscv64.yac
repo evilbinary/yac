@@ -24,15 +24,17 @@ let rv_sp_push(b, rs) =
   let _ = rv_addi(b, 2, 2, 0 - 8) in
   rv_sd(b, rs, 2, 0)
 
-/* Extra apply args: a0–a7 then stack. Clos stays in t3 (x28). Temp t1 (x6). */
-let rv_apply_push(b, ncap, args, i) =
-  if i < 8 then 0
+/* Extra apply args go on the stack in reverse. `nreg` is how many leading
+ * registers this convention already filled: flat calls (fcall/tcall) use
+ * a0-a7, ycall leaves a0 as the object slot and starts at a1. */
+let rv_apply_push(b, nreg, ncap, args, i) =
+  if i < nreg then 0
   else
     let _ =
       if i < ncap then rv_ld(b, 6, 28, 32 + bshl(i, 3))
       else rv_slot(b, nth(args, i - ncap), false, 6) in
     let _ = rv_sp_push(b, 6) in
-    rv_apply_push(b, ncap, args, i - 1)
+    rv_apply_push(b, nreg, ncap, args, i - 1)
 
 let rv_apply_load(b, ncap, args, i, nreg) =
   if i >= nreg then 0
@@ -557,7 +559,7 @@ let emit_rv_fcall(st, insn) =
   let nreg = if na < 8 then na else 8 in
   let pad = if nstack == 0 then 0 else if band(nstack, 1) == 0 then 0 else 8 in
   let _ = if pad == 0 then 0 else rv_addi(b, 2, 2, 0 - 8) in
-  let _ = if nstack == 0 then 0 else rv_apply_push(b, 0, args, na - 1) in
+  let _ = if nstack == 0 then 0 else rv_apply_push(b, 8, 0, args, na - 1) in
   let load(j) =
     if j >= nreg then 0
     else
@@ -599,11 +601,11 @@ let emit_rv_ycall(st, insn) =
   let nreg = if na < 7 then na else 7 in
   let pad = if nstack == 0 then 0 else if band(nstack, 1) == 0 then 0 else 8 in
   let _ = if pad == 0 then 0 else rv_addi(b, 2, 2, 0 - 8) in
-  let _ = if nstack == 0 then 0 else rv_apply_push(b, 0, args, na - 1) in
+  let _ = if nstack == 0 then 0 else rv_apply_push(b, 7, 0, args, na - 1) in
   let load(j) =
     if j >= nreg then 0
     else
-      let _ = rv_slot(b, nth(args, j), false, 10 + j) in
+      let _ = rv_slot(b, nth(args, j), false, 11 + j) in
       load(j + 1) in
   let _ = load(0) in
   let pos = bytes_len(b) in
@@ -651,7 +653,7 @@ let emit_rv_tcall_other(st, insn, is_entry) =
     let nstack = na - 8 in
     let pad = if band(nstack, 1) == 0 then 0 else 8 in
     let _ = if pad == 0 then 0 else rv_addi(b, 2, 2, 0 - 8) in
-    let _ = rv_apply_push(b, 0, args, na - 1) in
+    let _ = rv_apply_push(b, 8, 0, args, na - 1) in
     let load(j) =
       if j >= 8 then 0
       else
@@ -1417,7 +1419,7 @@ let emit_rv_i_clos(st, insn, is_entry) =
       let _ = rv_slot(b, clos, false, 28) in
       let _ = rv_untag_ptr(b, 28) in
       let _ = if pad == 0 then 0 else rv_addi(b, 2, 2, 0 - 8) in
-      let _ = if nstack == 0 then 0 else rv_apply_push(b, ncap, args, ntot - 1) in
+      let _ = if nstack == 0 then 0 else rv_apply_push(b, 8, ncap, args, ntot - 1) in
       let _ = rv_ld(b, 6, 28, 16) in
       let _ = rv_apply_load(b, ncap, args, 0, nreg) in
       let _ = rv_jalr(b, 1, 6, 0) in

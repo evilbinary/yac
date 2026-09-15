@@ -147,14 +147,20 @@ test-link: $(LINK_TESTS)
 test-boot: $(TEST_HARNESS)
 	./$(TEST_HARNESS) boot
 
+# build/bin first: it carries the qemu-* forwarding shims (host without
+# user-mode qemu) and the timeout shim (Windows timeout.exe would eat -s).
 test-qemu: $(TEST_HARNESS)
-	./$(TEST_HARNESS) qemu
+	PATH="$(CURDIR)/build/bin:$$PATH" ./$(TEST_HARNESS) qemu
 
+# build/bin first: it carries the qemu-* forwarding shims (host without
+# user-mode qemu) and the timeout shim (Windows timeout.exe would eat -s).
 test-qemu-arm64: $(TEST_HARNESS)
-	./$(TEST_HARNESS) qemu-arm64
+	PATH="$(CURDIR)/build/bin:$$PATH" ./$(TEST_HARNESS) qemu-arm64
 
+# build/bin first: it carries the qemu-* forwarding shims (host without
+# user-mode qemu) and the timeout shim (Windows timeout.exe would eat -s).
 test-qemu-riscv64: $(TEST_HARNESS)
-	./$(TEST_HARNESS) qemu-riscv64
+	PATH="$(CURDIR)/build/bin:$$PATH" ./$(TEST_HARNESS) qemu-riscv64
 
 test-iso: $(TEST_HARNESS)
 	./$(TEST_HARNESS) iso
