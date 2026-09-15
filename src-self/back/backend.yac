@@ -620,6 +620,25 @@ let report_unbound(src, ast) = report_unbound_ex(src, ast, [])
 /* synth = 1 when src is a synthesized dylib wrapper package (not the package
  * source), so the "dylib-bound => do not compile real source" guard is
  * bypassed; link_check still approves the package. */
+/* Package initialisation (FLAT_ABI.md 2.2 / lir_let): a package's top-level
+ * values live in gvar cells, and anything that is not a literal has to be
+ * written "at run time, in source order, before any call". lir_extend_go used
+ * to keep only the package's procs and throw its statement list away, so every
+ * package-qualified cell stayed 0/nil: `let box = box_new()` read back nil and
+ * `let lit = 42` read back 0, and a package proc that used either then died
+ * (SIGSEGV at startup in the composed drivers, 139 in `import lib.log {log}`).
+ * Each package's statements are now compiled into its own `pkg/__init` proc
+ * (own frame, so slot numbers stay per-unit) and the entry calls them in
+ * dependency order before the main unit's own items. */
+let pkg_init_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+let pkg_init_add(nm) = box_set(pkg_init_box, cons(nm, box_get(pkg_init_box)))
+let pkg_init_list(_) = reverse(box_get(pkg_init_box))
+let pkg_init_reset(_) = box_set(pkg_init_box, [])
+
 let lir_extend_go(pkg, src, acc, synth) =
   if synth == 0 and pkg != "rt.num" and link_is_dylib(pkg) == 1 then acc
   else
@@ -663,10 +682,24 @@ let lir_extend_go(pkg, src, acc, synth) =
             [env_new(0), 1, fs, 0, list_new(), 0],
             len(anf)) in
           let out = reverse(sigma_list(nth(st, 2))) in
+          /* The package's own top-level statement list (gset for its `let`s,
+           * plus any side effects) becomes one proc of this unit. Its frame is
+           * its own, so the slot numbers it was compiled with stay valid. */
+          let inits = nth(st, 4) in
+          let out2 =
+            if len(inits) == 0 then out
+            else
+              let inm = str_cat(pkg, "/__init") in
+              let ibody = insn_extend(insn_push(list_new(),
+                            ["local", nth(st, 1), 0]), inits) in
+              let iproc = ["proc", inm, 0, 0,
+                           insn_push(ibody, ["ret", nth(st, 5)]), inm] in
+              let _ = pkg_init_add(inm) in
+              cons(iproc, out) in
           let _ = box_set(imap_box, saved_i) in
           let _ = box_set(malias_box, saved_m) in
           let _ = pkg_prefix_set(saved_p) in
-          out
+          out2
 
 let lir_extend(pkg, src, acc) = lir_extend_go(pkg, src, acc, 0)
 
@@ -760,6 +793,7 @@ let rt_base(_) =
   else c
 
 let rt_for_link(_) =
+  let _ = pkg_init_reset(0) in
   let st = visit_go(1, 0, box_get(link_need_box), 0,
                     cons("rt.num", box_get(link_local_box)), []) in
   let pkgs = reverse(nth(st, 1)) in
@@ -778,6 +812,15 @@ let rt_for_link(_) =
  * them environment-free and resolves references to them without captures.
  * The set travels INSIDE Σ (toplevel_seed) -- there is no global box, so
  * there is nothing a caller could forget to reset. */
+/* `ycall` slots for the package inits, in the entry frame: the inits come
+ * first, so their results occupy slots nslots..nslots+nin-1 and the unit's own
+ * items keep their original numbering. */
+let pkg_init_calls(xs, i, base, acc) =
+  if i >= len(xs) then acc
+  else
+    let acc2 = insn_push(acc, ["ycall", base + i, nth(xs, i), []]) in
+    pkg_init_calls(xs, i + 1, base, acc2)
+
 let pass_lir(anf_list) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
@@ -790,7 +833,11 @@ let pass_lir(anf_list) =
   let st = lir_all(0, anf_list,
              [env_new(0), 1, fs0, 0, list_new(), 0],
              len(anf_list)) in
-  let entry = start_proc(nth(st, 1), nth(st, 5), nth(st, 4)) in
+  let inits = pkg_init_list(0) in
+  let nin = len(inits) in
+  let body = insn_extend(pkg_init_calls(inits, 0, nth(st, 1), list_new()),
+                         nth(st, 4)) in
+  let entry = start_proc(nth(st, 1) + nin, nth(st, 5), body) in
   tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
 
 /* In-process image: _eval + print, not OS _start. */
@@ -808,8 +855,12 @@ let pass_lir_yjit(anf_list) =
              len(anf_list)) in
   let nslots = nth(st, 1) in
   let pslot = nth(st, 5) in
-  let b0 = insn_extend(insn_push(list_new(), ["local", nslots + 8, 0]),
-                       nth(st, 4)) in
+  let inits = pkg_init_list(0) in
+  let nin = len(inits) in
+  let body0 = insn_extend(pkg_init_calls(inits, 0, nslots + 8, list_new()),
+                          nth(st, 4)) in
+  let b0 = insn_extend(insn_push(list_new(), ["local", nslots + 8 + nin, 0]),
+                       body0) in
   let ins =
     insn_push(insn_push(insn_push(b0,
       ["mov_imm", nslots, 2]),
