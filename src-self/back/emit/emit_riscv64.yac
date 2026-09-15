@@ -15,10 +15,29 @@ let rv_frame_bytes(nlocals) =
   let nbytes = bshl(nlocals + 1, 3) in
   bshl(bshr(nbytes + 15, 4), 4)
 
+/* Unified operand access (LIR.md 4.4.2). Loads can be:
+ *   ["cap", i]  -> the i-th free variable, [self + 32 + i*8]  (capRef)
+ *   ["self"]    -> the closure object itself
+ *   ["imm", n]  -> an encoded constant
+ *   bare int k  -> frame slot k, [fp - 8*(k+1)]
+ * nth() on a bare int is a safe non-string read, so the dispatch is total.
+ * self lives in s11 (x27) -- callee-saved and used by nothing else here; an
+ * object-ABI prologue parks the CALLER's copy in frame slot 0 (never allocated
+ * by the front) so a capRef body can read its caps after any nested call. */
 let rv_slot(b, slot, store, r) =
-  let off = 0 - bshl(slot + 1, 3) in
-  let _ = rv_addi(b, 5, 8, off) in
-  if store then rv_sd(b, r, 5, 0) else rv_ld(b, r, 5, 0)
+  if store then
+    let off = 0 - bshl(slot + 1, 3) in
+    let _ = rv_addi(b, 5, 8, off) in
+    rv_sd(b, r, 5, 0)
+  else
+    let k0 = nth(slot, 0) in
+    if k0 == "cap" then rv_ld(b, r, 27, 32 + bshl(nth(slot, 1), 3))
+    else if k0 == "self" then rv_addi(b, r, 27, 0)
+    else if k0 == "imm" then rv_li(b, r, nth(slot, 1))
+    else
+      let off = 0 - bshl(slot + 1, 3) in
+      let _ = rv_addi(b, 5, 8, off) in
+      rv_ld(b, r, 5, 0)
 
 let rv_sp_push(b, rs) =
   let _ = rv_addi(b, 2, 2, 0 - 8) in
@@ -591,10 +610,10 @@ let emit_rv_fcall(st, insn) =
       cons([12, hpos, 136 + bshl(hid, 3)], nth(st, 3)))
 
 /* Direct call to an in-image yac proc (object ABI, LIR.md 4.4.4): the object
- * register is left unset and params start at a0 (registers 10..) -- measured:
- * a1-starting (11..) broke args7, which used to pass, because this backend's
- * prologue reads param slot j+1 from register 10+j as well. The extra args on
- * the stack start one lower than a flat call's, see rv_apply_push. */
+ * register a0 is left unset and the real params start at a1 (registers 11..),
+ * the rest on the stack -- matching this backend's prologue (which reads param
+ * slot j+1 from a(j+1) for a marked frame) and see rv_apply_push for why the
+ * stacked args start one slot lower than a flat call's. */
 let emit_rv_ycall(st, insn) =
   let b = nth(st, 0) in
   let args = nth(insn, 3) in
@@ -607,7 +626,7 @@ let emit_rv_ycall(st, insn) =
   let load(j) =
     if j >= nreg then 0
     else
-      let _ = rv_slot(b, nth(args, j), false, 10 + j) in
+      let _ = rv_slot(b, nth(args, j), false, 11 + j) in
       load(j + 1) in
   let _ = load(0) in
   let pos = bytes_len(b) in
@@ -646,22 +665,35 @@ let emit_rv_iccall(st, insn) =
   let _ = rv_slot(b, nth(insn, 1), true, 10) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
 
+/* Runtime $procs are named yac_* and keep the plain 8-register layout; every
+ * other in-image target is an object-ABI proc (params from a1, a0 = the object
+ * passed through from our own self). Mirrors x86_64's traw. */
+let is_yac_proc_name(nm) =
+  let n = str_len(nm) in
+  n >= 4 and str_ref(nm, 0) == 121 and str_ref(nm, 1) == 97
+    and str_ref(nm, 2) == 99 and str_ref(nm, 3) == 95
+
 let emit_rv_tcall_other(st, insn, is_entry) =
   let b = nth(st, 0) in
   let fn = nth(insn, 2) in
   let args = nth(insn, 3) in
   let na = len(args) in
-  if na > 8 then
-    let nstack = na - 8 in
+  let traw = is_yac_proc_name(fn) in
+  let nreg = if traw then 8 else 7 in
+  let areg(j) = if traw then j else j + 1 in
+  if na > nreg then
+    let nstack = na - nreg in
     let pad = if band(nstack, 1) == 0 then 0 else 8 in
     let _ = if pad == 0 then 0 else rv_addi(b, 2, 2, 0 - 8) in
-    let _ = rv_apply_push(b, 8, 0, args, na - 1) in
+    let _ = rv_apply_push(b, nreg, 0, args, na - 1) in
     let load(j) =
-      if j >= 8 then 0
+      if j >= nreg then 0
       else
-        let _ = rv_slot(b, nth(args, j), false, 10 + j) in
+        let _ = rv_slot(b, nth(args, j), false, 10 + areg(j)) in
         load(j + 1) in
     let _ = load(0) in
+    let _ = if traw then 0 else rv_addi(b, 10, 27, 0) in
+    let _ = if is_entry then 0 else rv_slot(b, 0, false, 27) in
     let pos = bytes_len(b) in
     let _ = rv_jal(b, 1, 0) in
     let _ = rv_addi(b, 2, 2, bshl(nstack, 3) + pad) in
@@ -679,12 +711,14 @@ let emit_rv_tcall_other(st, insn, is_entry) =
     let load(j) =
       if j >= na then 0
       else
-        let _ = rv_slot(b, nth(args, j), false, 10 + j) in
+        let _ = rv_slot(b, nth(args, j), false, 10 + areg(j)) in
         load(j + 1) in
     let _ = load(0) in
+    let _ = if traw then 0 else rv_addi(b, 10, 27, 0) in
     let _ =
       if is_entry then 0
       else
+        let _ = rv_slot(b, 0, false, 27) in
         let _ = rv_addi(b, 2, 8, 0) in
         let _ = rv_ld(b, 1, 2, 8) in
         let _ = rv_ld(b, 8, 2, 0) in
@@ -756,14 +790,25 @@ let emit_rv_i_core(st, insn, is_entry) =
         cons([6, sh_save], patches2)
       else patches2 in
     let _ = rv_addi(b, 2, 2, 0 - nbytes) in
+    /* Object ABI (LIR.md 4.4.4), keyed off the 4th local field the front writes
+     * for every closure-callable proc -- never inferred here. The object sits in
+     * a0 and the real params follow in a1-a7, then the stack at
+     * [fp + 16 + 8*(j-7)]; slot 0 keeps the CALLER's self, because this frame is
+     * about to retarget it at itself. Unmarked frames (_start, runtime $procs,
+     * host leaves) keep the plain 8-register layout. */
+    let selfabi = len(insn) > 3 in
+    let nregargs = if selfabi then 7 else 8 in
+    let aregadd = if selfabi then 1 else 0 in
+    let _ = if is_entry then 0 else rv_slot(b, 0, true, 27) in
+    let _ = if selfabi then rv_addi(b, 27, 10, 0) else 0 in
     let storep(j) =
       if j >= nparams then 0
-      else if j < 8 then
-        let _ = rv_slot(b, j + 1, true, 10 + j) in
+      else if j < nregargs then
+        let _ = rv_slot(b, j + 1, true, 10 + j + aregadd) in
         storep(j + 1)
       else
-        let _ = rv_ld(b, 10, 8, 16 + bshl(j - 8, 3)) in
-        let _ = rv_slot(b, j + 1, true, 10) in
+        let _ = rv_ld(b, 6, 8, 16 + bshl(j - nregargs, 3)) in
+        let _ = rv_slot(b, j + 1, true, 6) in
         storep(j + 1) in
     let _ = storep(0) in
     let labs =
@@ -853,6 +898,7 @@ let emit_rv_i_core(st, insn, is_entry) =
     if is_entry then
       let _ = rv_jalr(b, 0, 1, 0) in emit_st4(st, b, cur, labels, patches)
     else
+      let _ = if is_entry then 0 else rv_slot(b, 0, false, 27) in
       let _ = rv_addi(b, 2, 8, 0) in
       let _ = rv_ld(b, 1, 2, 8) in
       let _ = rv_ld(b, 8, 2, 0) in
@@ -1398,77 +1444,51 @@ let emit_rv_i_clos(st, insn, is_entry) =
   else if k == "apply" or k == "icall" then
     let dst = nth(insn, 1) in
     let clos = nth(insn, 2) in
-    let ncap = apply_ncap(insn) in
     let args = apply_args(insn) in
     let nargs = len(args) in
-    let ntot = ncap + nargs in
-    if ncap < 0 then
-      if nargs == 1 or nargs == 2 then
-        let _ = rv_slot(b, clos, false, 10) in
-        let _ = rv_slot(b, nth(args, 0), false, 11) in
-        let _ = if nargs == 2 then rv_slot(b, nth(args, 1), false, 12) else 0 in
-        let pos = bytes_len(b) in
-        let _ = rv_jal(b, 1, 0) in
-        let _ = rv_slot(b, dst, true, 10) in
-        let nm = if nargs == 1 then "yac_apply1" else "yac_apply2" in
-        emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, nm))
+    let nstack = if nargs > 7 then nargs - 7 else 0 in
+    let pad = if nstack == 0 then 0 else if band(nstack, 1) == 0 then 0 else 8 in
+    let _ = if pad == 0 then 0 else rv_addi(b, 2, 2, 0 - 8) in
+    let _ = if nstack == 0 then 0 else rv_apply_push(b, 7, 0, args, nargs - 1) in
+    /* Closure call, object ABI: the object (untagged) goes in a0 and the real
+     * params follow from a1; caps are the CALLEE's business now -- it reads them
+     * through its self register, so nothing is repacked at the call site (that
+     * repack was the dead flat-ABI scheme, which fed a capRef callee garbage). */
+    let _ = rv_slot(b, clos, false, 10) in
+    let _ = rv_untag_ptr(b, 10) in
+    let load(j) =
+      if j >= nargs or j >= 7 then 0
       else
-        let _ = rv_unimp(b) in emit_st4(st, b, cur, labels, patches)
-    else
-      let nstack = if ntot > 8 then ntot - 8 else 0 in
-      let nreg = if ntot < 8 then ntot else 8 in
-      let pad = if nstack == 0 then 0 else if band(nstack, 1) == 0 then 0 else 8 in
-      let _ = rv_slot(b, clos, false, 28) in
-      let _ = rv_untag_ptr(b, 28) in
-      let _ = if pad == 0 then 0 else rv_addi(b, 2, 2, 0 - 8) in
-      let _ = if nstack == 0 then 0 else rv_apply_push(b, 8, ncap, args, ntot - 1) in
-      let _ = rv_ld(b, 6, 28, 16) in
-      let _ = rv_apply_load(b, ncap, args, 0, nreg) in
-      let _ = rv_jalr(b, 1, 6, 0) in
-      let _ =
-        if nstack == 0 then 0
-        else rv_addi(b, 2, 2, bshl(nstack, 3) + pad) in
-      let _ = rv_slot(b, dst, true, 10) in
-      emit_st4(st, b, cur, labels, patches)
+        let _ = rv_slot(b, nth(args, j), false, 11 + j) in
+        load(j + 1) in
+    let _ = load(0) in
+    let _ = rv_ld(b, 6, 10, 16) in
+    let _ = rv_jalr(b, 1, 6, 0) in
+    let _ =
+      if nstack == 0 then 0
+      else rv_addi(b, 2, 2, bshl(nstack, 3) + pad) in
+    let _ = rv_slot(b, dst, true, 10) in
+    emit_st4(st, b, cur, labels, patches)
   else if k == "tailapply" or k == "ticall" then
     let clos = nth(insn, 2) in
-    let ncap = apply_ncap(insn) in
     let args = apply_args(insn) in
     let nargs = len(args) in
-    let ntot = ncap + nargs in
-    if ncap < 0 then
-      if nargs == 1 or nargs == 2 then
-        let _ = rv_slot(b, clos, false, 10) in
-        let _ = rv_slot(b, nth(args, 0), false, 11) in
-        let _ = if nargs == 2 then rv_slot(b, nth(args, 1), false, 12) else 0 in
-        let _ =
-          if is_entry then 0
-          else
-            let _ = rv_addi(b, 2, 8, 0) in
-            let _ = rv_ld(b, 1, 2, 8) in
-            let _ = rv_ld(b, 8, 2, 0) in
-            rv_addi(b, 2, 2, 16) in
-        let pos = bytes_len(b) in
-        let _ = rv_jal(b, 0, 0) in
-        let nm = if nargs == 1 then "yac_apply1" else "yac_apply2" in
-        emit_st4(st, b, cur, labels, emit_patch_jmpf(nth(st, 4), patches, pos, nm))
-      else
-        let _ = rv_unimp(b) in emit_st4(st, b, cur, labels, patches)
-    else if ntot > 8 then
+    /* Same object ABI as apply (object in a0, params from a1). This really
+     * jumps, so the frame is gone: stack args would have to live above it and
+     * stay unimplemented, and self is handed back to our own caller first. */
+    if nargs > 7 then
       let _ = rv_unimp(b) in emit_st4(st, b, cur, labels, patches)
     else
-      let _ = rv_slot(b, clos, false, 28) in
-      let _ = rv_untag_ptr(b, 28) in
-      let _ = rv_ld(b, 6, 28, 16) in
-      let load(i) =
-        if i >= ntot then 0
-        else if i < ncap then
-          let _ = rv_ld(b, 10 + i, 28, 32 + bshl(i, 3)) in
-          load(i + 1)
+      let _ = rv_slot(b, clos, false, 10) in
+      let _ = rv_untag_ptr(b, 10) in
+      let load(j) =
+        if j >= nargs then 0
         else
-          let _ = rv_slot(b, nth(args, i - ncap), false, 10 + i) in
-          load(i + 1) in
+          let _ = rv_slot(b, nth(args, j), false, 11 + j) in
+          load(j + 1) in
       let _ = load(0) in
+      let _ = rv_ld(b, 6, 10, 16) in
+      let _ = if is_entry then 0 else rv_slot(b, 0, false, 27) in
       let _ =
         if is_entry then 0
         else
