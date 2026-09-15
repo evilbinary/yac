@@ -6,7 +6,7 @@ package back.emit.emit_arm64
 export emit_program_arm64, a64_resolve_loop
 import back.encode.encode_arm64
 import lib.log {log_fatal}
-import back.emit.emit {apply_args, apply_ncap, apply_u64, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {apply_args, apply_ncap, apply_u64, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {dlib_a64_va, emit_cabi_all}
 import back.pack.elf {elf_pic, funsym_set}
 import back.pack.target {JIT_VADDR}
@@ -570,6 +570,16 @@ let emit_a64_fcall(st, insn) =
   let pad = if nstack == 0 then 0 else if band(nstack, 1) == 0 then 0 else 8 in
   let _ = if pad == 0 then 0 else a64_sub_imm(b, 31, 31, 8) in
   let _ = if nstack == 0 then 0 else a64_apply_push(b, 0, args, na - 1) in
+  /* Host leaf (@name): the slot address is materialised into x0 (the tag
+   * writes rd=0, like x86_64's movabs) and the slot value parked in x16 BEFORE
+   * the arguments are loaded -- x0..x7 belong to the call. */
+  let hid = host_id(intern(nth(insn, 2)), 0) in
+  let hpos = if hid < 0 then 0 - 1 else bytes_len(b) in
+  let _ =
+    if hid < 0 then 0
+    else
+      let _ = a64_mov_imm64(b, 0, 0) in
+      a64_ldur(b, 16, 0, 0) in
   let load(j) =
     if j >= nreg then 0
     else
@@ -577,13 +587,21 @@ let emit_a64_fcall(st, insn) =
       load(j + 1) in
   let _ = load(0) in
   let pos = bytes_len(b) in
-  let _ = a64_bl(b, 0) in
+  let _ =
+    if hid < 0 then a64_bl(b, 0)
+    else
+      /* Call through the slot: the entry is in x16, loaded above. */
+      a64_blr(b, 16) in
   let _ =
     if nstack == 0 then 0
     else a64_add_imm(b, 31, 31, bshl(nstack, 3) + pad) in
   let _ = a64_slot(b, nth(insn, 1), true, 0) in
-  emit_st4(st, b, nth(st, 1), nth(st, 2),
-    emit_patch_rel(nth(st, 4), nth(st, 3), pos, nth(insn, 2)))
+  if hid < 0 then
+    emit_st4(st, b, nth(st, 1), nth(st, 2),
+      emit_patch_rel(nth(st, 4), nth(st, 3), pos, nth(insn, 2)))
+  else
+    emit_st4(st, b, nth(st, 1), nth(st, 2),
+      cons([12, hpos, 136 + bshl(hid, 3)], nth(st, 3)))
 
 let emit_a64_ccall(st, insn) =
   let b = nth(st, 0) in
@@ -1698,6 +1716,12 @@ let a64_resolve_patch(st, p) =
     dlib_a64_va(b, nth(p, 1), 0, globbase + 128, codebase)
   else if tag == 9 then
     a64_apply_b26(b, nth(p, 1), nth(offs, nth(p, 2)))
+  else if tag == 12 then
+    /* A host-leaf slot address: globbase + 136 + 8*id. Numeric tag on purpose:
+     * a64_resolve_fun_patches only keeps NUMERIC (and cclab/beq) patches. */
+    /* A host-leaf slot address: globbase + 136 + 8*id. x86_64 bakes these
+     * inline; here the address is only known once data_start is fixed. */
+    dlib_a64_va(b, nth(p, 1), 0, globbase + nth(p, 2), codebase)
   else if tag == 11 then
     dlib_a64_va(b, nth(p, 1), 0, nth(st, 5) + nth(p, 2) + 1, codebase)
   else if tag == 15 then
