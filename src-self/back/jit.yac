@@ -70,6 +70,11 @@ let gref_fill(code) =
       let nm = nth(names, i) in
       let cobj = ds + base + bshl(i, 5) in
       let entry = gfn_lookup(fnl, nm) in
+      /* Hushed trace (--verbose): which fill source this blob's cell got. A
+       * function with neither a gfn entry nor a gval value stays 0 and the next
+       * line then applies 0 ("not a function"). Host-side read only. */
+      let _ = log("jit", nm) in
+      let _ = if entry == 0 then log("jit", "  no gfn entry") else 0 in
       let _ =
         if entry != 0 then
           /* Function: write the raw entry into the stub's entry field. */

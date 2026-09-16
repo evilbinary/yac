@@ -46,6 +46,16 @@ let run(argv) =
   let e2 = if err == 0 then "" else err in
   [rc, o2, e2]
 
+/* Run argv with `src` on stdin: the harness has no pipe primitive, and both the
+ * repl group and the in-process `pkg compiler` case need one. It lives HERE,
+ * next to run(), and not next to repl_feed(): top-level bindings resolve in
+ * SOURCE ORDER, so a use above the definition is "unbound variable"
+ * (FLAT_ABI.md 8.6, measured: "error: 318:1: unbound variable 'run_stdin'"). */
+let run_stdin(argv, src) =
+  let p = str_cat(TMP, "/stdin_in.yac") in
+  let _ = write_file(p, src) in
+  run(["sh", "-c", str_cat(join_cmd(argv), str_cat(" <", p))])
+
 let native(p) =
   let n = str_len(p) in
   let already =
@@ -326,6 +336,19 @@ let pkg_one(st, yc, c) =
   let kind = nth(c, 1) in
   let want = nth(c, 2) in
   let bin = native(str_cat(TMP, str_cat("/pkg_", name))) in
+  if kind == "host" then
+    /* Host-leaf package (see the `compiler` row): only the yc process has the
+     * leaves, so run the case in-process -- `--repl` preloads the file on the
+     * path that fills the blob's host table from the running image
+     * (back/jit.yac:97 host_tab_fill). `--cps` does NOT (it is the unnamed jit
+     * path), and an AOT image has no host at all. The case's last value is
+     * echoed, which is what `want` matches. */
+    let r = run_stdin(append(yc, ["--repl", pkg_case(name)]), ":q\n") in
+    let blob = str_cat(nth(r, 1), nth(r, 2)) in
+    if nth(r, 0) != 0 then check(st, str_cat("pkg ", name), want, blob)
+    else if contains(blob, want) then check(st, str_cat("pkg ", name), want, want)
+    else check(st, str_cat("pkg ", name), want, blob)
+  else
   let cr = run(append(yc, [pkg_case(name), "-o", bin])) in
   if nth(run(["test", "-f", bin]), 0) != 0 then
     check(st, str_cat("pkg ", name), "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
@@ -344,7 +367,13 @@ let pkg_cases(_) = [
   ["math", "rc", "42"],
   ["profile", "rc", "42"],
   ["prof_hook", "rc", "42"],
-  ["compiler", "rc", "42"],
+  /* `compiler` is a THIN wrapper over host leaves: pkg/compiler.yac binds every
+   * symbol as an @host leaf, so the compiler tree is deliberately NOT linked
+   * into the guest (see its header). An AOT image therefore answers
+   * "host fn unavailable: <leaf>" and returns 0 -- by design, not a bug
+   * (FLAT_ABI.md 8.1). The API only exists inside the yc process, so this case
+   * runs there ("host" kind), not as a standalone binary. */
+  ["compiler", "host", "42"],
   ["import_as", "rc", "42"]
 ]
 
@@ -391,7 +420,9 @@ let compiler_cases(_) = [
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
   ["io_rw", "rc", "2"], ["system", "rc", "0"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"],
   ["tco_cap", "rc", "42"], ["tco_7args", "rc", "42"], ["callcc", "rc", "42"], ["callcc2", "rc", "99"],
-  ["callcc3", "rc", "42"], ["callcc4", "rc", "99"]]
+  ["callcc3", "rc", "42"], ["callcc4", "rc", "99"],
+  /* `import` after a use still binds (interp twin: "import after use"). */
+  ["import_late", "rc", "1"]]
 
 let compile_msg_err(st, yc, src, name, needle) =
   let p = str_cat(TMP, "/synerr.yac") in
@@ -436,9 +467,7 @@ let unbound_bads(_) = [
 
 /* stdin → yc --repl. rc must be 0 (not SIGSEGV) and stdout must contain needle. */
 let repl_feed(yc, src) =
-  let p = str_cat(TMP, "/repl_in.yac") in
-  let _ = write_file(p, src) in
-  run(["sh", "-c", str_cat(join_cmd(yc), str_cat(" --repl <", p))])
+  run_stdin(append(yc, ["--repl"]), src)
 
 let repl_check(st, yc, name, src, needle) =
   let r = repl_feed(yc, src) in

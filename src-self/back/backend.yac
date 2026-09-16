@@ -536,8 +536,26 @@ let rewrite_imports_go(ast, i, acc, local) =
     let e2 = if nth(e, 0) == "import" then fill_import(e, local) else e in
     rewrite_imports_go(ast, i + 1, cons(e2, acc), local)
 
+/* Top-level `import` forms are DECLARATIONS: hoist them in front of every other
+ * item, stably (imports keep their relative order, everything else keeps its).
+ * Both callers of rewrite_imports (report_unbound_ex's pre-check and
+ * link_from_ast) walk the AST in source order and widen scope where an import
+ * sits, so an import written AFTER a use left the name unbound -- measured on
+ * tests/interp/import_late.yac (`let f(_) = host_os(0)` / `import rt.os`):
+ *   yc  : error: 1:1: unbound variable 'host_os'
+ *   yac : error: 1:12: unbound variable 'host_os'
+ * With import first the same file prints 1 in both. Declarations having no
+ * runtime effect, reordering them in front is semantics-preserving; the only
+ * observable change is that a late import now binds (which is the point). */
+let hoist_imports(ast, i, imps, rest) =
+  if i >= len(ast) then append(reverse(imps), reverse(rest))
+  else
+    let e = nth(ast, i) in
+    if nth(e, 0) == "import" then hoist_imports(ast, i + 1, cons(e, imps), rest)
+    else hoist_imports(ast, i + 1, imps, cons(e, rest))
+
 let rewrite_imports(ast, i, acc) =
-  rewrite_imports_go(ast, i, acc, local_exports(ast))
+  rewrite_imports_go(hoist_imports(ast, 0, [], []), i, acc, local_exports(ast))
 
 /* Compile one rt/*.yac against already-lowered procs so later stdlib
  * files can call earlier ones. Guest always gets rt.num; other packages
