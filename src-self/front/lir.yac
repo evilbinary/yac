@@ -979,7 +979,10 @@ let lir_var(atom, st) =
        * never reach here (calli uses ycall). The name is resolved through Σ
        * because the patch/bake is keyed by the package-qualified code
        * name. */
-      lir_clos_atom(st, sigma_code(nth(st, 3), g))
+      let code = sigma_code(nth(st, 3), g) in
+      let se2 = sigma_ent_h(nth(st, 3), code, hash_str(code)) in
+      if se2 != 0 and nth(se2, 1) == 0 then lir_gvar_atom(st, code)
+      else lir_clos_atom(st, code)
     else if se != 0 and len(se) > 3 and nth(se, 3) == "$proc" then
       lir_clos_prim(st, nth(se, 0))
     else if se != 0 then lir_clos_atom(st, nth(se, 0))
@@ -1001,6 +1004,8 @@ let lir_qvar(atom, st) =
      * go through the wrapper -- its raw entry cannot be a closure entry. */
     if se != 0 and len(se) > 3 and nth(se, 3) == "$proc" then
       lir_clos_prim(st, nth(se, 0))
+    else if se != 0 and len(se) > 2 and nth(se, 1) == 0 then
+      lir_gvar_atom(st, nth(se, 0))
     else if se != 0 then lir_clos_atom(st, nth(se, 0))
     else
       [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]

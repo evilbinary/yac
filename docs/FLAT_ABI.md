@@ -363,6 +363,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | 4 | 仓库根的 `./yc`（无扩展名） | 本机 `EXEEXT = .exe` ⇒ `make` 只产出 `yc.exe`；MSYS 的 `./yc` 会**抢先命中**那个无扩展名文件 ⇒ 陈旧二进制反复误导调试（已发生两次）。构建后须 `cp -f yc.exe yc`，或直接 `rm yc` |
 | 5 | `build/` | 遗留 `patch_rv.py` 与 `emit_*.bak*` / `run.yac.bak` / `Makefile.bak` 等备份；无害，但别当源码读 |
 | 6 | `qemu-*` 组 | `--shared ccall add` 在**转发 shim**下按设计 SKIP（每组 3 个）：shim 只上传可执行文件，`.so` 会被远端当 Windows 路径找。该用例只在**真 qemu** 环境回归 |
+| 7 | 前端 | **顶层 `let` 绑定的值不能当函数调用**：`let f(x) = print(x)` + `let a = f` + `a("x")` ⇒ `error: LIR: call to undefined procedure 'a'`（`lir.yac` 的 `calli` 只认 Σ 里的过程与局部槽；顶层值名不在其中）。是**响亮报错**而非静默 ✓，但与"值是一等函数"不一致（Chez 里 `(define a f)` 后 `(a "x")` 是合法的）|
 
 ### 8.3 当时的基线（改动验收对照）
 
@@ -454,6 +455,67 @@ letfun 保持原来的分配式 `closure`** ✓。因为把这条**推广到所�
 | 1 | 用户 letfun 的取值仍是每次分配 ⇒ 跨出现点 `==` 仍是 `#f`（同一次具体化的槽共享仍是 `#t`） |
 | 2 | REPL 显示名字（`<fun cons>`）：cell 的 `+32` 在 `nenv = 0` 时无人读 ✓，可以放名字，但要同步改 3 条 repl 用例的 `<fun>` 期望 |
 | 3 | `pkg profile` **仍是 139** ⇒ §8.1 第一条的根因**已被证伪**，待重新定位（见 §8.4 第 4 条） |
+
+#### 8.5.1 顶层 letfun 相等：A 方案实测（**未落地**，2026-09-16）
+
+现象：**顶层** `let f(x) = …` + `let a = f` ⇒ `a == f` 是 `#f` ✗（Chez 里 `(define a f)` /
+`(eq? a f)` 是 `#t`）；**同一写法放进 `in`-链**（局部绑定）却是 `#t` ✓ —— 因为局部的 letfun
+在定义点建一次闭包并绑进 Γ 槽，而顶层名字**没有那个"位置"**。
+
+`FLAT_ABI.md` §7.2 的修法是"顶层 ⇒ `Γ[x ↦ cell(x)]` + 发 `gset` 发布"。实测下来它**不是
+一处前端小改**，路上有三个坑，全部有据可查：
+
+| # | 坑 | 证据 |
+|---|---|---|
+| 1 | `gvar`（**代码入口** stub）**不能**用于顶层 letfun 的通用情形 | 前端注释声称"顶层 letfun 必然 ncap == 0"（`lir.yac:1593-1596`），但 `tests/run.yac` 的 `interp_step` 被判为顶层 letfun（`sigma_kind == 1`）**且 ncap = 3** ✗ ⇒ `error: EMIT: patch to unknown proc 'interp_step'` |
+| 2 | `gset` / `gval` 的名字表**只认"顶层值名"**，不认 letfun 名 | 在 letfun 定义点发 `gset` 后，三种名字形态都失败：`gname` ✗、`resolve_call(name)` ✗（这正是既有 kind==2 发布处注释指定的形态）、`sigma_code(Σ, name)` ✗ ⇒ 一律 `error: EMIT: patch to unknown proc 'slen'`（`front/lexer.yac:46` 的顶层 letfun，被当值使用） |
+| 3 | Σ 的 proc 列表里 **stub 先于真记录**金 | `lir_proc_find` 按名字取到的第一条是 `lir_letfun_begin` 建的 stub（空 insns，ncap 不可信），所以"这条 letfun 是否 0 捕获"在**引用点**判不准 |
+
+⇒ 要做 A，必须**同时**：把发射侧的 *name → cell* 表扩到 letfun 名（新能力，含前向引用语义），
+并且在引用点拿到**可信的 ncap**（跳过 stub）。只改前端会在自举第二阶段就断（实测 ✓）。
+
+**窄版（B）实测也撞同一堵墙** ✗：只对"**真记录**（insns 非空）且 ncap == 0"的顶层 letfun 用
+`gvar` 静态 cell —— `src-self` 自举**通过** ✓（连 `slen` 都能解析 ✓），但**独立程序**里失败 ✗：
+`let f(x) = print(x)`（顶层 letfun，0 捕获）+ `let a = f` ⇒ `error: EMIT: patch to unknown proc
+'f'` ⇒ 程序自己的顶层 letfun 名**不在发射侧的 name/id 表**里。
+
+⇒ **两项修复都在发射侧**（前端改不动）：(1) 把 *name → cell/id* 表建到"单元的顶层名字（含
+letfun）"；(2) 规定这类名字的发布语义（`gset` 写一次 / `gvar` 静态 cell）与前向引用。这三条
+（8.5.1 的坑 1/2/3）是同一件事的三面。
+
+### 8.6 实测：`gvar` 引用的过程会在装配时被丢掉（2026-09-16）
+
+**现象**：把顶层 letfun 的取值改成静态 cell（`gvar`，§8.5 的推广）后，
+`let f(x) = … in let a = f in a == f` 编译报 `error: EMIT: patch to unknown proc 'f'`。
+
+**读数链**（同一台编译器逐层仪表化，全部只打标量）：
+
+| 观测点 | 过程数 | 长度 = 1 的名字数 |
+|---|---|---|
+| 前端 prog（`--dump-lir t5.yac`） | 3（`_start` + `f` stub + `f` 真体） | 2 |
+| 后端 `tco_prog` 现场（`backend.yac:841/870`） | 110 | 2 |
+| 发射器收到的 `prog[1]`（`emit_x86_64.yac:2078`） | **109** | **0** |
+| 发射器 `funs`（= `prog[1]` + 10 个宿主桩） | 120 | 0 |
+
+⇒ 发射期 id 表**每进程只建一次**（实测 `emit_ids_new` 调用数 = 1），内容是 `prog[1]` + 宿主桩
+（`emit_ids_bind` `emit.yac:334`，值 = 索引 + 1）。`emit_map_get` 在 fmap miss 后会**按名字扫全表**
+（`emit_id_scan` `emit.yac:220`）—— 所以"表里没有"意味着**这个名字确实不在被发射的 prog 里**，
+而不是解析器不认识 letfun（先前一句"表里没有 letfun 名"说得太绝对，此处更正）。
+
+**结论**：`f` 的 proc 记录是在**装配被发射的 prog 时**被丢的
+（109 = 110 − 2×`f` + 1×`pkg/__init`；长度 = 1 的名字数 2 → 0 同时印证）。该装配只跟**调用 / 闭包**引用，
+**不把 `["gvar", dst, name]` 当成对 `name` 这个过程的引用**。
+
+**修法（未做）**：让装配 / 引用收集把 `gvar`（以及以过程名为目标的 `gset` / `gval`）算作引用。
+做完后本条目与 §8.5 的"用户 letfun 跨出现点 `==`"是同一次修复 —— 实测：把 `f` 也**直接调用**一次
+（`f(1)`）时，`a == f` **立刻变成 `1`** ✓（miss 消失，语义正确）。
+
+**另记两条环境事实**：
+
+| # | 事实 |
+|---|---|
+| 1 | **顶层绑定按源码顺序解析**：新帮手若插在首次使用**之后**，编译报 `unbound variable 'xxx'`（实测 `9717:1`）⇒ 新函数 / 新 box 必须定义在使用点之前 |
+| 2 | **发射期打印会拖垮自举**：在 emit 路径里逐条 `print` 会让 stage2（编译器编自己）**段错误**（两次实测）⇒ 仪表只用标量计数，并保持极低输出量 |
 
 ---
 

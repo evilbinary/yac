@@ -44,6 +44,23 @@ let is_kernel_name(n) =
   else
     if n == "print" then true
     else false
+/* A name-cell reference: `gvar`/`gval` read the name's cell and `gset` writes
+ * it. A 0-capture value IS the name's static stub (LIR.md 4.5 / FLAT_ABI.md
+ * 7.2), so all three keep the name's proc alive. Without this, a top-level
+ * `let f(x) = ... in let a = f in a == f` reads `f` only through `gvar`, the
+ * proc was pruned, and emit died with "patch to unknown proc 'f'". */
+let gname_of(x) =
+  if x == 0 then 0
+  else if is_int(x) then x
+  else intern(x)
+
+let insn_name_ref(ins) =
+  let k = nth(ins, 0) in
+  if k == "gvar" then gname_of(nth(ins, 2))
+  else if k == "gval" then gname_of(nth(ins, 2))
+  else if k == "gset" then gname_of(nth(ins, 1))
+  else 0
+
 let drop_unreachable(funs) =
   let seen = fmap_new(0) in
   let _ = fmap_init_n(seen, 4096) in
@@ -66,7 +83,9 @@ let drop_unreachable(funs) =
   let scan(insns, i) =
     if i >= len(insns) then 0
     else
-      let _ = mark(insn_callee(nth(insns, i))) in
+      let ins = nth(insns, i) in
+      let _ = mark(insn_callee(ins)) in
+      let _ = mark(insn_name_ref(ins)) in
       scan(insns, i + 1) in
   let _ = mark(intern("_start")) in
   let _ = mark(intern("_eval")) in
