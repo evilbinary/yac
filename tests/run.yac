@@ -362,6 +362,7 @@ let compiler_cases(_) = [
   ["ncap12_disp8", "rc", "16"],
   ["capture_shadow_top", "rc", "17"], ["capture_shadow_top_many", "rc", "80"],
   ["higher", "rc", "7"], ["curry", "rc", "7"], ["return_clo", "rc", "15"],
+  ["fun_eq", "out", "1\nequal"],
   ["list_len", "rc", "3"], ["list_nth", "rc", "20"], ["list_set", "rc", "20"], ["list_cons", "rc", "3"],
   ["foldl", "rc", "10"], ["map_len", "rc", "3"], ["map_nth", "rc", "4"], ["filter", "rc", "2"],
   ["append", "rc", "4"], ["drop", "rc", "3"], ["str_len", "rc", "3"], ["str_ref", "rc", "105"],
@@ -377,6 +378,7 @@ let compiler_cases(_) = [
   ["float_add", "out", "-0.005"],
   ["float_cmp", "rc", "42"],
   ["print_list", "out", "[1, [2, 3], x]\n[]"],
+  ["print_dotted", "out", "[1 . 2]\n[[1 . 2] . 3]\n[1, 2]"],
   ["print_nl", "out", "ab"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
   ["nested_comment", "rc", "42"],
@@ -456,6 +458,8 @@ let repl_cases(_) = [
   ["(exit)", "(exit)\n", "yc>"],
   ["exit as value", "exit\n:q\n", "<fun>"],
   ["cons", "cons\n:q\n", "<fun>"],
+  ["cons dotted pair", "cons(1, 2)\n:q\n", "[1 . 2]"],
+  ["cons dotted nested", "cons(cons(1, 2), 3)\n:q\n", "[[1 . 2] . 3]"],
   ["unit", "()\n:q\n", "0"],
   ["cons then unit twice", "cons\n()\n()\n:q\n", "0"],
   ["let then use", "let a = 42\na\n:q\n", "42"],
@@ -476,6 +480,9 @@ let repl_cases(_) = [
    * removed; FLAT_ABI.md 6): this is the jslot/closure half of 12.14, and this
    * case is the standing guard for that fix. */
   ["let fn then call", "let f(x) = x + 1\nprint(f(2))\n:q\n", "3"],
+  /* Chez identity across REPL lines: the name is one location, so `a == f`.
+   * Guards FLAT_ABI.md 8.5/8.6 from the REPL side too. */
+  ["let fn then eq", "let f(x) = x + 1\nlet a = f\na == f\n:q\n", "1"],
   ["let fn after expr line", "1+1\nlet f(x) = x + 1\nprint(f(2))\n:q\n", "3"],
   ["import then printf d", "let a=42\nimport fmt\nprintf(\"%d\", [a])\n:q\n", "42"],
   ["import then printf one", "let a=42\nimport fmt\nprintf(a)\n:q\n", "42"],
