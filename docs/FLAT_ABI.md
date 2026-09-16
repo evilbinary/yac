@@ -543,6 +543,36 @@ letfun）"；(2) 规定这类名字的发布语义（`gset` 写一次 / `gvar` �
 | 1 | **顶层绑定按源码顺序解析**：新帮手若插在首次使用**之后**，编译报 `unbound variable 'xxx'`（实测 `9717:1`）⇒ 新函数 / 新 box 必须定义在使用点之前 |
 | 2 | **发射期打印会拖垮自举**：在 emit 路径里逐条 `print` 会让 stage2（编译器编自己）**段错误**（两次实测）⇒ 仪表只用标量计数，并保持极低输出量 |
 
+### 8.7 已修：profiler 钩子的 ABI 错位（`pkg profile` 139）
+
+**现象**：`pkg profile` rc **139**；最小复现（5 行、不需要 `profile` 包）里钩子打印出的名字是 **0**：
+
+```yac
+let prof_enter_go(name) =
+    print(name)                        /* 期望 "f"，实际 0 */
+let f(x) = x + 1
+let _ = list_push(yac_prof_cell(), 1)  /* 让 prof 会话非空 ⇒ 钩子生效 */
+let _ = f(1)
+```
+
+**根因**：运行期（`rt_prof_enter_ins` / `rt_prof_leave_ins`）用**平** ABI 调钩子（`fcall` ⇒ 第一个参数在 **rdi**），而**用户写的** `prof_enter_go` 是普通 letfun＝**对象 ABI**（第一个参数从 **rsi** 读，LIR.md 4.4.4）⇒ 名字进 rdi、钩子读 rsi ⇒ 拿到 nil ⇒ profiler 把它当字符串哈希（`yac_str_hash` 读 `[0+24]`）⇒ 段错误。旁证：ELF 里名字**已正确烘焙**（`imm=0x414679`，tagged 池对象）；`yac_prof_enter` 的序言是 `mov %rdi,-0x10(%rbp)`（平 ✓），`prof_enter_go` 是 `mov %rsi,-0x10(%rbp)`（对象 ✗）。
+
+**两处修复**（`src-self/rt/runtime.yac`）：
+
+| # | 改动 | 覆盖的情形 |
+|---|---|---|
+| 1 | `rt_funs_rename_prof` 的重定向从 `fcall` 改为 **`ycall`**（对象 ABI） | 钩子来自**运行期 base + 被链接的包**（`pkg/profile.yac`、`src-self/back/profile.yac`）⇒ `runtime_add` 能看见并重定向 |
+| 2 | 运行期那条钩子调用把名字**同时放进 rdi 与 rsi**（`[1, 1]`） | 钩子**写在程序自己**里 ⇒ 不在 `runtime_add` 的列表里（它只拿到 `rt_base` + 链接的包）⇒ 调用保持平 ABI，靠 rdi 也能被对象钩子…… 反之同理 |
+
+**测试**：
+
+| 用例 | 断言 |
+|---|---|
+| `tests/compiler/cases/prof_hook_name.yac` | 输出恰为 **`f`**（最小复现固化；修前是 `0`） |
+| `tests/pkg/prof_hook.yac` | rc **42**：dump 存在且含 `bump`/`work`（修前 `nfuncs=0`） |
+
+**结果**：host `compiler` **182 / 1**、host `pkg` **21 / 1** ⇒ `pkg profile` 不再失败 ✓。剩余失败 **3 条**：`repl let fn after expr line`（12.14 jslot）、`pkg compiler`（跑法/设计缺口）、`import after use`（C 解释器那条路）。
+
 ---
 
 # 附录：到 `LIR.md` 的索引

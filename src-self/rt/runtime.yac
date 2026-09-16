@@ -1983,7 +1983,14 @@ let rt_prof_enter_ins(_) =
    ["label", "pe_go"],
    ["mov_imm", 8, 1 + 1],
    ["gst", 4, 8],
-   ["fcall", 6, "prof_enter_go", [1]],
+   /* The hook may be either the runtime's own no-op stub (a $proc: FLAT ABI,
+    * first param in rdi) or a USER prof_enter_go (an ordinary letfun: OBJECT
+    * ABI, first param in rsi -- runtime_add's redirect emits `ycall` for it).
+    * A program that defines the hook itself is not in the list runtime_add
+    * sees (it only gets rt_base + linked packages), so that case stays a flat
+    * `fcall`: handing the name through BOTH registers makes either callee read
+    * it. Without this the user hook saw nil and pkg profile died hashing it. */
+   ["fcall", 6, "prof_enter_go", [1, 1]],
    ["mov_imm", 8, 0 + 0],
    ["gst", 4, 8],
    ["ret", 6]]
