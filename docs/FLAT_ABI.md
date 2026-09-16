@@ -420,14 +420,40 @@ ABI。真名**不抄第二份表** ✓：直接问镜像的 proc 列表（试用
 | 4 | **`pkg profile` 仍是 139** ⇒ §8.1 第一条的"平过程当值"根因**已被证伪**（该机制修好后它照崩）⇒ 需**重新定位**；原先的旁证（被调方为"平 2 参过程"、调用点用对象 ABI）指向别的入口 |
 | 5 | `a == cons` 仍是 **false**（实测 `let a = cons in a == cons` ⇒ 不等）—— 那是 §8.5 的下一步，不是本条修复的内容 |
 
-### 8.5 下一步：名字单元静态化（Chez 式 `eq?`）
+### 8.5 已落地：名字单元静态化（Chez 式 `eq?`）
 
 Chez 里 `(define a display)` 后 `(eq? a display)` 是 `#t` ✓，因为**读名字 = load**（一个
-稳定的值对象），而我这里 `let a = cons` 每次出现都**构造**一个新闭包 ✗（实测：`let a = f`
-对**用户函数**是 `#t` ✓（Γ 槽里共享同一对象），对**原语**是 `#f` ✗）。修法已在 §7.2 写明：
-`ncap == 0` 时**不分配**，`Γ[f ↦ cell(f)]` ⇒ `["closure", dst, name, []]` 在 `capSlots == []`
-时**取静态 cell 的地址**而不是 `yac_alloc` ✓。这一步同时给出：`eq?` ✓、零分配 ✓，以及
-REPL 显示名字（`<fun cons>`，cell 的 `+32` 在 `nenv=0` 时无人读 ✓）的可能 ✓。
+稳定的值对象），而这里 `let a = cons` 以前每次出现都**构造**一个新闭包 ✗（实测：`let a = f`
+对**用户函数**是 `#t` ✓，对**原语**是 `#f` ✗）。
+
+**修法（本轮已落地）**：§8.4 造 wrapper 时，把它的**取值**从 `["closure", dst, wn, []]`
+换成 `["gvar", dst, wn]` —— `gvar` 本来就是这个语义 ✓（`emit_x86_64.yac:1279` 原文：
+"a static stub closure [0, 0, entry, 0] in the image's globals area, **one per referenced
+name** (32 bytes) … Value = the stub's address (tagged)"）⇒ **一名一个 cell ⇒ 同一地址** ✓、
+**零分配** ✓、`icall` 的 `nenv=0` 展开照常 ✓、后端**一行未改** ✓。
+
+| 实测 | 修前 | 修后 |
+|---|---|---|
+| `let a = cons in a == cons` | `#f` ✗ | **`#t`** ✓ |
+| `let a = cons in let b = cons in a == b` | `#f` ✗ | **`#t`** ✓ |
+| `let f = str_cat` + `f("ab","cd")` | 无输出 ✗ | `abcd` ✓ |
+| 取值点分配 | 每次 `yac_alloc` | **无**（静态 cell） |
+
+**范围被刻意收窄（实测教训）**：**只有我们自己造的 wrapper** 走静态 cell ✓；**用户
+letfun 保持原来的分配式 `closure`** ✓。因为把这条**推广到所有 0 捕获闭包**会立刻炸 ✓：
+`gvar` 的 entry 是**按名字烘焙**的，它的解析器不认识**捕获过程的 letfun 名** ⇒
+实测 `error: EMIT: patch to unknown proc 'interp_step'` ✗（`tests/run.yac` 里
+`interp_step` 是 `ncap = 3` 的顶层 letfun，被 `foldl(interp_step, …)` 当值使用）。所以
+"用户函数的跨出现点相等"仍是**未做**的一步，且必须先把 `gvar` 的解析面扩到本镜像的
+捕获过程（或给这类值另一条稳定的 cell 路）✓。
+
+**仍未做**：
+
+| # | 内容 |
+|---|---|
+| 1 | 用户 letfun 的取值仍是每次分配 ⇒ 跨出现点 `==` 仍是 `#f`（同一次具体化的槽共享仍是 `#t`） |
+| 2 | REPL 显示名字（`<fun cons>`）：cell 的 `+32` 在 `nenv = 0` 时无人读 ✓，可以放名字，但要同步改 3 条 repl 用例的 `<fun>` 期望 |
+| 3 | `pkg profile` **仍是 139** ⇒ §8.1 第一条的根因**已被证伪**，待重新定位（见 §8.4 第 4 条） |
 
 ---
 

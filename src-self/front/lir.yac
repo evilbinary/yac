@@ -846,6 +846,18 @@ let lir_clos_atom(st, fname) =
      ["closure", nth(st, 2), fname, []]),
    nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
 
+/* 0-capture value for a wrapper WE created: a STATIC cell (gvar), so every
+ * occurrence is the SAME object -- `let a = cons` and `cons` compare equal,
+ * like Chez's (define a display) / (eq? a display) => #t -- and nothing is
+ * allocated (FLAT_ABI.md 7.2: "真捕获数 = 0 时不分配"). Restricted to our own
+ * wrappers: they are 0-cap, live in this unit, and their entry is baked at
+ * link time. Generalizing it to every 0-cap closure hit "patch to unknown
+ * proc" for capturing letfuns (measured: interp_step, ncap = 3), so user
+ * letfuns keep the allocating `closure` for now. */
+let lir_gvar_atom(st, fname) =
+  [insn_push(nth(st, 0), ["gvar", nth(st, 2), fname]),
+   nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
+
 /* ---- reifying a runtime $proc as a first-class value ---------------------
  * See the top of this file's value path (lir_var). A closure's entry must
  * follow the object ABI, and there must be ONE value object per name -- not a
@@ -916,7 +928,7 @@ let lir_clos_prim(st, nm) =
   else
     let wn = intern(str_cat(if target == "" then nm else target, "$v")) in
     let have = lir_proc_find(procs, wn) in
-    if have != 0 then lir_clos_atom(st, wn)
+    if have != 0 then lir_gvar_atom(st, wn)
     else
       /* Marked frame (4th field 1) = object ABI: params arrive in arg1.., slot
        * 0 keeps the caller's self. The body is one call to the primitive --
@@ -930,7 +942,7 @@ let lir_clos_prim(st, nm) =
       let w = ["proc", wn, np, 0, body, wn] in
       let st2 = [nth(st, 0), nth(st, 1), nth(st, 2),
                  sigma_cons(nth(st, 3), w), nth(st, 4)] in
-      lir_clos_atom(st2, wn)
+      lir_gvar_atom(st2, wn)
 
 let lir_var(atom, st) =
   let nm = nth(atom, 1) in
