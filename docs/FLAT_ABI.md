@@ -452,7 +452,7 @@ letfun 保持原来的分配式 `closure`** ✓。因为把这条**推广到所�
 
 | # | 内容 |
 |---|---|
-| 1 | 用户 letfun 的取值仍是每次分配 ⇒ 跨出现点 `==` 仍是 `#f`（同一次具体化的槽共享仍是 `#t`） |
+| 1 | ~~用户 letfun 的取值仍是每次分配 ⇒ 跨出现点 `==` 仍是 `#f`~~ ⇒ **2026-09-16 已修**（`ncap == 0` 走静态 cell + `gvar` 计入剪枝引用，见 §8.6） |
 | 2 | REPL 显示名字（`<fun cons>`）：cell 的 `+32` 在 `nenv = 0` 时无人读 ✓，可以放名字，但要同步改 3 条 repl 用例的 `<fun>` 期望 |
 | 3 | `pkg profile` **仍是 139** ⇒ §8.1 第一条的根因**已被证伪**，待重新定位（见 §8.4 第 4 条） |
 
@@ -483,6 +483,15 @@ letfun 保持原来的分配式 `closure`** ✓。因为把这条**推广到所�
 letfun）"；(2) 规定这类名字的发布语义（`gset` 写一次 / `gvar` 静态 cell）与前向引用。这三条
 （8.5.1 的坑 1/2/3）是同一件事的三面。
 
+> **2026-09-16 更正（见 §8.6）**：上面把 `'f'` 归因为"名字不在发射侧的 name/id 表里"⇒ 要"把表建到
+> 单元顶层名字"——**不成立** ✗。真正原因是**剪枝**：`back/lower.yac` 的 `drop_unreachable` 只沿
+> `insn_callee`（`fcall` / `ycall` / `tcall` / `closure`）标记过程，不认 `gvar` / `gval` / `gset`
+> ⇒ 只被 `gvar` 引用的顶层 letfun 在装配 prog 时被丢掉（实测 110 → 109、长度 = 1 的名字 2 → 0）。
+> 所以只修两处就够：**引用收集加 `gvar` / `gval` / `gset`**（`defceba`）+ **前端对 `ncap == 0`
+> 的顶层 letfun 用静态 cell**；name/id 表**不需要**扩（`emit_id_scan` 本来就按名字扫全表 ✓）。
+> 坑 1 仍要防 ✓：实测 `interp_step` 依旧走 `[closure, 157, interp_step, [59, 61, 63]]` ✓
+> —— 捕获型必须留在分配式 `closure` 上。
+
 ### 8.6 实测：`gvar` 引用的过程会在装配时被丢掉（2026-09-16）
 
 **现象**：把顶层 letfun 的取值改成静态 cell（`gvar`，§8.5 的推广）后，
@@ -506,9 +515,26 @@ letfun）"；(2) 规定这类名字的发布语义（`gset` 写一次 / `gvar` �
 （109 = 110 − 2×`f` + 1×`pkg/__init`；长度 = 1 的名字数 2 → 0 同时印证）。该装配只跟**调用 / 闭包**引用，
 **不把 `["gvar", dst, name]` 当成对 `name` 这个过程的引用**。
 
-**修法（未做）**：让装配 / 引用收集把 `gvar`（以及以过程名为目标的 `gset` / `gval`）算作引用。
-做完后本条目与 §8.5 的"用户 letfun 跨出现点 `==`"是同一次修复 —— 实测：把 `f` 也**直接调用**一次
-（`f(1)`）时，`a == f` **立刻变成 `1`** ✓（miss 消失，语义正确）。
+**修法（2026-09-16 已落地）**：剪枝的判据是 `back/lower.yac:24` 的 `insn_callee`
+（只认 `fcall` / `ycall` / `tcall` / `closure`），`drop_unreachable`（`:47`）据此收集存活过程。
+新增 `insn_name_ref`：`gvar` / `gval` 取 `insn[2]`、`gset` 取 `insn[1]`，在 `scan` 里与
+`insn_callee` 一起 `mark`（`gname_of` 同时接受已 intern 的 id 和字符串；`mark` 对非过程名是空操作）。
+这一步与 §8.5 的"用户 letfun 跨出现点 `==`"是同一次修复。
+
+**验收（实测）**：
+
+| 用例 | 结果 |
+|---|---|
+| `let f(x) = … in let a = f in a == f` | **1** ✓（原 `0` ✗）；`if a == f then print("equal")` 打到 `equal` ✓ |
+| `let a = f in let b = f in a == b` | **1** ✓ |
+| `foldl(add2, 0, [1,2,3,4])`（0 捕获 letfun 传给运行期 HOF） | **10** ✓ |
+| `make test-compiler` | **176 / 1** ✓（同基线，唯一失败仍是 `repl let fn after expr line`） |
+| `qemu-arm64` / `qemu-riscv64` | **81 / 0** ×2 ✓（各 3 SKIP） |
+| `make test` 全量 | **679 / 7** ✓（仍是那 4 个用例，无新增） |
+
+**仍未做（同一族的前端限制）**：**把函数当值的变量再调用**（`let a = f in a(4)`）报
+`error: LIR: call to undefined procedure 'a'` —— callee 只走 Γ / Σ 解析，不认"值是过程"的绑定。
+（`let f = str_cat` 后 `f("ab","cd")` 同样报这条。）
 
 **另记两条环境事实**：
 
