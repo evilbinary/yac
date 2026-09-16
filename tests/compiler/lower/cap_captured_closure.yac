@@ -1,0 +1,10 @@
+/* capRef 回归：被捕获的闭包再被调用（apply 的 clos 是 ["cap",j]）。
+ * 坑：calli 没把 Γ 负标记转成 ["cap",j] 操作数，apply 拿槽号
+ * -1 当闭包装载，rdi = 保存的 rbp，间接调用跳进栈数据。
+ * 期望退出码 42。 */
+let mk(n) =
+  let addn = fun(x) -> x + n in
+  let twice(f2, v) = f2(f2(v)) in
+  let g(y) = twice(addn, y) in
+  g(40)
+mk(1)

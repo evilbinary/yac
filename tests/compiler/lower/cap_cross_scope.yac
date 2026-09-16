@@ -1,0 +1,11 @@
+/* capRef 回归：隔代作用域引用（孙子层用祖父层的局部）。
+ * 坑：若传递捕获缺失，孙子层的引用会 Γ-miss → Σ 回退 →
+ * ycall 直调（不传对象寄存器），r13 残留导致 cap 读取错位。
+ * 期望退出码 25。 */
+let g(n) =
+  let k = 10 in
+  let mid(x) =
+    let inner(y) = y + k + n in
+    inner(x * 2) in
+  mid(n)
+g(5)

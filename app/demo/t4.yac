@@ -1,0 +1,4 @@
+import compiler
+compile_it("1")()
+
+print("hello")

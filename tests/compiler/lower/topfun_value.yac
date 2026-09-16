@@ -1,0 +1,9 @@
+/* 顶层函数作为一等值传递（gvar→closure 包装 + 被捕获闭包 icall 的
+ * 负标记转换回归用例）。期望退出码 10。 */
+let addv(a, b) = a + b
+let foldl2(f, z, xs) =
+  let rec(i, acc) =
+    if i >= len(xs) then acc else rec(i + 1, f(acc, nth(xs, i))) in
+  rec(0, z)
+let f() = foldl2(addv, 0, [1, 2, 3, 4])
+f()
