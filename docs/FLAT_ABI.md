@@ -334,6 +334,49 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 
 ---
 
+## 8. 实测缺口与欠账（台账，2026-09-15）
+
+本节只记**实测到的事实**（行号以当时工作树为准），不是设计意图。目的：这些
+点现在**不报错**，但迟早会被踩到 —— 记在这里，免得下次从零再查一遍。
+
+### 8.1 四类失败（全量 679 / 7）
+
+| 用例 | 现象 | 根因 | 证据 |
+|---|---|---|---|
+| `pkg profile` | rc **139**（期望 42） | **平过程被当闭包值调用**：profiling 打开后进普通函数 ⇒ 调用点按**对象 ABI** 放参（真参从 `rsi` 起、`rdi` 不设），被调方是**平**过程（形状 = `yac_str_cat`：`len(a)`+`len(b)`），从 `rdi` 读 ⇒ `len(0)` ⇒ 段错误 | gdb 崩点 `mov 0x18(%rax),%rax`（`rax=0`）；调用点 `mov %rax,%rsi; xor %rax,%rax; mov %rax,%rdx…`；被调方 `mov %rdi,-0x10(%rbp)` + 两个 `len`。x86_64 的 ABI 表：`ycall` `emit_x86_64.yac:702-733`（对象 ABI），`tcall_other` `:172-186`，自尾调用 `:758` / 跨过程尾调用 `:760`（写死 `traw=true`）。闭包值的产生点：`front/lir.yac:846`、`:1501` |
+| `repl let fn after expr line` | `f(2)` 给 **2**（期望 3） | 12.14 的 **jslot / 闭包入口发布**那半：表达式行之后才定义的函数落在会话 blob 里，其闭包入口没人从宿主注册表填 ⇒ 调用落到错入口 | `tests/run.yac:479` 的注释即为这条的常驻哨兵 |
+| `pkg compiler` | rc **0**（期望 42） | **不是崩溃**：程序调用 `compiler` 包的**宿主叶**（`@compile_native` / `@host_arch` / `@mk_target` / `@host_format`），它们只在 **yc 自己的镜像**里有实现；被当独立可执行跑时槽是桩 ⇒ 打印 `host fn unavailable` ⇒ 返回 0 | 桩的生成点 `emit_x86_64.yac:2065-2080`（`unstub_procs`）。**结论是跑法/设计缺口**：该用例应走进程内 host 路径，而不是独立二进制 |
+| `import after use` | 失败 | 走的是 **C 解释器 `./yac`** 那条路（`interp` 组 35/1），与 `yc` 后端无关 | `make test-interp` |
+
+> **规范结论（值得写进实现约束）**：**闭包值的调用目标必须是对象 ABI（标记帧）**。
+> `$proc` 这类**平**过程被当成值（`closure`）去 `apply` / `icall` 时，必须在中间套一层
+> 对象 ABI 的 **thunk**（丢弃对象、把真参从 arg1 搬到 arg0），或者干脆不允许这种取值。
+> 缺这一层时不会编译报错，只会静默错位 —— `pkg profile` 就是它的一次实爆。
+
+### 8.2 潜伏缺口（现在不失败，踩到才炸）
+
+| # | 位置 | 内容 |
+|---|---|---|
+| 1 | `emit_arm64.yac:1475`、`emit_riscv64.yac:1480` | `tailapply` / `ticall` 带**栈参数**（>7）时发 `brk` / `unimp` ⇒ 未实现；真跳到就 trap，偏"响亮失败"但仍是缺口 |
+| 2 | `emit_x86_64.yac:754` vs `emit_arm64.yac:685` / `emit_riscv64.yac:671` | 跨过程尾调用的目标 ABI：x86_64 **写死 `traw=true`**（当作平目标），arm64 / riscv64 按名字判（`is_yac_proc_name`）。假设不对称 —— 对象 ABI 的跨过程目标在 x86_64 上会被按平调用（与 §8.1 第 1 条同族） |
+| 3 | 提交 `943d438` | 提交信息写 "correct riscv64 ycall param register offset"，实际内容是**回退 + 改注释**（`10 + j` 是对的，注释错了）⇒ 信息与内容不符 |
+| 4 | 仓库根的 `./yc`（无扩展名） | 本机 `EXEEXT = .exe` ⇒ `make` 只产出 `yc.exe`；MSYS 的 `./yc` 会**抢先命中**那个无扩展名文件 ⇒ 陈旧二进制反复误导调试（已发生两次）。构建后须 `cp -f yc.exe yc`，或直接 `rm yc` |
+| 5 | `build/` | 遗留 `patch_rv.py` 与 `emit_*.bak*` / `run.yac.bak` / `Makefile.bak` 等备份；无害，但别当源码读 |
+| 6 | `qemu-*` 组 | `--shared ccall add` 在**转发 shim**下按设计 SKIP（每组 3 个）：shim 只上传可执行文件，`.so` 会被远端当 Windows 路径找。该用例只在**真 qemu** 环境回归 |
+
+### 8.3 当时的基线（改动验收对照）
+
+| 组 | 结果 |
+|---|---|
+| host `compiler` | 176 / 1 |
+| host `interp` | 35 / 1 |
+| host `pkg` | 19 / 2 |
+| `qemu-arm64` | **81 / 0**（3 SKIP） |
+| `qemu-riscv64` | **81 / 0**（3 SKIP） |
+| 全量 `make test` | **679 / 7** |
+
+---
+
 # 附录：到 `LIR.md` 的索引
 
 **本文不定义任何指令** —— 语法、形态、语义、现状与迁移**全部**以 `docs/LIR.md`
