@@ -846,6 +846,92 @@ let lir_clos_atom(st, fname) =
      ["closure", nth(st, 2), fname, []]),
    nth(st, 2), nth(st, 1), nth(st, 2) + 1, nth(st, 3), nth(st, 4)]
 
+/* ---- reifying a runtime $proc as a first-class value ---------------------
+ * See the top of this file's value path (lir_var). A closure's entry must
+ * follow the object ABI, and there must be ONE value object per name -- not a
+ * fresh construction per occurrence. */
+
+let lir_wrap_args(n, i, acc) =
+  if i > n then reverse(acc)
+  else lir_wrap_args(n, i + 1, cons(i, acc))
+
+let lir_proc_find(procs, nm) =
+  let go(i) =
+    if i >= len(procs) then 0
+    else if nth(nth(procs, i), 1) == nm then nth(procs, i)
+    else go(i + 1) in
+  go(0)
+
+/* The flat runtime $proc this source name denotes: `print` keeps its own name,
+ * everything else is `yac_<name>` (LIR.md 4.10: primitives are `call yac_*`).
+ * Asked of the image's own proc list -- never a second table. */
+let lir_prim_target(procs, nm) =
+  let a = lir_proc_find(procs, nm) in
+  if a != 0 and nth(a, 0) == "$proc" then nm
+  else
+    let b = str_cat("yac_", nm) in
+    let c = lir_proc_find(procs, b) in
+    if c != 0 and nth(c, 0) == "$proc" then b else ""
+
+/* Arity of the primitives that have NO procedure at all -- they lower to an
+ * inline LIR op (lir_rt), so the wrapper body is that op rather than an fcall.
+ * Only the arity is listed here; the op itself is asked of lir_rt, so there is
+ * still exactly one description of what the primitive does.
+ * (`filter` / `foldr` / `head` / `popen` are in is_prim_name but have neither
+ * a proc nor a lir_rt entry -- calling them is `undefined procedure` today, so
+ * they cannot be reified either, and they fall through to the error below.) */
+let lir_prim_inline_arity(nm) =
+  if nm == "exit" then 1
+  else if nm == "str_len" then 1
+  else if nm == "str_ref" then 2
+  else if nm == "bytes_len" then 1
+  else 0 - 1
+
+/* The inline op for a prim that has no proc. Shapes are copied VERBATIM from
+ * the lir_rt_* builders, with the destination fixed at slot 1 (the wrapper's
+ * result slot). lir_rt itself cannot be called from here -- it is defined
+ * further down and this front has no forward references. `band` (and anything
+ * else without a proc) is therefore not reifiable yet; it errors loudly
+ * instead of silently becoming some other function. */
+let lir_prim_inline_op(nm, args) =
+  if nm == "exit" then ["exit", nth(args, 0)]
+  else if nm == "str_len" then ["str_len", 1, nth(args, 0)]
+  else if nm == "str_ref" then ["str_ref", 1, nth(args, 0), nth(args, 1)]
+  else if nm == "bytes_len" then ["bytes_len", 1, nth(args, 0)]
+  else 0
+
+/* [closure dst wrapper []] where `wrapper` is the 0-cap marked proc that
+ * calls the primitive with the object ABI. One per target name: if it is
+ * already in the unit's proc list, reuse it (that is what makes `a == cons`
+ * possible once the 0-cap closure stops allocating). */
+let lir_clos_prim(st, nm) =
+  let procs = sigma_list(nth(st, 3)) in
+  let target = lir_prim_target(procs, nm) in
+  let np =
+    if target != "" then nth(lir_proc_find(procs, target), 2)
+    else lir_prim_inline_arity(nm) in
+  if np < 0 then
+    log_fatal(str_cat("LIR: '", str_cat(nm,
+      "' cannot be used as a value -- its runtime procedure is not in this image")))
+  else
+    let wn = intern(str_cat(if target == "" then nm else target, "$v")) in
+    let have = lir_proc_find(procs, wn) in
+    if have != 0 then lir_clos_atom(st, wn)
+    else
+      /* Marked frame (4th field 1) = object ABI: params arrive in arg1.., slot
+       * 0 keeps the caller's self. The body is one call to the primitive --
+       * `fcall` for a $proc (the flat convention stated right there, no ABI
+       * inference), or the primitive's own inline op when it has no proc. */
+      let args = lir_wrap_args(np, 1, []) in
+      let op =
+        if target != "" then ["fcall", 1, target, args]
+        else lir_prim_inline_op(nm, args) in
+      let body = [["local", np + 1, np, 1], ["label", "$tco"], op, ["ret", 1]] in
+      let w = ["proc", wn, np, 0, body, wn] in
+      let st2 = [nth(st, 0), nth(st, 1), nth(st, 2),
+                 sigma_cons(nth(st, 3), w), nth(st, 4)] in
+      lir_clos_atom(st2, wn)
+
 let lir_var(atom, st) =
   let nm = nth(atom, 1) in
   let h = hash_str(nm) in
@@ -882,8 +968,10 @@ let lir_var(atom, st) =
        * because the patch/bake is keyed by the package-qualified code
        * name. */
       lir_clos_atom(st, sigma_code(nth(st, 3), g))
+    else if se != 0 and len(se) > 3 and nth(se, 3) == "$proc" then
+      lir_clos_prim(st, nth(se, 0))
     else if se != 0 then lir_clos_atom(st, nth(se, 0))
-    else if is_prim_name(nm) then lir_clos_atom(st, "print")
+    else if is_prim_name(nm) then lir_clos_prim(st, nm)
     else
       /* Not in Γ or sigma: a first-class cross-image reference. Flat ABI
        * (12.14): the value is the callee's entry address, loaded from a
@@ -897,7 +985,11 @@ let lir_qvar(atom, st) =
     [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
   else
     let se = sigma_ent_h(nth(st, 3), g, hash_str(g)) in
-    if se != 0 then lir_clos_atom(st, nth(se, 0))
+    /* Qualified name (pkg/name). Same rule as lir_var: a $proc target has to
+     * go through the wrapper -- its raw entry cannot be a closure entry. */
+    if se != 0 and len(se) > 3 and nth(se, 3) == "$proc" then
+      lir_clos_prim(st, nth(se, 0))
+    else if se != 0 then lir_clos_atom(st, nth(se, 0))
     else
       [nth(st, 0), 0, nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
 

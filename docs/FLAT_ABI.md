@@ -375,6 +375,60 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | `qemu-riscv64` | **81 / 0**（3 SKIP） |
 | 全量 `make test` | **679 / 7** |
 
+### 8.4 已修复：平过程当值（2026-09-16）
+
+**修的是什么。** `let f = <原语>` / `map(<原语>, xs)` 这类"原语当值"以前会得到一个
+**平入口**的闭包 ✗ —— 闭包调用按对象 ABI 传参（对象进 arg0、真参从 arg1，`LIR.md`
+4.4.4），而 `$proc` 的真参从 arg0 起 ⇒ 整体错一格 ⇒ `pkg profile` 读 `len(0)` 段错误、
+`let f = str_cat` 静默无输出。且 `front/lir.yac` 的 `is_prim_name(nm)` 兜底把**任何**
+原语都包成 `print` ✗（实测：`let f = len` / `cons` / `str_cat` 全部得到
+`[closure, 1, print, []]`）—— 连 `repl` 的三条 `<fun>` 用例都只是**假通过**（值错、显示对）。
+
+**怎么修的**（只动前端，后端零改动）：取值点不再把裸入口放进闭包 ✗，而是给该原语生成一个
+**规范化的 0 捕获 wrapper proc**（每个目标名一个，名字 `<target>$v`）✓：
+
+```
+[proc, yac_str_cat$v, 2, 0, [[local, 3, 2, 1],            ; 标记帧 = 对象 ABI
+                             [label, $tco],
+                             [fcall, 1, yac_str_cat, [1, 2]], [ret, 1]], yac_str_cat$v]
+[closure, dst, yac_str_cat$v, []]                         ; 取值点
+```
+
+`fcall` 是唯一把平约定**写明白**的调用形态（`LIR.md` 4.4），所以两侧都不需要靠名字形状猜
+ABI。真名**不抄第二份表** ✓：直接问镜像的 proc 列表（试用 `nm` / `yac_`+`nm`，看哪个是
+`$proc`）。wrapper 名确定 ⇒ "是否已生成"就是查一次单元自己的 proc 列表（Σ）⇒ **无全局
+注册表、无 reset 陷阱**。三个取值点都收敛了：`lir_var` 的 Σ-`$proc` 分支、`is_prim_name`
+分支，以及 `lir_qvar`（限定名 `pkg/name`）的同一条。
+
+**效果**（`src-self` 两阶段自举 + 全组无回归）：
+
+| 组 | 修前 | 修后 |
+|---|---|---|
+| host `compiler` | 176 / 1 | **176 / 1** ✓ |
+| host `interp` / `pkg` / `boot` | 35/1 · 19/2 · 1/0 | 同 ✓ |
+| `qemu-arm64` / `qemu-riscv64` | 81 / 0 | **81 / 0** ✓ |
+| `let f = str_cat` + `f("ab","cd")` | 无输出 ✗ | **`abcd`** ✓ |
+| `repl cons` / `exit as value` | 假通过（值是 `print`） | 真通过 ✓ |
+
+**新台账（同一轮实测）：**
+
+| # | 事实 |
+|---|---|
+| 1 | `filter` `foldr` `head` `popen` 在 `is_prim_name` 里，但**既无 `yac_*` 过程、也无 `lir_rt` 条目** ⇒ 连**按名调用**都是 `undefined procedure` ⇒ 当值只能**报错**（不静默） |
+| 2 | `band` 是内联原语但没有 wrapper（见下）⇒ 当值报错 |
+| 3 | **这个前端不允许前向引用** —— `lir_rt` 定义在 `lir_var` 之后，所以从取值点**不能**调用它（实测：`unbound variable 'lir_rt'`）⇒ 内联原语的 op 形状在 `lir_prim_inline_op` 里**抄了 4 条**（`exit` / `str_len` / `str_ref` / `bytes_len`），出处已注释；`band` 因为要复用 `bin()` 而暂未支持 |
+| 4 | **`pkg profile` 仍是 139** ⇒ §8.1 第一条的"平过程当值"根因**已被证伪**（该机制修好后它照崩）⇒ 需**重新定位**；原先的旁证（被调方为"平 2 参过程"、调用点用对象 ABI）指向别的入口 |
+| 5 | `a == cons` 仍是 **false**（实测 `let a = cons in a == cons` ⇒ 不等）—— 那是 §8.5 的下一步，不是本条修复的内容 |
+
+### 8.5 下一步：名字单元静态化（Chez 式 `eq?`）
+
+Chez 里 `(define a display)` 后 `(eq? a display)` 是 `#t` ✓，因为**读名字 = load**（一个
+稳定的值对象），而我这里 `let a = cons` 每次出现都**构造**一个新闭包 ✗（实测：`let a = f`
+对**用户函数**是 `#t` ✓（Γ 槽里共享同一对象），对**原语**是 `#f` ✗）。修法已在 §7.2 写明：
+`ncap == 0` 时**不分配**，`Γ[f ↦ cell(f)]` ⇒ `["closure", dst, name, []]` 在 `capSlots == []`
+时**取静态 cell 的地址**而不是 `yac_alloc` ✓。这一步同时给出：`eq?` ✓、零分配 ✓，以及
+REPL 显示名字（`<fun cons>`，cell 的 `+32` 在 `nenv=0` 时无人读 ✓）的可能 ✓。
+
 ---
 
 # 附录：到 `LIR.md` 的索引
