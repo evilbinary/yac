@@ -2507,7 +2507,16 @@ let runtime_funs(_) =
    ["$proc", "yac_f64_rel", 3, 0, rt_f64_rel_ins(0), "yac_f64_rel"],
    ["$proc", "yac_f64_print", 1, 0, rt_f64_print_ins(0), "yac_f64_print"]]
 
-/* Rewrite fcall "prof_enter_go"/"prof_leave_go" inside one insn list. */
+/* Rewrite the profiler's hook call inside one insn list.
+ *
+ * The runtime's own hooks (`runtime_prof_stubs`) are $procs -- FLAT ABI, first
+ * param in rdi -- so the plain `fcall prof_*_go` in rt_prof_enter/leave_ins is
+ * right for them. The USER hook (`prof_enter_go` in package profile, and in
+ * src-self/back/profile.yac for the compiler itself) is an ordinary letfun,
+ * i.e. OBJECT ABI: object in rdi (unset here), first param from rsi (LIR.md
+ * 4.4.4). Redirecting a flat call at it handed the name to rdi while the hook
+ * read rsi: the hook saw nil, `pkg profile` hashed it (yac_str_hash([0+24])) and
+ * died with 139. So the redirect has to switch to the object convention too. */
 let rt_insns_set_go(insns, newn, i, out) =
   if i >= len(insns) then out
   else
@@ -2516,7 +2525,7 @@ let rt_insns_set_go(insns, newn, i, out) =
       if nth(ins, 0) == "fcall" then
         let callee = intern(nth(ins, 2)) in
         if callee == intern("prof_enter_go") or callee == intern("prof_leave_go") then
-          list_push(out, ["fcall", nth(ins, 1), newn, nth(ins, 3)])
+          list_push(out, ["ycall", nth(ins, 1), newn, nth(ins, 3)])
         else list_push(out, ins)
       else list_push(out, ins) in
     rt_insns_set_go(insns, newn, i + 1, out)
