@@ -14,6 +14,8 @@
  * printed "wrote ..." and then reported nfuncs=0 (the name never arrived).
  */
 import profile
+import io
+import str
 
 let bump(x) =
     x + 1
