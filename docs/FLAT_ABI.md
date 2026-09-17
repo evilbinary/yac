@@ -285,7 +285,7 @@ IR 收敛的完整方案（KISS / OCP 准则、六类维度泄漏、逐条迁移
 | `yjit` clos_list / `host_tab_fill` 残留 | 首会话槽拷贝 ⇒ **核实：`clos_list` 早已不存在** ✓，但 **`host_tab_fill` 是活的** ✗（7 处 ✓）—— 它就是 §8.10 里把宿主叶地址写进**会话** G+136 槽的那一位 ✓，**不能删** ✗（本行只剩前半段是旧的 ✓）|
 | `gcall` | rev1 的调用指令 |
 | `pass_lir` 的 `TOPVALS` 打印、`gvst_push` 的 `GVST?` 打印 | 调试残留 |
-| 第 6 步收敛掉的 opcode | `xcall` / `apply` / `ticall` / `tailapply` / `iccall` / `$icall` / `gvld` / `gvst` / `gfnst` —— **逐项核实后（§8.12 普查 ✓）**：`tailapply` / `ticall` / `xcall` **已删** ✓；`gvld` / `gvst` / `gfnst` 本来就没有 ✓；**`apply` / `iccall` / `$icall` 仍是活的** ✗（分别见 §8.12 的出现次数 ✓）⇒ 这行只剩 `apply` 一项待做（即下一行的"改形态" ✓）|
+| 第 6 步收敛掉的 opcode | `xcall` / `apply` / `ticall` / `tailapply` / `iccall` / `$icall` / `gvld` / `gvst` / `gfnst` —— **本条已结清（2026-09-17 ✓）**：`tailapply` / `ticall` / `xcall` **已删** ✓（§8.12 ✓）、**`apply` 已收进唯一动态调用形态** ✓（§8.16 三步 ✓）、`gvld` / `gvst` / `gfnst` 本来就没有 ✓；`iccall` / `$icall` 经核实**是活的** ✗（C 互操作 ✓ / 内核手写 LIR ✓）⇒ **不在删除范围** ✓ |
 
 **逐项核实（2026-09-17 ✓，方法同 §8.12 普查：全用例库 111 个 dump + 源码扫描 ✓）**：
 
@@ -1060,6 +1060,58 @@ marked 的钩子会从 1 号参数寄存器读到别的东西 ⇒ 输出**必然
 
 > 附带说明 ✓：`prof_hook_name.yac` 的注释里那段"同放 rdi 与 rsi"的描述已按新机制改写 ✓ ——
 > 否则它会变成下一份"过期真相" ✓。
+
+### 8.16 已做：`apply` 收进唯一动态调用形态（三步 ✓）—— 2026-09-17
+
+**先把"值不值"厘清** ✓：`LIR.md` §4.4.6 已经把"`apply` / `icall` / `tailapply` / `$icall` 全删 ✓、
+调用只有一种"写成**目标设计** ✓，§4.4.7 记的落地现状是"`apply`/`icall` 的 emit 保留为对象 ABI 序列 ✓、
+**前端的发码点已收敛** ✓" ⇒ 要紧的不是删一个拼写好看 ✓，而是**少一个"调用点必须与目标帧协商"的编译期字段** ✓
+（`ncap` ✓）—— 本会话抓到的 §8.1 / §8.7 / §8.11 / §8.15 全是这一类 ✗。查证结果比预期好：
+
+| 事实 | 结论 |
+|---|---|
+| 三个后端**没有任何一处**读 `ncap` ✓ | `apply` 与 `icall` 在 **emit 层早已是同一条指令** ✓ |
+| x86_64 `emit_x86_i_clos` 里那套"旧平 ABI 重排 + 动态 nenv 跳表" ✗ | **死代码** ✓（该函数只在 `k == "closure"` 时被调用 ✓）|
+| arm64 / riscv 的注释 ✓ | 写明 caps 由**被调方**经 self 寄存器读 ✓、"repack 是**已死的平 ABI 方案**" ✓ |
+
+⇒ 三步里**没有一步需要动 ABI** ✓：步 1 只换拼写 ✓、步 2 只删拼写 ✓ —— 机器码逐字节不变 ✓
+（步 1 后与步 2 后各做一次固定点自举，**两次都 IDENTICAL** ✓，这正是"ncap 早已没人读"的实证 ✓）。
+
+**步 0：删死代码 + 撤 `apply_ncap`** ✓
+
+- `emit_x86_64.yac`：删掉 `emit_x86_i_clos` 内整段 `apply`/`icall` ✓（含动态 nenv 跳表 ✗）。
+- `emit.yac`：删 `apply_ncap` ✓（撤导出 ✓ + 撤三后端 import ✓）；`icall_args` 保留并简化为 `nth(insn, 3)` ✓。
+- 验收：全量 **726 / 0** ✓（未变 ⇒ 那段确实不可达 ✓）。
+
+**步 1：前端改为只发 `icall`** ✓
+
+`lir.yac` 两处发码点 ✓：`["apply", dst, ["self"], ncap, ss]` → `["icall", dst, ["self"], ss]` ✓；
+`["apply", dst, clo, ncap, ss]` → `["icall", dst, clo, ss]` ✓（caps 由对象携带 ✓，调用点不再重排 ✓）。
+**TCO 不受影响** ✓：`tco_find` 早已同时认 `apply`/`icall` ✓、`tco_one` 的 `icall` 分支产出 `tcall` ✓ ——
+正证据：`tests/compiler/cases/tco_cap.yac` ✓（`let x = 42 in let loop(n) = … loop(n-1) in loop(100000)` ✓）
+的 LIR 仍是 `[tcall, 7, loop, [6]]` ✓ ⇒ 带捕获的自递归仍走循环 ✓（否则 10 万层必爆栈 ✓）。
+
+**步 2：删拼写** ✓
+
+| 位置 | 改动 |
+|---|---|
+| `lir.yac` | `tco_find` 只认 `icall` ✓；`tco_one` 删掉与之重复的 `apply` 分支 ✓ |
+| 三后端 | 分发条件 `k == "apply" or k == "icall"` → `k == "icall"` ✓（arm64 / riscv 的 `i_clos` 守卫同步 ✓）|
+| `backend.yac` 的 `vops(0)` | 摘掉 `"apply"` ✓（有 `vop_known` 兜底 ⇒ 残留会**校验期响亮报错** ✓）|
+| `emit.yac` | `apply_args` → **`icall_args`** ✓（名字也改准 ✓，不留过期真相 ✓）|
+
+**验收** ✓：
+
+| 项 | 结果 |
+|---|---|
+| 自身 LIR 普查（2.6 MB ✓）| `apply` **387 → 0** ✓；`icall` 33 → **404** ✓ ⇒ `[apply` 已不可能再出现 ✓ |
+| TCO 正证据 | `tco_cap.yac` 仍为 `[tcall, 7, loop, [6]]` ✓ |
+| 两趟自举 + 固定点 | 通过 ✓，**stage2 ≡ stage3 逐字节相同** ✓（步 1 后、步 2 后各验一次 ✓）|
+| 全量 `make test` | **726 / 0** ✓（0 条 FAIL ✓，含 arm64 / riscv64 用例组 ✓）|
+
+> **§6 的 opcode 条目就此结清** ✓：`tailapply` / `ticall` / `xcall` / **`apply`** 已删 ✓；
+> `gvld` / `gvst` / `gfnst` 本来就没有 ✓；`iccall` / `$icall` 经核实**是活的** ✓（C 互操作 / 内核手写 LIR ✓），
+> **不在删除范围** ✓ —— 至此 §6 只剩那 8 项"逐项核实早已不存在 / 仍在用"的记录 ✓（见本节的状态表 ✓）。
 
 ---
 
