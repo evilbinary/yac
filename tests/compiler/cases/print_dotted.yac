@@ -1,0 +1,6 @@
+/* A pair's cdr is not always a list. The printer used to feed it straight back
+ * into the list loop, so `print(cons(1, 2))` printed "[1," and died with
+ * SIGSEGV (REPL repro). Chez-style: a non-cons, non-nil tail prints " . x". */
+print(cons(1, 2))
+print(cons(cons(1, 2), 3))
+print(cons(1, [2]))

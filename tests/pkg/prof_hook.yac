@@ -1,0 +1,37 @@
+/* Profiler hook regression (the pkg profile 139).
+ *
+ * The runtime's yac_prof_enter/leave redirect their hook call to whatever
+ * `prof_enter_go` / `prof_leave_go` the program provides (runtime_add's
+ * rt_funs_rename_prof). That user hook is an ordinary letfun -- OBJECT ABI,
+ * first param from rsi (LIR.md 4.4.4) -- while the runtime's own stubs are
+ * $procs (flat, first param in rdi). Redirecting a flat `fcall` at the user
+ * hook handed the name to rdi while the hook read rsi: the hook saw nil, the
+ * profiler hashed it (yac_str_hash -> [0+24]) and the program died with 139
+ * before writing any record.
+ *
+ * So this case asserts the whole chain, not just "it did not crash": the dump
+ * must exist AND must contain the profiled function's name. Before the fix it
+ * printed "wrote ..." and then reported nfuncs=0 (the name never arrived).
+ */
+import profile
+import io
+import str
+
+let bump(x) =
+    x + 1
+
+let work(n, acc) =
+    if n <= 0 then acc else work(n - 1, bump(acc))
+
+let path = "build/test_tmp/prof_hook.prof"
+let _ = prof_enable(path)
+let _ = work(8, 0)
+let _ = prof_dump(0)
+if exists(path) == false then 0
+else
+  let s = read_or_0(path) in
+  if s == 0 then 0
+  else if contains(s, "# yc-prof") == false then 0
+  else if contains(s, "bump") == false then 0
+  else if contains(s, "work") == false then 0
+  else 42

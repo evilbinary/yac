@@ -1,0 +1,13 @@
+/* capRef 回归：带捕获的自递归嵌套 lambda（尾调用 + 非尾调用）。
+ * 曾经的坑：self 的 Γ 条目丢失 ncap，calli 把带捕获的自调用错派给
+ * ycall（不传对象寄存器），被调者 r13 残留调用者的对象，
+ * cap 读取到垃圾（编译器自身 run_cli/is_punct 段错误即此因）。
+ * 期望退出码 200（退出码只有 8 位，结果必须 < 256）。 */
+let outer(n) =
+  let base = 100 in
+  let rec(i, acc) =
+    if i <= 0 then acc else rec(i - 1, acc + base) + 0 in
+  let rec2(i, acc) =
+    if i <= 0 then acc else rec2(i - 1, acc + rec(1, 0)) in
+  rec2(n, 0)
+outer(2)

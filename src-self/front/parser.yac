@@ -156,9 +156,18 @@ let parse_idlist(toks, i, acc) =
     parse_idlist(toks, i + 2, cons(tok_t(toks, i), acc))
   else [reverse(cons(tok_t(toks, i), acc)), i + 1]
 
-/* One brace spec: name or `name as alias` → [local, orig]. */
+/* One brace spec: name or `name as alias` → [local, orig].
+ * Host binding `@name` → [name, name, 1]: the symbol is not looked up in
+ * the package's exports; it binds the host leaf of the same name (slot
+ * G+136+8*id). Length 3 is the host marker kept through fill_import. */
 let parse_imp1(toks, i) =
-  if tok_k(toks, i) != "ident" then 0
+  if tok_k(toks, i) == "punct" and str_len(tok_t(toks, i)) == 1
+     and str_ref(tok_t(toks, i), 0) == 64 then
+    if tok_k(toks, i + 1) != "ident" then 0
+    else
+      let n = tok_t(toks, i + 1) in
+      [[n, n, 1], i + 2]
+  else if tok_k(toks, i) != "ident" then 0
   else
     let orig = tok_t(toks, i) in
     if tok_k(toks, i + 1) == "ident" then

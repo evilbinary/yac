@@ -46,6 +46,16 @@ let run(argv) =
   let e2 = if err == 0 then "" else err in
   [rc, o2, e2]
 
+/* Run argv with `src` on stdin: the harness has no pipe primitive, and both the
+ * repl group and the in-process `pkg compiler` case need one. It lives HERE,
+ * next to run(), and not next to repl_feed(): top-level bindings resolve in
+ * SOURCE ORDER, so a use above the definition is "unbound variable"
+ * (FLAT_ABI.md 8.6, measured: "error: 318:1: unbound variable 'run_stdin'"). */
+let run_stdin(argv, src) =
+  let p = str_cat(TMP, "/stdin_in.yac") in
+  let _ = write_file(p, src) in
+  run(["sh", "-c", str_cat(join_cmd(argv), str_cat(" <", p))])
+
 let native(p) =
   let n = str_len(p) in
   let already =
@@ -326,6 +336,19 @@ let pkg_one(st, yc, c) =
   let kind = nth(c, 1) in
   let want = nth(c, 2) in
   let bin = native(str_cat(TMP, str_cat("/pkg_", name))) in
+  if kind == "host" then
+    /* Host-leaf package (see the `compiler` row): only the yc process has the
+     * leaves, so run the case in-process -- `--repl` preloads the file on the
+     * path that fills the blob's host table from the running image
+     * (back/jit.yac:97 host_tab_fill). `--cps` does NOT (it is the unnamed jit
+     * path), and an AOT image has no host at all. The case's last value is
+     * echoed, which is what `want` matches. */
+    let r = run_stdin(append(yc, ["--repl", pkg_case(name)]), ":q\n") in
+    let blob = str_cat(nth(r, 1), nth(r, 2)) in
+    if nth(r, 0) != 0 then check(st, str_cat("pkg ", name), want, blob)
+    else if contains(blob, want) then check(st, str_cat("pkg ", name), want, want)
+    else check(st, str_cat("pkg ", name), want, blob)
+  else
   let cr = run(append(yc, [pkg_case(name), "-o", bin])) in
   if nth(run(["test", "-f", bin]), 0) != 0 then
     check(st, str_cat("pkg ", name), "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
@@ -343,7 +366,14 @@ let pkg_cases(_) = [
   ["env", "rc", "42"], ["cli", "rc", "42"], ["http", "rc", "42"], ["yui", "rc", "42"],
   ["math", "rc", "42"],
   ["profile", "rc", "42"],
-  ["compiler", "rc", "42"],
+  ["prof_hook", "rc", "42"],
+  /* `compiler` is a THIN wrapper over host leaves: pkg/compiler.yac binds every
+   * symbol as an @host leaf, so the compiler tree is deliberately NOT linked
+   * into the guest (see its header). An AOT image therefore answers
+   * "host fn unavailable: <leaf>" and returns 0 -- by design, not a bug
+   * (FLAT_ABI.md 8.1). The API only exists inside the yc process, so this case
+   * runs there ("host" kind), not as a standalone binary. */
+  ["compiler", "host", "42"],
   ["import_as", "rc", "42"]
 ]
 
@@ -360,7 +390,10 @@ let compiler_cases(_) = [
   ["args7", "rc", "28"], ["args9", "rc", "45"],
   ["capture", "rc", "15"], ["multi_capture", "rc", "13"], ["capture_2args", "rc", "103"],
   ["ncap12_disp8", "rc", "16"],
+  ["capture_shadow_top", "rc", "17"], ["capture_shadow_top_many", "rc", "80"],
   ["higher", "rc", "7"], ["curry", "rc", "7"], ["return_clo", "rc", "15"],
+  ["fun_eq", "out", "1\nequal"],
+  ["prof_hook_name", "out", "f"],
   ["list_len", "rc", "3"], ["list_nth", "rc", "20"], ["list_set", "rc", "20"], ["list_cons", "rc", "3"],
   ["foldl", "rc", "10"], ["map_len", "rc", "3"], ["map_nth", "rc", "4"], ["filter", "rc", "2"],
   ["append", "rc", "4"], ["drop", "rc", "3"], ["str_len", "rc", "3"], ["str_ref", "rc", "105"],
@@ -376,6 +409,7 @@ let compiler_cases(_) = [
   ["float_add", "out", "-0.005"],
   ["float_cmp", "rc", "42"],
   ["print_list", "out", "[1, [2, 3], x]\n[]"],
+  ["print_dotted", "out", "[1 . 2]\n[[1 . 2] . 3]\n[1, 2]"],
   ["print_nl", "out", "ab"],
   ["print_fact10", "out", "3628800"], ["block_comment", "rc", "42"],
   ["nested_comment", "rc", "42"],
@@ -386,7 +420,9 @@ let compiler_cases(_) = [
   ["report", "out", "n=4 sum=300 avg=75 pass=3"], ["seq", "rc", "42"],
   ["io_rw", "rc", "2"], ["system", "rc", "0"], ["gc_loop", "rc", "42"], ["tco", "rc", "42"],
   ["tco_cap", "rc", "42"], ["tco_7args", "rc", "42"], ["callcc", "rc", "42"], ["callcc2", "rc", "99"],
-  ["callcc3", "rc", "42"], ["callcc4", "rc", "99"]]
+  ["callcc3", "rc", "42"], ["callcc4", "rc", "99"],
+  /* `import` after a use still binds (interp twin: "import after use"). */
+  ["import_late", "rc", "1"]]
 
 let compile_msg_err(st, yc, src, name, needle) =
   let p = str_cat(TMP, "/synerr.yac") in
@@ -431,9 +467,7 @@ let unbound_bads(_) = [
 
 /* stdin → yc --repl. rc must be 0 (not SIGSEGV) and stdout must contain needle. */
 let repl_feed(yc, src) =
-  let p = str_cat(TMP, "/repl_in.yac") in
-  let _ = write_file(p, src) in
-  run(["sh", "-c", str_cat(join_cmd(yc), str_cat(" --repl <", p))])
+  run_stdin(append(yc, ["--repl"]), src)
 
 let repl_check(st, yc, name, src, needle) =
   let r = repl_feed(yc, src) in
@@ -455,6 +489,8 @@ let repl_cases(_) = [
   ["(exit)", "(exit)\n", "yc>"],
   ["exit as value", "exit\n:q\n", "<fun>"],
   ["cons", "cons\n:q\n", "<fun>"],
+  ["cons dotted pair", "cons(1, 2)\n:q\n", "[1 . 2]"],
+  ["cons dotted nested", "cons(cons(1, 2), 3)\n:q\n", "[[1 . 2] . 3]"],
   ["unit", "()\n:q\n", "0"],
   ["cons then unit twice", "cons\n()\n()\n:q\n", "0"],
   ["let then use", "let a = 42\na\n:q\n", "42"],
@@ -466,8 +502,34 @@ let repl_cases(_) = [
   ["let semi then print", "let a=1234;\nprint(a)\n:q\n", "yc> 1234"],
   ["print no replay", "print(\"ONLYONCE\")\n1\n:q\n", "yc> 1"],
   ["print str after int", "1\nprint(\"hello\")\n:q\n", "hello"],
+  /* REPL function definitions (FLAT_ABI 12.14 cross-line binding).
+   * First line: works -- the emit-time gref fill places the stub entry.
+   * Second: KNOWN OPEN. A function defined on a LATER line is reached through
+   * the session slot (jslot), and the closure cell for it lives in that blob,
+   * where nothing fills the entry from host-side registries -- so the call
+   * still lands on a wrong entry (segfault). xcall is NOT involved (it was
+   * removed; FLAT_ABI.md 6): this is the jslot/closure half of 12.14, and this
+   * case is the standing guard for that fix. */
+  ["let fn then call", "let f(x) = x + 1\nprint(f(2))\n:q\n", "3"],
+  /* Chez identity across REPL lines: the name is one location, so `a == f`.
+   * Guards FLAT_ABI.md 8.5/8.6 from the REPL side too. */
+  ["let fn then eq", "let f(x) = x + 1\nlet a = f\na == f\n:q\n", "1"],
+  ["let fn after expr line", "1+1\nlet f(x) = x + 1\nprint(f(2))\n:q\n", "3"],
+  /* A host leaf used on a line AFTER a completed line, immediately after the
+   * import that introduced it. Those calls go through G+136/G+456, which for a
+   * REPL blob are the SESSION's slots (back/jit.yac host_tab_fill writes
+   * them), not the blob's own image: addressing them per-image read zeroed
+   * memory and called 0 (SIGSEGV at RIP=0, measured 2026-09-17). */
+  ["nested compile after import", "1+1\nimport compiler\ncompile(\"1+2\")\n:q\n", "<bytes>"],
   ["import then printf d", "let a=42\nimport fmt\nprintf(\"%d\", [a])\n:q\n", "42"],
-  ["import then printf one", "let a=42\nimport fmt\nprintf(a)\n:q\n", "42"]]
+  ["import then printf one", "let a=42\nimport fmt\nprintf(a)\n:q\n", "42"],
+  /* Host-view compiler pkg (12.11 @host): import must be fast, not crash,
+   * and bind the thin wrappers. Do NOT invoke compile/load here: calling a
+   * host leaf runs the real host compiler in-process and pollutes the REPL
+   * session (state isolation is open, see BOOTSTRAP_LINK.md §12.11). */
+  ["import compiler", "import compiler\n:q\n", "compiler"],
+  ["import compiler binds compile", "import compiler\ncompile\n:q\n", "<fun>"],
+  ["compile unbound without import", "compile\n:q\n", "unbound variable 'compile'"]]
 
 let repl_all(st, yc, stem) =
   let _ = banner("repl", nth(yc, 0)) in
@@ -715,41 +777,83 @@ let compiler_all(st, yc) =
 let has_cmd(c) =
   nth(run(["sh", "-c", str_cat("command -v ", str_cat(c, " >/dev/null 2>&1"))]), 0) == 0
 
+/* A forwarding shim (see build/bin/qemu-*) can provide qemu-user on a host
+ * that has none, so the Windows short-circuit only applies when nothing on
+ * PATH answers: has_cmd() below is the real test now. */
+/* build/bin/<name> is usable as a command as-is, so a plain `./harness qemu`
+ * works without exporting PATH for the qemu shims (`make test-qemu` exports it
+ * for the timeout shim, which is a bare name inside run()). */
+let qemu_local(name) =
+  let p = str_cat("build/bin/", name) in
+  if nth(run(["test", "-x", p]), 0) == 0 then p else ""
+
+let qemu_pick(name, alt) =
+  if has_cmd(name) then name
+  else if has_cmd(alt) then alt
+  else qemu_local(name)
+
 let qemu_cmd(arch) =
-  if on_win(0) then ""
-  else if arch == "arm64" then
-    if has_cmd("qemu-aarch64") then "qemu-aarch64"
-    else if has_cmd("qemu-aarch64-static") then "qemu-aarch64-static"
-    else ""
-  else if arch == "riscv64" then
-    if has_cmd("qemu-riscv64") then "qemu-riscv64"
-    else if has_cmd("qemu-riscv64-static") then "qemu-riscv64-static"
-    else ""
+  if arch == "arm64" then qemu_pick("qemu-aarch64", "qemu-aarch64-static")
+  else if arch == "riscv64" then qemu_pick("qemu-riscv64", "qemu-riscv64-static")
   else ""
+
+/* The forwarding shim uploads the guest binary to a Linux box and swaps our -L
+ * for one that points at a real sysroot (see qemu_root). */
+let qemu_is_shim(q) =
+  let local = qemu_local(q) in
+  if contains(q, "build/bin") then true
+  else if local == "" then false
+  else contains(nth(run(["sh", "-c", str_cat("command -v ", q)]), 1), "build/bin")
 
 let qemu_interp(arch) =
   if arch == "arm64" then "/lib/ld-linux-aarch64.so.1"
   else if arch == "riscv64" then "/lib/ld-linux-riscv64-lp64d.so.1"
   else ""
 
-let qemu_root(arch) =
+let qemu_root(arch, qemu) =
   let dir =
     if arch == "arm64" then "/usr/aarch64-linux-gnu"
     else if arch == "riscv64" then "/usr/riscv64-linux-gnu"
     else "" in
+  /* A workspace-local stand-in first: on a host without /usr/<triple> the
+   * shim ignores -L anyway and points qemu at the real root. */
+  let local = str_cat(TMP, str_cat("/sysroot-", arch)) in
   if dir == "" then ""
+  else if nth(run(["test", "-f", str_cat(local, qemu_interp(arch))]), 0) == 0 then
+    local
   else if nth(run(["test", "-f", str_cat(dir, qemu_interp(arch))]), 0) == 0 then
     dir
+  /* With the forwarding shim there is no local sysroot to find: the shim
+   * drops -L and points the real qemu-user at its own root. The stand-in only
+   * has to EXIST for the two gates below, so lay down an empty one. */
+  else if qemu_is_shim(qemu) then
+    let _ = run(["mkdir", "-p", str_cat(local, "/lib")]) in
+    let _ = write_file(str_cat(local, qemu_interp(arch)), "") in
+    local
   else ""
 
+/* Windows' timeout.exe does not understand -s/-k, so prefer the workspace shim
+ * when it is there -- a plain `./harness qemu` (and `make test`) then behaves
+ * like `make test-qemu`, which exports build/bin into PATH instead. */
+let timeout_cmd(_) =
+  let p = str_cat("build/bin/", "timeout") in
+  if nth(run(["test", "-x", p]), 0) == 0 then p else "timeout"
+
 let qemu_exec(qemu, arch, bin) =
-  let root = qemu_root(arch) in
-  if root == "" then run(["timeout", "-s", "KILL", "8", qemu, bin])
-  else run(["timeout", "-s", "KILL", "8", qemu, "-L", root, bin])
+  let root = qemu_root(arch, qemu) in
+  let t = timeout_cmd(0) in
+  if root == "" then run([t, "-s", "KILL", "8", qemu, bin])
+  else run([t, "-s", "KILL", "8", qemu, "-L", root, bin])
 
 let qemu_skip(st, tag, why) =
   let _ = print(str_cat("SKIP: ", str_cat(tag, str_cat(" (", str_cat(why, ")"))))) in
   st
+
+/* `-o NAME` comes back as NAME (elf/macho) or NAME.exe (host pe on Windows). */
+let qemu_out(p) =
+  if nth(run(["test", "-f", p]), 0) == 0 then p
+  else if nth(run(["test", "-f", native(p)]), 0) == 0 then native(p)
+  else ""
 
 let qemu_one(st, yc, qemu, arch, c) =
   let name = nth(c, 0) in
@@ -759,9 +863,13 @@ let qemu_one(st, yc, qemu, arch, c) =
   else
     let kind = nth(c, 1) in
     let want = nth(c, 2) in
-    let bin = str_cat(TMP, str_cat("/q_", str_cat(arch, str_cat("_", name)))) in
-    let cr = run(append(yc, [case_src(name), "-o", bin, "--arch", arch])) in
-    if nth(run(["test", "-f", bin]), 0) != 0 then
+    let out = str_cat(TMP, str_cat("/q_", str_cat(arch, str_cat("_", name)))) in
+    /* Guest code runs under qemu-user, so it has to be a Linux ELF -- ask for
+     * that format explicitly, the host default is pe on Windows / macho on mac. */
+    let cr = run(append(yc, [case_src(name), "-o", out, "--arch", arch,
+                             "--format", "elf"])) in
+    let bin = qemu_out(out) in
+    if bin == "" then
       check(st, tag, "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
     else
       let _ = run(["chmod", "+x", bin]) in
@@ -777,10 +885,12 @@ let qemu_shared(st, yc, qemu, arch) =
   let _ = write_file(pdrv,
     str_cat("import ffi\nlet h = load(\"",
       str_cat(so, "\")\nlet f = sym(h, \"add\")\nif ccall(f, 2, 3) == 5 then 42 else 0\n"))) in
-  let bin = str_cat(TMP, str_cat("/q_", str_cat(arch, "_dadd"))) in
+  let out = str_cat(TMP, str_cat("/q_", str_cat(arch, "_dadd"))) in
   let tag = str_cat(arch, " elf --shared ccall add") in
-  let cr = run(append(yc, [pdrv, "-o", bin, "--arch", arch])) in
-  if nth(run(["test", "-f", bin]), 0) != 0 then
+  let cr = run(append(yc, [pdrv, "-o", out, "--arch", arch,
+                           "--format", "elf"])) in
+  let bin = qemu_out(out) in
+  if bin == "" then
     check(st, tag, "wrote binary", str_cat("compile rc=", int_to_str(nth(cr, 0))))
   else
     let _ = run(["chmod", "+x", bin]) in
@@ -809,10 +919,16 @@ let qemu_arch(st, yc, arch) =
                  str_cat(nth(yc, 0), str_cat(" --arch ", arch))) in
   if q == "" then
     let _ = print(str_cat("SKIP: qemu ", arch)) in st
-  else if qemu_root(arch) == "" then qemu_skip_sysroot(st, arch)
+  else if qemu_root(arch, q) == "" then qemu_skip_sysroot(st, arch)
   else
-    qemu_shared(foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st,
-                      compiler_cases(0)), yc, q, arch)
+    let st1 = foldl(fun(s, c) -> qemu_one(s, yc, q, arch, c), st,
+                    compiler_cases(0)) in
+    /* The shared run dlopens <TMP>/libdadd_<arch>.so by PATH, and the shim
+     * uploads only the executable -- the Linux box would look for a Windows
+     * path. Real qemu runs it where both files already are. */
+    if qemu_is_shim(q) then
+      qemu_skip(st1, str_cat(arch, " elf --shared ccall add"), "shim sends exe only")
+    else qemu_shared(st1, yc, q, arch)
 
 let exists_rc(p) = nth(run(["test", "-f", p]), 0)
 
@@ -946,11 +1062,30 @@ let boot_front(st, ya) =
       else print(chomp(nth(br, 2))) in
     check(st, "boot frontend", "0", int_to_str(nth(br, 0)))
 
+/* --link suite lives in tests/link/run.yac; run it as a sub-runner. */
+let link_front(st, ya) =
+  let lk = native(str_cat(TMP, "/link_run")) in
+  let _ = run(["rm", "-f", lk]) in
+  let cr = run(append(yc_pkg(ya), ["tests/link/run.yac", "-o", lk])) in
+  let _ = banner("link", ya) in
+  if nth(cr, 0) != 0 then
+    let _ = print(chomp(nth(cr, 1))) in
+    let _ = print(chomp(nth(cr, 2))) in
+    check(st, "link runner build", "0", int_to_str(nth(cr, 0)))
+  else
+    let _ = run(["chmod", "+x", lk]) in
+    let lr = run(append([lk], [ya])) in
+    let _ = print(chomp(nth(lr, 1))) in
+    let _ =
+      if nth(lr, 0) == 0 then 0
+      else print(chomp(nth(lr, 2))) in
+    check(st, "link runner", "0", int_to_str(nth(lr, 0)))
+
 let qemu_both(st, yc) =
   qemu_arch(qemu_arch(st, yc, "arm64"), yc, "riscv64")
 
 let suite_usage(_) =
-  let _ = print("usage: run_tests [interp|compiler|pkg|boot|qemu|qemu-arm64|qemu-riscv64|iso|cps|repl] [case]") in
+  let _ = print("usage: run_tests [interp|compiler|pkg|link|boot|qemu|qemu-arm64|qemu-riscv64|iso|cps|repl] [case]") in
   exit(2)
 
 let main =
@@ -962,6 +1097,7 @@ let main =
   let yc = yc_pkg(ya) in
   let s = suite_name(0) in
   if s == "pkg" then suite_done(pkg_all([0, 0], yc))
+  else if s == "link" then suite_done(link_front([0, 0], ya))
   else if s == "interp" then suite_done(interp_suite([0, 0]))
   else if s == "compiler" then suite_done(compiler_all([0, 0], yc))
   else if s == "cps" then
@@ -981,5 +1117,6 @@ let main =
     let st0 = interp_suite([0, 0]) in
     let st1 = boot_front(st0, ya) in
     let st2 = pkg_all(compiler_all(st1, yc), yc) in
-    suite_done(boot_suite(qemu_both(st2, yc), ya))
+    let st3 = link_front(st2, ya) in
+    suite_done(boot_suite(qemu_both(st3, yc), ya))
 in main

@@ -1,0 +1,8 @@
+let f(x) =
+    print(x)
+let a=f
+print("hello")
+print(a)
+print(f)
+print(a==f)
+if a==f then  print("equal") else print("not equal")

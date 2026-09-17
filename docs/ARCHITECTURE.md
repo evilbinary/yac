@@ -24,6 +24,9 @@ tools/
   genyac.c        随机 Yac 程序生成器（确定性、可终止）
 docs/
   DESIGN.md       语言与 IR 的完整设计
+  ANF.md          ANF 权威定义（语法 / 不变量 / ANF → LIR）
+  LIR.md          LIR 权威定义（指令集 / 不变量 / LIR → 机器码 / 校验规则）
+  FLAT_ABI.md     Flat ABI 与静态化、闭包表示阶梯、call 收敛（待实现）
 ```
 
 ## 包与编译单元

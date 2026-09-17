@@ -1,0 +1,23 @@
+/* The profiler hook is a USER letfun: OBJECT ABI, first param from rsi
+ * (LIR.md 4.4.4). The runtime used to hand the name over in rdi only -- the
+ * FLAT convention of its own no-op stub -- so a program-level prof_enter_go
+ * read nil, and pkg/profile.yac then hashed that nil (yac_str_hash on [0+24])
+ * and died with 139 before writing a single record.
+ *
+ * Two things keep both hook flavours working now:
+ *   runtime_add's redirect emits `ycall` (object ABI) for a user hook found in
+ *   the runtime base + linked packages, and the runtime's own call hands the
+ *   name through BOTH rdi and rsi, so a hook that is NOT in that list (one the
+ *   program defines itself) reads it too.
+ *
+ * Expect exactly one line -- "f". Only front-wrapped letfuns are hooked (the
+ * runtime's own $procs are not), and the runtime's busy flag stops the hook's
+ * own calls from re-entering it. */
+let prof_enter_go(name) =
+    print(name)
+
+let f(x) =
+    x + 1
+
+let _ = list_push(yac_prof_cell(), 1)
+let _ = f(1)

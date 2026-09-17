@@ -1,5 +1,5 @@
 YAC_ROOT ?= $(abspath ..)
-YUI_ROOT ?= /media/evil/d/dev/yui
+YUI_ROOT ?= ../yui
 YUI_LIBDIR ?= $(YUI_ROOT)/build/pc/None/None
 # Prefer native yc_a from `make yc` (build/yc_tmp); .exe for PE hosts / Git Bash.
 YC ?= $(firstword $(wildcard \
@@ -40,9 +40,12 @@ YUI_LIBS = \
 	$(YUI_LIBDIR)/libsocket.a \
 	$(SDL_LIBS) -lm -ldl -lpthread
 
-.PHONY: all so apps counter hello lantern llm llm-trigram llm-transformer llm-train llm-infer llm-snapshot llm-snapshot-train llm-snapshot-infer clean
+.PHONY: all so apps nogui counter hello lantern llm llm-trigram llm-transformer llm-train llm-infer llm-snapshot llm-snapshot-train llm-snapshot-infer clean
 
 all: so apps
+
+# No-GUI build: everything that needs no libyui_yac.so (no YUI tree / SDL2).
+nogui: llm
 
 so: $(SO)
 

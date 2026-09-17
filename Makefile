@@ -134,17 +134,33 @@ endif
 test-pkg: $(TEST_HARNESS)
 	./$(TEST_HARNESS) pkg
 
+# --link CLI / artifact probing regression (BOOTSTRAP_LINK.md 12.3).
+# Self-contained runner in tests/link/run.yac.
+LINK_TESTS = $(TEST_TMP)/link_tests$(EXEEXT)
+$(LINK_TESTS): $(YC_A) tests/link/run.yac | $(TEST_TMP)
+	$(YC_A) --pkg src-self tests/link/run.yac -o $@
+	chmod +x $@
+
+test-link: $(LINK_TESTS)
+	./$(LINK_TESTS) $(YC_A)
+
 test-boot: $(TEST_HARNESS)
 	./$(TEST_HARNESS) boot
 
+# build/bin first: it carries the qemu-* forwarding shims (host without
+# user-mode qemu) and the timeout shim (Windows timeout.exe would eat -s).
 test-qemu: $(TEST_HARNESS)
-	./$(TEST_HARNESS) qemu
+	PATH="$(CURDIR)/build/bin:$$PATH" ./$(TEST_HARNESS) qemu
 
+# build/bin first: it carries the qemu-* forwarding shims (host without
+# user-mode qemu) and the timeout shim (Windows timeout.exe would eat -s).
 test-qemu-arm64: $(TEST_HARNESS)
-	./$(TEST_HARNESS) qemu-arm64
+	PATH="$(CURDIR)/build/bin:$$PATH" ./$(TEST_HARNESS) qemu-arm64
 
+# build/bin first: it carries the qemu-* forwarding shims (host without
+# user-mode qemu) and the timeout shim (Windows timeout.exe would eat -s).
 test-qemu-riscv64: $(TEST_HARNESS)
-	./$(TEST_HARNESS) qemu-riscv64
+	PATH="$(CURDIR)/build/bin:$$PATH" ./$(TEST_HARNESS) qemu-riscv64
 
 test-iso: $(TEST_HARNESS)
 	./$(TEST_HARNESS) iso
@@ -160,6 +176,6 @@ clean:
 	rm -rf $(BUILD)
 	rm -f src/*.o
 
-.PHONY: all clean test test-interp test-compiler test-pkg test-boot \
+.PHONY: all clean test test-interp test-compiler test-pkg test-link test-boot \
 	test-qemu test-qemu-arm64 test-qemu-riscv64 test-iso test-cps test-repl prop \
 	yc_a yc_b bootstrap yc-iso

@@ -22,7 +22,7 @@
  */
 
 package lib.log
-export log, log_i, log_set_hush, log_get_hush
+export log, log_i, log_set_hush, log_get_hush, log_fatal
 
 let log_hush =
   let b = box_new() in
@@ -30,6 +30,14 @@ let log_hush =
   b
 let log_set_hush(v) = box_set(log_hush, v)
 let log_get_hush(_) = box_get(log_hush)
+
+/* Compiler invariant violation: report and stop. The IR builders and the emit
+ * dispatch have no error-return channel, so a broken shape must NOT be
+ * silently skipped -- silently continuing is how the drift in docs/LIR.md
+ * §9.1 stayed hidden. Exit 2 (exit codes 1 is "user error": syntax/unbound). */
+let log_fatal(msg) =
+  let _ = print(str_cat("error: ", msg)) in
+  exit(2)
 
 let log(mod, msg) =
   if box_get(log_hush) then 0

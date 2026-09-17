@@ -1,0 +1,11 @@
+import compiler
+import fmt
+
+printf("hello world")
+
+
+let a=compile(1)
+print(a)
+
+
+printf("end")

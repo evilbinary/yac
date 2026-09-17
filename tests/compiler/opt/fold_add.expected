@@ -1,0 +1,1 @@
+[[call, [cont, #k0, [let, t0, [var, #k0], [halt, [var, t0]]]], [[int, 3]]]]

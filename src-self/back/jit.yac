@@ -6,21 +6,174 @@
  */
 
 package back.jit
-export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live
+export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live, jit_reloc_apply, jit_asm_dump_set, jit_lir_dump_set
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
-import back.emit.emit {cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, yjit_layout_get}
-import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog}
-import back.backend {ast_imports, fun_off, link_from_ast, link_need_box, pass_anf, pass_lex, pass_parse, report_unbound, rewrite_imports, rt_for_link}
+import back.emit.emit {apply_u64, asm_dump_set, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref22, gref22_reset, gref_base, host_names, yjit_layout_get, relocs_get, relocs_reset, relocs_set}
+import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog, toplevel_seed, lir_tlv_set}
+import back.backend {ast_imports, fun_off, link_from_ast, link_is_dylib, link_need_box, pass_anf, pass_lex, pass_parse, pkg_src, report_unbound, rewrite_imports, rt_for_link}
 import back.lower {emit_apply_unres, lower_expr}
 import back.pack.target {JIT_VADDR, target_arch}
-import back.pack.yjit {bytes_copy_range, pack_yjit_ex, yjit_arch_name, yjit_arch_num, yjit_export_dec, yjit_export_enc, yjit_imp_enc, yjit_imp_parse, yjit_read}
+import back.pack.yjit {bytes_copy_range, pack_yjit_ex, yjit_arch_name, yjit_arch_num, yjit_export_dec, yjit_export_enc, yjit_imp_enc, yjit_imp_parse, yjit_read, yjit_reloc_enc}
 import front.cps {cps_all, cps_maybe_opt}
 import front.parser {prog_has_err, report_syntax}
 import front.uncps {uncps_all, uncps_is_err}
 import lib.log {log_get_hush, log_set_hush}
 import rt.os {host_arch}
+import rt.runtime {yac_gfn_list, yac_gval_list}
 
 let reverse(xs) = list_rev(xs)
+
+/* Flat ABI (12.14): after a blob compiles, resolve every cross-image
+ * reference it emitted (gvar/gvld/xcall/gcall patch slots in the blob's
+ * globals area) against the host image's runtime registries: the function
+ * entry list (G+448, via yac_gfn_list) and the top-level value list
+ * (G+440, via yac_gval_list). Both are [name, payload] pair lists; name
+ * matching is a content compare in yac code, so nothing is baked.
+ * data_start (yjit_layout[2]) is the globals area offset in the blob.
+ * The blob's gref slot layout is snapshotted right after its emit (the
+ * emit state still belongs to the blob at that point): [gref_base, names]. */
+let gref_snap_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let glist_len(l, n) =
+  if l == 0 or l == 1 then n else glist_len(nth(l, 1), n + 1)
+
+let gfn_lookup(lst, nm) =
+  if lst == 0 then 0
+  else if lst == 1 then 0
+  else
+    let pair = nth(lst, 0) in
+    if nth(pair, 0) == nm then nth(pair, 1)
+    else gfn_lookup(nth(lst, 1), nm)
+
+let gval_lookup(lst, nm) =
+  if lst == 0 then 0
+  else if lst == 1 then 0
+  else
+    let pair = nth(lst, 0) in
+    if nth(pair, 0) == nm then nth(pair, 1)
+    else gval_lookup(nth(lst, 1), nm)
+
+let gref_fill(code) =
+  let snap = box_get(gref_snap_box) in
+  let base = nth(snap, 0) in
+  let names = nth(snap, 1) in
+  let lay = yjit_layout_get(0) in
+  let ds = nth(lay, 2) in
+  let fnl = yac_gfn_list(0) in
+  let vall = yac_gval_list(0) in
+  let go(i) =
+    if i >= len(names) then 0
+    else
+      let nm = nth(names, i) in
+      let cobj = ds + base + bshl(i, 5) in
+      let entry = gfn_lookup(fnl, nm) in
+      /* Hushed trace (--verbose): which fill source this blob's cell got. A
+       * function with neither a gfn entry nor a gval value stays 0 and the next
+       * line then applies 0 ("not a function"). Host-side read only. */
+      let _ = log("jit", nm) in
+      let _ = if entry == 0 then log("jit", "  no gfn entry") else 0 in
+      let _ =
+        if entry != 0 then
+          /* Function: write the raw entry into the stub's entry field. */
+          apply_u64(code, cobj + 16, entry)
+        else
+          /* Top-level value: copy the host's current value into [cobj+0]. */
+          let v = gval_lookup(vall, nm) in
+          if v == 0 then 0 else apply_u64(code, cobj, v) in
+      go(i + 1) in
+  go(0)
+
+/* BOOTSTRAP_LINK 3.2: a REPL session runs INSIDE the host, so the blob's host
+ * table (G+136+8*id, 10 slots) must hold the host image's own entries. The
+ * emitter's bake() only ever saw the blob's own procs -- none of the
+ * compiler's -- and wrote the yac_host_unimpl stub there, which is why a host
+ * leaf called from a REPL line answered "host fn unavailable" (or died when
+ * the call had been lowered to the cross-image xcall path instead).
+ * yac_host_sym(id) reads the RUNNING image's slot -- this session's host --
+ * and returns the address as a yac value, exactly what apply_u64 writes. */
+let host_tab_fill(code) =
+  let lay = yjit_layout_get(0) in
+  let ds = nth(lay, 2) in
+  let go(i) =
+    if i >= len(host_names(0)) then 0
+    else
+      let v = yac_host_sym(i) in
+      let _ =
+        if v == 0 then 0
+        else apply_u64(code, ds + 136 + bshl(i, 3), v) in
+      go(i + 1) in
+  go(0)
+
+/* `--dump-asm` under `--repl`: the emitter consumes asm_dump (it dumps, then
+ * clears the flag), so without re-arming only the FIRST line of a session was
+ * ever dumped -- the session preamble, never the line under test
+ * (FLAT_ABI.md 8.2 #10). The REPL line path re-arms it before each emit. */
+let jit_asm_dump_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let jit_asm_dump_set(v) = box_set(jit_asm_dump_box, v)
+
+let jit_asm_dump(_) = box_get(jit_asm_dump_box)
+
+let jit_asm_dump_arm(_) =
+  if jit_asm_dump(0) != 0 then asm_dump_set(1) else 0
+
+/* `--dump-lir` under `--repl`: the batch path never sees a REPL line, so the
+ * switch used to do nothing at all there (FLAT_ABI.md 8.2 #10). Dump the line's
+ * LIR: the proc index (names only -- the runtime procs are in the list too) plus
+ * the whole `_eval` proc, which is where the line's code lives, including the
+ * gvar/jslot instructions this session semantics hangs on. */
+let jit_lir_dump_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let jit_lir_dump_set(v) = box_set(jit_lir_dump_box, v)
+
+let jit_lir_dump(_) = box_get(jit_lir_dump_box)
+
+let dump_lir_prog(prog) =
+  let ps = nth(prog, 1) in
+  let n = len(ps) in
+  let _ = print(str_cat("=== lir: ", str_cat(int_to_str(n), " procs"))) in
+  let names(i) =
+    if i >= n then 0
+    else
+      let p = nth(ps, i) in
+      let _ = print(str_cat("  proc ", nth(p, 1))) in
+      names(i + 1) in
+  let _ = names(0) in
+  let ev(i) =
+    if i >= n then 0
+    else
+      let p = nth(ps, i) in
+      let _ = if nth(p, 1) == "_eval" then print(p) else 0 in
+      ev(i + 1) in
+  ev(0)
+
+/* `--dump-asm` + `--repl`: tag-22 (movabs cell address) values exist only after
+ * emit_apply_unres, so the emitter's own dump cannot show them. Print the
+ * resolved records here, where the resolve has already run. */
+let dump_tag22(_) =
+  let rs = gref22(0) in
+  let n = len(rs) in
+  let _ = print(str_cat("=== tag22 cells: ", str_cat(int_to_str(n), " patches"))) in
+  let go(i) =
+    if i >= n then 0
+    else
+      let r = nth(rs, i) in
+      let m1 = str_cat("  tag22 globbase=", int_to_str(nth(r, 0))) in
+      let m2 = str_cat(m1, str_cat(" goff=", int_to_str(nth(r, 1)))) in
+      let _ = print(str_cat(m2, str_cat(" cell=", int_to_str(nth(r, 2))))) in
+      go(i + 1) in
+  let r = go(0) in
+  let _ = gref22_reset(0) in
+  r
 
 let jit_lets_box =
   let b = box_new() in
@@ -127,21 +280,49 @@ let jslot_rw_prog(p, i, sc, acc) =
 
 let jslot_rw_all(p) = jslot_rw_prog(p, 0, [], list_new())
 
-let start_eval_ins(nslots, pslot, body, name, quiet) =
+/* Is `name` bound by a top-level `letfun` anywhere in this ANF list? A line
+ * that DEFINES a function must register a callable closure, not a value. */
+let anf_letfun_p(p, name, i) =
+  if i >= len(p) then false
+  else
+    let binds = nth(nth(p, i), 0) in
+    let go(j) =
+      if j >= len(binds) then anf_letfun_p(p, name, i + 1)
+      else
+        let b = nth(binds, j) in
+        if nth(b, 0) == "letfun" and nth(b, 1) == name then true
+        else go(j + 1) in
+    go(0)
+
+let start_eval_ins(nslots, pslot, body, name, quiet, is_fun) =
   let b0 = insn_extend(insn_push(list_new(), ["local", nslots + 8, 0]), body) in
-  let b0s =
+  /* For a named bind, put the BOUND NAME's value where the echo and the
+   * yac_jslot_set registry (later REPL lines read it through yac_jslot_get)
+   * can see it: pslot is the item's result slot, which for `let a = 1` holds
+   * unit (0).
+   *
+   * A function definition has no value in its static cell at all -- a
+   * top-level `letfun` never materialises a closure (AOT resolves the name
+   * statically as a direct ycall, so it does not need one). `gval name` there
+   * read 0, the session registered 0, and the next line's `f(2)` applied 0.
+   * `gvar name` builds the flat stub closure and, for an in-blob proc, bakes
+   * its entry through tag 23 -- which is exactly the callable value a later
+   * line needs. REPL-defined functions are always flat: the session-name
+   * rewrite turns captured session names into yac_jslot_get calls, so nothing
+   * is captured and nenv == 0 holds. */
+  let b0g =
     if name == "" then b0
+    else if is_fun then insn_push(b0, ["gvar", nslots + 7, name])
+    else insn_push(b0, ["gval", nslots + 7, name]) in
+  let b0s =
+    if name == "" then b0g
     else
       let ix = jit_let_ensure(name) in
-      let b1 = insn_push(b0, ["mov_imm", nslots, ix + ix]) in
-      insn_push(b1, ["fcall", nslots + 1, "yac_jslot_set", [nslots, pslot]]) in
-  if name == "" then
-    if quiet then insn_push(b0s, ["ret", pslot])
-    else
-      insn_push(insn_push(insn_push(b0s,
-        ["mov_imm", nslots, 2]),
-        ["fcall", nslots + 1, "print", [pslot, nslots]]),
-        ["ret", pslot])
+      let b1 = insn_push(b0g, ["mov_imm", nslots, ix + ix]) in
+      insn_push(b1, ["fcall", nslots + 1, "yac_jslot_set", [nslots, nslots + 7]]) in
+  /* No echo here: the host shows the value after yac_jit_run returns (see
+   * repl_echo_line). quiet is still what this line's own text says. */
+  if name == "" then insn_push(b0s, ["ret", pslot])
   else
     let b1 = insn_push(b0s, ["strlit", nslots, name]) in
     let b2 = insn_push(b1, ["strlit", nslots + 1, " = "]) in
@@ -149,24 +330,36 @@ let start_eval_ins(nslots, pslot, body, name, quiet) =
     let b4 = insn_push(b3, ["mov_imm", nslots + 3, 2]) in
     let b5 = insn_push(b4, ["fcall", nslots + 4, "print", [nslots, nslots + 2]]) in
     let b6 = insn_push(b5, ["fcall", nslots + 5, "print", [nslots + 1, nslots + 2]]) in
-    let b7 = insn_push(b6, ["fcall", nslots + 6, "print", [pslot, nslots + 3]]) in
+    let b7 = insn_push(b6, ["fcall", nslots + 6, "print", [nslots + 7, nslots + 3]]) in
     insn_push(b7, ["ret", pslot])
 
-let start_proc_eval(nslots, result_slot, body, name, quiet) =
-  ["proc", "_eval", 0, 0, start_eval_ins(nslots, result_slot, body, name, quiet), "_eval"]
+let start_proc_eval(nslots, result_slot, body, name, quiet, is_fun) =
+  ["proc", "_eval", 0, 0,
+   start_eval_ins(nslots, result_slot, body, name, quiet, is_fun), "_eval"]
 
 let pass_lir_eval(anf_list, bind_name, quiet) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
+  /* Host bindings (@name) must be seeded exactly as the AOT path does it
+   * (backend.yac lir_all call): without the seed a REPL line's host call falls
+   * through to the cross-image `xcall` branch, whose entry comes from the
+   * host's gfn registry instead of the G+136 host slot the design prescribes
+   * (lir.yac sigma_host_seed comment). */
+  let fs0 = sigma_host_seed(toplevel_seed(anf_list, 0, sigma_of_rt(rt0))) in
+  let _ = lir_tlv_set(1) in
   let st = lir_all(0, anf_list,
-             [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
+             [env_new(0), 1, fs0, 0, list_new(), 0],
              len(anf_list)) in
   let pslot =
     if bind_name == "" then nth(st, 5)
     else
       let s = env_slot(nth(st, 0), bind_name) in
       if s == 0 then nth(st, 5) else s in
-  let entry = start_proc_eval(nth(st, 1), pslot, nth(st, 4), bind_name, quiet) in
+  let is_fun =
+    if bind_name == "" then false
+    else anf_letfun_p(anf_list, bind_name, 0) in
+  let entry =
+    start_proc_eval(nth(st, 1), pslot, nth(st, 4), bind_name, quiet, is_fun) in
   /* prog[2] is the Linux process entry (is_entry in emit). JIT jumps to
    * _eval by name; it must not be prog[2] or it would get _start's ABI. */
   tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
@@ -197,10 +390,26 @@ let pkgs_append(dst, src, i) =
     if in_list(p, dst) then pkgs_append(dst, src, i + 1)
     else pkgs_append(cons(p, dst), src, i + 1)
 
+/* An import that resolves to nothing used to be silent: pkg_export_names()
+ * returns [] when pkg_src() finds no file, so the line just did nothing and
+ * the mistake only surfaced much later (or not at all). Say it where the
+ * import is. "rt.num" and anything in a --link dylib chain are legitimate
+ * without a .yac source, so they are skipped. */
+let repl_check_pkgs(xs, i) =
+  if i >= len(xs) then 0
+  else
+    let p = nth(xs, i) in
+    let _ =
+      if link_is_dylib(p) then 0
+      else if pkg_src(p) != 0 then 0
+      else print(str_cat("error: unknown package '", str_cat(p, "'"))) in
+    repl_check_pkgs(xs, i + 1)
+
 let link_from_ast_repl(ast) =
   let filled = rewrite_imports(ast, 0, []) in
   let more = ast_imports(ast, 0, []) in
   let _ = box_set(link_need_box, pkgs_append(box_get(link_need_box), more, 0)) in
+  let _ = repl_check_pkgs(more, 0) in
   let _ = imap_load_merge(filled, 0) in
   0
 
@@ -252,7 +461,53 @@ let jit_run_ok(t) = target_arch(t) == host_arch(0)
 
 let jit_sess_ok(t) = target_arch(t) == "x86_64"
 
-let compile_jit(src, t, named) =
+/* ---- Showing a line's value is the HOST's job, not the image's ------------
+ * An image used to print its own last value from the tail of _eval. That made
+ * "run a value" and "show that value" the same act, so anything that runs an
+ * image from inside another (compiler.run / compile_it(...)()) printed twice:
+ * the inner session printed the value the user asked for, and the outer line
+ * echoed the STATUS the inner call returned on top of it.
+ *
+ * The image no longer echoes; yac_jit_run already hands the _eval result back
+ * (runtime.yac: it returns the $icall result), so the host can show it here,
+ * after the fact, and decide with runtime facts only -- no entry is known by
+ * name:
+ *   quiet  : this line already printed everything itself, decided at emit time
+ *            from its own text (print/printf -> back/jit.yac repl_quiet_print)
+ *   nest   : the depth at which an inner run started, 0 if none did. An
+ *            invocation whose value is a status is exactly one that had
+ *            another run INSIDE it (depth >= myd), so it stays quiet; the
+ *            inner invocation (deeper) still shows its own value. */
+/* Reentrancy depth (BOOTSTRAP_LINK 12.11 遺留 1 / 12.12): a REPL line's own code
+ * can call a host leaf that compiles and runs ANOTHER image in this process.
+ * 0 = outermost (this invocation IS the session), > 0 = nested. */
+let jit_busy_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let repl_nest_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let repl_echo_line(v, quiet, myd) =
+  if quiet then 0
+  else if box_get(repl_nest_box) >= myd then 0
+  else print(v)
+
+/* Every path that runs an image comes through here: the image no longer echoes
+ * its last value, so whoever ran it must show it (unless the line already
+ * printed everything itself). */
+let jit_run_show(code, ent, dest, quiet) =
+  let myd = box_get(jit_busy_box) in
+  let v = jit_run(code, ent, dest) in
+  let _ = repl_echo_line(v, quiet, myd) in
+  v
+
+let compile_jit_go(src, t, named) =
+  /* Re-arm the ASM dump for THIS line (see jit_asm_dump_arm). */
+  let _ = jit_asm_dump_arm(0) in
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then
     let _ = report_syntax(ast) in 1
@@ -265,6 +520,9 @@ let compile_jit(src, t, named) =
       else
         let live0 = box_get(jit_live_box) in
         let live = if jit_sess_ok(t) then live0 else 0 in
+        /* A fresh image starts a fresh relocation table; later lines append to
+         * both (BOOTSTRAP_LINK 12.7 / JIT_IMAGE 1). */
+        let _ = if live == 0 then relocs_reset(0) else 0 in
         let _ = link_from_ast_repl(ast1) in
         let _ =
           if live == 0 then emit_jsess_set(0)
@@ -274,20 +532,32 @@ let compile_jit(src, t, named) =
         let hush0 = log_get_hush(0) in
         let _ = log_set_hush(true) in
         let dest = if live == 0 then 0 else nth(live, 0) in
-        let r = lower_expr(pass_lir_eval(pass_anf(ast1), bn, q), t) in
+        let ls = pass_lir_eval(pass_anf(ast1), bn, q) in
+        let _ = if jit_lir_dump(0) != 0 then dump_lir_prog(ls) else 0 in
+        let r = lower_expr(ls, t) in
         let _ = emit_apply_unres(dest) in
+        let _ = if jit_asm_dump(0) != 0 then dump_tag22(0) else 0 in
+        /* Snapshot the blob's gref slot layout before any later emit
+         * (AOT or next REPL line) reuses the emit state. */
+        let _ = box_set(gref_snap_box, [gref_base(), gref_names()]) in
         let _ = log_set_hush(hush0) in
         let _ = emit_jsess_set(0) in
         let code = nth(r, 0) in
         let fo = nth(r, 1) in
+        /* Publish this line's place in the session BEFORE running it. A nested
+         * compile (compiler.run / compile_it, reached through a host leaf while
+         * this very line is executing) reads jit_live_box to find where to
+         * append its own image. With the bookkeeping only updated after
+         * jit_run returned, the nested image was laid down at THIS line's own
+         * dest -- measured: both reported dest 98980 -- so it overwrote the
+         * code this line was still executing; the outer continuation then
+         * jumped into the nested image and died (SIGSEGV). Publishing first
+         * makes the nested image land at dest + bytes_len(code) instead, and
+         * extending the accumulated bytes in the same order keeps :dump
+         * consistent with the mapping. */
         let _ =
-          if jit_run_ok(t) then
-            let _ = if dest == 0 then cimport_jit_bind(code) else 0 in
-            jit_run(code, fun_off(fo, "_eval"), dest)
-          else 0 in
-        let _ =
-          if live == 0 then
-            if jit_sess_ok(t) then
+          if jit_sess_ok(t) then
+            if live == 0 then
               let m = fmap_new(0) in
               let _ = fmap_init_n(m, 4096) in
               let _ = jsess_put_fo(m, fo) in
@@ -295,14 +565,25 @@ let compile_jit(src, t, named) =
               box_set(jit_live_box,
                 [bytes_len(code), JIT_VADDR + nth(lay, 2), m, code,
                  fun_off(fo, "_eval")])
-            else 0
-          else
-            let m = nth(live, 2) in
-            let _ = jsess_merge_fo(m, fo, dest) in
-            let _ = bytes_extend(nth(live, 3), code) in
-            box_set(jit_live_box,
-              [dest + bytes_len(code), nth(live, 1), m, nth(live, 3),
-               dest + fun_off(fo, "_eval")]) in
+            else
+              let m = nth(live, 2) in
+              let _ = jsess_merge_fo(m, fo, dest) in
+              let _ = bytes_extend(nth(live, 3), code) in
+              box_set(jit_live_box,
+                [dest + bytes_len(code), nth(live, 1), m, nth(live, 3),
+                 dest + fun_off(fo, "_eval")])
+          else 0 in
+        let _ =
+          if jit_run_ok(t) then
+            let _ = if dest == 0 then cimport_jit_bind(code) else 0 in
+            let _ = gref_fill(code) in
+            let _ = host_tab_fill(code) in
+            /* A `let` line printed "name = value" from inside the image, and a
+             * print/printf line printed its own output: neither wants the
+             * value echoed again. */
+            jit_run_show(code, fun_off(fo, "_eval"), dest,
+                         if q then true else bn != "")
+          else 0 in
         0
   else if report_unbound(src, ast) != 0 then 1
   else
@@ -310,15 +591,58 @@ let compile_jit(src, t, named) =
     let _ = emit_jsess_set(0) in
     let hush0 = log_get_hush(0) in
     let _ = log_set_hush(true) in
-    let r = lower_expr(pass_lir_eval(pass_anf(ast), "", false), t) in
+    let ls = pass_lir_eval(pass_anf(ast), "", false) in
+    let _ = if jit_lir_dump(0) != 0 then dump_lir_prog(ls) else 0 in
+    let r = lower_expr(ls, t) in
     let _ = emit_apply_unres(0) in
+    let _ = if jit_asm_dump(0) != 0 then dump_tag22(0) else 0 in
     let _ = log_set_hush(hush0) in
     let _ =
       if jit_run_ok(t) then
         let _ = cimport_jit_bind(nth(r, 0)) in
-        jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0)
+        jit_run_show(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0, false)
       else 0 in
     0
+
+/* Reentrancy guard (BOOTSTRAP_LINK 12.11 遗留 1 / 12.12 minimal half): a REPL
+ * line's own code can call a host leaf that compiles and runs ANOTHER image in
+ * this same process -- `compiler.run` / `compiler.compile_it`. Both sessions
+ * share the ONE live mapping (rt/runtime.yac rt_jit_run_ins maps 16MiB at
+ * JIT_VADDR once), so the nested image must be appended AFTER the line that is
+ * currently executing. compile_jit_go therefore publishes this run's place in
+ * jit_live_box (and extends the accumulated bytes) BEFORE calling jit_run, and
+ * the guard below must NOT roll that back -- a nested compile legitimately
+ * extends it. Only the emit-time scratch (gref slot snapshot, reloc table) is
+ * saved and restored here, because the outer emit state is still needed when
+ * the host leaf returns into the running line.
+ *
+ * Measured before the fix: the bookkeeping was updated only after jit_run
+ * returned, so a nested `compile_it` read the session length from BEFORE the
+ * running line and laid its image down at the very same dest (both reported
+ * dest 98980), overwriting the code the outer line was still executing -- the
+ * outer continuation jumped into the nested image and died with SIGSEGV. */
+let compile_jit(src, t, named) =
+  if box_get(jit_busy_box) != 0 then
+    /* Only the emit-time scratch is rolled back: the session record and the
+     * lets are NOT, because a nested compile legitimately extends them now
+     * (compile_jit_go publishes this run's place before jit_run). */
+    let st = [box_get(gref_snap_box), relocs_get(0)] in
+    /* A run started inside a running line: remember the depth it started at,
+     * which is what lets the outer line know it no longer owns its value. */
+    let d0 = box_get(jit_busy_box) in
+    let _ = if box_get(repl_nest_box) >= d0 then 0 else box_set(repl_nest_box, d0) in
+    let _ = box_set(jit_busy_box, d0 + 1) in
+    let r = compile_jit_go(src, t, named) in
+    let _ = box_set(jit_busy_box, d0) in
+    let _ = box_set(gref_snap_box, nth(st, 0)) in
+    let _ = relocs_set(nth(st, 1)) in
+    r
+  else
+    let _ = box_set(repl_nest_box, 0) in
+    let _ = box_set(jit_busy_box, 1) in
+    let r = compile_jit_go(src, t, named) in
+    let _ = box_set(jit_busy_box, 0) in
+    r
 
 let compile_jit_anf(anf, t, bn) =
   let hush0 = log_get_hush(0) in
@@ -329,7 +653,7 @@ let compile_jit_anf(anf, t, bn) =
   let _ =
     if jit_run_ok(t) then
       let _ = cimport_jit_bind(nth(r, 0)) in
-      jit_run(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0)
+      jit_run_show(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0, false)
     else 0 in
   0
 
@@ -350,6 +674,39 @@ let compile_uncps(src, t, named, do_opt) =
         compile_jit_anf(r, t, bn)
 
 /* Live TEXT + last _eval off from jit_live_box. GOT may still be bound. */
+let jit_rd64(b, i) =
+  let l0 = bytes_ref(b, i) + bshl(bytes_ref(b, i + 1), 8) in
+  let l1 = l0 + bshl(bytes_ref(b, i + 2), 16) + bshl(bytes_ref(b, i + 3), 24) in
+  let l2 = l1 + bshl(bytes_ref(b, i + 4), 32) + bshl(bytes_ref(b, i + 5), 40) in
+  l2 + bshl(bytes_ref(b, i + 6), 48) + bshl(bytes_ref(b, i + 7), 56)
+
+let jit_wr64(b, i, v) =
+  let put(j) =
+    if j >= 8 then 0
+    else
+      let _ = bytes_put(b, i + j, band(bshr(v, bshl(j, 3)), 255)) in
+      put(j + 1) in
+  put(0)
+
+/* A recorded site only qualifies for the rela table if the word it points at
+ * still holds an address INSIDE this image (BOOTSTRAP_LINK 12.7): host-leaf
+ * slots and gref cells get overwritten with host entries at run time
+ * (host_tab_fill / gref_fill), and those are process addresses that must NOT
+ * move with the image. Sites holding 0 or a plain value drop out too, so
+ * applying a delta can never corrupt a non-address word. */
+let jit_reloc_filter(code, offs, i, n, base, lim, acc) =
+  if offs == 0 or i >= n then acc
+  else
+    let o = nth(offs, i) in
+    let v = jit_rd64(code, o) in
+    let acc2 = if v >= base and v < lim then cons(o, acc) else acc in
+    jit_reloc_filter(code, offs, i + 1, n, base, lim, acc2)
+
+let jit_reloc_filter_all(code, offs) =
+  if offs == 0 then 0
+  else jit_reloc_filter(code, offs, 0, len(offs),
+                        JIT_VADDR, JIT_VADDR + bytes_len(code), [])
+
 let jit_dump_live(path, arch) =
   let live = box_get(jit_live_box) in
   if live == 0 then
@@ -362,10 +719,27 @@ let jit_dump_live(path, arch) =
     let link = yjit_imp_enc(cimport_got(0), cimport_names(0)) in
     let _ = bytes_extend(link, yjit_export_enc(nth(live, 2))) in
     let img = pack_yjit_ex(nth(live, 3), yjit_arch_num(arch),
-                           [abi, JIT_VADDR, nth(live, 4), drel, link, 1]) in
+                           [abi, JIT_VADDR, nth(live, 4), drel, link, 1,
+                            yjit_reloc_enc(jit_reloc_filter_all(nth(live, 3), relocs_get(0)))]) in
     let _ = write_file(path, img) in
     let _ = print(path) in
     0
+
+/* b1 relocation (docs/JIT_IMAGE.md 1, BOOTSTRAP_LINK.md 12.7): the emitter
+ * records every site holding an ABSOLUTE address, and a loader that maps the
+ * image anywhere other than the baked base adds (actual - baked) to each.
+ * Today the runtime maps .yjit at JIT_VADDR, so the delta here is 0 -- that is
+ * the point of b1: the TABLE was missing, and this is the function that a
+ * second image region (b2) will call with a real delta. */
+let jit_reloc_apply_list(code, offs, i, n, delta) =
+  if offs == 0 or i >= n then 0
+  else
+    let o = nth(offs, i) in
+    let _ = jit_wr64(code, o, jit_rd64(code, o) + delta) in
+    jit_reloc_apply_list(code, offs, i + 1, n, delta)
+
+let jit_reloc_apply(code, offs, delta) =
+  if offs == 0 then 0 else jit_reloc_apply_list(code, offs, 0, len(offs), delta)
 
 let jit_load_yjit(path, sess) =
   let im = yjit_read(path) in
@@ -377,6 +751,9 @@ let jit_load_yjit(path, sess) =
       let _ = print(str_cat("error: yjit arch ", an)) in 1
     else
       let code = nth(im, 4) in
+      let rels = if len(im) > 7 then nth(im, 7) else 0 in
+      let baked = if len(im) > 8 then nth(im, 8) else JIT_VADDR in
+      let _ = jit_reloc_apply(code, rels, JIT_VADDR - baked) in
       let ent = nth(im, 2) in
       let link = nth(im, 5) in
       let flags = if len(im) > 6 then nth(im, 6) else 0 in

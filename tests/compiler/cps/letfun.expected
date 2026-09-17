@@ -1,0 +1,1 @@
+[[let, f, [fun, [x, #k0], [call, [prim, +], [[var, x], [int, 1], [cont, #k1, [let, t0, [var, #k1], [call, [var, #k0], [[var, t0]]]]]]]], [call, [var, f], [[int, 2], [cont, #k2, [let, t1, [var, #k2], [halt, [var, t1]]]]]]]]

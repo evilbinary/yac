@@ -250,17 +250,28 @@ let lir_suite(st) =
      "[[mov_imm, 1, 4], [mov_imm, 2, 6], [fcall, 3, yac_num_mul, [1, 2]], [mov_imm, 4, 2], [fcall, 5, yac_num_add, [4, 3]]]"],
     ["if true", "if true then 1 else 2",
      "[[mov_imm, 1, 2], [cmpjmp, 1, LIF0, LIF1], [label, LIF0], [mov_imm, 3, 2], [mov, 2, 3], [jmp, LIF2], [label, LIF1], [mov_imm, 3, 4], [mov, 2, 3], [label, LIF2]]"],
+    /* A free variable is materialised with gvar into its own slot first, so
+     * every later slot index shifts by one. */
     ["if var", "if x then 1 else 2",
-     "[[cmpjmp, 0, LIF0, LIF1], [label, LIF0], [mov_imm, 2, 2], [mov, 1, 2], [jmp, LIF2], [label, LIF1], [mov_imm, 2, 4], [mov, 1, 2], [label, LIF2]]"],
+     "[[gvar, 1, x], [cmpjmp, 1, LIF0, LIF1], [label, LIF0], [mov_imm, 3, 2], [mov, 2, 3], [jmp, LIF2], [label, LIF1], [mov_imm, 3, 4], [mov, 2, 3], [label, LIF2]]"],
     ["let bind", "let x = 5 in x + 1",
      "[[mov_imm, 1, 10], [mov_imm, 2, 2], [fcall, 3, yac_num_add, [1, 2]]]"],
+    /* A user proc is reached by ycall (object ABI), not fcall -- fcall is for
+     * runtime yac_* procs and host leaves. */
     ["letfun call", "let f(x) = x + 1 in f(2)",
-     "[[closure, 1, f, []], [mov_imm, 2, 4], [fcall, 3, f, [2]]]"],
+     "[[closure, 1, f, []], [mov_imm, 2, 4], [ycall, 3, f, [2]]]"],
     ["unary minus", "-5", "[[mov_imm, 1, 0], [mov_imm, 2, 10], [fcall, 3, yac_num_sub, [1, 2]]]"],
-    ["call", "f(1, 2)", "[[mov_imm, 1, 2], [mov_imm, 2, 4], [fcall, 3, f, [1, 2]]]"],
+    /* f is not defined anywhere and the xcall fallback is gone, so this is now
+     * a compile error rather than a call to a name assumed to exist. */
+    ["call", "f(1, 2)", "error: LIR: call to undefined procedure 'f'"],
     ["lambda", "fun (a) -> a + 1", "[[closure, 1, t1, []]]"]])
 
 let pipe_suite(st) =
+  /* driver_pipe.yac hands a source string through a host fifo; Windows has no
+   * mkfifo, so the runner never writes pipe.bin there. */
+  if on_win(0) then
+    let _ = print("SKIP: pipe rc (no mkfifo on this host)") in st
+  else
   foldl(pipe_one, st, [
     ["1+2", "1 + 2\n", "3"],
     ["lit 42", "42\n", "42"],

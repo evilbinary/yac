@@ -1,0 +1,1 @@
+[[call, [var, f], [[int, 1], [call, [var, g], [[int, 2]]]]]]

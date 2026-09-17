@@ -1,0 +1,12 @@
+/* `import` is a DECLARATION: a use written before its import must still bind.
+ * This is the native twin of tests/interp/import_late.yac ("import after use").
+ * Before the hoist both front ends failed on exactly this file:
+ *   yc  -> error: 1:1: unbound variable 'host_os'
+ *   yac -> error: 1:12: unbound variable 'host_os'
+ * (yc hoists in back/backend.yac rewrite_imports; the C interpreter inserts
+ * spliced import items at the front-of-array cursor, src/parser.c.) The last
+ * value is the process status, and host_os(0) is non-empty on every host, so
+ * this case asserts rc 1. */
+let f(_) = host_os(0)
+import rt.os
+if str_len(f(0)) > 0 then 1 else 0

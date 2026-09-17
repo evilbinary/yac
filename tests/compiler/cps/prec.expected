@@ -1,0 +1,1 @@
+[[call, [prim, *], [[int, 2], [int, 3], [cont, #k0, [let, t0, [var, #k0], [call, [prim, +], [[int, 1], [var, t0], [cont, #k1, [let, t1, [var, #k1], [halt, [var, t1]]]]]]]]]]]

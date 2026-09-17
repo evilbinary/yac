@@ -7,7 +7,7 @@
  */
 
 package back.pack.elf
-export pack_elf, pack_elf_ex, pack_elf_libc, pack_elf_exec, pack_elf_dyn, elf_shared_set, elf_maybe_debug, elf_note_abs64, elf_dynexp_set, elf_dynexp_get, elf_init_off_set, elf_init_off, elf_pic_set, elf_pic, elf_relocs_reset, elf_relocs_get, syms_enable, le16, le32, le64, funsym_get, funsym_set
+export pack_elf, pack_elf_ex, pack_elf_libc, pack_elf_exec, pack_elf_dyn, elf_shared_set, elf_int_set, elf_int, elf_maybe_debug, elf_note_abs64, elf_dynexp_set, elf_dynexp_get, elf_init_off_set, elf_init_off, elf_pic_set, elf_pic, elf_relocs_reset, elf_relocs_get, syms_enable, le16, le32, le64, funsym_get, funsym_set
 
 let le16(b, v, i) =
   let _ = bytes_put(b, i + 0, band(v, 255)) in
@@ -199,6 +199,19 @@ let elf_shared_set(on) = box_set(elf_shared_box, on)
 let elf_shared(_) =
   let v = box_get(elf_shared_box) in
   if v == 0 then false else true
+
+/* 1 = shared image whose exports are the raw yac internal-ABI proc entries
+ * (used by the 12.4.C dylib loader) instead of C-ABI cabi stubs. */
+let elf_int_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let elf_int_set(on) = box_set(elf_int_box, on)
+
+let elf_int(_) =
+  let v = box_get(elf_int_box) in
+  if v == 0 then 0 else 1
 
 let elf_u64_at(b, i) =
   let b0 = bytes_ref(b, i) in

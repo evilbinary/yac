@@ -1,15 +1,15 @@
 /* backend.yac — pipeline + image. lir_expr = ANF→LIR；lower_expr = LIR→emit. */
 
 package back.backend
-export compile_native, dump_ast, dump_anf, dump_cps, dump_uncps, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, fun_off, link_need_box, rewrite_imports, rt_for_link
+export pkg_src, link_is_dylib, compile_native, compile_env_of, compile_env_new, dump_ast, dump_anf, dump_cps, dump_uncps, dump_lex, dump_lir, verify_lir, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, link_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, fun_off, link_need_box, rewrite_imports, rt_for_link
 import back.lower
 import back.pack.elf {elf_shared_set, funsym_get, pack_elf, pack_elf_libc}
 import back.pack.target {target_arch, target_emachine, target_format, target_shared, target_text_off, target_vaddr}
 import back.pack.pe {pack_pe_target, pe_finish_dll, pe_finish_imports}
 import back.pack.pack {pack_image}
 import lib.map
-import back.emit.emit {cimport_got, cimport_n, cimport_names, emit_abi_win, yjit_layout_get}
-import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, malias_box, pkg_prefix_get, pkg_prefix_set, sigma_list, sigma_of_rt, start_proc, tco_prog, ub_prog}
+import back.emit.emit {cimport_buf, cimport_got, cimport_n, cimport_names, cimport_set, emit_abi_win, emit_jsess, emit_jsess_set, extsym_add, extsym_bind_add, extsym_bind_list, extsym_bind_set, extsym_names, extsym_names_set, host_names, yjit_layout_get, yjit_layout_set}
+import front.lir {env_new, imap_box, imap_load, import_alias, in_list, insn_extend, insn_push, lir_all, lir_expr, malias_box, pkg_prefix_get, pkg_prefix_set, pkg_qn, sigma_host_seed, sigma_list, sigma_new, sigma_of_rt, start_proc, st_no, tco_prog, toplevel_seed, top_dup_scan, ub_prog, lir_tlv_set}
 import front.lexer {tok_ident_line, tokenize}
 import front.parser {parse_program, prog_has_err, report_syntax}
 import front.anf {anf_all}
@@ -44,7 +44,11 @@ let backend_compile(prog) = pack_elf(nth(lower_program(prog), 0))
 
 let pass_lex(src) = tokenize(src)
 let pass_parse(toks) = parse_program(toks, 0, [])
-let pass_anf(prog) = anf_all(0, prog, list_new(), len(prog))
+let pass_anf(prog) =
+  /* AST is the only place where the package boundary is still visible, so the
+   * duplicate-top-level-definition check lives here (see top_dup_scan). */
+  let _ = top_dup_scan(prog) in
+  anf_all(0, prog, list_new(), len(prog))
 
 /* Package lookup must not import path: loading path.yac would recurse. */
 let path_dirname(s) =
@@ -125,6 +129,199 @@ let pkg_src(pkg) =
     if p != 0 then p
     else file_or_0(join_path(path_dirname(argv(0)), f))
 
+/* ---- --link: BOOTSTRAP_LINK.md §5.2 / 12.3. Interface only: parse the
+ * chain into state and probe precompiled artifacts. Loaders are later steps
+ * (12.4 embed .host / dylib .so / yjit .yjit). Default ["stub"] means the
+ * current source-link behavior; stub is also the safe tail of any chain.
+ * Grammar:
+ *   --link <mode>[,<mode>…]            global chain (no '=')
+ *   --link <pkg>=<mode>[,<mode>…][,…]  per-package override; a bare mode
+ *                                      segment continues the last <pkg>=
+ * Repeated --link accumulates package overrides (later wins); a later
+ * --link without '=' replaces the global chain. --link is *not* once-only
+ * (contrast pkg_set). Modes: embed | dylib | yjit | stub. */
+let link_global_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+let link_pkg_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+let link_valid_mode(m) =
+  if m == "embed" then true
+  else if m == "dylib" then true
+  else if m == "yjit" then true
+  else m == "stub"
+
+let link_has_eq(s, i) =
+  if i >= str_len(s) then false
+  else if str_ref(s, i) == 61 then true
+  else link_has_eq(s, i + 1)
+
+let link_cut_eq(s, i) =
+  if i >= str_len(s) then 0
+  else if str_ref(s, i) == 61 then
+    [str_slice(s, 0, i), str_slice(s, i + 1, str_len(s) - i - 1)]
+  else link_cut_eq(s, i + 1)
+
+let link_any_eq(xs, i) =
+  if i >= len(xs) then false
+  else if link_has_eq(nth(xs, i), 0) then true
+  else link_any_eq(xs, i + 1)
+
+let link_modes_ok(xs, i) =
+  if i >= len(xs) then true
+  else if link_valid_mode(nth(xs, i)) == false then false
+  else link_modes_ok(xs, i + 1)
+
+/* segs from pkg_split; every later segment without '=' appends to the last
+ * <pkg>= override; a bare segment before any '=' is an error. */
+let link_parse_override(segs, i, cur, acc) =
+  if i >= len(segs) then
+    if cur == 0 then reverse(acc)
+    else reverse(cons([nth(cur, 0), reverse(nth(cur, 1))], acc))
+  else
+    let t = nth(segs, i) in
+    if link_has_eq(t, 0) then
+      let pr = link_cut_eq(t, 0) in
+      if pr == 0 then 0
+      else
+        let p = nth(pr, 0) in
+        let m = nth(pr, 1) in
+        if str_len(p) == 0 then 0
+        else if link_valid_mode(m) == false then 0
+        else if str_len(m) == 0 then 0
+        else
+          let acc2 =
+            if cur == 0 then acc
+            else cons([nth(cur, 0), reverse(nth(cur, 1))], acc) in
+          link_parse_override(segs, i + 1, [p, [m]], acc2)
+    else if cur == 0 then 0
+    else if link_valid_mode(t) == false then 0
+    else
+      link_parse_override(segs, i + 1,
+                          [nth(cur, 0), cons(t, nth(cur, 1))], acc)
+
+/* 1 on success; 0 on a bad argument (CLI then reports bad arguments). */
+let link_set(csv) =
+  let segs = pkg_split(csv) in
+  if segs == 0 then 0
+  else if link_any_eq(segs, 0) == false then
+    if link_modes_ok(segs, 0) then
+      let _ = box_set(link_global_box, segs) in
+      1
+    else 0
+  else
+    let ov = link_parse_override(segs, 0, 0, []) in
+    if ov == 0 then 0
+    else
+      let _ = box_set(link_pkg_box,
+                      append(box_get(link_pkg_box), ov)) in
+      1
+
+/* Effective chain for pkg: last package override (search back-to-front so a
+ * later --link with the same pkg wins), else global, else stub. */
+let link_chain_of(pkg) =
+  let find(xs, i) =
+    if i < 0 then 0
+    else if nth(nth(xs, i), 0) == pkg then nth(nth(xs, i), 1)
+    else find(xs, i - 1) in
+  let o = find(box_get(link_pkg_box), len(box_get(link_pkg_box)) - 1) in
+  if o != 0 then o
+  else
+    let g = box_get(link_global_box) in
+    if g == 0 then ["stub"]
+    else if len(g) == 0 then ["stub"]
+    else g
+
+let link_has_nstub(c, i) =
+  if i >= len(c) then false
+  else if nth(c, i) != "stub" then true
+  else link_has_nstub(c, i + 1)
+
+/* Artifact suffixes per mode. dylib is target-format dependent: ELF .so,
+ * PE .dll, Mach-O .dylib — probe all so the same chain works on any host. */
+let link_suffixes(mode) =
+  if mode == "embed" then [".host"]
+  else if mode == "dylib" then [".so", ".dll", ".dylib"]
+  else if mode == "yjit" then [".yjit"]
+  else []
+
+/* Artifact file <pkg>.yac<mode-suffix> under the package roots. Content or
+ * 0. Only used when a non-stub mode was explicitly requested. */
+let link_artifact(pkg, mode) =
+  let try_suf(sufs, i) =
+    if i >= len(sufs) then 0
+    else
+      let f = str_cat(pkg_file(pkg), nth(sufs, i)) in
+      let extra = box_get(pkg_extra_box) in
+      let a = if extra == 0 then 0 else pkg_try(extra, f, 0) in
+      if a != 0 then a
+      else
+        let p = file_or_0(join_path("pkg", f)) in
+        if p != 0 then p
+        else
+          let q = file_or_0(join_path(path_dirname(argv(0)), f)) in
+          if q != 0 then q
+          else try_suf(sufs, i + 1) in
+  try_suf(link_suffixes(mode), 0)
+
+let link_render_go(xs, i, acc) =
+  if i >= len(xs) then acc
+  else if acc == "" then link_render_go(xs, i + 1, nth(xs, i))
+  else link_render_go(xs, i + 1, str_cat(acc, str_cat(",", nth(xs, i))))
+
+let link_render(xs) = link_render_go(xs, 0, "")
+
+/* dylib-bound packages (12.5 stage 2): the operative chain mode is dylib and
+ * the dylib artifact exists. Their source is NOT linked into the image; each
+ * exported function name becomes one extern slot (G+216+8*i, tag21 id 10+i).
+ * Calls currently land on the yac_host_unimpl stub until the runtime loader
+ * (12.4.C) fills the slots. */
+let link_operative(c, i) =
+  if i >= len(c) then "stub"
+  else if nth(c, i) == "stub" then link_operative(c, i + 1)
+  else nth(c, i)
+
+let link_is_dylib(pkg) =
+  if link_operative(link_chain_of(pkg), 0) == "dylib" then
+    if link_artifact(pkg, "dylib") == 0 then 0
+    else 1
+  else 0
+
+/* 0 = proceed (source-link, or artifact mode that can't apply yet).
+ * 1 = fail compile with a message (pkg_fail). Only fires when the chain
+ * names a non-stub mode for this pkg. Found artifact -> "not implemented"
+ * (loaders land in 12.4+); nothing found and no stub tail -> error. */
+let link_check_pkg(pkg) =
+  if link_is_dylib(pkg) == 1 then 0
+  else
+    let chain = link_chain_of(pkg) in
+    if link_has_nstub(chain, 0) == false then 0
+    else
+      let rec_scan(i) =
+        if i >= len(chain) then
+          if in_list("stub", chain) then 0
+          else
+            let _ = print(str_cat("error: --link for pkg '",
+              str_cat(pkg, str_cat("': no precompiled artifact (",
+                str_cat(link_render(chain),
+                  "); make one or add 'stub' to the chain"))))) in
+            1
+        else
+          let m = nth(chain, i) in
+          if m == "stub" then rec_scan(i + 1)
+          else if link_artifact(pkg, m) != 0 then
+            let _ = print(str_cat("error: --link ", str_cat(m,
+              str_cat(" for pkg '", str_cat(pkg,
+                "': artifact exists but this mode is not implemented yet"))))) in
+            1
+          else rec_scan(i + 1) in
+      rec_scan(0)
+
 let intern_names(xs, i, acc) =
   if i >= len(xs) then acc
   else intern_names(xs, i + 1, cons(intern(nth(xs, i)), acc))
@@ -143,10 +340,120 @@ let ast_pkg_name(ast, i) =
   else if nth(nth(ast, i), 0) == "package" then nth(nth(ast, i), 1)
   else ast_pkg_name(ast, i + 1)
 
+/* Exports of an imported package, cached: the bundle imports the same
+ * lib/front/back package many times, and reading+parsing it on every import
+ * was ~9 s of a ~29 s self-compile. The map value is the same list object
+ * each call, so the caller must not mutate it. */
+let pkg_exp_cache_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
 let pkg_export_names(pkg) =
-  let src = pkg_src(pkg) in
-  if src == 0 then []
-  else ast_export_list(pass_parse(pass_lex(src)), 0)
+  let b0 = box_get(pkg_exp_cache_box) in
+  let m =
+    if b0 == 0 then
+      let _ = box_set(pkg_exp_cache_box, fmap_new64(0)) in
+      box_get(pkg_exp_cache_box)
+    else b0 in
+  let e = fmap_get(m, pkg) in
+  if e != 0 then e
+  else
+    let src = pkg_src(pkg) in
+    let v = if src == 0 then [] else ast_export_list(pass_parse(pass_lex(src)), 0) in
+    let _ = fmap_put(m, pkg, v) in
+    v
+
+/* extbind entries: [qnameKey, exportSymbol, artifactPath]. Key matches the
+ * emit extern slot (extsym index), symbol is what csym() looks up in the
+ * artifact, path is what cload() opens. Fed by pkg_extern_register below,
+ * read by the 12.4.C loader. */
+let extbind_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+let extbind_add(key, sym, art) =
+  let xs = box_get(extbind_box) in
+  let has(xs2, i) =
+    if i >= len(xs2) then false
+    else if nth(nth(xs2, i), 0) == key then true
+    else has(xs2, i + 1) in
+  if has(xs, 0) then 0
+  else box_set(extbind_box, cons([key, sym, art], xs))
+
+let extbind_list(_) = box_get(extbind_box)
+
+/* Like link_artifact but returns the file path of the first existing artifact
+ * (mode suffixes, same root order) instead of its contents; 0 if none. Used
+ * to build the loader's cload() argument (12.4.C). */
+let link_artifact_path(pkg, mode) =
+  let try_suf(sufs, i) =
+    if i >= len(sufs) then 0
+    else
+      let f = str_cat(pkg_file(pkg), nth(sufs, i)) in
+      let extra = box_get(pkg_extra_box) in
+      let try_root(xs, j) =
+        if j >= len(xs) then 0
+        else
+          let c = str_cat(nth(xs, j), str_cat("/", f)) in
+          if file_or_0(c) == 0 then try_root(xs, j + 1)
+          else c in
+      let a = if extra == 0 then 0 else try_root(extra, 0) in
+      if a != 0 then a
+      else
+        let p = join_path("pkg", f) in
+        if file_or_0(p) == 0 then
+          let q = join_path(path_dirname(argv(0)), f) in
+          if file_or_0(q) == 0 then try_suf(sufs, i + 1)
+          else q
+        else p in
+  try_suf(link_suffixes(mode), 0)
+
+/* Register every export of a dylib-bound package as one extern slot keyed by
+ * its qname (pkg/f), plus the extbind triple the loader needs. See extsym_*
+ * (emit) and extbind_* / link_artifact_path above (12.5 stage 2/3). */
+let pkg_extern_register(pkg) =
+  let art = link_artifact_path(pkg, "dylib") in
+  let names = pkg_export_names(pkg) in
+  let rec_add(i) =
+    if i >= len(names) then 0
+    else
+      let n = nth(names, i) in
+      let key = intern(pkg_qn(pkg, n)) in
+      let _ = extsym_add(key) in
+      let _ = if art == 0 then 0 else extsym_bind_add(key, intern(n), art) in
+      rec_add(i + 1) in
+  rec_add(0)
+
+/* dylib wrapper package (12.5, option B): each export becomes a shim that
+ * dlopens the C-ABI artifact and forwards up to 6 tagged int args through
+ * ccall (untags args, calls the C export, tags the int result). Compiled
+ * under `package pkg`, so imported calls resolve to local procs named pkg/f
+ * through the normal sigma path.
+ *
+ * Note: a per-package box cache was tried and REVERTED — package-scope
+ * functions referencing a top-level box crash at runtime (only main files
+ * support that). Resolve happens on every call for now. */
+let pkg_dylib_synth(pkg) =
+  let art = link_artifact_path(pkg, "dylib") in
+  if art == 0 then ""
+  else
+    let names = pkg_export_names(pkg) in
+    let hdr = str_cat("package ", str_cat(pkg, "\n")) in
+    let one(e, acc) =
+      let msg = str_cat("dylib load failed: ", art) in
+      let s1 = str_cat("(a0, a1, a2, a3, a4, a5) = let h = ccall(\"dlopen\", \"", art) in
+      let s2 = str_cat(s1, "\", 258) in if h == 0 then let _ = print(\"") in
+      let s3 = str_cat(s2, msg) in
+      let s4 = str_cat(s3, "\") in 0 else ccall(ccall(\"dlsym\", 0, \"") in
+      let s5 = str_cat(s4, e) in
+      let s6 = str_cat(s5, "\"), a0, a1, a2, a3, a4, a5)\n") in
+      str_cat(acc, str_cat("let ", str_cat(e, s6))) in
+    let rec(i, acc) =
+      if i >= len(names) then acc
+      else rec(i + 1, one(nth(names, i), acc)) in
+    str_cat(hdr, rec(0, ""))
 
 let import_id_pairs(xs, i, acc) =
   if i >= len(xs) then acc
@@ -158,27 +465,97 @@ let import_sel(sel, all, i, acc) =
   if i >= len(sel) then acc
   else
     let spec = nth(sel, i) in
-    let orig = intern(nth(spec, 1)) in
-    let loc = intern(nth(spec, 0)) in
-    if in_list(orig, all) then
-      import_sel(sel, all, i + 1, cons([loc, orig], acc))
-    else import_sel(sel, all, i + 1, acc)
+    if len(spec) > 2 then
+      /* host binding (@name): not checked against the package exports,
+       * kept as [name, name, 1] so imap_load binds the bare host name. */
+      import_sel(sel, all, i + 1, cons(spec, acc))
+    else
+      let orig = intern(nth(spec, 1)) in
+      let loc = intern(nth(spec, 0)) in
+      if in_list(orig, all) then
+        import_sel(sel, all, i + 1, cons([loc, orig], acc))
+      else import_sel(sel, all, i + 1, acc)
 
-let fill_import(e) =
-  let all = pkg_export_names(nth(e, 1)) in
+/* Exports of packages declared in the same source. Saves reading+parsing
+ * the imported file for every `import` inside the concatenated compiler
+ * bundle (that was ~9 s; the disk cache above still covers repeat imports
+ * of packages that are genuinely separate files). */
+let ast_exp_go(ast, i, n, st) =
+  if i >= n then st
+  else
+    let e = nth(ast, i) in
+    let k = nth(e, 0) in
+    if k == "package" then ast_exp_go(ast, i + 1, n, [nth(st, 0), nth(e, 1)])
+    else if k == "export" then
+      let cur = nth(st, 1) in
+      if cur == "" then ast_exp_go(ast, i + 1, n, st)
+      else
+        let m = nth(st, 0) in
+        let old = fmap_get(m, cur) in
+        let v = if old == 0 then nth(e, 1) else append(nth(e, 1), old) in
+        let _ = fmap_put(m, cur, v) in
+        ast_exp_go(ast, i + 1, n, st)
+    else ast_exp_go(ast, i + 1, n, st)
+
+let local_exports(ast) =
+  let st = ast_exp_go(ast, 0, len(ast), [fmap_new64(0), ""]) in
+  nth(st, 0)
+
+/* True when every brace spec of an import is a host binding (@name): the
+ * package then only provides a name view over host leaves and its source
+ * must NOT be pulled into the link closure. */
+let import_all_host(sel, i) =
+  if i >= len(sel) then true
+  else
+    let spec = nth(sel, i) in
+    if len(spec) <= 2 then false
+    else import_all_host(sel, i + 1)
+
+let fill_import(e, local) =
+  let sel =
+    if len(e) < 3 then 0
+    else if nth(e, 2) == 0 then 0
+    else nth(e, 2) in
   let alias = if len(e) > 3 then nth(e, 3) else 0 in
+  let all0 = if local == 0 then 0 else fmap_get(local, nth(e, 1)) in
   let pairs =
-    if len(e) < 3 then import_id_pairs(all, 0, [])
-    else if nth(e, 2) == 0 then import_id_pairs(all, 0, [])
-    else import_sel(nth(e, 2), all, 0, []) in
+    if sel != 0 and import_all_host(sel, 0) then
+      /* every spec is @name: bind bare host names, never read the package. */
+      sel
+    else
+      let all = if all0 == 0 then pkg_export_names(nth(e, 1)) else all0 in
+      if len(e) < 3 then import_id_pairs(all, 0, [])
+      else if nth(e, 2) == 0 then import_id_pairs(all, 0, [])
+      else import_sel(sel, all, 0, []) in
   ["import", nth(e, 1), pairs, alias]
 
-let rewrite_imports(ast, i, acc) =
+let rewrite_imports_go(ast, i, acc, local) =
   if i >= len(ast) then reverse(acc)
   else
     let e = nth(ast, i) in
-    let e2 = if nth(e, 0) == "import" then fill_import(e) else e in
-    rewrite_imports(ast, i + 1, cons(e2, acc))
+    let e2 = if nth(e, 0) == "import" then fill_import(e, local) else e in
+    rewrite_imports_go(ast, i + 1, cons(e2, acc), local)
+
+/* Top-level `import` forms are DECLARATIONS: hoist them in front of every other
+ * item, stably (imports keep their relative order, everything else keeps its).
+ * Both callers of rewrite_imports (report_unbound_ex's pre-check and
+ * link_from_ast) walk the AST in source order and widen scope where an import
+ * sits, so an import written AFTER a use left the name unbound -- measured on
+ * tests/interp/import_late.yac (`let f(_) = host_os(0)` / `import rt.os`):
+ *   yc  : error: 1:1: unbound variable 'host_os'
+ *   yac : error: 1:12: unbound variable 'host_os'
+ * With import first the same file prints 1 in both. Declarations having no
+ * runtime effect, reordering them in front is semantics-preserving; the only
+ * observable change is that a late import now binds (which is the point). */
+let hoist_imports(ast, i, imps, rest) =
+  if i >= len(ast) then append(reverse(imps), reverse(rest))
+  else
+    let e = nth(ast, i) in
+    if nth(e, 0) == "import" then hoist_imports(ast, i + 1, cons(e, imps), rest)
+    else hoist_imports(ast, i + 1, imps, cons(e, rest))
+
+let rewrite_imports(ast, i, acc) =
+  rewrite_imports_go(hoist_imports(ast, 0, [], []), i, acc, local_exports(ast))
 
 /* Compile one rt/*.yac against already-lowered procs so later stdlib
  * files can call earlier ones. Guest always gets rt.num; other packages
@@ -216,8 +593,31 @@ let kernel_fun_names(_) =
     v
   else c
 
+/* Kernel package (rt/runtime.yac) exports: always linked into every image,
+ * so a standalone package may reference them without importing. Cached. */
+let kernel_let_names_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let kernel_let_names(_) =
+  let c = box_get(kernel_let_names_box) in
+  if c == 0 then
+    let v = pkg_export_names("rt.runtime") in
+    let _ = box_set(kernel_let_names_box, v) in
+    v
+  else c
+
+/* Host functions available to REPL lines and host packages. These are the
+ * names baked into the yc host image's G+136..G+216 table; a *guest* must not
+ * see them without an import (pkg/compiler.yac binds them via `import`), so
+ * a bare `compile(...)` is an unbound-variable error, exactly like any other
+ * name. Only the kernel (rt.runtime) and imported names widen guest scope. */
+let host_fun_names(_) = host_names(0)
+
 let report_unbound_ex(src, ast, extra) =
-  let sc0 = pair_locals(box_get(imap_box), 0, kernel_fun_names(0)) in
+  let sc0 = pair_locals(box_get(imap_box), 0,
+                        append(kernel_fun_names(0), kernel_let_names(0))) in
   let sc1 = pair_locals(box_get(malias_box), 0, sc0) in
   let nm = ub_prog(rewrite_imports(ast, 0, []), 0, append(extra, sc1)) in
   if nm == "" then 0
@@ -235,38 +635,93 @@ let report_unbound_ex(src, ast, extra) =
 
 let report_unbound(src, ast) = report_unbound_ex(src, ast, [])
 
-let lir_extend(pkg, src, acc) =
-  if src == 0 then acc
+/* synth = 1 when src is a synthesized dylib wrapper package (not the package
+ * source), so the "dylib-bound => do not compile real source" guard is
+ * bypassed; link_check still approves the package. */
+/* Package initialisation (FLAT_ABI.md 2.2 / lir_let): a package's top-level
+ * values live in gvar cells, and anything that is not a literal has to be
+ * written "at run time, in source order, before any call". lir_extend_go used
+ * to keep only the package's procs and throw its statement list away, so every
+ * package-qualified cell stayed 0/nil: `let box = box_new()` read back nil and
+ * `let lit = 42` read back 0, and a package proc that used either then died
+ * (SIGSEGV at startup in the composed drivers, 139 in `import lib.log {log}`).
+ * Each package's statements are now compiled into its own `pkg/__init` proc
+ * (own frame, so slot numbers stay per-unit) and the entry calls them in
+ * dependency order before the main unit's own items. */
+let pkg_init_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+let pkg_init_add(nm) = box_set(pkg_init_box, cons(nm, box_get(pkg_init_box)))
+let pkg_init_list(_) = reverse(box_get(pkg_init_box))
+let pkg_init_reset(_) = box_set(pkg_init_box, [])
+
+let lir_extend_go(pkg, src, acc, synth) =
+  if synth == 0 and pkg != "rt.num" and link_is_dylib(pkg) == 1 then acc
   else
-    let ast = pass_parse(pass_lex(src)) in
-    if prog_has_err(ast, 0) then
-      let _ = print(str_cat("error: syntax in package '", str_cat(pkg, "'"))) in
-      let _ = report_syntax(ast) in
-      let _ = pkg_fail_set(1) in
-      acc
+    let _ =
+      if pkg == "rt.num" then 0
+      else if link_check_pkg(pkg) != 0 then pkg_fail_set(1)
+      else 0 in
+    if src == 0 then acc
     else
-      let saved_i = box_get(imap_box) in
-      let saved_m = box_get(malias_box) in
-      let saved_p = pkg_prefix_get(0) in
-      let filled = rewrite_imports(ast, 0, []) in
-      let _ = imap_load(filled, 0) in
-      let _ = pkg_prefix_set(ast_pkg_name(ast, 0)) in
-      if report_unbound(src, ast) != 0 then
+      let ast = pass_parse(pass_lex(src)) in
+      if prog_has_err(ast, 0) then
+        let _ = print(str_cat("error: syntax in package '", str_cat(pkg, "'"))) in
+        let _ = report_syntax(ast) in
         let _ = pkg_fail_set(1) in
-        let _ = box_set(imap_box, saved_i) in
-        let _ = box_set(malias_box, saved_m) in
-        let _ = pkg_prefix_set(saved_p) in
         acc
       else
-        let anf = pass_anf(ast) in
-        let st = lir_all(0, anf,
-          [env_new(0), 1, sigma_of_rt(acc), 0, list_new(), 0],
-          len(anf)) in
-        let out = reverse(sigma_list(nth(st, 2))) in
-        let _ = box_set(imap_box, saved_i) in
-        let _ = box_set(malias_box, saved_m) in
-        let _ = pkg_prefix_set(saved_p) in
-        out
+        let saved_i = box_get(imap_box) in
+        let saved_m = box_get(malias_box) in
+        let saved_p = pkg_prefix_get(0) in
+        let filled = rewrite_imports(ast, 0, []) in
+        let _ = imap_load(filled, 0) in
+        let _ = pkg_prefix_set(ast_pkg_name(ast, 0)) in
+        if report_unbound(src, ast) != 0 then
+          let _ = pkg_fail_set(1) in
+          let _ = box_set(imap_box, saved_i) in
+          let _ = box_set(malias_box, saved_m) in
+          let _ = pkg_prefix_set(saved_p) in
+          acc
+        else
+          let anf = pass_anf(ast) in
+          /* toplevel_seed, exactly like the AOT (lir_all call) and REPL paths:
+           * Σ's kind table is what lir_let's is_tv reads to recognise "this bind
+           * is a top-level value of the unit". Without it a package's own
+           * top-level `let` looks like a local, enters Γ, and free_vars counts
+           * it as a capture -- so the package's procs came out with ncap > 0
+           * and a by-name call (ycall, which leaves the object register unset)
+           * read [r13+32] with r13 == 0: the composed drivers died with
+           * SIGSEGV at startup. */
+          let fs = sigma_host_seed(toplevel_seed(anf, 0, sigma_of_rt(acc))) in
+          let st = lir_all(0, anf,
+            [env_new(0), 1, fs, 0, list_new(), 0],
+            len(anf)) in
+          let out = reverse(sigma_list(nth(st, 2))) in
+          /* The package's own top-level statement list (gset for its `let`s,
+           * plus any side effects) becomes one proc of this unit. Its frame is
+           * its own, so the slot numbers it was compiled with stay valid. */
+          let inits = nth(st, 4) in
+          let out2 =
+            if len(inits) == 0 then out
+            else
+              let inm = str_cat(pkg, "/__init") in
+              let ibody = insn_extend(insn_push(list_new(),
+                            ["local", nth(st, 1), 0]), inits) in
+              let iproc = ["proc", inm, 0, 0,
+                           insn_push(ibody, ["ret", nth(st, 5)]), inm] in
+              let _ = pkg_init_add(inm) in
+              cons(iproc, out) in
+          let _ = box_set(imap_box, saved_i) in
+          let _ = box_set(malias_box, saved_m) in
+          let _ = pkg_prefix_set(saved_p) in
+          out2
+
+let lir_extend(pkg, src, acc) = lir_extend_go(pkg, src, acc, 0)
+
+let lir_extend_dylib(pkg, src, acc) = lir_extend_go(pkg, src, acc, 1)
 
 let ast_imports(ast, i, acc) =
   if i >= len(ast) then acc
@@ -274,7 +729,12 @@ let ast_imports(ast, i, acc) =
     let e = nth(ast, i) in
     if nth(e, 0) == "import" then
       let p = nth(e, 1) in
-      if in_list(p, acc) then ast_imports(ast, i + 1, acc)
+      let sel =
+        if len(e) < 3 then 0
+        else if nth(e, 2) == 0 then 0
+        else nth(e, 2) in
+      if sel != 0 and import_all_host(sel, 0) then ast_imports(ast, i + 1, acc)
+      else if in_list(p, acc) then ast_imports(ast, i + 1, acc)
       else ast_imports(ast, i + 1, cons(p, acc))
     else ast_imports(ast, i + 1, acc)
 
@@ -289,6 +749,7 @@ let visit_go(op, p, xs, i, seen, order) =
   if op == 0 then
     if in_list(p, seen) then [seen, order]
     else if p == "rt.num" then [cons(p, seen), order]
+    else if link_is_dylib(p) then [cons(p, seen), cons(p, order)]
     else
       let seen1 = cons(p, seen) in
       let st = visit_go(1, p, pkg_file_imports(p), 0, seen1, order) in
@@ -303,9 +764,36 @@ let link_need_box =
   let _ = box_set(b, []) in
   b
 
+let link_local_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+
+/* Package names declared inside a source (used to skip them when linking). */
+let ast_packages(ast, i, acc) =
+  if i >= len(ast) then acc
+  else
+    let e = nth(ast, i) in
+    if nth(e, 0) == "package" then
+      ast_packages(ast, i + 1, cons(nth(e, 1), acc))
+    else ast_packages(ast, i + 1, acc)
+
+/* Drop imports of packages defined inside the same source. */
+let skip_local_imp(ast, local, i, acc) =
+  if i >= len(ast) then reverse(acc)
+  else
+    let e = nth(ast, i) in
+    if nth(e, 0) == "import" then
+      if in_list(nth(e, 1), local) then skip_local_imp(ast, local, i + 1, acc)
+      else skip_local_imp(ast, local, i + 1, cons(e, acc))
+    else skip_local_imp(ast, local, i + 1, cons(e, acc))
+
 let link_from_ast(ast) =
-  let filled = rewrite_imports(ast, 0, []) in
-  let _ = box_set(link_need_box, ast_imports(ast, 0, [])) in
+  let pkgs = ast_packages(ast, 0, []) in
+  let ast1 = skip_local_imp(ast, pkgs, 0, []) in
+  let filled = rewrite_imports(ast1, 0, []) in
+  let _ = box_set(link_need_box, ast_imports(ast1, 0, [])) in
+  let _ = box_set(link_local_box, pkgs) in
   let _ = imap_load(filled, 0) in
   0
 
@@ -323,36 +811,74 @@ let rt_base(_) =
   else c
 
 let rt_for_link(_) =
-  let st = visit_go(1, 0, box_get(link_need_box), 0, [], []) in
+  let _ = pkg_init_reset(0) in
+  let st = visit_go(1, 0, box_get(link_need_box), 0,
+                    cons("rt.num", box_get(link_local_box)), []) in
   let pkgs = reverse(nth(st, 1)) in
   let rec(i, acc) =
     if i >= len(pkgs) then acc
     else
       let p = nth(pkgs, i) in
       if p == "rt.num" then rec(i + 1, acc)
+      else if link_is_dylib(p) == 1 then
+        let src = pkg_dylib_synth(p) in
+        rec(i + 1, lir_extend_dylib(p, src, acc))
       else rec(i + 1, lir_extend(p, pkg_src(p), acc)) in
   runtime_add(rec(0, rt_base(0)))
+
+/* Flat ABI (12.14): seed Σ with this unit's top-level names so lir compiles
+ * them environment-free and resolves references to them without captures.
+ * The set travels INSIDE Σ (toplevel_seed) -- there is no global box, so
+ * there is nothing a caller could forget to reset. */
+/* `ycall` slots for the package inits, in the entry frame: the inits come
+ * first, so their results occupy slots nslots..nslots+nin-1 and the unit's own
+ * items keep their original numbering. */
+let pkg_init_calls(xs, i, base, acc) =
+  if i >= len(xs) then acc
+  else
+    let acc2 = insn_push(acc, ["ycall", base + i, nth(xs, i), []]) in
+    pkg_init_calls(xs, i + 1, base, acc2)
 
 let pass_lir(anf_list) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
+  /* sigma_host_seed too: a guest with host bindings (@name) must resolve them
+   * to the G+136 host slot (fcall), exactly like the package loop above and
+   * jit.yac's pass_lir_eval. Without it the call has no static entry and no
+   * registry, and lir now reports it instead of emitting xcall. */
+  let fs0 = sigma_host_seed(toplevel_seed(anf_list, 0, sigma_of_rt(rt0))) in
+  let _ = lir_tlv_set(1) in
   let st = lir_all(0, anf_list,
-             [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
+             [env_new(0), 1, fs0, 0, list_new(), 0],
              len(anf_list)) in
-  let entry = start_proc(nth(st, 1), nth(st, 5), nth(st, 4)) in
+  let inits = pkg_init_list(0) in
+  let nin = len(inits) in
+  let body = insn_extend(pkg_init_calls(inits, 0, nth(st, 1), list_new()),
+                         nth(st, 4)) in
+  let entry = start_proc(nth(st, 1) + nin, nth(st, 5), body) in
   tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
 
 /* In-process image: _eval + print, not OS _start. */
 let pass_lir_yjit(anf_list) =
   let rt0 = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
+  /* sigma_host_seed too: a guest with host bindings (@name) must resolve them
+   * to the G+136 host slot (fcall), exactly like the package loop above and
+   * jit.yac's pass_lir_eval. Without it the call has no static entry and no
+   * registry, and lir now reports it instead of emitting xcall. */
+  let fs0 = sigma_host_seed(toplevel_seed(anf_list, 0, sigma_of_rt(rt0))) in
+  let _ = lir_tlv_set(1) in
   let st = lir_all(0, anf_list,
-             [env_new(0), 1, sigma_of_rt(rt0), 0, list_new(), 0],
+             [env_new(0), 1, fs0, 0, list_new(), 0],
              len(anf_list)) in
   let nslots = nth(st, 1) in
   let pslot = nth(st, 5) in
-  let b0 = insn_extend(insn_push(list_new(), ["local", nslots + 8, 0]),
-                       nth(st, 4)) in
+  let inits = pkg_init_list(0) in
+  let nin = len(inits) in
+  let body0 = insn_extend(pkg_init_calls(inits, 0, nslots + 8, list_new()),
+                          nth(st, 4)) in
+  let b0 = insn_extend(insn_push(list_new(), ["local", nslots + 8 + nin, 0]),
+                       body0) in
   let ins =
     insn_push(insn_push(insn_push(b0,
       ["mov_imm", nslots, 2]),
@@ -389,6 +915,10 @@ let make_pipeline(t) =
    mk_pass("lower", pass_lower),
    mk_pass("pack", pass_pack)]
 
+/* --dump-lex: token stream (kind, text, line) before parsing. */
+let dump_lex(src) =
+  let _ = print(tokenize(src)) in 0
+
 let dump_ast(src) =
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then
@@ -403,6 +933,221 @@ let dump_anf(src) =
   else if report_unbound(src, ast) != 0 then 1
   else
     let _ = print(pass_anf(ast)) in 0
+
+let lir_slice_list(l, i, n, acc) =
+  if i >= n then reverse(acc)
+  else lir_slice_list(l, i + 1, n, cons(nth(l, i), acc))
+
+let lir_dump_items(anf, i, n, st) =
+  if i >= n then 0
+  else
+    let r = lir_expr(nth(anf, i),
+              st_no([nth(st, 4), nth(st, 0), nth(st, 1), nth(st, 2), nth(st, 3)])) in
+    /* Print only THIS item's insns (the delta), not the accumulated list --
+     * the cumulative form is O(n^2) text and unusable on large units.
+     * Items with an empty delta (e.g. a top-level letfun: its body lives in
+     * a separate proc) print nothing at all. */
+    let _ =
+      if len(nth(r, 0)) > len(nth(st, 4)) then
+        print(lir_slice_list(nth(r, 0), len(nth(st, 4)), len(nth(r, 0)), []))
+      else 0 in
+    lir_dump_items(anf, i + 1, n,
+      [nth(r, 2), nth(r, 3), nth(r, 4), nth(r, 5), nth(r, 0), nth(r, 1)])
+
+/* --dump-lir: per top-level ANF item, the LIR insn list (item-level view of
+ * ANF -> LIR). Same setup as pass_lir — top-level names seeded into Σ, st
+ * accumulated across items — so the dump is faithful (flatness
+ * decisions and name resolution match the real pipeline).
+ *
+ * It does NOT print the whole prog: pass_lir's output carries every linked
+ * runtime proc, which would swamp a per-stage golden. The cost is that the
+ * synthetic `_start` proc (where top-level publications and `tcall` / `$tco`
+ * live) is not shown here. */
+let dump_lir(src) =
+  let ast = pass_parse(pass_lex(src)) in
+  if prog_has_err(ast, 0) then
+    let _ = report_syntax(ast) in 1
+  else if report_unbound(src, ast) != 0 then 1
+  else
+    let anf = pass_anf(ast) in
+    let rt0 = rt_for_link(0) in
+    let _ = pkg_prefix_set("") in
+    let fs0 = toplevel_seed(anf, 0, sigma_of_rt(rt0)) in
+    let _ = lir_dump_items(anf, 0, len(anf),
+      [env_new(0), 1, fs0, 0, list_new(), 0]) in
+    /* Then the procs of THIS unit. Item-level LIR cannot express captures,
+     * self closures or TCO rewrites -- those live in a proc body, so without
+     * this the lir suite cannot see them at all. sigma_list is newest-first
+     * and starts with the runtime procs (sigma_of_rt), so cutting at
+     * len(ps) - len(rt0) drops those. */
+    let ps = nth(pass_lir(anf), 1) in
+    let st0 = len(rt0) + 1 in
+    let dump_ps(i) =
+      if i >= len(ps) then 0
+      else if i > 0 and i < st0 then dump_ps(i + 1)
+      else let _ = print(nth(ps, i)) in dump_ps(i + 1) in
+    dump_ps(0)
+
+/* ---------- --verify-lir: machine-check the LIR invariants (docs/LIR.md §8) ----
+ *
+ * Walks the REAL pipeline output (pass_lir) and reports EVERY violation,
+ * instead of dying on the first one at emit time (emit_insn_go hard-errors
+ * since §9.1 -- that catches the same class, but only one at a time, and only
+ * after code selection has already started).
+ *
+ * Implemented here: rules 1, 2, 5, 6, 9.
+ * NOT implemented: rule 3 / 4 (need a per-op operand-kind table), rule 7 (needs
+ * the enclosing frame), rule 8 (needs `[fvs]` -- §5.5 S2 has not landed).
+ */
+
+/* Names emit_x86_64 actually dispatches on. An op outside this set would fall
+ * into emit_insn_go's `else` branch, which is a hard error since §9.1. The
+ * verifier keeps its own copy so it can report the violation before packing --
+ * and report all of them. Keep in sync with emit_x86_64's dispatch chain. */
+let vops(_) =
+  ["local", "$local", "mov_imm", "mov", "add", "sub", "mul", "land", "lor",
+   "xor", "bnot", "shl", "shr", "div", "rem", "cmp", "icmp", "label", "fcall",
+   "ccall", "iccall", "tcall", "ycall", "jmp", "cmpjmp", "ret", "exit", "$f64fromstr",
+   "$f64binop", "$f64rel", "$f64print", "$and", "$addi", "$add", "$sub",
+   "$bts", "$bt", "$or", "$clamp0", "$st64", "$st8", "$ld64", "$ld8", "$sp",
+   "$fp", "$smap", "$gbase", "$glob", "$icmp", "$jcc", "$memcpy", "$memset",
+   "$shr", "$carg", "$icall", "gvar", "gval", "gset", "obj_kind",
+   "mref", "mset", "tag", "is_int", "alloc", "obj_sti", "obj_st_int",
+   "alloc_s", "mref8", "mset8", "ld64", "st64", "write1", "clock", "glob",
+   "gst", "time_ms", "time_str", "argc", "argv", "closure", "apply", "icall",
+   "tailapply", "ticall", "nil", "cons", "len", "nth", "tail", "append",
+   "list_rev", "list_new", "list_push", "strlit", "str_len", "str_ref",
+   "bytes_new", "bytes_len", "bytes_ref", "bytes_put", "bytes_append",
+   "bytes_extend", "str_cat", "str_slice", "int_to_str", "bytes_to_str",
+   "drop", "foldl", "map", "read_file", "write_file", "mkcont", "throwk",
+   "cc_recv", "xcall", "untag", "syscall", "$syscall", "memcpy"]
+
+let vop_known(k) = in_list(k, vops(0))
+
+/* Raw (`$`) ops that only do INTEGER arithmetic on slots which are already
+ * int-tagged: harmless inside a GC-scanned frame. Rule 6 exists to keep
+ * *pointer-producing* raw ops (which leave untagged addresses) out of scanned
+ * frames -- those are the ones that break the GC. */
+let vraw_arith_ok(k) =
+  in_list(k, ["$and", "$add", "$addi", "$sub", "$or", "$shr", "$shl",
+              "$bt", "$bts", "$clamp0", "$icmp", "$jcc"])
+
+let vcnt_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let vcnt(_) = box_get(vcnt_box)
+let vcnt_reset(_) = box_set(vcnt_box, 0)
+
+let vwarn_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let vwarns(_) = box_get(vwarn_box)
+let vwarn_reset(_) = box_set(vwarn_box, 0)
+
+/* ERROR: a violation of an invariant that must hold. Fails the run. */
+let vbad(where, msg) =
+  let _ = print(str_cat("verify-lir: ", str_cat(where, str_cat(": ", msg)))) in
+  box_set(vcnt_box, box_get(vcnt_box) + 1)
+
+/* WARN: observed, but deciding "bug vs accepted" needs human judgement (or a
+ * finer per-op semantics than this verifier has). Reported, does not fail. */
+let vwarn(where, msg) =
+  let _ = print(str_cat("verify-lir: warn: ", str_cat(where, str_cat(": ", msg)))) in
+  box_set(vwarn_box, box_get(vwarn_box) + 1)
+
+let vlabels(insns, i, n, acc) =
+  if i >= n then acc
+  else
+    let ins = nth(insns, i) in
+    if nth(ins, 0) == "label" then
+      vlabels(insns, i + 1, n, cons(nth(ins, 1), acc))
+    else vlabels(insns, i + 1, n, acc)
+
+let vtarget(name, labs, l, what) =
+  if in_list(l, labs) then 0
+  else vbad(name,
+         str_cat(what, str_cat(" target '", str_cat(l, "' is not defined in this proc"))))
+
+let vtargets(name, k, ins, labs) =
+  if k == "jmp" then vtarget(name, labs, nth(ins, 1), "jmp")
+  else if k == "cmpjmp" then
+    vtarget(name, labs, nth(ins, 2), "cmpjmp")
+      + vtarget(name, labs, nth(ins, 3), "cmpjmp")
+  else if k == "$jcc" then
+    vtarget(name, labs, nth(ins, 4), "$jcc")
+      + vtarget(name, labs, nth(ins, 5), "$jcc")
+  else 0
+
+let vinsns(name, insns, i, n, labs, is_raw) =
+  if i >= n then 0
+  else
+    let ins = nth(insns, i) in
+    let k = nth(ins, 0) in
+    let _ =
+      if vop_known(k) then 0
+      else vbad(name, str_cat("unknown op '", str_cat(k, "'"))) in
+    let _ =
+      if is_raw == 0 and str_len(k) > 0 and str_ref(k, 0) == 36 then
+        (if vraw_arith_ok(k) then 0
+         else vwarn(name,
+                str_cat("pointer-producing raw op '",
+                  str_cat(k, "' outside a $proc"))))
+      else 0 in
+    let _ = vtargets(name, k, ins, labs) in
+    vinsns(name, insns, i + 1, n, labs, is_raw)
+
+let vproc(f) =
+  let name = nth(f, 1) in
+  let insns = nth(f, 4) in
+  let n = len(insns) in
+  let is_raw =
+    if nth(f, 0) == "$proc" then 1
+    else if n > 0 then (if nth(nth(insns, 0), 0) == "$local" then 1 else 0)
+    else 0 in
+  let _ =
+    if n == 0 then 0
+    else if nth(nth(insns, 0), 0) == "local" then 0
+    else if nth(nth(insns, 0), 0) == "$local" then 0
+    else vbad(name, "first insn is not a frame insn (`local` / `$local`)") in
+  let labs = vlabels(insns, 0, n, list_new()) in
+  vinsns(name, insns, 0, n, labs, is_raw)
+
+let vprocs(procs, i, n, seen) =
+  if i >= n then 0
+  else
+    let f = nth(procs, i) in
+    let name = nth(f, 1) in
+    let _ =
+      if in_list(name, seen) then vwarn(name, "duplicate proc code name") else 0 in
+    let _ = vproc(f) in
+    vprocs(procs, i + 1, n, cons(name, seen))
+
+let verify_lir(src) =
+  let ast = pass_parse(pass_lex(src)) in
+  if prog_has_err(ast, 0) then
+    let _ = report_syntax(ast) in 1
+  else if report_unbound(src, ast) != 0 then 1
+  else
+    let anf = pass_anf(ast) in
+    let prog = pass_lir(anf) in
+    let _ = vcnt_reset(0) in
+    let _ = vwarn_reset(0) in
+    let procs = nth(prog, 1) in
+    let _ = vprocs(procs, 0, len(procs), list_new()) in
+    let tail =
+      str_cat(int_to_str(vcnt(0)),
+        str_cat(" error(s), ",
+          str_cat(int_to_str(vwarns(0)), " warning(s)"))) in
+    if vcnt(0) == 0 then
+      let _ = print(str_cat("verify-lir: ok -- ", tail)) in
+      0
+    else
+      let _ = print(str_cat("verify-lir: ", tail)) in
+      1
 
 let dump_cps(src, do_opt) =
   let ast = pass_parse(pass_lex(src)) in
@@ -436,14 +1181,62 @@ let dump_uncps(src, do_opt) =
     else
       let _ = print(r) in 0
 
-let compile_native(src, t) =
+/* Compile-session environment (BOOTSTRAP_LINK.md 12.13 B1). One value per
+ * independent compile; for now it snapshots the host session globals a
+ * compile rewrites, applied on entry and restored on every exit (incl. the
+ * syntax / unbound early returns). Later batches (B2/B3) thread these fields
+ * explicitly instead of through the process-global boxes; callers that must
+ * not share state (host leaves, REPL rows) create their own env.
+ * Fields: 0 emit_jsess, 1 imap, 2 malias, 3 pkg_prefix, 4 link_need,
+ * 5 link_local, 6 yjit_layout, 7 pkg_fail, 8 link_pkg, 9 link_global,
+ * 10 extbind, 11 pkg_extra, 12 extsym_names, 13 extsym_bind, 14 cimport
+ * (12.13 B3: cumulative emit/pack registries). */
+let compile_env_new(_) =
+  [emit_jsess(0), box_get(imap_box), box_get(malias_box),
+   pkg_prefix_get(0), box_get(link_need_box), box_get(link_local_box),
+   yjit_layout_get(0), pkg_fail(0), box_get(link_pkg_box),
+   box_get(link_global_box), box_get(extbind_box), box_get(pkg_extra_box),
+   extsym_names(0), extsym_bind_list(0), cimport_buf(0)]
+
+let compile_env_leave(env) =
+  let _ = box_set(imap_box, nth(env, 1)) in
+  let _ = box_set(malias_box, nth(env, 2)) in
+  let _ = pkg_prefix_set(nth(env, 3)) in
+  let _ = box_set(link_need_box, nth(env, 4)) in
+  let _ = box_set(link_local_box, nth(env, 5)) in
+  let _ =
+    if nth(env, 6) == 0 then 0
+    else yjit_layout_set(nth(nth(env, 6), 0), nth(nth(env, 6), 1),
+                         nth(nth(env, 6), 2), nth(nth(env, 6), 3)) in
+  let _ = pkg_fail_set(nth(env, 7)) in
+  let _ = box_set(link_pkg_box, nth(env, 8)) in
+  let _ = box_set(link_global_box, nth(env, 9)) in
+  let _ = box_set(extbind_box, nth(env, 10)) in
+  let _ = box_set(pkg_extra_box, nth(env, 11)) in
+  let _ = extsym_names_set(nth(env, 12)) in
+  let _ = extsym_bind_set(nth(env, 13)) in
+  let _ = cimport_set(nth(env, 14)) in
+  let _ = emit_jsess_set(nth(env, 0)) in
+  0
+
+let compile_env_of(env, src, t) =
+  let _ = emit_jsess_set(0) in
   let ast0 = pass_parse(pass_lex(src)) in
   if prog_has_err(ast0, 0) then
-    let _ = report_syntax(ast0) in 0
-  else if report_unbound(src, ast0) != 0 then 0
+    let _ = report_syntax(ast0) in
+    compile_env_leave(env)
+  else if report_unbound(src, ast0) != 0 then
+    compile_env_leave(env)
   else
     let _ = pkg_fail_set(0) in
     let _ = link_from_ast(ast0) in
-    let bin = run_passes(make_pipeline(t), src) in
-    if pkg_fail(0) != 0 then 0 else bin
+    /* ast0 is already the parsed program (syntax + unbound checks above);
+     * rerunning lex+parse on src would duplicate ~6s of a ~38s self-compile. */
+    let bin = run_passes(drop(make_pipeline(t), 2), ast0) in
+    /* read pkg_fail BEFORE leave restores the caller's value */
+    let failed = pkg_fail(0) in
+    let _ = compile_env_leave(env) in
+    if failed != 0 then 0 else bin
+
+let compile_native(src, t) = compile_env_of(compile_env_new(0), src, t)
 

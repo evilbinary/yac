@@ -602,7 +602,7 @@ static int skip_idlist(Parser *p) {
     return 1;
 }
 
-#define YAC_IMPORT_MAX 16
+#define YAC_IMPORT_MAX 64
 
 typedef struct {
     char pkgs[YAC_IMPORT_MAX][64];
@@ -610,6 +610,9 @@ typedef struct {
 } ImportCtx;
 
 static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, int *cap);
+
+/* nhoist: how many of *items are import-spliced items sitting at the FRONT
+ * (insert cursor for import_splice, one per item array). */
 
 static int parse_dotted_name(Parser *p, char *buf, size_t bufsz) {
     if (!at(p, TK_IDENT)) {
@@ -732,7 +735,7 @@ static int import_mark(ImportCtx *c, const char *pkg) {
 }
 
 static int import_splice(Parser *errp, ImportCtx *ictx, const char *pkg,
-                         Item **items, int *nitems, int *cap) {
+                         Item **items, int *nitems, int *cap, int *nhoist) {
     if (import_seen(ictx, pkg)) return 1;
     char *src = read_pkg_source(pkg);
     if (!src) {
@@ -752,8 +755,14 @@ static int import_splice(Parser *errp, ImportCtx *ictx, const char *pkg,
         return 0;
     }
     Parser ip = {lx.toks, lx.n, 0, errp->a, NULL};
-    /* Prepend: cat-bundle import is at the end (yc.yac). Appending left
-     * host_os unbound in earlier lets (emit). Native lir_extend is outer too. */
+    /* Append, in DFS pre-order, at the import's text position. Prepend
+     * inverted the order: each import put its subtree at the FRONT, so a
+     * module imported LATER became OUTER and a module imported EARLIER
+     * became INNER. A user whose dependency was first spliced inside an
+     * earlier-processed subtree ended up OUTER to that dependency and the
+     * name went unbound (pass.yac log_i, profile.yac fmap_put). With append,
+     * first-imported deps stay outer and every importer's lets follow all of
+     * its own imports, mirroring native lir_extend (deps outer). */
     Item *pkg_items = NULL;
     int pkg_n = 0, pkg_cap = 0;
     int ok = parse_items(&ip, ictx, &pkg_items, &pkg_n, &pkg_cap);
@@ -781,15 +790,25 @@ static int import_splice(Parser *errp, ImportCtx *ictx, const char *pkg,
         *items = grown;
         *cap = ncap;
     }
-    if (*nitems > 0)
-        memmove(*items + pkg_n, *items, (size_t)*nitems * sizeof(Item));
-    memcpy(*items, pkg_items, (size_t)pkg_n * sizeof(Item));
+    /* Insert at the front-of-array import cursor, not at the import's text
+     * position: `import` is a declaration, so a use written BEFORE its import
+     * must still bind. Measured on tests/interp/import_late.yac
+     * (`let f(_) = host_os(0)` / `import rt.os`) the old append-at-position
+     * said "1:12: unbound variable 'host_os'". When imports come first -- the
+     * normal case, and every existing file -- *nhoist == *nitems, so the
+     * memmove moves nothing and this is exactly the append it replaced. */
+    int at_i = *nhoist;
+    memmove(*items + at_i + pkg_n, *items + at_i,
+            (size_t)(*nitems - at_i) * sizeof(Item));
+    memcpy(*items + at_i, pkg_items, (size_t)pkg_n * sizeof(Item));
     *nitems = new_n;
+    *nhoist = at_i + pkg_n;
     free(pkg_items);
     return 1;
 }
 
 static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, int *cap) {
+    int nhoist = 0;             /* how many front items came from imports */
     while (!at(p, TK_EOF)) {
         if (at(p, TK_KW_PACKAGE)) {
             advance(p);
@@ -824,7 +843,7 @@ static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, in
                 advance(p);
             }
             eat(p, TK_SEMI);
-            if (!import_splice(p, ictx, pkg, items, nitems, cap)) return 0;
+            if (!import_splice(p, ictx, pkg, items, nitems, cap, &nhoist)) return 0;
             continue;
         }
         if (at(p, TK_KW_LET)) {

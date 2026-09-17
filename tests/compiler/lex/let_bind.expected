@@ -1,0 +1,1 @@
+[[kw, let, 1], [ident, x, 1], [op, =, 1], [num, 5, 1], [kw, in, 1], [ident, x, 1], [op, +, 1], [num, 1, 1], [eof, , 2]]

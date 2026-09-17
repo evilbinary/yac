@@ -1,0 +1,9 @@
+/* Chez-style identity for a named function: the name is a LOCATION holding one
+ * value, so every occurrence is the SAME object -- `let a = f` then `a == f`
+ * must be true (FLAT_ABI.md 8.5 / 8.6). This was false while a top-level
+ * letfun still materialised a fresh closure per occurrence. */
+let f(x) =
+    x + 1
+let a = f
+print(a == f)
+if a == f then print("equal") else print("not equal")

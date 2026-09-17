@@ -3,7 +3,7 @@
  * v1 pack treats the emit blob as a single TEXT section. */
 
 package back.pack.yjit
-export pack_yjit_ex, pack_yjit_flat, yjit_arch_num, yjit_arch_name, yjit_read, yjit_export_enc, yjit_export_dec, yjit_imp_enc, yjit_imp_parse, bytes_copy_range
+export pack_yjit_ex, pack_yjit_flat, yjit_reloc_enc, yjit_reloc_dec, yjit_arch_num, yjit_arch_name, yjit_read, yjit_export_enc, yjit_export_dec, yjit_imp_enc, yjit_imp_parse, bytes_copy_range
 import back.pack.elf {le16, le32, le64}
 import lib.map {fmap_cap_ok, fmap_init_n, fmap_new, fmap_put, intern}
 
@@ -74,20 +74,32 @@ let pack_yjit_ex(code, arch, rest) =
   let link = if len(rest) > 4 then nth(rest, 4) else bytes_new() in
   let ln = bytes_len(link) in
   let flags = if len(rest) > 5 then nth(rest, 5) else 0 in
-  let loff = 64 + n in
+  /* Optional RODATA slot (rest[6]) carries the relocation table; when absent
+   * the header keeps everything at 0 as before. */
+  let rbuf = if len(rest) > 6 then nth(rest, 6) else 0 in
+  let rn = if rbuf == 0 then 0 else bytes_len(rbuf) in
+  let roff = 64 + n in
+  let doff = 64 + n + rn in
+  let loff = doff in
   let out = bytes_new() in
   let _ = yjit_hdr_zeros(out) in
   let _ = yjit_hdr_write(out,
     [arch, nth(rest, 0), flags, nth(rest, 1), nth(rest, 2),
-     64, n, 64 + n, 0, 64 + n, 0, loff, ln]) in
+     64, n, roff, rn, doff, 0, loff, ln]) in
   let _ = le32(out, nth(rest, 3), 28) in
   let _ = bytes_extend(out, code) in
+  let _ = if rn == 0 then 0 else bytes_extend(out, rbuf) in
   let _ = if ln == 0 then 0 else bytes_extend(out, link) in
   out
 
 let pack_yjit_flat(code, arch, abi, base, entry) =
   pack_yjit_ex(code, arch, [abi, base, entry, 0])
 
+/* Relocation table (docs/JIT_IMAGE.md 1 / BOOTSTRAP_LINK.md 12.7): every
+ * absolute-address site the emitter recorded (emit.yac relocs_*), so the same
+ * image can run at any base once the loader adds (actual_base - baked_base).
+ * v1 layout, carried in the RODATA slot (r_off/r_sz, free today): u32 n;
+ * n x u32 site_off, each a byte offset into the code buffer. */
 let yjit_magic_ok(b) =
   if bytes_len(b) < 4 then false
   else if bytes_ref(b, 0) != 89 then false
@@ -103,6 +115,28 @@ let yjit_arch_name(n) =
 let ld16(b, i) = bytes_ref(b, i) + bshl(bytes_ref(b, i + 1), 8)
 
 let ld32(b, i) = ld16(b, i) + bshl(ld16(b, i + 2), 16)
+
+let rd64(b, i) =
+  let lo = ld32(b, i) in
+  lo + bshl(ld32(b, i + 4), 32)
+
+let yjit_reloc_enc(offs) =
+  let n = if offs == 0 then 0 else len(offs) in
+  let b = bytes_new() in
+  let _ = yjit_app32(b, n) in
+  let put(i) =
+    if i >= n then 0
+    else let _ = yjit_app32(b, nth(offs, i)) in put(i + 1) in
+  let _ = put(0) in
+  b
+
+let yjit_reloc_dec(b, off, n, i, acc) =
+  /* Order is irrelevant when applying (each site is independent), so no
+   * reverse() -- that helper lives elsewhere and would need an import. */
+  if i >= n then acc
+  else
+    let o = ld32(b, off + 4 + i * 4) in
+    yjit_reloc_dec(b, off, n, i + 1, cons(o, acc))
 
 let bytes_from_str(s, i, n, b) =
   if i >= n then b
@@ -206,9 +240,16 @@ let yjit_parse(b) =
   else
     let toff = ld32(b, 32) in
     let tsz = ld32(b, 36) in
+    let roff = ld32(b, 40) in
+    let rsz = ld32(b, 44) in
     let loff = ld32(b, 56) in
     let lsz = ld32(b, 60) in
     let nb = bytes_len(b) in
+    let nrel = if rsz >= 4 then ld32(b, roff) else 0 in
+    let rels =
+      if nrel == 0 then 0
+      else if roff + rsz > nb then 0
+      else yjit_reloc_dec(b, roff, nrel, 0, []) in
     if toff + tsz > nb then 0
     else if lsz > 0 then
       if loff + lsz > nb then 0
@@ -216,12 +257,12 @@ let yjit_parse(b) =
         [ld16(b, 6), ld16(b, 8), ld32(b, 24), ld32(b, 28),
          bytes_copy_range(b, toff, tsz, 0, bytes_new()),
          bytes_copy_range(b, loff, lsz, 0, bytes_new()),
-         ld16(b, 10)]
+         ld16(b, 10), rels, rd64(b, 16)]
     else
       [ld16(b, 6), ld16(b, 8), ld32(b, 24), ld32(b, 28),
        bytes_copy_range(b, toff, tsz, 0, bytes_new()),
        bytes_new(),
-       ld16(b, 10)]
+       ld16(b, 10), rels, rd64(b, 16)]
 
 let yjit_read(path) =
   let s = read_file(path) in

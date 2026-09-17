@@ -19,6 +19,16 @@
  * with runtime_add; backend chooses what to hang.
  */
 
+
+package rt.runtime
+export runtime_funs, runtime_add, yac_cimport_host_sym, yac_gval_pub, yac_gval_list, yac_gfn_pub, yac_gfn_list
+/* `intern` is used by the profiling/entry-table helpers below. This file is
+ * compiled BOTH concatenated into the bundle and standalone as package
+ * rt.runtime (drivers like driver_emit compose it), and only an explicit
+ * import binds the name in the package case -- sigma_host_seed only covers
+ * @name host bindings, which intern is not. */
+import lib.map {intern}
+
 let rt_cons_ins(_) =
   [["local", 6, 2],
    ["alloc", 3, 40],
@@ -1051,7 +1061,34 @@ let rt_print_val_ins(_) =
    ["label", "pv_nc"],
    ["mov_imm", 6, 5 + 5],
    ["icmp", "==", 7, 5, 6],
-   ["cmpjmp", 7, "pv_buf", "pv_oth"],
+   ["cmpjmp", 7, "pv_buf", "pv_c4"],
+   /* kind 4 = BYTES (layout note at the top of this file): without this branch
+    * every bytes value fell through to pv_oth and printed "<fun>", so the
+    * compiler's own result -- compile() returns the packed image, exactly the
+    * bytes the CLI writes with -o -- looked like a closure. `a()` on it then
+    * jumped into the object header (rip=4) and crashed, which read as "it is a
+    * fun that cannot be called". */
+   ["label", "pv_c4"],
+   ["mov_imm", 6, 4 + 4],
+   ["icmp", "==", 7, 5, 6],
+   ["cmpjmp", 7, "pv_bytes", "pv_oth"],
+   ["label", "pv_bytes"],
+   ["mov_imm", 4, 60 + 60],
+   ["write1", 4],
+   ["mov_imm", 4, 98 + 98],
+   ["write1", 4],
+   ["mov_imm", 4, 121 + 121],
+   ["write1", 4],
+   ["mov_imm", 4, 116 + 116],
+   ["write1", 4],
+   ["mov_imm", 4, 101 + 101],
+   ["write1", 4],
+   ["mov_imm", 4, 115 + 115],
+   ["write1", 4],
+   ["mov_imm", 4, 62 + 62],
+   ["write1", 4],
+   ["mov_imm", 8, 0 + 0],
+   ["ret", 8],
    ["label", "pv_buf"],
    ["mref", 9, 1, 32],
    ["jmp", "pv_lbr"],
@@ -1089,7 +1126,35 @@ let rt_print_val_ins(_) =
    ["fcall", 15, "print_val", [14]],
    ["mov_imm", 10, 2 + 2],
    ["mref", 9, 9, 32],
-   ["jmp", "pv_lp"],
+   /* The cdr is NOT always a list: `cons(1, 2)` is a dotted pair, and the loop
+    * used to feed the integer 2 straight back to pv_lp, which `mref`s it --
+    * REPL `cons(1,2)` printed "[1," and then SIGSEGV. Chez-style: a non-cons,
+    * non-nil tail prints " . x" before the closing bracket. Ints are even and
+    * objects odd, so: even -> tail; odd -> nil ends, cons loops, anything else
+    * (str/bytes/f64/closure) is a tail. */
+   ["is_int", 16, 9],
+   ["cmpjmp", 16, "pv_tail", "pv_ck2"],
+   ["label", "pv_ck2"],
+   ["icmp", "==", 16, 9, 2],
+   ["cmpjmp", 16, "pv_le", "pv_c3"],
+   ["label", "pv_c3"],
+   ["mov_imm", 17, 65536 + 65536],
+   ["icmp", "<", 16, 9, 17],
+   ["cmpjmp", 16, "pv_tail", "pv_c5"],
+   ["label", "pv_c5"],
+   ["obj_kind", 16, 9],
+   ["mov_imm", 17, 2 + 2],
+   ["icmp", "==", 16, 16, 17],
+   ["cmpjmp", 16, "pv_lp", "pv_tail"],
+   ["label", "pv_tail"],
+   ["mov_imm", 4, 32 + 32],
+   ["write1", 4],
+   ["mov_imm", 4, 46 + 46],
+   ["write1", 4],
+   ["mov_imm", 4, 32 + 32],
+   ["write1", 4],
+   ["fcall", 15, "print_val", [9]],
+   ["jmp", "pv_le"],
    ["label", "pv_le"],
    ["mov_imm", 4, 93 + 93],
    ["write1", 4],
@@ -1320,6 +1385,20 @@ let rt_gc_collect_ins(_) =
    ["label", "gc_pmark"],
    ["fcall", 12, "yac_gc_mark", [5]],
    ["label", "gc_pnone"],
+   ["$ld64", 5, 1, 440],
+   ["$and", 9, 5, 7],
+   ["mov_imm", 10, 1],
+   ["$jcc", "==", 9, 10, "gc_vmark", "gc_vnone"],
+   ["label", "gc_vmark"],
+   ["fcall", 12, "yac_gc_mark", [5]],
+   ["label", "gc_vnone"],
+   ["$ld64", 5, 1, 448],
+   ["$and", 9, 5, 7],
+   ["mov_imm", 10, 1],
+   ["$jcc", "==", 9, 10, "gc_fmark", "gc_fnone"],
+   ["label", "gc_fmark"],
+   ["fcall", 12, "yac_gc_mark", [5]],
+   ["label", "gc_fnone"],
    ["$ld64", 2, 1, 24],
    ["$smap", 21],
    ["$jcc", "==", 21, 8, "gc_cons", "gc_smp"],
@@ -1567,7 +1646,7 @@ let rt_alloc_ins(_) =
    ["$ld64", 3, 2, 40],
    ["$add", 3, 3, 15],
    ["$st64", 2, 40, 3],
-   ["mov_imm", 4, 16777216 + 1],
+   ["mov_imm", 4, 16777216 + 1],--gc 16M内存回收
    ["$icmp", ">=u", 11, 3, 4],
    ["cmpjmp", 11, "al_gc", "al_nogc"],
    ["label", "al_gc"],
@@ -1904,7 +1983,14 @@ let rt_prof_enter_ins(_) =
    ["label", "pe_go"],
    ["mov_imm", 8, 1 + 1],
    ["gst", 4, 8],
-   ["fcall", 6, "prof_enter_go", [1]],
+   /* The hook may be either the runtime's own no-op stub (a $proc: FLAT ABI,
+    * first param in rdi) or a USER prof_enter_go (an ordinary letfun: OBJECT
+    * ABI, first param in rsi -- runtime_add's redirect emits `ycall` for it).
+    * A program that defines the hook itself is not in the list runtime_add
+    * sees (it only gets rt_base + linked packages), so that case stays a flat
+    * `fcall`: handing the name through BOTH registers makes either callee read
+    * it. Without this the user hook saw nil and pkg profile died hashing it. */
+   ["fcall", 6, "prof_enter_go", [1, 1]],
    ["mov_imm", 8, 0 + 0],
    ["gst", 4, 8],
    ["ret", 6]]
@@ -2099,6 +2185,153 @@ let rt_jit_run_ins(_) =
    ["mov_imm", 12, 0],
    ["ret", 12]]
 
+/* Host function-address table: host image's own G+136..G+216 slots, baked
+ * by emit_program_* at host build time. arg1 = slot id (0..9). */
+let rt_host_sym_ins(_) =
+  [["$local", 8, 1],
+   ["$shr", 2, 1, 1],
+   ["$add", 2, 2, 2],
+   ["$add", 2, 2, 2],
+   ["$add", 2, 2, 2],
+   ["mov_imm", 4, 136],
+   ["$add", 2, 2, 4],
+   ["$gbase", 3],
+   ["$add", 3, 3, 2],
+   ["$ld64", 4, 3, 0],
+   ["$add", 4, 4, 4],
+   ["ret", 4]]
+
+/* Name-keyed entry table (12.14 flat ABI): the image's own GTAB, baked by
+ * emit at G+440 as [intern(gname), entry] x nfun plus a [0,0] sentinel.
+ * arg1 = tagged intern; returns the raw entry address, or 0 when absent.
+ * jit.yac calls the host copy to resolve a blob's cross-image refs. */
+/* Top-level registries (12.14 flat ABI). Two association lists rooted in
+ * this image's G area: G+440 = [ [name, value] ... ] published by gvst
+ * (top-level values), G+448 = [ [name, entry] ... ] published by _start's
+ * gfnst prologue (top-level function entries). Both are GC roots (marked
+ * in yac_gc_collect); name matching happens in host yac code (content
+ * compare) - no keys are baked, so nothing breaks across processes. */
+let rt_gval_pub_ins(_) =
+  [["$local", 24, 2],
+   ["$gbase", 3],
+   ["$ld64", 4, 3, 440],
+   ["fcall", 5, "yac_cons", [1, 2]],
+   ["fcall", 6, "yac_cons", [5, 4]],
+   /* $st64 operands are (base, disp, value) -- same order as every other
+    * $st64 in this file (allocator: ["$st64", 2, 96, 7]). Written as
+    * (value, base, disp) here it compiled to [cons+3] = <frame slot 440>,
+    * an unaligned 8-byte wild write that clobbered the neighbour object's
+    * link word: the GC's list walk then dereferenced garbage (gen-2 abort). */
+   ["$st64", 3, 440, 6],
+   ["ret", 2]]
+
+let rt_gval_list_ins(_) =
+  [["$local", 16, 0],
+   ["$gbase", 1],
+   ["$ld64", 2, 1, 440],
+   ["ret", 2]]
+
+let rt_gfn_pub_ins(_) =
+  [["$local", 24, 2],
+   ["$gbase", 3],
+   ["$ld64", 4, 3, 448],
+   ["fcall", 5, "yac_cons", [1, 2]],
+   ["fcall", 6, "yac_cons", [5, 4]],
+   ["$st64", 3, 448, 6],   /* base, disp, value -- see rt_gval_pub_ins */
+   ["ret", 2]]
+
+let rt_gfn_list_ins(_) =
+  [["$local", 16, 0],
+   ["$gbase", 1],
+   ["$ld64", 2, 1, 448],
+   ["ret", 2]]
+
+/* Host cimport address table direct read (12.13 B3+ crash fix):
+ * G+216..G+432 holds absolute runtime addresses (win_need order) of this
+ * image's own IAT/GOT slots for the fixed APIs, baked by emit_program_* at
+ * build time; the loader has resolved them by the time a REPL session runs.
+ * Double dereference: table -> slot address -> resolved API address.
+ * Only meaningful when executed in the image that baked the table (the
+ * host, from cimport_jit_fill on the host side). arg1 = win_need index. */
+let rt_cimport_host_sym_ins(_) =
+  [["$local", 16, 1],
+   ["$shr", 2, 1, 1],
+   ["$add", 2, 2, 2],
+   ["$add", 2, 2, 2],
+   ["$add", 2, 2, 2],
+   ["mov_imm", 3, 216],
+   ["$add", 3, 3, 2],
+   ["$gbase", 1],
+   ["$add", 3, 3, 1],
+   ["$ld64", 5, 3, 0],
+   ["$ld64", 5, 5, 0],
+   ["$add", 5, 5, 5],
+   ["ret", 5]]
+
+/* Stub for host-leaf calls whose implementation is not present (AOT without
+ * an embedded/dylib host). Prints "host fn unavailable" and returns int 0.
+ * bake() points every empty G+136..G+216 slot at this proc. Arity 0 is safe:
+ * the caller cleans stack args and the stub ignores register args. */
+let rt_host_unimpl_ins(_) =
+  [["local", 8, 0],
+   ["mov_imm", 1, 104 + 104], /* h */
+   ["write1", 1],
+   ["mov_imm", 1, 111 + 111], /* o */
+   ["write1", 1],
+   ["mov_imm", 1, 115 + 115], /* s */
+   ["write1", 1],
+   ["mov_imm", 1, 116 + 116], /* t */
+   ["write1", 1],
+   ["mov_imm", 1, 32 + 32],   /* sp */
+   ["write1", 1],
+   ["mov_imm", 1, 102 + 102], /* f */
+   ["write1", 1],
+   ["mov_imm", 1, 110 + 110], /* n */
+   ["write1", 1],
+   ["mov_imm", 1, 32 + 32],   /* sp */
+   ["write1", 1],
+   ["mov_imm", 1, 117 + 117], /* u */
+   ["write1", 1],
+   ["mov_imm", 1, 110 + 110], /* n */
+   ["write1", 1],
+   ["mov_imm", 1, 97 + 97],   /* a */
+   ["write1", 1],
+   ["mov_imm", 1, 118 + 118], /* v */
+   ["write1", 1],
+   ["mov_imm", 1, 97 + 97],   /* a */
+   ["write1", 1],
+   ["mov_imm", 1, 105 + 105], /* i */
+   ["write1", 1],
+   ["mov_imm", 1, 108 + 108], /* l */
+   ["write1", 1],
+   ["mov_imm", 1, 97 + 97],   /* a */
+   ["write1", 1],
+   ["mov_imm", 1, 98 + 98],   /* b */
+   ["write1", 1],
+   ["mov_imm", 1, 108 + 108], /* l */
+   ["write1", 1],
+   ["mov_imm", 1, 101 + 101], /* e */
+   ["write1", 1],
+   ["mov_imm", 1, 10 + 10],   /* \n */
+   ["write1", 1],
+   ["mov_imm", 1, 0],
+   ["ret", 1]]
+
+/* A dynamic call (apply/icall) whose target is not a closure. The call sites
+ * used to do call [target+16] blindly; for a GC object that word is its small
+ * kind (cons 2 / str 3 / BYTES 4 / listbuf 5 / float 7), so `let a =
+ * compile("1"); a()` jumped to address 4 and died with SIGSEGV and no message.
+ * Prints a line and returns int 0 so the session survives. */
+let rt_not_fn_ins(_) =
+  [["local", 12, 1],
+   ["strlit", 8, "error: not a function: "],
+   ["mov_imm", 9, 0],
+   ["fcall", 10, "print", [8, 9]],
+   ["mov_imm", 9, 2],
+   ["fcall", 10, "print", [0, 9]],
+   ["mov_imm", 8, 0],
+   ["ret", 8]]
+
 /* REPL top-level lets: qword slots at JIT_VADDR+12MiB (same 16MiB map).
  * Must not use $gbase: this $proc is emitted into the JIT image, whose G
  * is guest DATA; the map pointer lives in the host G+112. */
@@ -2205,48 +2438,56 @@ let rt_f64_print_ins(_) =
    ["ret", 2]]
 
 let runtime_funs(_) =
-  [["proc", "yac_cons", 2, 0, rt_cons_ins(0), "yac_cons"],
-   ["proc", "yac_tail", 1, 0, rt_tail_ins(0), "yac_tail"],
-   ["proc", "yac_len", 1, 0, rt_len_ins(0), "yac_len"],
-   ["proc", "yac_nth", 2, 0, rt_nth_ins(0), "yac_nth"],
-   ["proc", "yac_list_rev", 1, 0, rt_list_rev_ins(0), "yac_list_rev"],
-   ["proc", "yac_append", 2, 0, rt_append_ins(0), "yac_append"],
-   ["proc", "yac_drop", 2, 0, rt_drop_ins(0), "yac_drop"],
-   ["proc", "yac_list_new", 0, 0, rt_list_new_ins(0), "yac_list_new"],
-   ["proc", "yac_list_ensure", 1, 0, rt_list_ensure_ins(0), "yac_list_ensure"],
-   ["proc", "yac_list_push", 2, 0, rt_list_push_ins(0), "yac_list_push"],
-   ["proc", "yac_list_set", 3, 0, rt_list_set_ins(0), "yac_list_set"],
-   ["proc", "yac_foldl", 3, 0, rt_foldl_ins(0), "yac_foldl"],
-   ["proc", "yac_map", 2, 0, rt_map_ins(0), "yac_map"],
-   ["proc", "yac_str_eq", 2, 0, rt_str_eq_ins(0), "yac_str_eq"],
-   ["proc", "yac_str_hash", 1, 0, rt_str_hash_ins(0), "yac_str_hash"],
-   ["proc", "yac_ident_hash", 1, 0, rt_ident_hash_ins(0), "yac_ident_hash"],
-   ["proc", "yac_str_cat", 2, 0, rt_str_cat_ins(0), "yac_str_cat"],
-   ["proc", "yac_str_slice", 3, 0, rt_str_slice_ins(0), "yac_str_slice"],
-   ["proc", "yac_str_chr", 1, 0, rt_str_chr_ins(0), "yac_str_chr"],
-   ["proc", "yac_int_to_str", 1, 0, rt_int_to_str_ins(0), "yac_int_to_str"],
-   ["proc", "yac_bytes_new", 0, 0, rt_bytes_new_ins(0), "yac_bytes_new"],
-   ["proc", "yac_bytes_grow", 2, 0, rt_bytes_grow_ins(0), "yac_bytes_grow"],
-   ["proc", "yac_bytes_append", 2, 0, rt_bytes_append_ins(0), "yac_bytes_append"],
-   ["proc", "yac_bytes_ref", 2, 0, rt_bytes_ref_ins(0), "yac_bytes_ref"],
-   ["proc", "yac_bytes_put", 3, 0, rt_bytes_put_ins(0), "yac_bytes_put"],
-   ["proc", "yac_mem_load", 3, 0, rt_mem_load_ins(0), "yac_mem_load"],
-   ["proc", "yac_mem_store", 4, 0, rt_mem_store_ins(0), "yac_mem_store"],
+  [["$proc", "yac_cons", 2, 0, rt_cons_ins(0), "yac_cons"],
+   ["$proc", "yac_tail", 1, 0, rt_tail_ins(0), "yac_tail"],
+   ["$proc", "yac_len", 1, 0, rt_len_ins(0), "yac_len"],
+   ["$proc", "yac_nth", 2, 0, rt_nth_ins(0), "yac_nth"],
+   ["$proc", "yac_list_rev", 1, 0, rt_list_rev_ins(0), "yac_list_rev"],
+   ["$proc", "yac_append", 2, 0, rt_append_ins(0), "yac_append"],
+   ["$proc", "yac_drop", 2, 0, rt_drop_ins(0), "yac_drop"],
+   ["$proc", "yac_list_new", 0, 0, rt_list_new_ins(0), "yac_list_new"],
+   ["$proc", "yac_list_ensure", 1, 0, rt_list_ensure_ins(0), "yac_list_ensure"],
+   ["$proc", "yac_list_push", 2, 0, rt_list_push_ins(0), "yac_list_push"],
+   ["$proc", "yac_list_set", 3, 0, rt_list_set_ins(0), "yac_list_set"],
+   ["$proc", "yac_foldl", 3, 0, rt_foldl_ins(0), "yac_foldl"],
+   ["$proc", "yac_map", 2, 0, rt_map_ins(0), "yac_map"],
+   ["$proc", "yac_str_eq", 2, 0, rt_str_eq_ins(0), "yac_str_eq"],
+   ["$proc", "yac_str_hash", 1, 0, rt_str_hash_ins(0), "yac_str_hash"],
+   ["$proc", "yac_ident_hash", 1, 0, rt_ident_hash_ins(0), "yac_ident_hash"],
+   ["$proc", "yac_str_cat", 2, 0, rt_str_cat_ins(0), "yac_str_cat"],
+   ["$proc", "yac_str_slice", 3, 0, rt_str_slice_ins(0), "yac_str_slice"],
+   ["$proc", "yac_str_chr", 1, 0, rt_str_chr_ins(0), "yac_str_chr"],
+   ["$proc", "yac_int_to_str", 1, 0, rt_int_to_str_ins(0), "yac_int_to_str"],
+   ["$proc", "yac_bytes_new", 0, 0, rt_bytes_new_ins(0), "yac_bytes_new"],
+   ["$proc", "yac_bytes_grow", 2, 0, rt_bytes_grow_ins(0), "yac_bytes_grow"],
+   ["$proc", "yac_bytes_append", 2, 0, rt_bytes_append_ins(0), "yac_bytes_append"],
+   ["$proc", "yac_bytes_ref", 2, 0, rt_bytes_ref_ins(0), "yac_bytes_ref"],
+   ["$proc", "yac_bytes_put", 3, 0, rt_bytes_put_ins(0), "yac_bytes_put"],
+   ["$proc", "yac_mem_load", 3, 0, rt_mem_load_ins(0), "yac_mem_load"],
+   ["$proc", "yac_mem_store", 4, 0, rt_mem_store_ins(0), "yac_mem_store"],
    ["$proc", "yac_mem_ref_raw", 3, 0, rt_mem_ref_raw_ins(0), "yac_mem_ref_raw"],
    ["$proc", "yac_mem_put_raw", 4, 0, rt_mem_put_raw_ins(0), "yac_mem_put_raw"],
-   ["proc", "yac_mem_ref", 3, 0, rt_mem_ref_ins(0), "yac_mem_ref"],
-   ["proc", "yac_mem_put", 4, 0, rt_mem_put_ins(0), "yac_mem_put"],
-   ["proc", "yac_bytes_extend", 2, 0, rt_bytes_extend_ins(0), "yac_bytes_extend"],
-   ["proc", "yac_bytes_to_str", 1, 0, rt_bytes_to_str_ins(0), "yac_bytes_to_str"],
-   ["proc", "print_int", 1, 0, rt_print_int_ins(0), "print_int"],
-   ["proc", "print_val", 1, 0, rt_print_val_ins(0), "print_val"],
-   ["proc", "print", 2, 0, rt_print_ins(0), "print"],
+   ["$proc", "yac_mem_ref", 3, 0, rt_mem_ref_ins(0), "yac_mem_ref"],
+   ["$proc", "yac_mem_put", 4, 0, rt_mem_put_ins(0), "yac_mem_put"],
+   ["$proc", "yac_bytes_extend", 2, 0, rt_bytes_extend_ins(0), "yac_bytes_extend"],
+   ["$proc", "yac_bytes_to_str", 1, 0, rt_bytes_to_str_ins(0), "yac_bytes_to_str"],
+   ["$proc", "print_int", 1, 0, rt_print_int_ins(0), "print_int"],
+   ["$proc", "print_val", 1, 0, rt_print_val_ins(0), "print_val"],
+   ["$proc", "print", 2, 0, rt_print_ins(0), "print"],
    ["$proc", "yac_read_file", 1, 0, rt_read_file_ins(0), "yac_read_file"],
    ["$proc", "yac_write_file", 2, 0, rt_write_file_ins(0), "yac_write_file"],
    ["$proc", "yac_argv", 1, 0, rt_argv_ins(0), "yac_argv"],
    ["$proc", "yac_system", 1, 0, rt_system_ins(0), "yac_system"],
    ["$proc", "yac_read_line", 0, 0, rt_read_line_ins(0), "yac_read_line"],
    ["$proc", "yac_jit_run", 3, 0, rt_jit_run_ins(0), "yac_jit_run"],
+    ["$proc", "yac_host_sym", 1, 0, rt_host_sym_ins(0), "yac_host_sym"],
+    ["$proc", "yac_cimport_host_sym", 1, 0, rt_cimport_host_sym_ins(0), "yac_cimport_host_sym"],
+   ["$proc", "yac_gval_pub", 2, 0, rt_gval_pub_ins(0), "yac_gval_pub"],
+   ["$proc", "yac_gval_list", 0, 0, rt_gval_list_ins(0), "yac_gval_list"],
+   ["$proc", "yac_gfn_pub", 2, 0, rt_gfn_pub_ins(0), "yac_gfn_pub"],
+   ["$proc", "yac_gfn_list", 0, 0, rt_gfn_list_ins(0), "yac_gfn_list"],
+   ["$proc", "yac_host_unimpl", 0, 0, rt_host_unimpl_ins(0), "yac_host_unimpl"],
+   ["$proc", "yac_not_fn", 0, 0, rt_not_fn_ins(0), "yac_not_fn"],
    ["$proc", "yac_jslot_get", 1, 0, rt_jslot_get_ins(0), "yac_jslot_get"],
    ["$proc", "yac_jslot_set", 2, 0, rt_jslot_set_ins(0), "yac_jslot_set"],
    ["$proc", "yac_alloc", 1, 0, rt_alloc_ins(0), "yac_alloc"],
@@ -2254,28 +2495,37 @@ let runtime_funs(_) =
    ["$proc", "yac_apply2", 3, 0, rt_apply2_ins(0), "yac_apply2"],
    ["$proc", "yac_gc_mark", 1, 0, rt_gc_mark_ins(0), "yac_gc_mark"],
    ["$proc", "yac_gc", 0, 0, rt_gc_collect_ins(0), "yac_gc"],
-   ["proc", "gc_collect", 0, 0, rt_gc_ins(0), "gc_collect"],
-   ["proc", "yac_argc", 0, 0, rt_argc_ins(0), "yac_argc"],
-   ["proc", "time_ms", 0, 0, rt_time_ms_ins(0), "time_ms"],
-   ["proc", "time_ns", 0, 0, rt_time_ns_ins(0), "time_ns"],
-   ["proc", "yac_two_digit", 1, 0, rt_two_digit_ins(0), "yac_two_digit"],
-   ["proc", "time_str", 0, 0, rt_time_str_ins(0), "time_str"],
-   ["proc", "yac_box_new", 0, 0, rt_box_new_ins(0), "yac_box_new"],
-   ["proc", "yac_box_get", 1, 0, rt_box_get_ins(0), "yac_box_get"],
-   ["proc", "yac_box_set", 2, 0, rt_box_set_ins(0), "yac_box_set"],
-   ["proc", "yac_prof_cell", 0, 0, rt_prof_cell_ins(0), "yac_prof_cell"],
-   ["proc", "yac_prof_enter", 1, 0, rt_prof_enter_ins(0), "yac_prof_enter"],
-   ["proc", "yac_prof_leave", 0, 0, rt_prof_leave_ins(0), "yac_prof_leave"],
-   ["proc", "yac_num_add", 2, 0, rt_num_add_ins(0), "yac_num_add"],
-   ["proc", "yac_num_sub", 2, 0, rt_num_sub_ins(0), "yac_num_sub"],
-   ["proc", "yac_num_mul", 2, 0, rt_num_mul_ins(0), "yac_num_mul"],
-   ["proc", "yac_num_div", 2, 0, rt_num_div_ins(0), "yac_num_div"],
-   ["proc", "yac_f64_from_str", 1, 0, rt_f64_from_str_ins(0), "yac_f64_from_str"],
-   ["proc", "yac_f64_binop", 3, 0, rt_f64_binop_ins(0), "yac_f64_binop"],
-   ["proc", "yac_f64_rel", 3, 0, rt_f64_rel_ins(0), "yac_f64_rel"],
-   ["proc", "yac_f64_print", 1, 0, rt_f64_print_ins(0), "yac_f64_print"]]
+   ["$proc", "gc_collect", 0, 0, rt_gc_ins(0), "gc_collect"],
+   ["$proc", "yac_argc", 0, 0, rt_argc_ins(0), "yac_argc"],
+   ["$proc", "time_ms", 0, 0, rt_time_ms_ins(0), "time_ms"],
+   ["$proc", "time_ns", 0, 0, rt_time_ns_ins(0), "time_ns"],
+   ["$proc", "yac_two_digit", 1, 0, rt_two_digit_ins(0), "yac_two_digit"],
+   ["$proc", "time_str", 0, 0, rt_time_str_ins(0), "time_str"],
+   ["$proc", "yac_box_new", 0, 0, rt_box_new_ins(0), "yac_box_new"],
+   ["$proc", "yac_box_get", 1, 0, rt_box_get_ins(0), "yac_box_get"],
+   ["$proc", "yac_box_set", 2, 0, rt_box_set_ins(0), "yac_box_set"],
+   ["$proc", "yac_prof_cell", 0, 0, rt_prof_cell_ins(0), "yac_prof_cell"],
+   ["$proc", "yac_prof_enter", 1, 0, rt_prof_enter_ins(0), "yac_prof_enter"],
+   ["$proc", "yac_prof_leave", 0, 0, rt_prof_leave_ins(0), "yac_prof_leave"],
+   ["$proc", "yac_num_add", 2, 0, rt_num_add_ins(0), "yac_num_add"],
+   ["$proc", "yac_num_sub", 2, 0, rt_num_sub_ins(0), "yac_num_sub"],
+   ["$proc", "yac_num_mul", 2, 0, rt_num_mul_ins(0), "yac_num_mul"],
+   ["$proc", "yac_num_div", 2, 0, rt_num_div_ins(0), "yac_num_div"],
+   ["$proc", "yac_f64_from_str", 1, 0, rt_f64_from_str_ins(0), "yac_f64_from_str"],
+   ["$proc", "yac_f64_binop", 3, 0, rt_f64_binop_ins(0), "yac_f64_binop"],
+   ["$proc", "yac_f64_rel", 3, 0, rt_f64_rel_ins(0), "yac_f64_rel"],
+   ["$proc", "yac_f64_print", 1, 0, rt_f64_print_ins(0), "yac_f64_print"]]
 
-/* Rewrite fcall "prof_enter_go"/"prof_leave_go" inside one insn list. */
+/* Rewrite the profiler's hook call inside one insn list.
+ *
+ * The runtime's own hooks (`runtime_prof_stubs`) are $procs -- FLAT ABI, first
+ * param in rdi -- so the plain `fcall prof_*_go` in rt_prof_enter/leave_ins is
+ * right for them. The USER hook (`prof_enter_go` in package profile, and in
+ * src-self/back/profile.yac for the compiler itself) is an ordinary letfun,
+ * i.e. OBJECT ABI: object in rdi (unset here), first param from rsi (LIR.md
+ * 4.4.4). Redirecting a flat call at it handed the name to rdi while the hook
+ * read rsi: the hook saw nil, `pkg profile` hashed it (yac_str_hash([0+24])) and
+ * died with 139. So the redirect has to switch to the object convention too. */
 let rt_insns_set_go(insns, newn, i, out) =
   if i >= len(insns) then out
   else
@@ -2284,7 +2534,7 @@ let rt_insns_set_go(insns, newn, i, out) =
       if nth(ins, 0) == "fcall" then
         let callee = intern(nth(ins, 2)) in
         if callee == intern("prof_enter_go") or callee == intern("prof_leave_go") then
-          list_push(out, ["fcall", nth(ins, 1), newn, nth(ins, 3)])
+          list_push(out, ["ycall", nth(ins, 1), newn, nth(ins, 3)])
         else list_push(out, ins)
       else list_push(out, ins) in
     rt_insns_set_go(insns, newn, i + 1, out)
@@ -2296,10 +2546,10 @@ let rt_funs_rename_prof(funs, enter, leave, i, out) =
     let nm = intern(nth(f, 1)) in
     let _ =
       if nm == intern("yac_prof_enter") then
-        list_push(out, ["proc", nth(f, 1), nth(f, 2), nth(f, 3),
+        list_push(out, [nth(f, 0), nth(f, 1), nth(f, 2), nth(f, 3),
           rt_insns_set_go(nth(f, 4), enter, 0, list_new()), nth(f, 5)])
       else if nm == intern("yac_prof_leave") then
-        list_push(out, ["proc", nth(f, 1), nth(f, 2), nth(f, 3),
+        list_push(out, [nth(f, 0), nth(f, 1), nth(f, 2), nth(f, 3),
           rt_insns_set_go(nth(f, 4), leave, 0, list_new()), nth(f, 5)])
       else list_push(out, f) in
     rt_funs_rename_prof(funs, enter, leave, i + 1, out)
@@ -2325,5 +2575,5 @@ let runtime_add(funs) =
 /* Used only when profile.yac is not in the program. Do not put these in
  * runtime_funs: same names would steal calls from profile.yac. */
 let runtime_prof_stubs(_) =
-  [["proc", "prof_enter_go", 1, 0, rt_prof_go_enter_ins(0), "prof_enter_go"],
-   ["proc", "prof_leave_go", 0, 0, rt_prof_go_leave_ins(0), "prof_leave_go"]]
+  [["$proc", "prof_enter_go", 1, 0, rt_prof_go_enter_ins(0), "prof_enter_go"],
+   ["$proc", "prof_leave_go", 0, 0, rt_prof_go_leave_ins(0), "prof_leave_go"]]

@@ -60,3 +60,11 @@ app/llm/snapshot/*.pt
 app/llm/snapshot/remote_train.ps1
 app/llm/snapshot/remote_train.sh
 tools/__pycache__/fill_imports.cpython-310.pyc
+zhistory-doc/
+perf.data
+a.txt
+tmp_tests/e3.yac
+tmp_tests/v1.yac
+tmp_tests/y1t.yac
+*.asm
+*.lir
