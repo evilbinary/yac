@@ -1,0 +1,8 @@
+/* A top-level value assigned at RUN time must be published as a GC root
+ * (G+440, yac_gval_pub) or the collector never marks the cell's value:
+ * x86_64 always did it, arm64/riscv64 did not (FLAT_ABI.md 8.2 #13). Counting
+ * the registry is the deterministic way to see it -- before the fix arm64
+ * crashed and riscv64 printed 0. arm64 also needed the $ld64/$st64 offset fix
+ * (8.2 #14) before G+440 could be reached at all. */
+let v = str_cat("keep", "_me")
+print(len(yac_gval_list()))

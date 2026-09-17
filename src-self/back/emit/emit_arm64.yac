@@ -1013,7 +1013,15 @@ let emit_a64_i_raw(st, insn) =
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
     let _ = a64_untag_ptr(b, 0) in
     let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
+    /* Same 9-bit offset limit as $ld64 above: fold big offsets into x0 first
+     * (G+440 is where yac_gval_pub stores the value registry -- 8.2 #14). */
+    let big = nth(insn, 2) > 255 or nth(insn, 2) < 0 - 256 in
+    let _ =
+      if big then
+        (if nth(insn, 2) < 0 then a64_sub_imm(b, 0, 0, 0 - nth(insn, 2))
+         else a64_add_imm(b, 0, 0, nth(insn, 2)))
+      else 0 in
+    let _ = a64_stur(b, 1, 0, if big then 0 else nth(insn, 2)) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "$st8" then
     let _ = a64_slot(b, nth(insn, 1), false, 0) in
@@ -1022,7 +1030,18 @@ let emit_a64_i_raw(st, insn) =
   else if k == "$ld64" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_untag_ptr(b, 0) in
-    let _ = a64_ldur(b, 0, 0, nth(insn, 3)) in
+    /* ldur/stur encode a signed 9-bit (scaled) offset only. The G area reaches
+     * past 440 -- the registry roots G+440/G+448 and the cimport table before
+     * them -- so a big offset must be folded into the address first, exactly
+     * the way $ld8 below already does. Before this, G+440 was addressed at a
+     * bogus offset: yac_gval_pub / yac_gval_list crashed on arm64 (8.2 #14). */
+    let big = nth(insn, 3) > 255 or nth(insn, 3) < 0 - 256 in
+    let _ =
+      if big then
+        (if nth(insn, 3) < 0 then a64_sub_imm(b, 0, 0, 0 - nth(insn, 3))
+         else a64_add_imm(b, 0, 0, nth(insn, 3)))
+      else 0 in
+    let _ = a64_ldur(b, 0, 0, if big then 0 else nth(insn, 3)) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "$ld8" then
@@ -1332,9 +1351,9 @@ let emit_a64_i_heap(st, insn) =
   else if k == "gset" then
     /* ["gset", name, off, src]: off 0 = value, 16 = function entry.
      * An immediate source is BAKED into the cell at link time (x86_64 tag 24,
-     * zero runtime action); anything else is stored at run time. The GC-root
-     * publish (yac_gval_pub) x86_64 does after a runtime store is not here
-     * yet -- TODO. */
+     * zero runtime action); anything else is stored at run time and then
+     * PUBLISHED as a GC root (yac_gval_pub), exactly like x86_64 does
+     * (FLAT_ABI.md 2.3). */
     let nm = nth(insn, 1) in
     let off = nth(insn, 2) in
     let src = nth(insn, 3) in
@@ -1346,7 +1365,20 @@ let emit_a64_i_heap(st, insn) =
       let _ = a64_mov_imm64(b, 0, 0) in
       let _ = a64_slot(b, src, false, 1) in
       let _ = a64_stur(b, 1, 0, 0) in
-      emit_st4(st, b, cur, labels, cons([12, gpos, goff], patches))
+      /* GC-root publish (FLAT_ABI.md 2.3 / 8.2 #13): a top-level value
+       * assigned at run time must land in the G+440 list, or the collector
+       * never marks the cell's value. yac_gval_pub is an unmarked $proc
+       * (plain ABI), so the name goes to x0 and the value to x1; both the
+       * strlit and the call are patched like any other fcall. */
+      let npos = bytes_len(b) in
+      let _ = a64_mov_imm64(b, 0, 0) in
+      let _ = a64_slot(b, src, false, 1) in
+      let acall = bytes_len(b) in
+      let _ = a64_bl(b, 0) in
+      emit_st4(st, b, cur, labels,
+        emit_patch_rel(nth(st, 4),
+          emit_patch_strlit(cons([12, gpos, goff], patches), npos, strlit_off(nm)),
+          acall, "yac_gval_pub"))
   else if k == "glob" then
     let which = nth(insn, 2) in
     let gpos = bytes_len(b) in

@@ -1335,7 +1335,8 @@ let emit_rv_i_heap(st, insn) =
     emit_st4(st, b, cur, labels, cons([12, gpos, goff], patches))
   else if k == "gset" then
     /* ["gset", name, off, src]: immediate -> link-time bake (tag 24),
-     * otherwise a runtime store. GC publish (yac_gval_pub) TODO. */
+     * otherwise a runtime store followed by a GC-root publish (yac_gval_pub),
+     * exactly like x86_64 (FLAT_ABI.md 2.3). */
     let nm = nth(insn, 1) in
     let off = nth(insn, 2) in
     let src = nth(insn, 3) in
@@ -1347,7 +1348,20 @@ let emit_rv_i_heap(st, insn) =
       let _ = rv_li32_pair(b, 6, 0) in
       let _ = rv_slot(b, src, false, 7) in
       let _ = rv_sd(b, 7, 6, 0) in
-      emit_st4(st, b, cur, labels, cons([12, gpos, goff], patches))
+      /* GC-root publish (FLAT_ABI.md 2.3 / 8.2 #13): a top-level value
+       * assigned at run time must land in the G+440 list, or the collector
+       * never marks the cell's value. yac_gval_pub is an unmarked $proc
+       * (plain ABI), so the name goes to a0 and the value to a1; both the
+       * strlit and the call are patched like any other fcall. */
+      let npos = bytes_len(b) in
+      let _ = rv_li32_pair(b, 10, 0) in
+      let _ = rv_slot(b, src, false, 11) in
+      let acall = bytes_len(b) in
+      let _ = rv_jal(b, 1, 0) in
+      emit_st4(st, b, cur, labels,
+        emit_patch_rel(nth(st, 4),
+          emit_patch_strlit(cons([12, gpos, goff], patches), npos, strlit_off(nm)),
+          acall, "yac_gval_pub"))
   else if k == "glob" then
     let which = nth(insn, 2) in
     let gpos = bytes_len(b) in
