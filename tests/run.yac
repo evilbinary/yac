@@ -527,6 +527,13 @@ let repl_cases(_) = [
   ["nested compile after import", "1+1\nimport compiler\ncompile(\"1+2\")\n:q\n", "<bytes>"],
   ["import then printf d", "let a=42\nimport fmt\nprintf(\"%d\", [a])\n:q\n", "42"],
   ["import then printf one", "let a=42\nimport fmt\nprintf(a)\n:q\n", "42"],
+  /* The blob's entry wrapper is `_eval`, so a guest `let _eval` makes that name
+   * ambiguous: the JIT used to resolve its entry BY NAME over funOffsRev (a
+   * list the emitters cons in emission order, scanned from its head = the last
+   * proc emitted), which picked the guest's proc and jumped there -- SIGSEGV,
+   * measured 2026-09-17. The entry is funs[0], i.e. that list's LAST record
+   * (backend.yac entry_off; FLAT_ABI.md 8.2 #9). */
+  ["guest _eval shadows wrapper", "let _eval(x) = x + 1\nprint(_eval(41))\n:q\n", "42"],
   /* Host-view compiler pkg (12.11 @host): import must be fast, not crash,
    * and bind the thin wrappers. Do NOT invoke compile/load here: calling a
    * host leaf runs the real host compiler in-process and pollutes the REPL
