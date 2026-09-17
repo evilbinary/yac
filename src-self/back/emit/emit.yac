@@ -9,7 +9,7 @@
  */
 
 package back.emit.emit
-export asm_dump_get, asm_dump_set, asm_dump_procs, asm_dump_cells, relocs_get, relocs_set, relocs_reset, relocs_add, relocs_n, cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, apply_args, apply_i32, apply_ncap, apply_patch, apply_u64, apply_u64_rel, cabi_should, cabi_skip, cimport_buf, cimport_id, cimport_index, cimport_reset, cimport_set, cimport_win_need, clos_bytes, emit_arch, emit_cplt_a64, emit_cplt_rv, emit_glob_data, emit_ids_new, emit_jsess, emit_jsess_set, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, fun_is_raw, fun_selfabi, is_yac_proc_name, tcall_tab_set, tcall_raw_of, host_id, host_names, extsym_add, extsym_bind_add, extsym_bind_list, extsym_names, extsym_names_set, extsym_bind_set, extsym_find, extsym_n, extsym_reset, emit_jit_blob, emit_jit_blob_set, funsz_get, funsz_set, gref_alloc, gref_count, gref_names, gref_reset, gref_base, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_get, yjit_layout_set, reverse, host_unstub_procs, host_slot_bake, gref22, gref22_reset
+export asm_dump_get, asm_dump_set, asm_dump_procs, asm_dump_cells, relocs_get, relocs_set, relocs_reset, relocs_add, relocs_n, cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, apply_args, apply_i32, apply_ncap, apply_patch, apply_u64, apply_u64_rel, cabi_should, cabi_skip, cimport_buf, cimport_id, cimport_index, cimport_reset, cimport_set, cimport_win_need, clos_bytes, emit_arch, emit_cplt_a64, emit_cplt_rv, emit_glob_data, emit_ids_new, emit_jsess, emit_jsess_set, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, fun_is_raw, fun_selfabi, is_yac_proc_name, tcall_tab_set, tcall_raw_of, prof_hook_fix, host_id, host_names, extsym_add, extsym_bind_add, extsym_bind_list, extsym_names, extsym_names_set, extsym_bind_set, extsym_find, extsym_n, extsym_reset, emit_jit_blob, emit_jit_blob_set, funsz_get, funsz_set, gref_alloc, gref_count, gref_names, gref_reset, gref_base, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_get, yjit_layout_set, reverse, host_unstub_procs, host_slot_bake, gref22, gref22_reset
 import back.pack.elf {elf_note_abs64}
 import rt.runtime {yac_cimport_host_sym}
 import back.pack.pe {pe_iat_off, pe_iat_qwords}
@@ -407,6 +407,57 @@ let tcall_raw_of(nm) =
   let v = tcall_tab_lookup(box_get(tcall_tab_box), nm, 0) in
   if v < 0 then is_yac_proc_name(nm)
   else v != 0
+
+/* ---- profiler hooks (FLAT_ABI.md 8.2 #8) --------------------------------
+ * The kernel calls the hooks by bare name (rt_prof_enter_ins /
+ * rt_prof_leave_ins). runtime_add (runtime.yac) retargets those calls to the
+ * object ABI when the hook comes from the runtime base or a linked package --
+ * it runs at LINK time, before the unit's own procs exist, so a hook defined
+ * IN THE PROGRAM stayed a plain `fcall`. A marked (object ABI) callee then
+ * reads its first param from arg register 1 while fcall put it in 0; the old
+ * workaround passed the name in BOTH registers, which falls apart the moment a
+ * hook takes a second parameter. Once the whole proc list is known, pick the
+ * call kind from the TARGET's own frame ABI -- exactly the tcall_raw_of rule. */
+let prof_marked_hook(funs, nm, i) =
+  if i >= len(funs) then 0
+  else
+    let f = nth(funs, i) in
+    if nth(f, 0) == "$proc" then prof_marked_hook(funs, nm, i + 1)
+    else if nth(f, 1) == nm and fun_selfabi(f) then 1
+    else prof_marked_hook(funs, nm, i + 1)
+
+let prof_fix_insns(insns, enter, leave, i, out) =
+  if i >= len(insns) then out
+  else
+    let ins = nth(insns, i) in
+    let _ =
+      if nth(ins, 0) == "fcall" then
+        let nm = nth(ins, 2) in
+        let obj =
+          (nm == "prof_enter_go" and enter != 0)
+            or (nm == "prof_leave_go" and leave != 0) in
+        if obj then list_push(out, ["ycall", nth(ins, 1), nm, nth(ins, 3)])
+        else list_push(out, ins)
+      else list_push(out, ins) in
+    prof_fix_insns(insns, enter, leave, i + 1, out)
+
+let prof_fix_funs(funs, enter, leave, i, out) =
+  if i >= len(funs) then out
+  else
+    let f = nth(funs, i) in
+    let nm = intern(nth(f, 1)) in
+    let _ =
+      if nm == intern("yac_prof_enter") or nm == intern("yac_prof_leave") then
+        list_push(out, [nth(f, 0), nth(f, 1), nth(f, 2), nth(f, 3),
+          prof_fix_insns(nth(f, 4), enter, leave, 0, list_new()), nth(f, 5)])
+      else list_push(out, f) in
+    prof_fix_funs(funs, enter, leave, i + 1, out)
+
+let prof_hook_fix(funs) =
+  let enter = prof_marked_hook(funs, "prof_enter_go", 0) in
+  let leave = prof_marked_hook(funs, "prof_leave_go", 0) in
+  if enter == 0 and leave == 0 then funs
+  else prof_fix_funs(funs, enter, leave, 0, list_new())
 
 /* C ABI stubs: skip kernel, pkg-qualified (slash), and libc names. */
 let cabi_has_slash(s, i) =
