@@ -193,8 +193,7 @@ let tco_find(insns, i, slot, gname) =
     if tgt == "yac_prof_leave" or tgt == "yac_prof_enter" then
       tco_find(insns, i - 1, slot, gname)
     else tco_hit(nth(insns, i), slot, gname, i)
-  else if nth(nth(insns, i), 0) == "apply"
-       or nth(nth(insns, i), 0) == "icall" then
+  else if nth(nth(insns, i), 0) == "icall" then
     let ins = nth(insns, i) in
     if nth(ins, 1) == slot and tco_self_op(nth(ins, 2)) then i
     else 0 - 1
@@ -203,19 +202,14 @@ let tco_find(insns, i, slot, gname) =
 let tco_one(ins, gname) =
   if nth(ins, 0) == "fcall" or nth(ins, 0) == "ycall" then
     ["tcall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
-  else if nth(ins, 0) == "apply" then
-    /* self -> tcall (tloop: same object, args shuffled, no new frame).
-     * Only a SELF call can be turned into a loop here, and tco_find only ever
-     * reports one (lir.yac:199 -- it accepts apply/icall only when the callee
-     * operand is the ["self"] sentinel). The non-self branches used to build
-     * the legacy `tailapply` / `ticall` spellings; nothing consumes them any
-     * more (FLAT_ABI.md 6 cleanup list, 8.12 census), so a non-self apply /
-     * icall in tail position is simply left as it is: an ordinary call whose
-     * value the enclosing `ret` returns. */
-    if tco_self_op(nth(ins, 2)) then
-      ["tcall", nth(ins, 1), gname, nth(ins, 4)]
-    else ins
   else if nth(ins, 0) == "icall" then
+    /* self -> tcall (tloop: same object, args shuffled, no new frame).
+     * Only a SELF call can become a loop here, and tco_find only ever reports
+     * one (it accepts icall only when the callee operand is the ["self"]
+     * sentinel). A non-self icall in tail position is left as it is: an
+     * ordinary call whose value the enclosing `ret` returns. The `apply`
+     * spelling this branch used to duplicate is gone -- caps live in the
+     * object, so there is one dynamic call form (LIR.md 4.4.6). */
     if tco_self_op(nth(ins, 2)) then
       ["tcall", nth(ins, 1), gname, nth(ins, 3)]
     else ins
@@ -1197,16 +1191,20 @@ let calli(g0, dst, ss, env, funs, self, tail, inl) =
       ["ycall", dst, code, ss]
     else if slf then
       /* Non-flat self-recursion (capRef): the object is the incoming self
-       * itself; apply through ["self"] so the callee reads caps from r13. */
-      ["apply", dst, ["self"], ncap, ss]
+       * itself; call through ["self"] so the callee reads caps from r13.
+       * icall, not apply: caps live in the object, so the call site carries no
+       * ncap and there is only one dynamic-call form (LIR.md 4.4.6). */
+      ["icall", dst, ["self"], ss]
     else if ncap > 0 then
       /* The callee is a captured closure: capRef binds its Gamma slot to a
        * NEGATIVE marker, so it must become the ["cap", j] operand (same
-       * conversion as lir_var/outer_caps) before it can be applied. The
-       * old fcall-with-caps-as-args path is gone under the object ABI. */
+       * conversion as lir_var/outer_caps) before it can be called. The old
+       * fcall-with-caps-as-args path is gone under the object ABI, and so is
+       * the apply spelling: the callee reads its caps through the object, so
+       * nothing is repacked here and no ncap field is needed. */
       let cs = nth(e, 0) in
       let clo = if cs < 0 then ["cap", 0 - cs - 1] else cs in
-      ["apply", dst, clo, ncap, ss]
+      ["icall", dst, clo, ss]
     else
       let se = sigma_ent_h(funs, g, h) in
       if se != 0 then

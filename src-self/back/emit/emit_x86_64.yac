@@ -2,7 +2,7 @@ package back.emit.emit_x86_64
 export emit_program, emit_program_x86_64
 import rt.os {host_os}
 import lib.log {log_fatal}
-import back.emit.emit {relocs_add, apply_args, apply_patch, apply_u64, cimport_buf, cimport_got, cimport_index, cimport_names, cimport_reset, cimport_win_need, clos_bytes, asm_dump_cells, asm_dump_procs, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jit_blob, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, funsz_get, funsz_set, gref_base, cabi_skip, fun_is_raw, tcall_raw_of, tcall_tab_set, prof_hook_fix, gref_alloc, gref_reset, gref_count, gref_names, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {relocs_add, icall_args, apply_patch, apply_u64, cimport_buf, cimport_got, cimport_index, cimport_names, cimport_reset, cimport_win_need, clos_bytes, asm_dump_cells, asm_dump_procs, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jit_blob, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, funsz_get, funsz_set, gref_base, cabi_skip, fun_is_raw, tcall_raw_of, tcall_tab_set, prof_hook_fix, gref_alloc, gref_reset, gref_count, gref_names, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {emit_cabi_all}
 import back.emit.linux_x86_64 {call_rbx_user, call_user, cc_of, emit_load_rax_slot, emit_load_rbx_slot, emit_load_rdi_slot, emit_obj_load_argreg, emit_obj_load_rax, emit_obj_store_rdi, emit_store_param, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_unalign, emit_x86_c_untag, linux_begin, linux_cc_marshal, linux_ccall_patch, linux_clock, linux_entry, linux_exit, linux_finish, linux_num_syscall, linux_syscall, linux_write1}
 import back.emit.win_x86_64 {win_begin, win_cc_marshal, win_ccall_patch, win_clock, win_entry, win_exit, win_finish, win_num_syscall, win_syscall, win_write1}
@@ -1574,7 +1574,7 @@ let emit_x86_i_apply(st, insn, is_entry) =
   let patches = nth(st, 3) in
   let dst = nth(insn, 1) in
   let clos = nth(insn, 2) in
-  let args = apply_args(insn) in
+  let args = icall_args(insn) in
   let nargs = len(args) in
   let nstack = if nargs > 5 then nargs - 5 else 0 in
   let pushsa(i) =
@@ -1793,7 +1793,7 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
      * compile-time error in lir.yac. */
     if k == "closure" then
       emit_x86_i_clos(st, insn, is_entry)
-    else if k == "apply" or k == "icall" then
+    else if k == "icall" then
       emit_x86_i_apply(st, insn, is_entry)
     else if is_frame_op(k) or k == "mov_imm" or k == "mov" or is_arith(k)
          or k == "cmp" or k == "icmp" or k == "label" or k == "fcall" or k == "ccall"
