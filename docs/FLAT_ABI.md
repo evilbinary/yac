@@ -285,7 +285,7 @@ IR 收敛的完整方案（KISS / OCP 准则、六类维度泄漏、逐条迁移
 | `yjit` clos_list / `host_tab_fill` 残留 | 首会话槽拷贝 |
 | `gcall` | rev1 的调用指令 |
 | `pass_lir` 的 `TOPVALS` 打印、`gvst_push` 的 `GVST?` 打印 | 调试残留 |
-| 第 6 步收敛掉的 opcode | `xcall` / `apply` / `ticall` / `tailapply` / `iccall` / `$icall` / `gvld` / `gvst` / `gfnst` |
+| 第 6 步收敛掉的 opcode | `xcall` / `apply` / `ticall` / `tailapply` / `iccall` / `$icall` / `gvld` / `gvst` / `gfnst` —— **逐项核实后（§8.12 普查 ✓）**：`tailapply` / `ticall` / `xcall` **已删** ✓；`gvld` / `gvst` / `gfnst` 本来就没有 ✓；**`apply` / `iccall` / `$icall` 仍是活的** ✗（分别见 §8.12 的出现次数 ✓）⇒ 这行只剩 `apply` 一项待做（即下一行的"改形态" ✓）|
 
 **能力不删，只改形态**：`apply` / 间接调用的**能力**保留（嵌套闭包 +
 call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令的「运行期动态 caps」
@@ -379,8 +379,9 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | 11 | 本机 PATH | **没有 C 编译器**：`gcc` / `cc` / `clang` / `tcc` 全不在 PATH，`where.exe gcc` 也找不到；但 `/mingw64/bin/gcc.exe`（15.2.0）与 `/mingw32/bin/gcc.exe`（16.1.0）**存在**。⇒ 在**裸**的当前 shell 里 `gcc` 起不来（连 `-E` 都 rc=1：驱动 spawn 不了 `cc1` ✗），而 `make` 的隐式 `CC` 默认值就是 `cc` ⇒ `make test-*` 一旦需要重建 `$(BIN)`（`src/*.c` 比 `build/*.o` 新就会）**整组报错** ✗。可用的建法：走 MSYS2 MINGW64 环境再显式给编译器 —— `MSYSTEM=MINGW64 CHERE_INVOKING=1 MSYS2_PATH_TYPE=inherit /e/soft/msys2/usr/bin/bash.exe --login -i -c 'cd /e/workspace/yac && make CC=gcc yac.exe'`（实测可编、可链接 ✓） |
 | 12 | `make` 的 `$(YC_A)` 规则 | 两趟自举（`yc_a.exe` → `.new` → `.new2` → `mv`）**不能并行跑**：同时开两个 `make test-*`（各自都要重建 `$(YC_A)`）会撞在一起，第二趟产物缺失 ⇒ `mv: cannot stat 'build/yc_tmp/yc_a.exe.new2'` ✗（实测一次）。而且配方里 `echo pass 2` 前是 `;` ⇒ 第二趟失败后 `mv` 仍会跑 ⇒ 报错位置具有误导性。**串行跑 `make`** ✓。**2026-09-17 又踩一次**（症状不同 ✓）：一条 `make test` 因超时被切断 ✓ 但**仍在后台跑** ✓，此时又起一条 ⇒ 日志开头出现 **NUL 字节** + 3 条假失败 `FAIL: compiler capture_2args / ncap12_disp8 / capture_shadow_t`（`actual: compile rc=1`）✗ —— 用例本身没问题 ✓，等残留进程结束后单独重跑 ⇒ **0 FAIL** ✓。⇒ 跑测试前先确认没有正在跑的 `make` ✓。**2026-09-17 第三次**（新知识 ✓）：**被取消/超时的 `make test` 会把进程留在后台** ✗ —— `ps -W | grep -E 'make\.exe|run_tests'` 一次就能看到好几条（本次见到 13:26 起的一条 ✗）✓；清理：Windows PID 用 `taskkill //F //PID <pid>` ✓、MSYS PID 用 `kill -9 <pid>` ✓，清完再跑 ✓，一次就 **0 FAIL** ✓ |
 
-> **工作树里一处未决** ✓：`src-self/back/jit.yac` 留着 §8.8 的一条 **hushed 追踪**（`log("jit", …)`，只在 `--verbose` 打印 ✓）——
-> 要么撤掉恢复"零残留" ✓，要么明说"留作 verbose 开关" ✓；不留在别处出现（已确认 `--verbose` 之外无输出 ✓）。
+> ~~**工作树里一处未决**~~ ⇒ **已定** ✓（2026-09-17）：`src-self/back/jit.yac:76` 那条 **hushed 追踪**
+> （`log("jit", …)` ✓ = 每个 gref 名字 + 有没有 gfn 项 ✓）**已随提交进入 HEAD** ✓ ⇒ 当作"**留作 `--verbose` 开关**" ✓，
+> 不再算残留 ✓。它只在 `--verbose` 下打印 ✓（非 verbose 零输出 ✓），是排查 blob 里"cell 没填上"的第一手工具 ✓。
 
 ### 8.3 当时的基线（改动验收对照）
 
@@ -862,6 +863,7 @@ gdb 显示 **RIP = 0** ✓、返回地址在 JIT 会话镜像里 ✓ ⇒ 会话�
 |---|---|---|
 | `tests/run.yac` ✓ | 439 `ycall` / 2076 `fcall` / 11 `tcall` ✓ | 不是空样本 ✓ |
 | **编译器自身**（`build/yc_tmp/yc_bundle.yac` ✓）| **2.6 MB** LIR ✓ | 8277 `ycall` / 25409 `fcall` / 527 `tcall` / 33 `icall` / 2 `ccall` ✓ |
+| **全用例库** ✓（111 个 `tests/compiler/cases/*.yac` + `tests/pkg/*.yac` ✓，逐个 dump ✓ 全成功 ✓）| 299 `ycall` / 14 `tcall` / 12 `icall` / 2 `ccall` ✓ | `apply` 10 ✓、`iccall` **5** ✗（见盲区 2 ✓）|
 
 > **踩过并已修的坑** ✓：`--dump-lir` 对**带包导入**的程序原本**根本不出 dump** ✗ —— `backend.yac:966 dump_lir` 只做 `rt_for_link` ✓、
 > 从没设过 `link_need_box` / `link_local_box` ✗（而 `rt_for_link` 只链这两个盒子里记着的包 ✓）⇒ 拿它编 `yc_bundle.yac` 只得到
@@ -879,7 +881,7 @@ gdb 显示 **RIP = 0** ✓、返回地址在 JIT 会话镜像里 ✓ ⇒ 会话�
 | `$icall` | 0 ✓ | 4 ✓ | 0 / 0 ✓ | **活着** ✗ —— 见下面的盲区 ✓ |
 | `tailapply` | 1（`lir.yac:211` ✓）| 3 ✓ | 0 / 0 ✓ | 死 ✓（构造不可达 ✓，见下 ✓）|
 | `ticall` | 1（`lir.yac:215` ✓）| 3 ✓ | 0 / 0 ✓ | 死 ✓（同上 ✓）|
-| `iccall` | 1（`lir.yac:1417` ✓）| 3 ✓ | **0 / 0** ✓ | **实践上死** ✓（构造点还在 ✗）|
+| `iccall` | 1（`lir.yac:1417` ✓）| 3 ✓ | **5 / 0** ✗ | **活着** ✗ —— 见下面的"第二个盲区" ✓ |
 | **`apply`** | **2**（`lir.yac:1195` / `:1203` ✓）| 3 ✓ | **387 / 64** ✗ | **仍在用** ✗ ⇒ **不能删** ✗ |
 
 **`tailapply` / `ticall` 为什么不可达** ✓：唯一构造点是 TCO 重写的**非自调用**分支 ✓，
@@ -895,11 +897,21 @@ gdb 显示 **RIP = 0** ✓、返回地址在 JIT 会话镜像里 ✓ ⇒ 会话�
 ⇒ **>6 个值的多余参数被静默丢掉** ✗（返回错值 ✓）；arm64 / riscv64 同场景发 `brk` / `unimp` ✓（响亮 trap ✓）。
 今天都不可达 ✓，但**一旦**有人手写 `$proc` 发出它 ✓，三架构行为就分叉 ✗。
 
-**⚠ 普查的盲区**（重要 ✓）：`dump_lir` 只打**本单元**的 proc ✓（`dump_ps` 从 `st0 = len(rt0) + 1` 起 ✓），
-**runtime / 内核 proc 全被切掉** ✗ ⇒ 只由**手写内核 LIR** 使用的 opcode 在 dump 里必然显示 0 ✗ ——
-例如 `$icall`：`src-self/rt/runtime.yac` 里**有 3 处** ✓（`["$icall", 14, 4]` / `[16, 5]` / `[12, 9]` ✓，
-在 apply / 间接调用那几条内核 proc 里 ✓），而 dump 里是 0 ✓ ⇒ **它是活的** ✗。
-⇒ 任何"某 opcode 没人用"的结论 ✓，都必须**同时**扫 `rt/runtime.yac` 的手写 LIR ✓。
+**⚠ 普查的两个盲区**（都踩过 ✓，结论因此两次判错 ✗）：
+
+1. **内核手写 LIR 不在 dump 里** ✗：`dump_lir` 只打**本单元**的 proc ✓（`dump_ps` 从 `st0 = len(rt0) + 1` 起 ✓），
+   **runtime / 内核 proc 全被切掉** ✗ ⇒ 只由手写内核 LIR 使用的 opcode 在 dump 里必然显示 0 ✗ ——
+   例如 `$icall`：`src-self/rt/runtime.yac` 里有 **3 处** ✓（`["$icall", 14, 4]` / `[16, 5]` / `[12, 9]` ✓，
+   在 apply / 间接调用那几条内核 proc 里 ✓）而 dump 是 0 ✓ ⇒ **它是活的** ✗。⇒ 结论必须**同时**扫 `rt/runtime.yac` ✓。
+2. **单进程样本覆盖不到全部语言面** ✗：拿"两个最大的程序"（harness + 编译器自身 ✓）当样本时，
+   只有**各自编译成独立程序**才出现的 insn 会漏掉 ✗ —— `iccall` 就是这样被判成"实践上死"的 ✗：
+   它只在 **C 互操作**里出现 ✓（`ccall(<值>, args…)` ✓，第一个参数是**值**不是字符串字面量 ✓），
+   而那两个大样本都不碰 C 互操作 ✗。**全用例库普查** ✓（111 个 `tests/compiler/cases/*.yac` + `tests/pkg/*.yac` ✓，
+   逐个 `--dump-lir` ✓、全成功 ✓）：`iccall` **5 处** ✗（`ccall_cload` 2 ✓ / `ccall_many` 1 ✓ … ✓），
+   用例 `ccall_cload`（rc 20 ✓）/ `ccall_many`（rc 64 ✓）本来就在 compiler 组里跑 ✓ ⇒ **它是活的** ✗。
+   （同一轮也顺带复核了 `tailapply` / `ticall`：**全用例库 0 处** ✓ ⇒ §6 那次删除站得住 ✓。）
+
+⇒ 可靠的普查配方 ✓：**全用例库 dump**（111 个 ✓）+ **`rt/runtime.yac` 手写 LIR 源码扫描** ✓ —— 两边都为零才叫死 ✓。
 
 **结论与已执行的动作**（2026-09-17 ✓）：
 
@@ -908,7 +920,7 @@ gdb 显示 **RIP = 0** ✓、返回地址在 JIT 会话镜像里 ✓ ⇒ 会话�
 | **删掉** ✓（构造点不可达 ✓；三后端 handler + 名单 + 前端构造 + `vops(0)` 一起摘 ✓）| `tailapply` / `ticall` ✓：`lir.yac` 的 `tco_one` 非自调用分支改成 `else ins` ✓（留成普通调用 ✓，值由外层 `ret` 带走 ✓）、`prof_is_tco` 只剩 `tcall` ✓、三后端各删一个 handler 块与名单项 ✓、`emit.yac` 的 `apply_ncap`/`apply_args` 去掉 `ticall` 分支 ✓、只服务于它的 `emit_call_guard_tail`（x86_64 ✓）一并删除 ✓ |
 | **删掉** ✓（只摘名字 ✓）| `xcall` 从 `vops(0)` 摘除 ✓（它的 x86_64 handler 早被删过 ✓，注释留在 `emit_x86_64.yac:1995` ✓）|
 | **无需动** ✓（本来就没有 ✓）| `gvld` / `gvst` / `gfnst` —— 全仓只剩**历史注释** ✓（`emit.yac:1198` / `jit.yac:27` / `runtime.yac:2209` 等 ✓）|
-| **保留** ✗ | `$icall`（内核在用 ✓）、`apply`（动态调用能力的实际拼写 ✓）、`iccall`（构造点在 ✓、样本 0 ✓ ⇒ 想删先补一个"把 C 函数取成值再调"的用例 ✓）|
+| **保留** ✗ | `$icall`（内核手写 LIR 3 处在用 ✓）、`apply`（动态调用能力的实际拼写 ✓）、`iccall`（**活的** ✗：`ccall(<值>, args…)` ✓，用例 `ccall_cload` / `ccall_many` 就在 compiler 组里跑 ✓）|
 
 **验收** ✓：两趟自举通过 ✓ + **stage2 ≡ stage3 逐字节相同** ✓（删的都是不可达代码 ⇒ 输出不该变 ✓，实测如此 ✓）；
 全量 `make test` **716 / 0** ✓（0 条 FAIL 行 ✓）；`qemu-arm64` / `qemu-riscv64` **85 / 0** ×2 ✓（两架构的 handler 块也删了 ✓）。
