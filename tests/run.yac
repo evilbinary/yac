@@ -422,7 +422,9 @@ let compiler_cases(_) = [
   ["tco_cap", "rc", "42"], ["tco_7args", "rc", "42"], ["callcc", "rc", "42"], ["callcc2", "rc", "99"],
   ["callcc3", "rc", "42"], ["callcc4", "rc", "99"],
   /* `import` after a use still binds (interp twin: "import after use"). */
-  ["import_late", "rc", "1"]]
+  ["import_late", "rc", "1"],
+  /* A run-time-assigned top-level value is published as a GC root (8.2 #13). */
+  ["gcroot_pub", "out", "1"]]
 
 let compile_msg_err(st, yc, src, name, needle) =
   let p = str_cat(TMP, "/synerr.yac") in

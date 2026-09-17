@@ -353,7 +353,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 > 本节原为 2026-09-15 的"四类失败（全量 679 / 7）"。四条已全部修完 ✓：
 > `pkg profile`（§8.7 ✓）、`pkg compiler` 与 `import after use`（§8.9 ✓）、
 > 最后一条 `repl let fn after expr line`（§8.8 ✓，其副作用"import 后的宿主叶调用读 0 段错误"
-> 由 §8.10 的"两个基址"收尾 ✓）⇒ **全量 `make test` = 716 / 0** ✓。
+> 由 §8.10 的"两个基址"收尾 ✓）⇒ **全量 `make test` = 721 / 0** ✓（2026-09-17 晚：新增 `gcroot_pub` 用例 ✓ +5 ✓）。
 > 下表保留下来作"曾经红过什么"的台账。
 
 | 用例 | 现象 | 根因 | 证据 |
@@ -386,7 +386,8 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 
 | 11 | 本机 PATH | **没有 C 编译器**：`gcc` / `cc` / `clang` / `tcc` 全不在 PATH，`where.exe gcc` 也找不到；但 `/mingw64/bin/gcc.exe`（15.2.0）与 `/mingw32/bin/gcc.exe`（16.1.0）**存在**。⇒ 在**裸**的当前 shell 里 `gcc` 起不来（连 `-E` 都 rc=1：驱动 spawn 不了 `cc1` ✗），而 `make` 的隐式 `CC` 默认值就是 `cc` ⇒ `make test-*` 一旦需要重建 `$(BIN)`（`src/*.c` 比 `build/*.o` 新就会）**整组报错** ✗。可用的建法：走 MSYS2 MINGW64 环境再显式给编译器 —— `MSYSTEM=MINGW64 CHERE_INVOKING=1 MSYS2_PATH_TYPE=inherit /e/soft/msys2/usr/bin/bash.exe --login -i -c 'cd /e/workspace/yac && make CC=gcc yac.exe'`（实测可编、可链接 ✓） |
 | 12 | `make` 的 `$(YC_A)` 规则 | 两趟自举（`yc_a.exe` → `.new` → `.new2` → `mv`）**不能并行跑**：同时开两个 `make test-*`（各自都要重建 `$(YC_A)`）会撞在一起，第二趟产物缺失 ⇒ `mv: cannot stat 'build/yc_tmp/yc_a.exe.new2'` ✗（实测一次）。而且配方里 `echo pass 2` 前是 `;` ⇒ 第二趟失败后 `mv` 仍会跑 ⇒ 报错位置具有误导性。**串行跑 `make`** ✓。**2026-09-17 又踩一次**（症状不同 ✓）：一条 `make test` 因超时被切断 ✓ 但**仍在后台跑** ✓，此时又起一条 ⇒ 日志开头出现 **NUL 字节** + 3 条假失败 `FAIL: compiler capture_2args / ncap12_disp8 / capture_shadow_t`（`actual: compile rc=1`）✗ —— 用例本身没问题 ✓，等残留进程结束后单独重跑 ⇒ **0 FAIL** ✓。⇒ 跑测试前先确认没有正在跑的 `make` ✓。**2026-09-17 第三次**（新知识 ✓）：**被取消/超时的 `make test` 会把进程留在后台** ✗ —— `ps -W | grep -E 'make\.exe|run_tests'` 一次就能看到好几条（本次见到 13:26 起的一条 ✗）✓；清理：Windows PID 用 `taskkill //F //PID <pid>` ✓、MSYS PID 用 `kill -9 <pid>` ✓，清完再跑 ✓，一次就 **0 FAIL** ✓ |
-| 13 | `emit_arm64.yac:1336` / `emit_riscv64.yac:1338` | **GC 根发布只在 x86_64 做了** ✗：`gset` 用**非立即数**源（或任何 blob 里的 `gset` ✓）时，x86_64 会存完后调 `yac_gval_pub(name, value)` ✓（`emit_x86_64.yac:1373` ✓，FLAT_ABI.md 2.3 的 GC 根 ✓），而 arm64 / riscv64 只做存储 ✓ —— 两处注释自己就写着 "GC publish (`yac_gval_pub`) **TODO**" ✗。⇒ 在那两个架构上，**运行期**赋值的顶层值 cell 不是 GC 根 ✗ ⇒ 只被它引用的活值可能被回收 ✗（潜伏的错值/崩溃 ✓；套件没炸是因为没踩到触发条件 ✓）。修法：把 x86_64 那 8 行（取名字 strlit → rdi、值 → rsi、`call yac_gval_pub` ✓）按各架构的寄存器约定搬过去 ✓ |
+| ~~13~~ | ~~`emit_arm64.yac:1336` / `emit_riscv64.yac:1338`~~ ⇒ **已修（2026-09-17，§8.13）** | **GC 根发布只在 x86_64 做了** ✗：`gset` 用**非立即数**源时，x86_64 会存完后调 `yac_gval_pub(name, value)` ✓（`emit_x86_64.yac:1373` ✓），而 arm64 / riscv64 只做存储 ✓（注释自己写着 "GC publish **TODO**" ✗）⇒ 运行期赋值的顶层值 cell 不是 GC 根 ✗。**修**：两架构各补上同样的发布调用 ✓；新用例 `tests/compiler/cases/gcroot_pub.yac` ✓ 在三架构都 PASS ✓ |
+| ~~14~~ | ~~`emit_arm64.yac` 的 `$ld64` / `$st64`~~ ⇒ **已修（2026-09-17，§8.13）**，**修 #13 时才发现** ✗ | arm64 的 `$ld64`/`$st64` 用 `ldur`/`stur` **直接编码偏移** ✗，而它们只有 **±256** 的 9 位空间 ✓；G 区要到 **440/448**（注册表根 ✓）⇒ 越界 ⇒ 读写错地址 ⇒ `yac_gval_pub` / `yac_gval_list` 在 arm64 **必崩** ✓（`$ld8` 一直懂得先 `add` ✓，64 位版漏了 ✗）。**修**：大偏移先折进地址寄存器再 `ldur`/`stur` ✓（与 `$ld8` 同形 ✓）|
 
 > ~~**工作树里一处未决**~~ ⇒ **已定** ✓（2026-09-17）：`src-self/back/jit.yac:76` 那条 **hushed 追踪**
 > （`log("jit", …)` ✓ = 每个 gref 名字 + 有没有 gfn 项 ✓）**已随提交进入 HEAD** ✓ ⇒ 当作"**留作 `--verbose` 开关**" ✓，
@@ -405,7 +406,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 
 > **2026-09-17 现状**（全量实跑 ✓）：host `compiler` **185 / 0** ✓、host `pkg` **22 / 0** ✓、
 > host `interp` **36 / 0** ✓、`qemu-arm64` **85 / 0** ✓、`qemu-riscv64` **85 / 0** ✓（各 3 SKIP ✓）、
-> 全量 `make test` **716 / 0** ✓ —— **全绿** ✓。
+> 全量 `make test` **721 / 0** ✓ —— **全绿** ✓（2026-09-17 晚 ✓：`tailapply`/`ticall` 退役 opcode 清理 ✓、`gset` 的 GC 根发布补到 arm64/riscv64 ✓ 与 arm64 G 区大偏移修复 ✓，新增用例 `gcroot_pub` ✓）。
 > 相对上表的增量来自新增用例：`fun_eq` / `print_dotted` / `prof_hook_name` / `import_late`（compiler）
 > + `pkg prof_hook`（pkg）；`pkg profile`、`pkg compiler`、`import after use`、`repl let fn after expr line`
 > 也从此表里的失败逐条转绿 ✓（分别见 §8.7 / §8.9 / §8.9 / §8.8）。
@@ -942,6 +943,46 @@ gdb 显示 **RIP = 0** ✓、返回地址在 JIT 会话镜像里 ✓ ⇒ 会话�
 > §6 说的"**能力不删，只改形态**"这件事**还没做完** ✗（`apply` 仍是独立 opcode ✓）。
 > 顺带清掉一条**陈旧注释** ✓：x86_64 的 tailapply 块曾写着"REPL 行的尾调用走这里" ✗ ——
 > 实测（`printf '1+1\nlet a = 5\na()\n:q\n' | ./yc --repl --dump-lir` ✓）今天该行降成 **`icall`** ✓。
+
+### 8.13 已修：arm64/riscv64 的 GC 根发布 + arm64 的 G 区大偏移（2026-09-17）
+
+**怎么发现的** ✓：清点 §6 时顺手核对"顶层值注册表现在谁发布" ✓ —— `emit.yac:601` 写的是
+`yac_gval_pub` / `yac_gfn_pub` ✓，而 arm64 / riscv64 的 `gset` 注释写着 "GC publish … **TODO**" ✗。
+
+**#13：两个架构少了那次发布** ✗
+
+`gset` 的**非立即数**分支（运行期赋值 ✓）在 x86_64 上是"存储 + 调 `yac_gval_pub(name, value)`" ✓
+（`emit_x86_64.yac:1373` ✓），arm64 / riscv64 只做了存储 ✓ ⇒ G+440 的 `[name, value]` 表里没有这一条 ✓
+⇒ `yac_gc_collect` 不标它 ✓ ⇒ **只被那个 cell 引用的活值可能被回收** ✗（FLAT_ABI.md 2.3 的 GC 根 ✓）。
+修法 ✓：两架构各补上同样的调用 ✓ —— `yac_gval_pub` 是**未标记** `$proc`（平 ABI ✓）⇒ 名字进 0 号参数寄存器 ✓、
+值进 1 号 ✓；strlit 与调用都按各自 `fcall` 的惯用法打 patch ✓（`a64_bl` / `rv_jal` + `emit_patch_rel` ✓）。
+
+**#14：arm64 的 `$ld64`/`$st64` 够不到 G+440** ✗（修 #13 时才暴露 ✓）
+
+arm64 把偏移**直接**塞给 `ldur`/`stur` ✗ —— 它们只有 **9 位（±256 字节）** ✓，而 G 区布局要走到
+**G+440 / G+448**（顶层值 / 函数注册表根 ✓，`emit.yac:601` ✓）⇒ 越界 ⇒ 编出**错误的地址** ✓
+⇒ `yac_gval_pub`（写 G+440 ✓）与 `yac_gval_list`（读 G+440 ✓）在 arm64 **必崩** ✓。
+同文件的 `$ld8` 一直有 `add` 兜底 ✓，64 位版漏了 ✗。修法 ✓：`|off| > 255` 时先 `add`/`sub` 把偏移折进基址寄存器 ✓，
+再把 `ldur`/`stur` 的偏移写 0 ✓（与 `$ld8` 同形 ✓）。
+
+**证据（修前 → 修后）** ✓ —— 探针 = 顶层运行期赋值 + 只数注册表条数 ✓（不碰 `intern` 名字 ✓）：
+
+```yac
+let v = str_cat("keep", "_me")
+print(len(yac_gval_list()))
+```
+
+| 架构 | 修前 | 修后 |
+|---|---|---|
+| x86_64（对照 ✓）| **1** ✓ | **1** ✓ |
+| riscv64 | **0** ✗（表是空的 ✓）| **1** ✓ |
+| arm64 | **SIGSEGV** ✗（G+440 地址算错 ⇒ 读到垃圾 ✓）| **1** ✓ |
+
+> 修 #14 之前，连**源码里直接写** `yac_gval_pub("probe", 7)` 在 arm64 也崩 ✓ —— 与 emitter 改动无关 ✓，
+> 是一条一直躺在那里、只在 arm64 上炸的独立 bug ✓。
+
+**验收** ✓：两趟自举通过 ✓ + **stage2 ≡ stage3 逐字节相同** ✓；新用例 `tests/compiler/cases/gcroot_pub.yac` ✓
+（`["gcroot_pub", "out", "1"]` ✓）在 **compiler / arm64 / riscv64 三处 PASS** ✓；全量 `make test` **721 / 0** ✓（0 条 FAIL ✓）。
 
 ---
 
