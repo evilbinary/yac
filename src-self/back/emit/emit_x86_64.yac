@@ -2335,8 +2335,11 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
    * sentinel. This is the runtime lookup table for cross-image calls:
    * the jit layer queries it (via yac_gtab_get, host side) to fill a
    * blob's patch slots. AOT-only; blobs reference through patch slots. */
-  /* Top-level registries are runtime-published (gfnst/gvst insns in
-   * _start), no bake needed here. Extern package-symbol slots default to
+  /* Top-level registries are runtime-published -- nothing to bake here. The
+   * value list G+440 is fed by yac_gval_pub, which the `gset` runtime store
+   * below calls (FLAT_ABI.md 2.3); arm64/riscv64 still owe that call
+   * (FLAT_ABI.md 8.2 #13). The retired gfnst/gvst insn spellings that used to
+   * be named here are gone (sect. 6 opcode sweep). Extern package-symbol slots default to
    * the stub so an AOT call before the --link loader fills them prints
    * instead of call [0]. The loader (12.4.C) overwrites these at startup. */
   let _ =
