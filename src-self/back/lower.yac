@@ -145,13 +145,21 @@ let emit_apply_unres(off) =
     let rst = nth(u, 0) in
     let extra = nth(u, 1) in
     let arch = if len(u) > 2 then nth(u, 2) else "x86_64" in
+    /* Every image-relative base needs the append offset. Layouts differ:
+     *   x86_64           [b, offs, code, GLOBALS, pool, smap]  -> +2, +3, +4
+     *   arm64 / riscv64  [b, offs, code, GLOBALS, labels, pool] -> +2, +3, +5
+     * (field 4 is a LABEL LIST there, so it must not be touched). The globals
+     * field used to be left alone, which gave REPL lines >= 2 a globals base
+     * from the FIRST image: tag22 then patched a stub-cell address 2668 bytes
+     * off, the session slot held it, and the next line's icall jumped into
+     * garbage. off == 0 (AOT, and the session's first line) is unchanged. */
     let st =
       if off == 0 then rst
       else if arch == "x86_64" then
-        [nth(rst, 0), nth(rst, 1), nth(rst, 2) + off, nth(rst, 3),
+        [nth(rst, 0), nth(rst, 1), nth(rst, 2) + off, nth(rst, 3) + off,
          nth(rst, 4) + off, nth(rst, 5)]
       else
-        [nth(rst, 0), nth(rst, 1), nth(rst, 2) + off, nth(rst, 3),
+        [nth(rst, 0), nth(rst, 1), nth(rst, 2) + off, nth(rst, 3) + off,
          nth(rst, 4), nth(rst, 5) + off] in
     let _ = log("emit", "resolve") in
     let _ =

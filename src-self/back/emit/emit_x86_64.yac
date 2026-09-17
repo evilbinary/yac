@@ -2128,6 +2128,11 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
       let s2 = [b, nth(s1, 1), [], nth(st, 3), nth(st, 4)] in
       emit_fun(i + 1, s2, cons([name, fstart], fo)) in
   let r1 = emit_fun(0, glob, []) in
+  /* Remember the ASM-dump request for the gref cell table printed after
+   * fill_gref: that table is the only place the emitted (absolute) stub-cell
+   * entry is visible, because a stub cell's entry is written into the DATA area
+   * at emit time, while the code patches (tag 22) are still unresolved here. */
+  let want_asm = asm_dump_get(0) != 0 in
   let _ =
     if asm_dump_get(0) != 0 then
       let _ = asm_dump_set(0) in
@@ -2206,9 +2211,16 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
     else if emit_host_win(0) then win_finish(b, extra)
     else linux_finish(b, extra) in
   let _ = ckeep in
-  let GLOBALS_BASE =
-    if T != 0 then nth(js, 1)
-    else LOAD_VADDR + TEXT_OFF + data_start in
+  /* Globals base for THIS image's data area. A blob used to take the SESSION's
+   * base (nth(js, 1) = the first image's data_start) while fill_gref/bake write
+   * the stub cells into the CURRENT image's data area -- and emit_apply_unres
+   * never shifted the globals field by the append offset, so a REPL line >= 2
+   * patched tag22 with a cell address 2668 bytes off (first image's data area),
+   * put that address in the session slot, and the next line's icall read
+   * [wrong+16] and jumped into garbage (SIGSEGV/SIGILL, or silently nothing).
+   * Per-image base + the field shifted in emit_apply_unres is what fill_gref
+   * already assumes. */
+  let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
   let _ = patches_extend(extra, patches) in
   let rst = [b, offs, LOAD_VADDR + TEXT_OFF, GLOBALS_BASE,
              LOAD_VADDR + TEXT_OFF + pool_start, smap_start] in
@@ -2344,6 +2356,37 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
       let _ = apply_u64(b, data_start + gref_base() + bshl(i, 5) + 16, v) in
       fill_gref(i + 1, fr, stub) in
   let _ = fill_gref(0, funOffsRev, stub) in
+  /* The gref cell table: name -> cell offset -> [cell+0] value and [cell+16]
+   * ENTRY, read back from the emitted image. The entry is absolute (fill_gref
+   * writes T + LOAD_VADDR + TEXT_OFF + off) and is what `icall` jumps to, so
+   * this is the number to check when a session-defined function is called on a
+   * later line and lands anywhere but its own body. */
+  let _ =
+    if want_asm then
+      let u64_at(off) =
+        let g(i) = band(bytes_ref(b, off + i), 255) in
+        let v1 = bor(g(0), bshl(g(1), 8)) in
+        let v2 = bor(v1, bshl(g(2), 16)) in
+        let v3 = bor(v2, bshl(g(3), 24)) in
+        let v4 = bor(v3, bshl(g(4), 32)) in
+        let v5 = bor(v4, bshl(g(5), 40)) in
+        let v6 = bor(v5, bshl(g(6), 48)) in
+        bor(v6, bshl(g(7), 56)) in
+      let _ = print(str_cat("=== gref cells: ", str_cat(int_to_str(gref_count()),
+                str_cat("  (gref_base=", str_cat(int_to_str(gref_base()),
+                str_cat(", data_start=", str_cat(int_to_str(data_start),
+                str_cat(", T=", str_cat(int_to_str(T), ")"))))))))) in
+      let cells(i) =
+        if i >= gref_count() then 0
+        else
+          let c = data_start + gref_base() + bshl(i, 5) in
+          let nm = nth(gref_names(), i) in
+          let m1 = str_cat("  cell ", str_cat(nm, str_cat(" off=", int_to_str(c)))) in
+          let m2 = str_cat(m1, str_cat(" val=", int_to_str(u64_at(c)))) in
+          let _ = print(str_cat(m2, str_cat(" entry=", int_to_str(u64_at(c + 16))))) in
+          cells(i + 1) in
+      cells(0)
+    else 0 in
   /* Bake the host cimport address table (G+216..G+376, win_need order):
    * absolute runtime addresses of each fixed API's IAT/GOT slot, so
    * yac_cimport_host_sym(wid) resolves without a runtime GetProcAddress

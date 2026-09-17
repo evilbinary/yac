@@ -8,7 +8,7 @@
 package back.jit
 export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live, jit_reloc_apply, jit_asm_dump_set, jit_lir_dump_set
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
-import back.emit.emit {apply_u64, asm_dump_set, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref_base, host_names, yjit_layout_get, relocs_get, relocs_reset, relocs_set}
+import back.emit.emit {apply_u64, asm_dump_set, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref22, gref22_reset, gref_base, host_names, yjit_layout_get, relocs_get, relocs_reset, relocs_set}
 import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog, toplevel_seed, lir_tlv_set}
 import back.backend {ast_imports, fun_off, link_from_ast, link_is_dylib, link_need_box, pass_anf, pass_lex, pass_parse, pkg_src, report_unbound, rewrite_imports, rt_for_link}
 import back.lower {emit_apply_unres, lower_expr}
@@ -155,6 +155,25 @@ let dump_lir_prog(prog) =
       let _ = if nth(p, 1) == "_eval" then print(p) else 0 in
       ev(i + 1) in
   ev(0)
+
+/* `--dump-asm` + `--repl`: tag-22 (movabs cell address) values exist only after
+ * emit_apply_unres, so the emitter's own dump cannot show them. Print the
+ * resolved records here, where the resolve has already run. */
+let dump_tag22(_) =
+  let rs = gref22(0) in
+  let n = len(rs) in
+  let _ = print(str_cat("=== tag22 cells: ", str_cat(int_to_str(n), " patches"))) in
+  let go(i) =
+    if i >= n then 0
+    else
+      let r = nth(rs, i) in
+      let m1 = str_cat("  tag22 globbase=", int_to_str(nth(r, 0))) in
+      let m2 = str_cat(m1, str_cat(" goff=", int_to_str(nth(r, 1)))) in
+      let _ = print(str_cat(m2, str_cat(" cell=", int_to_str(nth(r, 2))))) in
+      go(i + 1) in
+  let r = go(0) in
+  let _ = gref22_reset(0) in
+  r
 
 let jit_lets_box =
   let b = box_new() in
@@ -517,6 +536,7 @@ let compile_jit_go(src, t, named) =
         let _ = if jit_lir_dump(0) != 0 then dump_lir_prog(ls) else 0 in
         let r = lower_expr(ls, t) in
         let _ = emit_apply_unres(dest) in
+        let _ = if jit_asm_dump(0) != 0 then dump_tag22(0) else 0 in
         /* Snapshot the blob's gref slot layout before any later emit
          * (AOT or next REPL line) reuses the emit state. */
         let _ = box_set(gref_snap_box, [gref_base(), gref_names()]) in
@@ -575,6 +595,7 @@ let compile_jit_go(src, t, named) =
     let _ = if jit_lir_dump(0) != 0 then dump_lir_prog(ls) else 0 in
     let r = lower_expr(ls, t) in
     let _ = emit_apply_unres(0) in
+    let _ = if jit_asm_dump(0) != 0 then dump_tag22(0) else 0 in
     let _ = log_set_hush(hush0) in
     let _ =
       if jit_run_ok(t) then
