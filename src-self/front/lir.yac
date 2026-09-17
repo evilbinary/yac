@@ -1181,7 +1181,7 @@ let lir_rt(g, dst, ss) =
 
 /* callι: Σ then Γ then runtime. Do not turn every ncap>0 into icall.
  * Named self uses fcall/tcall + capture slots 1..n. */
-let calli(g0, dst, ss, env, funs, self, tail) =
+let calli(g0, dst, ss, env, funs, self, tail, inl) =
   let h0 = hash_str(g0) in
   let e = env_rec_h(env, g0, h0) in
   let g = resolve_call(g0) in
@@ -1221,6 +1221,21 @@ let calli(g0, dst, ss, env, funs, self, tail) =
         let clo = if cs < 0 then ["cap", 0 - cs - 1] else cs in
         ["icall", dst, clo, ss]
   else
+    /* A top-level `let`-bound VALUE used as a function: it is in neither Γ nor
+     * Σ (lir_var's `kind == 2` is the reference side of the same fact), so it
+     * used to fall through to the fatal "call to undefined procedure" below.
+     * Load the cell into a temporary and call it DYNAMICALLY -- value calls
+     * must use the object ABI (FLAT_ABI.md 8.1 规范结论), which is exactly what
+     * icall is; a flat $proc reaches this point already wrapped in a thunk
+     * closure by lir_clos_prim. dst + 1 is free here: the call's own result
+     * lands in dst, and the next binding claims dst + 1 only afterwards. */
+    let k1 = sigma_kind_h(funs, g0, h0) in
+    let kind = if k1 != 0 then k1 else sigma_kind_h(funs, g, h) in
+    if kind == 2 then
+      let tmp = dst + 1 in
+      let _ = insn_push(inl, ["gval", tmp, g]) in
+      ["icall", dst, tmp, ss]
+    else
     let se = sigma_ent_h(funs, g, h) in
     if se != 0 then
       let ci = if len(se) > 3 and nth(se, 3) == "proc" then ["ycall", dst, nth(se, 0), ss]
@@ -1441,7 +1456,8 @@ let lir_letcall(b, pack) =
     let tail = rest_is_tail(nth(s, 5),
                  [nth(pack, 1), nth(pack, 2), nth(pack, 3), nth(b, 1)]) in
     let ins = maybe_tcall(tail,
-      calli(g0, dst, nth(lr, 1), nth(s, 1), nth(s, 3), nth(s, 5), tail),
+      calli(g0, dst, nth(lr, 1), nth(s, 1), nth(s, 3), nth(s, 5), tail,
+            nth(lr, 0)),
       nth(s, 5)) in
     [insn_push(nth(lr, 0), ins),
      env_bind(nth(lr, 2), nth(b, 1), dst, 0), dst + 1,

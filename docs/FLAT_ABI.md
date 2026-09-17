@@ -353,7 +353,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 > 本节原为 2026-09-15 的"四类失败（全量 679 / 7）"。四条已全部修完 ✓：
 > `pkg profile`（§8.7 ✓）、`pkg compiler` 与 `import after use`（§8.9 ✓）、
 > 最后一条 `repl let fn after expr line`（§8.8 ✓，其副作用"import 后的宿主叶调用读 0 段错误"
-> 由 §8.10 的"两个基址"收尾 ✓）⇒ **全量 `make test` = 721 / 0** ✓（2026-09-17 晚：新增 `gcroot_pub` 用例 ✓ +5 ✓）。
+> 由 §8.10 的"两个基址"收尾 ✓）⇒ **全量 `make test` = 726 / 0** ✓（2026-09-17 晚：新增 `gcroot_pub` ✓、`call_toplevel_value` ✓ 两个用例 ✓）。
 > 下表保留下来作"曾经红过什么"的台账。
 
 | 用例 | 现象 | 根因 | 证据 |
@@ -378,7 +378,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | 4 | 仓库根的 `./yc`（无扩展名） | 早先记的是"`./yc` 会抢先命中陈旧的无扩展名文件"。**2026-09-16 更正**：实测本机 `yc` 与 `yc.exe`（以及 `yac` / `yac.exe`）是**同一 inode**（`ls -i` 同号 ⇒ 硬链接/同一文件），`cp -f yc.exe yc` 会报 "are the same file" ⇒ 该现象在本机不成立 ✗（可能是别的机器/文件系统上的经历）。仍要记住的是**构建方向**：`make` 只写 `yc.exe` / `yac.exe` ✓，`./yc` / `./yac` 能跑就不能证明它们是新二进制以外的什么 |
 | 5 | `build/` | 遗留 `patch_rv.py` 与 `emit_*.bak*` / `run.yac.bak` / `Makefile.bak` 等备份；无害，但别当源码读 |
 | 6 | `qemu-*` 组 | `--shared ccall add` 在**转发 shim**下按设计 SKIP（每组 3 个）：shim 只上传可执行文件，`.so` 会被远端当 Windows 路径找。该用例只在**真 qemu** 环境回归 |
-| 7 | 前端 | **顶层 `let` 绑定的值不能当函数调用**：`let f(x) = print(x)` + `let a = f` + `a("x")` ⇒ `error: LIR: call to undefined procedure 'a'`（`lir.yac` 的 `calli` 只认 Σ 里的过程与局部槽；顶层值名不在其中）。是**响亮报错**而非静默 ✓，但与"值是一等函数"不一致（Chez 里 `(define a f)` 后 `(a "x")` 是合法的）|
+| ~~7~~ | ~~前端~~ ⇒ **已修（2026-09-17，§8.14）** | **顶层 `let` 绑定的值不能当函数调用** ✗：`let f(x) = print(x)` + `let a = f` + `a("x")` ⇒ `error: LIR: call to undefined procedure 'a'`（`calli` 只认 Σ 里的**过程**与 Γ 里的局部槽 ✓，而顶层值 **两者都不在** ✓ —— 见 `lir_var` 的 `kind == 2` ✓）。是响亮报错而非静默 ✓，但与"值是一等函数"不一致 ✓。**修**：`calli` 增一分支 ✓ —— `kind == 2` 时把 cell 读进临时槽（`gval` ✓）再发**动态调用** `icall` ✓（对象 ABI ✓ = §8.1 规范结论 ✓）；新用例 `call_toplevel_value` ✓ 三架构 PASS ✓ |
 
 | 8 | `rt/runtime.yac` 的 profiler 重定向 | **钩子的 ABI 归属只做到"兼容"**：`rt_funs_rename_prof` 只重定向**运行期列表里**的钩子（rt base + 被链接的包）；程序**自带**的 `prof_enter_go` 不在其中 ⇒ 那条调用仍是平 ABI，靠"名字**同放 rdi 与 rsi**"让两种钩子都能读到（§8.7 修法 2）。⇒ 一旦钩子**多参**、或哪天只留一个寄存器，就会再错位 |
 | 9 | `build/patch_funoffs.py` | 按**过程名**匹配 `(名, 偏移)` ⇒ 同名记录 / stub 会错配（实测同一个 `f`：`fun_off(fo,"f")` 一处给 52706、一处给 348 ✗）。要按**发射顺序**对齐，别按名字查 |
@@ -406,7 +406,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 
 > **2026-09-17 现状**（全量实跑 ✓）：host `compiler` **185 / 0** ✓、host `pkg` **22 / 0** ✓、
 > host `interp` **36 / 0** ✓、`qemu-arm64` **85 / 0** ✓、`qemu-riscv64` **85 / 0** ✓（各 3 SKIP ✓）、
-> 全量 `make test` **721 / 0** ✓ —— **全绿** ✓（2026-09-17 晚 ✓：`tailapply`/`ticall` 退役 opcode 清理 ✓、`gset` 的 GC 根发布补到 arm64/riscv64 ✓ 与 arm64 G 区大偏移修复 ✓，新增用例 `gcroot_pub` ✓）。
+> 全量 `make test` **726 / 0** ✓ —— **全绿** ✓（2026-09-17 晚 ✓：`tailapply`/`ticall` 退役 opcode 清理 ✓、`gset` 的 GC 根发布补到 arm64/riscv64 ✓、arm64 G 区大偏移修复 ✓、顶层 `let` 的值可当函数调用 ✓，新增用例 `gcroot_pub` ✓ / `call_toplevel_value` ✓）。
 > 相对上表的增量来自新增用例：`fun_eq` / `print_dotted` / `prof_hook_name` / `import_late`（compiler）
 > + `pkg prof_hook`（pkg）；`pkg profile`、`pkg compiler`、`import after use`、`repl let fn after expr line`
 > 也从此表里的失败逐条转绿 ✓（分别见 §8.7 / §8.9 / §8.9 / §8.8）。
@@ -983,6 +983,48 @@ print(len(yac_gval_list()))
 
 **验收** ✓：两趟自举通过 ✓ + **stage2 ≡ stage3 逐字节相同** ✓；新用例 `tests/compiler/cases/gcroot_pub.yac` ✓
 （`["gcroot_pub", "out", "1"]` ✓）在 **compiler / arm64 / riscv64 三处 PASS** ✓；全量 `make test` **721 / 0** ✓（0 条 FAIL ✓）。
+
+### 8.14 已修：顶层 `let` 的值可以当函数调用（2026-09-17）
+
+**症状** ✓（响亮报错 ✓）：
+
+```yac
+let f(x) = print(x)
+let a = f
+a("x")                    /* error: LIR: call to undefined procedure 'a' */
+let s = str_cat
+print(s("ab", "cd"))      /* error: LIR: call to undefined procedure 's' */
+```
+
+**根因** ✓：前端的调用解析（`lir.yac` 的 `calli`）只走两条路 —— Γ（局部槽 ✓）与 Σ（**过程** ✓）——
+而顶层 `let` 绑定的**值**两条都不在 ✗。引用侧（`lir_var` ✓）明确写着
+"top-level values are not procs and are **absent from Σ**" ✓，它用 `sigma_kind_h(...) == 2` 认出来 ✓
+（`kind == 2` ⇒ `["gval", slot, name]` ✓）。`calli` 里没有这一支 ⇒ 落到最后的 `else` ⇒
+`log_fatal("LIR: call to undefined procedure '…'")` ✓。
+
+**修法** ✓（一处 ✓）：`calli` 加一个参数 `inl`（本项的指令表 ✓，供它推入 `gval` ✓）与一个分支 ✓ ——
+`kind == 2` 时：`insn_push(inl, ["gval", dst + 1, g])` ✓ 再返回 `["icall", dst, dst + 1, ss]` ✓。
+
+- **为什么是 `icall`** ✓：值调用必须走**对象 ABI** ✓（§8.1 的"规范结论" ✓）—— 闭包对象进 0 号参数寄存器 ✓、
+  参数从 1 号起 ✓。平过程（`$proc` / `str_cat` 这类 ✓）到这一步**已经**被 `lir_clos_prim` 包成 0 捕获的
+  thunk 闭包 ✓ ⇒ 直接 `icall` 就对 ✓。
+- **为什么 `dst + 1` 能当临时槽** ✓：调用的结果落在 `dst` ✓，而下一个绑定要等这一串发完才占用 `dst + 1` ✓。
+
+**证据（修前 → 修后）** ✓：
+
+| 形态 | 修前 | 修后 |
+|---|---|---|
+| `let f(x) = print(x)` + `let a = f` + `a("x")` | `error: LIR: call to undefined procedure 'a'` ✗ | 打出 **x** ✓ |
+| `let s = str_cat` + `print(s("ab","cd"))` | `error: … 's'` ✗ | 打出 **abcd** ✓ |
+| 局部高阶 `let h(g) = g(7)`（对照 ✓）| 8 ✓ | 8 ✓（无回归 ✓）|
+
+**验收** ✓：两趟自举通过 ✓ + **stage2 ≡ stage3 逐字节相同** ✓（编译器自身不走这条新路 ✓，所以输出不变 ✓）；
+新用例 `tests/compiler/cases/call_toplevel_value.yac` ✓（`["call_toplevel_value", "rc", "2"]` ✓）在
+**compiler / arm64 / riscv64 四处 PASS** ✓；全量 `make test` **726 / 0** ✓（0 条 FAIL ✓）。
+
+> **写用例时自己踩的坑** ✗（记一笔 ✓）：`len` 是**列表**的 ✓，字符串要用 **`str_len`** ✓ ——
+> 第一版用例写了 `len("42")` ✓，编译运行都不报错 ✗ 但值不是 2 ⇒ 表现为"用例失败"✗ 而编译器无辜 ✓。
+> ⇒ **新用例的期望值也要先手工跑一遍** ✓（本次就是这么发现的 ✓）。
 
 ---
 
