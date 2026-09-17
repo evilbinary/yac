@@ -424,7 +424,9 @@ let compiler_cases(_) = [
   /* `import` after a use still binds (interp twin: "import after use"). */
   ["import_late", "rc", "1"],
   /* A run-time-assigned top-level value is published as a GC root (8.2 #13). */
-  ["gcroot_pub", "out", "1"]]
+  ["gcroot_pub", "out", "1"],
+  /* A top-level `let`-bound value is callable as a function (8.2 #7). */
+  ["call_toplevel_value", "rc", "2"]]
 
 let compile_msg_err(st, yc, src, name, needle) =
   let p = str_cat(TMP, "/synerr.yac") in
