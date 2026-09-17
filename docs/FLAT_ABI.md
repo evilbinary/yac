@@ -353,7 +353,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 > 本节原为 2026-09-15 的"四类失败（全量 679 / 7）"。四条已全部修完 ✓：
 > `pkg profile`（§8.7 ✓）、`pkg compiler` 与 `import after use`（§8.9 ✓）、
 > 最后一条 `repl let fn after expr line`（§8.8 ✓，其副作用"import 后的宿主叶调用读 0 段错误"
-> 由 §8.10 的"两个基址"收尾 ✓）⇒ **全量 `make test` = 726 / 0** ✓（2026-09-17 晚：新增 `gcroot_pub` ✓、`call_toplevel_value` ✓ 两个用例 ✓）。
+> 由 §8.10 的"两个基址"收尾 ✓）⇒ **全量 `make test` = 728 / 0** ✓（2026-09-17 晚：新增 `gcroot_pub` ✓、`call_toplevel_value` ✓、`guest _eval shadows wrapper` ✓ 三个用例 ✓）。
 > 下表保留下来作"曾经红过什么"的台账。
 
 | 用例 | 现象 | 根因 | 证据 |
@@ -381,13 +381,15 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | ~~7~~ | ~~前端~~ ⇒ **已修（2026-09-17，§8.14）** | **顶层 `let` 绑定的值不能当函数调用** ✗：`let f(x) = print(x)` + `let a = f` + `a("x")` ⇒ `error: LIR: call to undefined procedure 'a'`（`calli` 只认 Σ 里的**过程**与 Γ 里的局部槽 ✓，而顶层值 **两者都不在** ✓ —— 见 `lir_var` 的 `kind == 2` ✓）。是响亮报错而非静默 ✓，但与"值是一等函数"不一致 ✓。**修**：`calli` 增一分支 ✓ —— `kind == 2` 时把 cell 读进临时槽（`gval` ✓）再发**动态调用** `icall` ✓（对象 ABI ✓ = §8.1 规范结论 ✓）；新用例 `call_toplevel_value` ✓ 三架构 PASS ✓ |
 
 | ~~8~~ | ~~`rt/runtime.yac` 的 profiler 重定向~~ ⇒ **已修（2026-09-17，§8.15）** | **钩子的 ABI 归属只做到"兼容"** ✗：`rt_funs_rename_prof` 只在**运行期列表**（rt base + 被链接的包）里找钩子 ✓，而它跑在**链接期** ⇒ 程序**自带**的 `prof_enter_go` 还没出现 ✗ ⇒ 那条调用仍是平 ABI ✓，靠"名字**同放 rdi 与 rsi**"兜 ✓（§8.7 修法 2 ✓）。⇒ 一旦钩子**多参**、或哪天只留一个寄存器，就会再错位 ✗。**修**：新增 `emit.yac` 的 `prof_hook_fix` ✓ —— 在**整个 proc 列表已知**时（发射前 ✓）按**目标帧 ABI** 决定 `fcall`/`ycall` ✓（与 `tcall_raw_of` 同一条规则 ✓），并撤掉那个双寄存器 hack ✓（实参表 `[1, 1]` → `[1]` ✓）|
-| 9 | `build/patch_funoffs.py` | 按**过程名**匹配 `(名, 偏移)` ⇒ 同名记录 / stub 会错配（实测同一个 `f`：`fun_off(fo,"f")` 一处给 52706、一处给 348 ✗）。要按**发射顺序**对齐，别按名字查 |
+| ~~9~~ | ~~`build/patch_funoffs.py`~~ / `fun_off` ⇒ **已修（2026-09-17，§8.17）** | 按**过程名**匹配 `(名, 偏移)` ✗ ⇒ **不只是工具小疵** ✗：`backend.yac` 的 `fun_off(fo,"_eval")` 在 **JIT 入口**的生产路径上 ✓，REPL 里一行 `let _eval(x) = x + 1` 就能让**客体的 `_eval` 顶掉包装器** ⇒ **SIGSEGV** ✗（rc=139 ✓）。根因：`funOffsRev` 是**逆发射序** ✓，名字扫描从**表头**（= 最后发射的那个）开始 ✗。修法：**按顺序**取 —— 入口恒为 `funs[0]` ✓，即该表**最后一个**记录 ✓（`entry_off(fo)` ✓）|
 | 10 | `jit.yac` / REPL 的调试面 | ~~`--dump-lir` 配 `--repl` **什么都不打**、`--dump-asm` 配 `--repl` 只 dump **第一行**~~ ⇒ **2026-09-17 已修**（§8.8 ✓）：两个开关都**逐行生效** ✓（`parse_args` 补记 spec 标志 ✓ + REPL 路径逐行 re-arm ✓ + 逐行 LIR dump ✓），asm dump 另加 `=== gref cells` / `=== tag22 cells` 两张表 ✓。仍要注意：jit 路径的 `log` 被 **hush**（发射期打印看不见 ✓）⇒ 发射期内只能用 `print` 或盒子 ✓。**批处理侧另有一处** ✓：`--dump-lir` 对**带包导入**的程序原本**不出 dump** ✗（`dump_lir` 没设 `link_need_box`/`link_local_box` ⇒ `rt_for_link` 链不到包 ⇒ 只吐 `error: LIR: call to undefined procedure 'host_arch'` ✗）⇒ **2026-09-17 已修**（§8.12 ✓）：先 `link_from_ast(ast)` ✓，现在编自身 bundle 能出 **2.6 MB** LIR ✓ |
 
 | 11 | 本机 PATH | **没有 C 编译器**：`gcc` / `cc` / `clang` / `tcc` 全不在 PATH，`where.exe gcc` 也找不到；但 `/mingw64/bin/gcc.exe`（15.2.0）与 `/mingw32/bin/gcc.exe`（16.1.0）**存在**。⇒ 在**裸**的当前 shell 里 `gcc` 起不来（连 `-E` 都 rc=1：驱动 spawn 不了 `cc1` ✗），而 `make` 的隐式 `CC` 默认值就是 `cc` ⇒ `make test-*` 一旦需要重建 `$(BIN)`（`src/*.c` 比 `build/*.o` 新就会）**整组报错** ✗。可用的建法：走 MSYS2 MINGW64 环境再显式给编译器 —— `MSYSTEM=MINGW64 CHERE_INVOKING=1 MSYS2_PATH_TYPE=inherit /e/soft/msys2/usr/bin/bash.exe --login -i -c 'cd /e/workspace/yac && make CC=gcc yac.exe'`（实测可编、可链接 ✓） |
 | 12 | `make` 的 `$(YC_A)` 规则 | 两趟自举（`yc_a.exe` → `.new` → `.new2` → `mv`）**不能并行跑**：同时开两个 `make test-*`（各自都要重建 `$(YC_A)`）会撞在一起，第二趟产物缺失 ⇒ `mv: cannot stat 'build/yc_tmp/yc_a.exe.new2'` ✗（实测一次）。而且配方里 `echo pass 2` 前是 `;` ⇒ 第二趟失败后 `mv` 仍会跑 ⇒ 报错位置具有误导性。**串行跑 `make`** ✓。**2026-09-17 又踩一次**（症状不同 ✓）：一条 `make test` 因超时被切断 ✓ 但**仍在后台跑** ✓，此时又起一条 ⇒ 日志开头出现 **NUL 字节** + 3 条假失败 `FAIL: compiler capture_2args / ncap12_disp8 / capture_shadow_t`（`actual: compile rc=1`）✗ —— 用例本身没问题 ✓，等残留进程结束后单独重跑 ⇒ **0 FAIL** ✓。⇒ 跑测试前先确认没有正在跑的 `make` ✓。**2026-09-17 第三次**（新知识 ✓）：**被取消/超时的 `make test` 会把进程留在后台** ✗ —— `ps -W | grep -E 'make\.exe|run_tests'` 一次就能看到好几条（本次见到 13:26 起的一条 ✗）✓；清理：Windows PID 用 `taskkill //F //PID <pid>` ✓、MSYS PID 用 `kill -9 <pid>` ✓，清完再跑 ✓，一次就 **0 FAIL** ✓ |
 | ~~13~~ | ~~`emit_arm64.yac:1336` / `emit_riscv64.yac:1338`~~ ⇒ **已修（2026-09-17，§8.13）** | **GC 根发布只在 x86_64 做了** ✗：`gset` 用**非立即数**源时，x86_64 会存完后调 `yac_gval_pub(name, value)` ✓（`emit_x86_64.yac:1373` ✓），而 arm64 / riscv64 只做存储 ✓（注释自己写着 "GC publish **TODO**" ✗）⇒ 运行期赋值的顶层值 cell 不是 GC 根 ✗。**修**：两架构各补上同样的发布调用 ✓；新用例 `tests/compiler/cases/gcroot_pub.yac` ✓ 在三架构都 PASS ✓ |
 | ~~14~~ | ~~`emit_arm64.yac` 的 `$ld64` / `$st64`~~ ⇒ **已修（2026-09-17，§8.13）**，**修 #13 时才发现** ✗ | arm64 的 `$ld64`/`$st64` 用 `ldur`/`stur` **直接编码偏移** ✗，而它们只有 **±256** 的 9 位空间 ✓；G 区要到 **440/448**（注册表根 ✓）⇒ 越界 ⇒ 读写错地址 ⇒ `yac_gval_pub` / `yac_gval_list` 在 arm64 **必崩** ✓（`$ld8` 一直懂得先 `add` ✓，64 位版漏了 ✗）。**修**：大偏移先折进地址寄存器再 `ldur`/`stur` ✓（与 `$ld8` 同形 ✓）|
+
+| 15 | REPL **同名重定义** | `let f(x) = 1` → `let f(x) = 2` → `f(0)` ⇒ **SIGILL（rc=132）** ✗（2026-09-17 实测 ✓）。三组对照：重定义**前**调用正常 ✓、不重定义正常 ✓ ⇒ **触发条件就是同名重定义** ✗。已知：两次提交的 `yac_jslot_set` 与调用的 `yac_jslot_get` **用的是同一个槽 id（0）** ✓ ⇒ 不是槽号错 ✗，是**存进/取出的值**不对 ✗（第 3 行吃调用守卫的 `brk` ✓）。**机理未定论** ✓（与包装器注释里记的 `gval` ⇒ "下一行 applied 0" 同族 ✓，怀疑在 `gvar` / tag 23 烘焙 与 §8.8/§8.10 的**追加偏移**交界处 ✗）—— 待查 |
 
 > ~~**工作树里一处未决**~~ ⇒ **已定** ✓（2026-09-17）：`src-self/back/jit.yac:76` 那条 **hushed 追踪**
 > （`log("jit", …)` ✓ = 每个 gref 名字 + 有没有 gfn 项 ✓）**已随提交进入 HEAD** ✓ ⇒ 当作"**留作 `--verbose` 开关**" ✓，
@@ -404,9 +406,9 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | `qemu-riscv64` | **81 / 0**（3 SKIP） |
 | 全量 `make test` | **679 / 7** |
 
-> **2026-09-17 现状**（全量实跑 ✓）：host `compiler` **185 / 0** ✓、host `pkg` **22 / 0** ✓、
+> **2026-09-17 现状**（全量实跑 ✓）：host `compiler` **188 / 0** ✓、host `pkg` **22 / 0** ✓、
 > host `interp` **36 / 0** ✓、`qemu-arm64` **85 / 0** ✓、`qemu-riscv64` **85 / 0** ✓（各 3 SKIP ✓）、
-> 全量 `make test` **726 / 0** ✓ —— **全绿** ✓（2026-09-17 晚 ✓：`tailapply`/`ticall` 退役 opcode 清理 ✓、`gset` 的 GC 根发布补到 arm64/riscv64 ✓、arm64 G 区大偏移修复 ✓、顶层 `let` 的值可当函数调用 ✓，新增用例 `gcroot_pub` ✓ / `call_toplevel_value` ✓）。
+> 全量 `make test` **728 / 0** ✓ —— **全绿** ✓（2026-09-17 晚 ✓：`tailapply`/`ticall` 退役 opcode 清理 ✓、`gset` 的 GC 根发布补到 arm64/riscv64 ✓、arm64 G 区大偏移修复 ✓、顶层 `let` 的值可当函数调用 ✓、REPL 入口改按**发射顺序**定位 ✓（§8.17 ✓），新增用例 `gcroot_pub` ✓ / `call_toplevel_value` ✓ / `guest _eval shadows wrapper` ✓）。
 > 相对上表的增量来自新增用例：`fun_eq` / `print_dotted` / `prof_hook_name` / `import_late`（compiler）
 > + `pkg prof_hook`（pkg）；`pkg profile`、`pkg compiler`、`import after use`、`repl let fn after expr line`
 > 也从此表里的失败逐条转绿 ✓（分别见 §8.7 / §8.9 / §8.9 / §8.8）。
@@ -1112,6 +1114,39 @@ marked 的钩子会从 1 号参数寄存器读到别的东西 ⇒ 输出**必然
 > **§6 的 opcode 条目就此结清** ✓：`tailapply` / `ticall` / `xcall` / **`apply`** 已删 ✓；
 > `gvld` / `gvst` / `gfnst` 本来就没有 ✓；`iccall` / `$icall` 经核实**是活的** ✓（C 互操作 / 内核手写 LIR ✓），
 > **不在删除范围** ✓ —— 至此 §6 只剩那 8 项"逐项核实早已不存在 / 仍在用"的记录 ✓（见本节的状态表 ✓）。
+
+### 8.17 已修：REPL 入口按**发射顺序**定位（原 §8.2 #9）—— 2026-09-17
+
+**症状** ✓：REPL 里 `let _eval(x) = x + 1` 再 `print(_eval(41))` ⇒ **SIGSEGV（rc=139）** ✗（`--dump-lir` 显示崩前那行正常提交 ✓）。
+
+**根因** ✓：blob 的**入口包装器**就叫 `_eval` ✓，而一个 blob 里有**三份** `_eval`：包装器 ✓、
+一条**空体前向桩** ✓（`[proc, _eval, 1, 0, [], _eval]` ✓）、以及**客体自己定义的那份** ✓。
+JIT 用 `fun_off(fo, "_eval")` 找入口 ✗ —— `fo` 是 `funOffsRev` ✓（发射器按发射顺序 `cons` 出来的**逆序**表 ✓），
+扫描从**表头**开始 = **最后发射**的那个 ✗ ⇒ 客体那份把包装器**盖掉** ✓ ⇒ JIT 把客体过程当入口跑 ⇒ 崩 ✓。
+
+**修法**（KISS ✓：**一个查表问题就用查表解决** ✓，不发新状态 ✓）：入口**本来就在手里** ✓ ——
+四个 blob 构造器都是 `["prog", cons(entry, …), "_start"]` ✓ ⇒ 入口恒为 `funs[0]` ✓，
+也就是 `funOffsRev` 的**最后一个**记录 ✓。`backend.yac` 把 `fun_off(fo, name)` 换成 `entry_off(fo)`
+（走到表尾 ✓，4 行 ✓），`jit.yac` 五处与 `pack_yjit_prog` 改用它 ✓；
+`build/patch_funoffs.py` 同理改成 `funs[i]` ↔ `offs[i]` 配对 ✓（`offs` 对**每个** proc 都 push ✓，与 `funs` 逐项对齐 ✓）。
+
+> **试过并否掉的方案** ✗：让三后端在 `i == 0` 时调 `yjit_entry_set(...)` 发布入口偏移 ✓。
+> 它把**一个查表问题**变成**发射路径 + 全局箱子 + 三处 import** ✗ —— 耦合与状态都加错了地方 ✗，
+> 而答案本来就躺在那张表里 ✓。已撤 ✓。
+
+**验收** ✓：
+
+| 项 | 结果 |
+|---|---|
+| 复现（`let _eval` → `print(_eval(41))`）| rc **139 → 0** ✓、输出 **42** ✓ |
+| 对照（`let f(x) = x + 1` → `print(f(2))`）| 仍 **3** ✓ |
+| 回归用例 | `repl guest _eval shadows wrapper` ✓ **PASS** ✓ |
+| 两趟自举 + 固定点 | 通过 ✓，**stage2 ≡ stage3 逐字节相同** ✓ |
+| 全量 `make test` | **728 / 0** ✓（0 条 FAIL ✓；`compiler` **188 / 0** ✓）|
+| 工具 | `python3 build/patch_funoffs.py` 注入 + `--revert` 后**重建产物逐字节不变** ✓ |
+
+> **顺带发现（未修，记为 §8.2 #15）** ✗：REPL 里**同名重定义**（`let f(x) = 1` → `let f(x) = 2` → `f(0)`）
+> 会 **SIGILL（rc=132）** ✗。与本节不是同一条路 ✓（jslot 槽号实测一致 ✓，坏的是**存进/取出的值** ✗），机理待查 ✓。
 
 ---
 
