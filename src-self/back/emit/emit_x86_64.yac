@@ -2,7 +2,7 @@ package back.emit.emit_x86_64
 export emit_program, emit_program_x86_64
 import rt.os {host_os}
 import lib.log {log_fatal}
-import back.emit.emit {relocs_add, apply_args, apply_ncap, apply_patch, apply_u64, cimport_buf, cimport_got, cimport_index, cimport_names, cimport_reset, cimport_win_need, clos_bytes, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jit_blob, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, funsz_get, funsz_set, gref_base, cabi_skip, fun_is_raw, gref_alloc, gref_reset, gref_count, gref_names, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {relocs_add, apply_args, apply_ncap, apply_patch, apply_u64, cimport_buf, cimport_got, cimport_index, cimport_names, cimport_reset, cimport_win_need, clos_bytes, asm_dump_cells, asm_dump_procs, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jit_blob, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, funsz_get, funsz_set, gref_base, cabi_skip, fun_is_raw, gref_alloc, gref_reset, gref_count, gref_names, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {emit_cabi_all}
 import back.emit.linux_x86_64 {call_rbx_user, call_user, cc_of, emit_load_rax_slot, emit_load_rbx_slot, emit_load_rdi_slot, emit_obj_load_argreg, emit_obj_load_rax, emit_obj_store_rdi, emit_store_param, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_unalign, emit_x86_c_untag, linux_begin, linux_cc_marshal, linux_ccall_patch, linux_clock, linux_entry, linux_exit, linux_finish, linux_num_syscall, linux_syscall, linux_write1}
 import back.emit.win_x86_64 {win_begin, win_cc_marshal, win_ccall_patch, win_clock, win_entry, win_exit, win_finish, win_num_syscall, win_syscall, win_write1}
@@ -2133,35 +2133,8 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
    * entry is visible, because a stub cell's entry is written into the DATA area
    * at emit time, while the code patches (tag 22) are still unresolved here. */
   let want_asm = asm_dump_get(0) != 0 in
-  let _ =
-    if asm_dump_get(0) != 0 then
-      let _ = asm_dump_set(0) in
-      let nout = bytes_len(out) in
-      let hd(n) = if n < 10 then str_chr(48 + n) else str_chr(87 + n) in
-      let hx(bb) = str_cat(hd(bshr(band(bb, 255), 4)), hd(band(bb, 15))) in
-      let stof(i) = if i >= nfun then nout else nth(offs, i) in
-      let go(i) =
-        if i >= nfun then 0
-        else
-          let nm = nth(nth(funs, i), 1) in
-          let st0 = nth(offs, i) in
-          let en0 = stof(i + 1) in
-          let en1 = if en0 > st0 and en0 <= nout then en0 else nout in
-          let en = if en1 - st0 > 256 then st0 + 256 else en1 in
-          let _ =
-            if len(nth(nth(funs, i), 4)) == 0 then 0
-            else
-              let _ = print(str_cat("=== asm: ", str_cat(nm,
-                        str_cat(" @", str_cat(int_to_str(st0),
-                        str_cat(" (", str_cat(int_to_str(en1 - st0), " bytes)"))))))) in
-              let row(j, k, acc) =
-                if j >= en then (if acc != "" then print(acc) else 0)
-                else if k >= 16 then (let _ = print(acc) in row(j, 0, ""))
-                else row(j + 1, k + 1, str_cat(acc, str_cat(hx(bytes_ref(out, j)), " "))) in
-              row(st0, 0, "") in
-          go(i + 1) in
-      go(0)
-    else 0 in
+  let _ = if want_asm then asm_dump_set(0) else 0 in
+  let _ = if want_asm then asm_dump_procs(out, funs, offs, nfun) else 0 in
   let _ = log("emit", "funs done") in
   let st = nth(r1, 0) in
   let funOffsRev = nth(r1, 1) in
@@ -2361,32 +2334,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
    * writes T + LOAD_VADDR + TEXT_OFF + off) and is what `icall` jumps to, so
    * this is the number to check when a session-defined function is called on a
    * later line and lands anywhere but its own body. */
-  let _ =
-    if want_asm then
-      let u64_at(off) =
-        let g(i) = band(bytes_ref(b, off + i), 255) in
-        let v1 = bor(g(0), bshl(g(1), 8)) in
-        let v2 = bor(v1, bshl(g(2), 16)) in
-        let v3 = bor(v2, bshl(g(3), 24)) in
-        let v4 = bor(v3, bshl(g(4), 32)) in
-        let v5 = bor(v4, bshl(g(5), 40)) in
-        let v6 = bor(v5, bshl(g(6), 48)) in
-        bor(v6, bshl(g(7), 56)) in
-      let _ = print(str_cat("=== gref cells: ", str_cat(int_to_str(gref_count()),
-                str_cat("  (gref_base=", str_cat(int_to_str(gref_base()),
-                str_cat(", data_start=", str_cat(int_to_str(data_start),
-                str_cat(", T=", str_cat(int_to_str(T), ")"))))))))) in
-      let cells(i) =
-        if i >= gref_count() then 0
-        else
-          let c = data_start + gref_base() + bshl(i, 5) in
-          let nm = nth(gref_names(), i) in
-          let m1 = str_cat("  cell ", str_cat(nm, str_cat(" off=", int_to_str(c)))) in
-          let m2 = str_cat(m1, str_cat(" val=", int_to_str(u64_at(c)))) in
-          let _ = print(str_cat(m2, str_cat(" entry=", int_to_str(u64_at(c + 16))))) in
-          cells(i + 1) in
-      cells(0)
-    else 0 in
+  let _ = if want_asm then asm_dump_cells(b, data_start, T) else 0 in
   /* Bake the host cimport address table (G+216..G+376, win_need order):
    * absolute runtime addresses of each fixed API's IAT/GOT slot, so
    * yac_cimport_host_sym(wid) resolves without a runtime GetProcAddress

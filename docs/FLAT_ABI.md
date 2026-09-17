@@ -339,16 +339,17 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 本节只记**实测到的事实**（行号以当时工作树为准），不是设计意图。目的：这些
 点现在**不报错**，但迟早会被踩到 —— 记在这里，免得下次从零再查一遍。
 
-### 8.1 剩余失败（1 条）
+### 8.1 剩余失败（0 条，2026-09-17 全绿）
 
-> 本节原为 2026-09-15 的"四类失败（全量 679 / 7）"。`pkg profile` 已在 §8.7 修好，
-> `pkg compiler` 与 `import after use` 已在 §8.9 修好 ⇒ 现在只剩下面这条
-> （全量 `make test` = **712 / 2**，两条 FAIL 是同一个用例名：compiler 组与 repl 组各报一次）。
+> 本节原为 2026-09-15 的"四类失败（全量 679 / 7）"。`pkg profile` 在 §8.7 修好、
+> `pkg compiler` 与 `import after use` 在 §8.9 修好、最后一条
+> `repl let fn after expr line` 在 §8.8 修好 ⇒ **全量 `make test` = 714 / 0** ✓。
+> 下表保留下来作"曾经红过什么"的台账。
 
 | 用例 | 现象 | 根因 | 证据 |
 |---|---|---|---|
 | ~~`pkg profile`~~ | rc **139** ⇒ **已修（2026-09-16，§8.7）** | **平过程被当闭包值调用**：profiling 打开后进普通函数 ⇒ 调用点按**对象 ABI** 放参（真参从 `rsi` 起、`rdi` 不设），被调方是**平**过程（形状 = `yac_str_cat`：`len(a)`+`len(b)`），从 `rdi` 读 ⇒ `len(0)` ⇒ 段错误 | gdb 崩点 `mov 0x18(%rax),%rax`（`rax=0`）；调用点 `mov %rax,%rsi; xor %rax,%rax; mov %rax,%rdx…`；被调方 `mov %rdi,-0x10(%rbp)` + 两个 `len`。x86_64 的 ABI 表：`ycall` `emit_x86_64.yac:702-733`（对象 ABI），`tcall_other` `:172-186`，自尾调用 `:758` / 跨过程尾调用 `:760`（写死 `traw=true`）。闭包值的产生点：`front/lir.yac:846`、`:1501` |
-| `repl let fn after expr line` | `error: not a function`（期望 3）★**真触发条件是"函数定义不在会话第 1 行"**，与"前面有没有表达式行"无关（2026-09-16 复核，见 §8.8） | 12.14 的 **jslot / 闭包入口发布**那半：表达式行之后才定义的函数落在会话 blob 里，其闭包入口没人从宿主注册表填 ⇒ 调用落到错入口 | `tests/run.yac:479` 的注释即为这条的常驻哨兵 |
+| ~~`repl let fn after expr line`~~ | 症状随布局变（`error: not a function` / 静默无输出 / SIGSEGV 139 / SIGILL 132）⇒ **已修（2026-09-17，§8.8）**。真触发条件是"**函数定义不在会话第 1 行**"，与"前面有没有表达式行"无关 | 12.14 的 **jslot / 闭包入口发布**那半：表达式行之后才定义的函数落在会话 blob 里，其闭包入口没人从宿主注册表填 ⇒ 调用落到错入口 | `tests/run.yac:479` 的注释即为这条的常驻哨兵 |
 | ~~`pkg compiler`~~ | rc **0** ⇒ **已修（2026-09-16，§8.9：修的是跑法，不是代码）** | **不是崩溃**：程序调用 `compiler` 包的**宿主叶**（`@compile_native` / `@host_arch` / `@mk_target` / `@host_format`），它们只在 **yc 自己的镜像**里有实现；被当独立可执行跑时槽是桩 ⇒ 打印 `host fn unavailable` ⇒ 返回 0 | 桩的生成点 `emit_x86_64.yac:2065-2080`（`unstub_procs`）。**结论是跑法/设计缺口**：该用例应走进程内 host 路径，而不是独立二进制 |
 | ~~`import after use`~~ | `expected: 1` / `actual:`（空） ⇒ **已修（2026-09-16，§8.9）** | **`import` 不提升**（修前**两个前端都错**）：按**源码顺序**解析名字，`import rt.os` 写在用 `host_os` 的 `let` **之后** ⇒ 未绑定 | 用例 `tests/interp/import_late.yac`（`let f(_) = host_os(0)` / `import rt.os` / `if str_len(f(0)) > 0 then 1 else 0`）。`./yac --pkg src-self …` ⇒ `error: 1:12: unbound variable 'host_os'`（rc 1）；`./yc --pkg src-self …` ⇒ **`error: 1:1: unbound variable 'host_os'`** ✗ ⇒ **不是"C 解释器专有"，`yc` 同样不会提升**。把 `import rt.os` 挪到第 1 行 ⇒ **两者都打 `1`** ✓（`./yac` rc 0 / `yc` 编译并运行 rc 0 ✓）。**修法（已落地）**：两个前端各自做**顶层 `import` 的稳定提升** —— `yc` 在 `rewrite_imports`（`back/backend.yac`，`report_unbound_ex` 的预检与 `link_from_ast` 都经它 ⇒ 一处改动同时覆盖检查与链接）；C 解释器在 `src/parser.c` 把 import 子项插到"**前排 import 游标**"而不是"import 出现处"（imports 本来在前时 `memmove` 长度为 0 ⇒ 与原来的 append 逐字节等价）。验收见 §8.9 |
 
@@ -371,7 +372,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 
 | 8 | `rt/runtime.yac` 的 profiler 重定向 | **钩子的 ABI 归属只做到"兼容"**：`rt_funs_rename_prof` 只重定向**运行期列表里**的钩子（rt base + 被链接的包）；程序**自带**的 `prof_enter_go` 不在其中 ⇒ 那条调用仍是平 ABI，靠"名字**同放 rdi 与 rsi**"让两种钩子都能读到（§8.7 修法 2）。⇒ 一旦钩子**多参**、或哪天只留一个寄存器，就会再错位 |
 | 9 | `build/patch_funoffs.py` | 按**过程名**匹配 `(名, 偏移)` ⇒ 同名记录 / stub 会错配（实测同一个 `f`：`fun_off(fo,"f")` 一处给 52706、一处给 348 ✗）。要按**发射顺序**对齐，别按名字查 |
-| 10 | `jit.yac` / REPL 的调试面 | `--dump-lir` 配 `--repl` **什么都不打**（该开关只在批处理分支生效）、`--dump-asm` 配 `--repl` 只 dump **第一行**；jit 路径的 `log` 被 **hush**（发射期打印看不见）⇒ 附加 blob 类问题**没有现成 dump 可用**，只能宿主侧探针 + 标量统计（§8.6 环境事实 2、§8.8） |
+| 10 | `jit.yac` / REPL 的调试面 | ~~`--dump-lir` 配 `--repl` **什么都不打**、`--dump-asm` 配 `--repl` 只 dump **第一行**~~ ⇒ **2026-09-17 已修**（§8.8 ✓）：两个开关都**逐行生效** ✓（`parse_args` 补记 spec 标志 ✓ + REPL 路径逐行 re-arm ✓ + 逐行 LIR dump ✓），asm dump 另加 `=== gref cells` / `=== tag22 cells` 两张表 ✓。仍要注意：jit 路径的 `log` 被 **hush**（发射期打印看不见 ✓）⇒ 发射期内只能用 `print` 或盒子 ✓ |
 
 | 11 | 本机 PATH | **没有 C 编译器**：`gcc` / `cc` / `clang` / `tcc` 全不在 PATH，`where.exe gcc` 也找不到；但 `/mingw64/bin/gcc.exe`（15.2.0）与 `/mingw32/bin/gcc.exe`（16.1.0）**存在**。⇒ 在**裸**的当前 shell 里 `gcc` 起不来（连 `-E` 都 rc=1：驱动 spawn 不了 `cc1` ✗），而 `make` 的隐式 `CC` 默认值就是 `cc` ⇒ `make test-*` 一旦需要重建 `$(BIN)`（`src/*.c` 比 `build/*.o` 新就会）**整组报错** ✗。可用的建法：走 MSYS2 MINGW64 环境再显式给编译器 —— `MSYSTEM=MINGW64 CHERE_INVOKING=1 MSYS2_PATH_TYPE=inherit /e/soft/msys2/usr/bin/bash.exe --login -i -c 'cd /e/workspace/yac && make CC=gcc yac.exe'`（实测可编、可链接 ✓） |
 | 12 | `make` 的 `$(YC_A)` 规则 | 两趟自举（`yc_a.exe` → `.new` → `.new2` → `mv`）**不能并行跑**：同时开两个 `make test-*`（各自都要重建 `$(YC_A)`）会撞在一起，第二趟产物缺失 ⇒ `mv: cannot stat 'build/yc_tmp/yc_a.exe.new2'` ✗（实测一次）。而且配方里 `echo pass 2` 前是 `;` ⇒ 第二趟失败后 `mv` 仍会跑 ⇒ 报错位置具有误导性。**串行跑 `make`** ✓ |
@@ -390,11 +391,12 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | `qemu-riscv64` | **81 / 0**（3 SKIP） |
 | 全量 `make test` | **679 / 7** |
 
-> **2026-09-16 现状**（全量实跑 ✓）：host `compiler` **183 / 1** ✓、host `pkg` **22 / 0** ✓、
+> **2026-09-17 现状**（全量实跑 ✓）：host `compiler` **184 / 0** ✓、host `pkg` **22 / 0** ✓、
 > host `interp` **36 / 0** ✓、`qemu-arm64` **85 / 0** ✓、`qemu-riscv64` **85 / 0** ✓（各 3 SKIP ✓）、
-> 全量 `make test` **712 / 2** ✓（两条 FAIL = 同一个用例名，见 §8.1）。
+> 全量 `make test` **714 / 0** ✓ —— **全绿** ✓。
 > 相对上表的增量来自新增用例：`fun_eq` / `print_dotted` / `prof_hook_name` / `import_late`（compiler）
-> + `pkg prof_hook`（pkg）；`pkg profile` 与 `pkg compiler` 也从此表里的失败转绿 ✓。
+> + `pkg prof_hook`（pkg）；`pkg profile`、`pkg compiler`、`import after use`、`repl let fn after expr line`
+> 也从此表里的失败逐条转绿 ✓（分别见 §8.7 / §8.9 / §8.9 / §8.8）。
 
 ### 8.4 已修复：平过程当值（2026-09-16）
 
@@ -593,7 +595,41 @@ let _ = f(1)
 
 **结果**：host `compiler` **182 / 1**、host `pkg` **21 / 1** ⇒ `pkg profile` 不再失败 ✓。剩余失败 **3 条**：`repl let fn after expr line`（12.14 jslot）、`pkg compiler`（跑法/设计缺口）、`import after use`（C 解释器那条路）。
 
-### 8.8 进行中：REPL 里"定义行之前有表达式行"的跨行调用（2026-09-16）
+### 8.8 已修：REPL 跨行调用 —— `dest > 0` 的 globals 基址没带 append 偏移（2026-09-16 立项，2026-09-17 修）
+
+**根因**（一句话 ✓）：`emit_x86_64` 给解析状态的 `GLOBALS_BASE` 在 blob 上取的是**会话第一张镜像**的
+data 基址（`nth(js, 1)` ✗），而 `fill_gref` / `bake` 把 stub cell 写在**本镜像**的 data 区 ✓，
+`emit_apply_unres(dest)` 又只给部分栏加 append 偏移 ✗ ⇒ **第 2 行起**的 `gvar` cell 地址（tag 22）
+比实际 cell 低 `59044 − 56376 = 2668` ✗ ⇒ 会话槽里存的是**别的 cell 的地址** ✗ ⇒ 下一行 `icall`
+读 `[错地址+16]` ⇒ 跳进垃圾 ⇒ 症状随布局变：`error: not a function` / 静默无输出 / SIGSEGV 139 / SIGILL 132 ✓。
+
+**决定性读数** ✓（`--dump-asm --repl` 新加的两张表 ✓，定义行的镜像）：
+
+| 表 | 读数 | 判读 |
+|---|---|---|
+| `=== gref cells` | `cell f off=1208 val=0 entry=8589993232` | ✓ 入口 = `JIT_VADDR + dest(58292) + off(348)` ✓ **是对的** ✓ |
+| `=== tag22 cells` | `globbase=8589990968 goff=456 cell=8589991424` | ✗ `globbase − JIT_VADDR = 56376` = **第 1 张镜像**的 `data_start` ✗（应为 `dest + data_start = 59044` ✓）|
+
+**修法**（两处 ✓）：
+
+1. `src-self/back/emit/emit_x86_64.yac`：`GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start`（去掉
+   `if T != 0 then nth(js, 1)` 那个"会话基址"特例 ✓ ⇒ 与 `fill_gref` / `bake` 的落点**同源** ✓）。
+2. `src-self/back/lower.yac` 的 `emit_apply_unres(off)`：按架构把 **globals 栏**也加上 `off` ✓ ——
+   x86_64 加第 2/3/4 栏 ✓，arm64 / riscv64 加第 2/3/5 栏 ✓（它们第 4 栏是 **labels 列表**，不能碰 ✓）。
+   `off == 0`（AOT、以及会话第 1 行 ✓）行为不变 ✓。
+
+**顺带修好的调试工具** ✓：`--dump-lir` / `--dump-asm` 在 `--repl` 下现在**逐行生效** ——
+原先前者**完全不生效** ✗、后者只 dump 会话**第一张**镜像 ✗（§8.2 #10 ✓）；asm dump 另加
+`=== gref cells`（名字 / cell 偏移 / `+0` 值 / **`+16` 入口** ✓）与 `=== tag22 cells`
+（解析后的 cell 绝对地址 ✓）两张表 ✓ —— 这两个数就是这次定位的钥匙 ✓。
+
+**验收** ✓：全量 `make test` **714 / 0** ✓（原 712/2 ✓）；`compiler` **184 / 0** ✓、`pkg` 22/0 ✓、
+`interp` 36/0 ✓、`qemu-arm64` / `qemu-riscv64` **85 / 0** ×2 ✓；REPL 花样：定义在第 2、第 3 行 ✓、
+两个跨行定义互相调用 ✓、跨行 `a == f` = **1** ✓、`foldl(f, 0, [1,2,3])` = **3** ✓。
+
+---
+
+### 8.8.1 立项时的过程记录（2026-09-16，保留备查）
 
 **复现矩阵**（`./yc --repl`，每行一条）：
 
