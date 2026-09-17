@@ -10,7 +10,7 @@ export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live, 
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
 import back.emit.emit {apply_u64, asm_dump_set, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref22, gref22_reset, gref_base, host_names, yjit_layout_get, relocs_get, relocs_reset, relocs_set}
 import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog, toplevel_seed, lir_tlv_set}
-import back.backend {ast_imports, fun_off, link_from_ast, link_is_dylib, link_need_box, pass_anf, pass_lex, pass_parse, pkg_src, report_unbound, rewrite_imports, rt_for_link}
+import back.backend {ast_imports, entry_off, link_from_ast, link_is_dylib, link_need_box, pass_anf, pass_lex, pass_parse, pkg_src, report_unbound, rewrite_imports, rt_for_link}
 import back.lower {emit_apply_unres, lower_expr}
 import back.pack.target {JIT_VADDR, target_arch}
 import back.pack.yjit {bytes_copy_range, pack_yjit_ex, yjit_arch_name, yjit_arch_num, yjit_export_dec, yjit_export_enc, yjit_imp_enc, yjit_imp_parse, yjit_read, yjit_reloc_enc}
@@ -564,14 +564,14 @@ let compile_jit_go(src, t, named) =
               let lay = yjit_layout_get(0) in
               box_set(jit_live_box,
                 [bytes_len(code), JIT_VADDR + nth(lay, 2), m, code,
-                 fun_off(fo, "_eval")])
+                 entry_off(fo)])
             else
               let m = nth(live, 2) in
               let _ = jsess_merge_fo(m, fo, dest) in
               let _ = bytes_extend(nth(live, 3), code) in
               box_set(jit_live_box,
                 [dest + bytes_len(code), nth(live, 1), m, nth(live, 3),
-                 dest + fun_off(fo, "_eval")])
+                 dest + entry_off(fo)])
           else 0 in
         let _ =
           if jit_run_ok(t) then
@@ -581,7 +581,7 @@ let compile_jit_go(src, t, named) =
             /* A `let` line printed "name = value" from inside the image, and a
              * print/printf line printed its own output: neither wants the
              * value echoed again. */
-            jit_run_show(code, fun_off(fo, "_eval"), dest,
+            jit_run_show(code, entry_off(fo), dest,
                          if q then true else bn != "")
           else 0 in
         0
@@ -600,7 +600,7 @@ let compile_jit_go(src, t, named) =
     let _ =
       if jit_run_ok(t) then
         let _ = cimport_jit_bind(nth(r, 0)) in
-        jit_run_show(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0, false)
+        jit_run_show(nth(r, 0), entry_off(nth(r, 1)), 0, false)
       else 0 in
     0
 
@@ -653,7 +653,7 @@ let compile_jit_anf(anf, t, bn) =
   let _ =
     if jit_run_ok(t) then
       let _ = cimport_jit_bind(nth(r, 0)) in
-      jit_run_show(nth(r, 0), fun_off(nth(r, 1), "_eval"), 0, false)
+      jit_run_show(nth(r, 0), entry_off(nth(r, 1)), 0, false)
     else 0 in
   0
 

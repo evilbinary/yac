@@ -1,7 +1,7 @@
 /* backend.yac — pipeline + image. lir_expr = ANF→LIR；lower_expr = LIR→emit. */
 
 package back.backend
-export pkg_src, link_is_dylib, compile_native, compile_env_of, compile_env_new, dump_ast, dump_anf, dump_cps, dump_uncps, dump_lex, dump_lir, verify_lir, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, link_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, fun_off, link_need_box, rewrite_imports, rt_for_link
+export pkg_src, link_is_dylib, compile_native, compile_env_of, compile_env_new, dump_ast, dump_anf, dump_cps, dump_uncps, dump_lex, dump_lir, verify_lir, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, link_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, entry_off, link_need_box, rewrite_imports, rt_for_link
 import back.lower
 import back.pack.elf {elf_shared_set, funsym_get, pack_elf, pack_elf_libc}
 import back.pack.target {target_arch, target_emachine, target_format, target_shared, target_text_off, target_vaddr}
@@ -887,13 +887,23 @@ let pass_lir_yjit(anf_list) =
   let entry = ["proc", "_eval", 0, 0, ins, "_eval"] in
   tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
 
-let fun_off(fo, name) =
+/* Offset of the program's ENTRY proc: funs[0], the one every builder conses
+ * first (backend.yac: `["prog", cons(entry, ...), "_start"]`, and jit.yac's
+ * start_eval_ins likewise). The emitters cons funOffsRev in emission order, so
+ * that proc is its LAST record.
+ *
+ * The old fun_off(fo, "_eval") scanned the list from its HEAD -- the last proc
+ * emitted -- which only worked while `_eval` was unique in the blob. It is not:
+ * a blob holds the wrapper, a forward stub and any guest `let _eval`, so a
+ * guest definition shadowed the wrapper and the JIT entered the guest proc
+ * (SIGSEGV, measured 2026-09-17). Order, not name -- FLAT_ABI.md 8.2 #9. */
+let entry_off(fo) =
   if fo == [] then 0
-  else if nth(nth(fo, 0), 0) == name then nth(nth(fo, 0), 1)
-  else fun_off(drop(fo, 1), name)
+  else if drop(fo, 1) == [] then nth(nth(fo, 0), 1)
+  else entry_off(drop(fo, 1))
 
 let pack_yjit_prog(t, code) =
-  let ent = fun_off(funsym_get(0), "_eval") in
+  let ent = entry_off(funsym_get(0)) in
   let abi = if emit_abi_win(0) then 1 else 0 in
   let lay = yjit_layout_get(0) in
   let drel = if lay == 0 then 0 else nth(lay, 2) in
