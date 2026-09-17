@@ -1550,6 +1550,9 @@ let emit_call_guard(b, st, patches, dst) =
   let _ = apply_patch(b, j1, bad) in
   let _ = apply_patch(b, j2, bad) in
   let acall = bytes_len(b) in
+  /* Hand the rejected value to the stub as arg0 so the message says WHAT was
+   * applied; the checks above are the last use of the closure in rax. */
+  let _ = mov_rax_to_argreg(b, 1) in
   let _ = call_user(b) in
   let ps = emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_not_fn") in
   let _ = emit_store_rax_slot(b, dst) in
@@ -1564,6 +1567,9 @@ let emit_call_guard(b, st, patches, dst) =
  * the register the tail sequence jumps through -- and the stub's own `ret`
  * returns 0 to the original caller after printing the line. */
 let emit_call_guard_tail(b, st, patches) =
+  /* The stub identifies the rejected value from arg0; the tail sequence loads
+   * its real arguments AFTER this guard, so rsi is free here. */
+  let _ = mov_rax_to_argreg(b, 1) in
   let _ = mov_r11d_rax_disp32(b, 16) in
   let _ = cmp_r11_imm8(b, 16) in
   let _ = jcc_rel32(b, 2, 0) in
