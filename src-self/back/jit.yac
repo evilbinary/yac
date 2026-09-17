@@ -6,9 +6,9 @@
  */
 
 package back.jit
-export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live, jit_reloc_apply
+export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live, jit_reloc_apply, jit_asm_dump_set, jit_lir_dump_set
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
-import back.emit.emit {apply_u64, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref_base, host_names, yjit_layout_get, relocs_get, relocs_reset, relocs_set}
+import back.emit.emit {apply_u64, asm_dump_set, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref_base, host_names, yjit_layout_get, relocs_get, relocs_reset, relocs_set}
 import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog, toplevel_seed, lir_tlv_set}
 import back.backend {ast_imports, fun_off, link_from_ast, link_is_dylib, link_need_box, pass_anf, pass_lex, pass_parse, pkg_src, report_unbound, rewrite_imports, rt_for_link}
 import back.lower {emit_apply_unres, lower_expr}
@@ -106,6 +106,55 @@ let host_tab_fill(code) =
         else apply_u64(code, ds + 136 + bshl(i, 3), v) in
       go(i + 1) in
   go(0)
+
+/* `--dump-asm` under `--repl`: the emitter consumes asm_dump (it dumps, then
+ * clears the flag), so without re-arming only the FIRST line of a session was
+ * ever dumped -- the session preamble, never the line under test
+ * (FLAT_ABI.md 8.2 #10). The REPL line path re-arms it before each emit. */
+let jit_asm_dump_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let jit_asm_dump_set(v) = box_set(jit_asm_dump_box, v)
+
+let jit_asm_dump(_) = box_get(jit_asm_dump_box)
+
+let jit_asm_dump_arm(_) =
+  if jit_asm_dump(0) != 0 then asm_dump_set(1) else 0
+
+/* `--dump-lir` under `--repl`: the batch path never sees a REPL line, so the
+ * switch used to do nothing at all there (FLAT_ABI.md 8.2 #10). Dump the line's
+ * LIR: the proc index (names only -- the runtime procs are in the list too) plus
+ * the whole `_eval` proc, which is where the line's code lives, including the
+ * gvar/jslot instructions this session semantics hangs on. */
+let jit_lir_dump_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let jit_lir_dump_set(v) = box_set(jit_lir_dump_box, v)
+
+let jit_lir_dump(_) = box_get(jit_lir_dump_box)
+
+let dump_lir_prog(prog) =
+  let ps = nth(prog, 1) in
+  let n = len(ps) in
+  let _ = print(str_cat("=== lir: ", str_cat(int_to_str(n), " procs"))) in
+  let names(i) =
+    if i >= n then 0
+    else
+      let p = nth(ps, i) in
+      let _ = print(str_cat("  proc ", nth(p, 1))) in
+      names(i + 1) in
+  let _ = names(0) in
+  let ev(i) =
+    if i >= n then 0
+    else
+      let p = nth(ps, i) in
+      let _ = if nth(p, 1) == "_eval" then print(p) else 0 in
+      ev(i + 1) in
+  ev(0)
 
 let jit_lets_box =
   let b = box_new() in
@@ -438,6 +487,8 @@ let jit_run_show(code, ent, dest, quiet) =
   v
 
 let compile_jit_go(src, t, named) =
+  /* Re-arm the ASM dump for THIS line (see jit_asm_dump_arm). */
+  let _ = jit_asm_dump_arm(0) in
   let ast = pass_parse(pass_lex(src)) in
   if prog_has_err(ast, 0) then
     let _ = report_syntax(ast) in 1
@@ -462,7 +513,9 @@ let compile_jit_go(src, t, named) =
         let hush0 = log_get_hush(0) in
         let _ = log_set_hush(true) in
         let dest = if live == 0 then 0 else nth(live, 0) in
-        let r = lower_expr(pass_lir_eval(pass_anf(ast1), bn, q), t) in
+        let ls = pass_lir_eval(pass_anf(ast1), bn, q) in
+        let _ = if jit_lir_dump(0) != 0 then dump_lir_prog(ls) else 0 in
+        let r = lower_expr(ls, t) in
         let _ = emit_apply_unres(dest) in
         /* Snapshot the blob's gref slot layout before any later emit
          * (AOT or next REPL line) reuses the emit state. */
@@ -518,7 +571,9 @@ let compile_jit_go(src, t, named) =
     let _ = emit_jsess_set(0) in
     let hush0 = log_get_hush(0) in
     let _ = log_set_hush(true) in
-    let r = lower_expr(pass_lir_eval(pass_anf(ast), "", false), t) in
+    let ls = pass_lir_eval(pass_anf(ast), "", false) in
+    let _ = if jit_lir_dump(0) != 0 then dump_lir_prog(ls) else 0 in
+    let r = lower_expr(ls, t) in
     let _ = emit_apply_unres(0) in
     let _ = log_set_hush(hush0) in
     let _ =

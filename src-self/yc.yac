@@ -1,7 +1,7 @@
 import rt.os {host_arch, host_format}
 import back.backend {compile_native, dump_anf, dump_ast, dump_cps, dump_lir, dump_lex, dump_uncps, eval_cps_src, pkg_set, link_set, verify_lir}
 import back.emit.emit {asm_dump_set}
-import back.jit {compile_jit, compile_uncps, jit_dump_live, jit_load_yjit}
+import back.jit {compile_jit, compile_uncps, jit_asm_dump_set, jit_dump_live, jit_lir_dump_set, jit_load_yjit}
 import back.pack.elf {elf_int_set, syms_enable}
 import back.pack.target {mk_jit_target, mk_target, parse_arch_name, parse_format_name, target_shared}
 import lang.scheme {scheme_to_yac}
@@ -178,7 +178,10 @@ let parse_args(i, argc, out, pos, spec) =
     else if a == "--dump-lex" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "dump-lex"))
     else if a == "--dump-anf" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "dump-anf"))
     else if a == "--dump-lir" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "dump-lir"))
-    else if a == "--dump-asm" then (let _ = asm_dump_set(1) in parse_args(i + 1, argc, out, pos, spec))
+    /* Also record the spec flag: the REPL path re-arms the emitter's one-shot
+     * dump per line from it (otherwise only the session's first image was ever
+     * dumped -- FLAT_ABI.md 8.2 #10). */
+    else if a == "--dump-asm" then (let _ = asm_dump_set(1) in parse_args(i + 1, argc, out, pos, spec_flag(spec, "dump-asm")))
     else if a == "--verify-lir" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "verify-lir"))
     else if a == "--dump-cps" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "dump-cps"))
     else if a == "--eval-cps" then parse_args(i + 1, argc, out, pos, spec_flag(spec, "eval-cps"))
@@ -303,6 +306,8 @@ let run_cli(pr) =
       let npos = len(pos) in
       let inpath = if npos == 0 then "" else nth(pos, npos - 1) in
       if fl(spec, "repl") then
+        let _ = if fl(spec, "dump-asm") then jit_asm_dump_set(1) else 0 in
+        let _ = if fl(spec, "dump-lir") then jit_lir_dump_set(1) else 0 in
         let _ = repl_preload(pos, spec, an) in
         repl_loop(spec)
       else if npos == 0 then
