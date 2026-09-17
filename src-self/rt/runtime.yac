@@ -2323,10 +2323,12 @@ let rt_host_unimpl_ins(_) =
  * compile("1"); a()` jumped to address 4 and died with SIGSEGV and no message.
  * Prints a line and returns int 0 so the session survives. */
 let rt_not_fn_ins(_) =
-  [["local", 12, 0],
-   ["strlit", 8, "error: not a function"],
-   ["mov_imm", 9, 1],
+  [["local", 12, 1],
+   ["strlit", 8, "error: not a function: "],
+   ["mov_imm", 9, 0],
    ["fcall", 10, "print", [8, 9]],
+   ["mov_imm", 9, 2],
+   ["fcall", 10, "print", [0, 9]],
    ["mov_imm", 8, 0],
    ["ret", 8]]
 

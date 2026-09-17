@@ -348,7 +348,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | 用例 | 现象 | 根因 | 证据 |
 |---|---|---|---|
 | ~~`pkg profile`~~ | rc **139** ⇒ **已修（2026-09-16，§8.7）** | **平过程被当闭包值调用**：profiling 打开后进普通函数 ⇒ 调用点按**对象 ABI** 放参（真参从 `rsi` 起、`rdi` 不设），被调方是**平**过程（形状 = `yac_str_cat`：`len(a)`+`len(b)`），从 `rdi` 读 ⇒ `len(0)` ⇒ 段错误 | gdb 崩点 `mov 0x18(%rax),%rax`（`rax=0`）；调用点 `mov %rax,%rsi; xor %rax,%rax; mov %rax,%rdx…`；被调方 `mov %rdi,-0x10(%rbp)` + 两个 `len`。x86_64 的 ABI 表：`ycall` `emit_x86_64.yac:702-733`（对象 ABI），`tcall_other` `:172-186`，自尾调用 `:758` / 跨过程尾调用 `:760`（写死 `traw=true`）。闭包值的产生点：`front/lir.yac:846`、`:1501` |
-| `repl let fn after expr line` | `f(2)` 给 **2**（期望 3） | 12.14 的 **jslot / 闭包入口发布**那半：表达式行之后才定义的函数落在会话 blob 里，其闭包入口没人从宿主注册表填 ⇒ 调用落到错入口 | `tests/run.yac:479` 的注释即为这条的常驻哨兵 |
+| `repl let fn after expr line` | `error: not a function`（期望 3）★**真触发条件是"函数定义不在会话第 1 行"**，与"前面有没有表达式行"无关（2026-09-16 复核，见 §8.8） | 12.14 的 **jslot / 闭包入口发布**那半：表达式行之后才定义的函数落在会话 blob 里，其闭包入口没人从宿主注册表填 ⇒ 调用落到错入口 | `tests/run.yac:479` 的注释即为这条的常驻哨兵 |
 | ~~`pkg compiler`~~ | rc **0** ⇒ **已修（2026-09-16，§8.9：修的是跑法，不是代码）** | **不是崩溃**：程序调用 `compiler` 包的**宿主叶**（`@compile_native` / `@host_arch` / `@mk_target` / `@host_format`），它们只在 **yc 自己的镜像**里有实现；被当独立可执行跑时槽是桩 ⇒ 打印 `host fn unavailable` ⇒ 返回 0 | 桩的生成点 `emit_x86_64.yac:2065-2080`（`unstub_procs`）。**结论是跑法/设计缺口**：该用例应走进程内 host 路径，而不是独立二进制 |
 | ~~`import after use`~~ | `expected: 1` / `actual:`（空） ⇒ **已修（2026-09-16，§8.9）** | **`import` 不提升**（修前**两个前端都错**）：按**源码顺序**解析名字，`import rt.os` 写在用 `host_os` 的 `let` **之后** ⇒ 未绑定 | 用例 `tests/interp/import_late.yac`（`let f(_) = host_os(0)` / `import rt.os` / `if str_len(f(0)) > 0 then 1 else 0`）。`./yac --pkg src-self …` ⇒ `error: 1:12: unbound variable 'host_os'`（rc 1）；`./yc --pkg src-self …` ⇒ **`error: 1:1: unbound variable 'host_os'`** ✗ ⇒ **不是"C 解释器专有"，`yc` 同样不会提升**。把 `import rt.os` 挪到第 1 行 ⇒ **两者都打 `1`** ✓（`./yac` rc 0 / `yc` 编译并运行 rc 0 ✓）。**修法（已落地）**：两个前端各自做**顶层 `import` 的稳定提升** —— `yc` 在 `rewrite_imports`（`back/backend.yac`，`report_unbound_ex` 的预检与 `link_from_ast` 都经它 ⇒ 一处改动同时覆盖检查与链接）；C 解释器在 `src/parser.c` 把 import 子项插到"**前排 import 游标**"而不是"import 出现处"（imports 本来在前时 `memmove` 长度为 0 ⇒ 与原来的 append 逐字节等价）。验收见 §8.9 |
 
@@ -639,6 +639,39 @@ let _ = f(1)
 （怀疑附加 blob 里"名字 → 偏移 / cell"的对应错了 ✓）。
 
 ⇒ 两个 dump 都**看不到问题** ✗：`--dump-asm` 是**打补丁前**的字节 ✓，而本 bug 出在**解析后的地址**上（附加 blob 的 `dest` ✓）。所以下一步不再靠 dump ✓，而是：定义行跑完后在**宿主侧**读会话槽的值、打印其 `+16`（入口字段 ✓），A/B 对比 ✓（或给 `emit_resolve_loop` 的 tag 22/23 加一次性打印 ✓）。
+
+**2026-09-16 第二轮读数（全部为临时探针，已撤除 ✓；三组基线复核 183/1、22/0、36/0 ✓）**
+
+复现矩阵修正 ✓：**触发条件是"函数定义不在会话第 1 行"** ✗，而不是"定义行之前有表达式行" ✗ ——
+`let f(x)=x+1` / `1+1` / `print(f(2))` 里表达式行在定义**之后**也照样 `3` ✓，只有定义落在**第 2 行及以后**才坏 ✗
+（定义行的 blob 被**附加**到 `dest > 0` ✓）。
+
+| # | 探针（宿主侧生成，只打标量／单个值 ✓） | 读数 |
+|---|---|---|
+| 1 | `jit.yac` 每行读 `emit_jit_blob`/`emit_jsess` | 每行都是 `blob=1` ✓；`T`（会话长度）在**第 1 行 = 0** ✓、定义在第 2 行 = `58196` ✓、**第 3 行仍是 `58196` ✗ 而它的 `dest = 59740`** ✗ |
+| 2 | 定义行的 `_eval` 里**写槽后立刻读回**（`yac_jslot_set` → `yac_jslot_get`） | `DBG-SETGET ix=<fun>` ✓ ⇒ 写读往返**正常** ✓（A、B 都一样 ✓）⇒ "写进槽的是 0" ✗ 这条旧结论**不成立** ✗ |
+| 3 | `emit_x86_64.yac:fill_gref` 记录 `[name, off, entry, T]` | B 的定义行：`nm=f off=567 v=8589993355 T=58196` ✓（`v = JIT_VADDR + 58196 + 567` ✓ ⇒ **入口值算对了** ✓）；调用行同样 `off=567 T=58196` ✓ |
+| 4 | 调用点（`jslot_rw_expr` 的取值处）打印 `yac_jslot_get` 的值 | 打印为 `<fun>` ✓（`runtime.yac` 的 `pv_oth` 兜底：**任何认不出的对象都印 `<fun>`** ✗ ⇒ 它证明不了这是个合法闭包 ✗） |
+| 5 | 被调用的**返回值** | `4294995852` ✗ —— = `JIT_VADDR/2 + 28556`，即一个**地址型**结果 ✗，不是 `2+1` ✓ ⇒ 说明**执行到的不是 `f` 的 `x+1` 代码** ✗ |
+
+**结论（收窄）**：会话槽、槽索引、入口值三者都"看起来对" ✓，但**实际跳过去的代码不是 `f`** ✗
+（第 5 行读数：返回地址而不是 3 ✓；把守卫的"不是函数"分支改指到另一个桩后，同一会话直接 **SIGILL** ✓ ⇒
+目标确实是错代码 ✓）。⇒ 问题在**附加 blob 的"名字 → 入口/单元"对应**这一层，而不是"槽里是 0" ✗。
+两个已定位的不对称 ✓：
+
+1. **AOT 走 id 表、blob 走名字扫描** ✗：AOT 的入口由 tag 23 = `codebase + offs[fid]` 烘焙 ✓，
+   `fid = emit_map_get(st[4], nm)`（`emit_resolve_patch` `emit.yac:1060-1065` ✓）；
+   blob 的入口却由 `fill_gref`（`emit_x86_64.yac:2315+` ✓）**按名字扫 `funOffsRev`** ✗ 现算
+   （`T + LOAD_VADDR + TEXT_OFF + off` ✓）。名字在表里可能不止一条（stub 记录 + 真记录 ✓，§8.6 记过 ✓），
+   **试过跳过空 insns 的记录，行为不变** ✗ ⇒ 该修法（至少单独）不成立 ✗。
+2. **`emit_jsess_box` 在发射期间被写回旧值** ✗：第 3 行的 `fill_gref` 读到 `T = 58196`（= 第 2 行的长度 ✓）
+   而同一行的 `dest = 59740` ✓ ⇒ 两者应相等（注释 `emit_x86_64.yac:2308-2314` 即以"`js == live`"为前提 ✓）
+   ⇒ 发射路径里**有人把该盒子设成了上一行的值** ✗（待钉：在 `emit_program_x86_64` 入口再打一次 `T`，
+   与 `fill_gref` 的 `T` 对比，就能看出是"进来就旧"还是"中途被改" ✓）。
+
+**下一步（二选一，都不大）**：(a) 把 blob 的入口改成与 AOT **同源**（`emit_map_get` + `offs` ✓），
+彻底不用名字扫描 ✓；(b) 先钉 (2) 的盒子被谁改（一次只读探针 ✓），把 `T` 恢复成"本行的 append offset" ✓
+—— 顺带说明为什么 **A 恰好对**：定义在第 1 行时 `T = dest = 0` ✓，两个缺陷都被"零"掩盖了 ✓。
 
 ### 8.9 已修：`import` 提升（两个前端）+ `pkg compiler` 的跑法（2026-09-16）
 
