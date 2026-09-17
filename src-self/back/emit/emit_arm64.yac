@@ -6,7 +6,7 @@ package back.emit.emit_arm64
 export emit_program_arm64, a64_resolve_loop
 import back.encode.encode_arm64
 import lib.log {log_fatal}
-import back.emit.emit {apply_args, apply_ncap, apply_u64, asm_dump_cells, asm_dump_get, asm_dump_procs, asm_dump_set, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {apply_args, apply_ncap, apply_u64, asm_dump_cells, asm_dump_get, asm_dump_procs, asm_dump_set, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tcall_raw_of, tcall_tab_set, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {dlib_a64_va, emit_cabi_all}
 import back.pack.elf {elf_pic, funsym_set}
 import back.pack.target {JIT_VADDR}
@@ -679,20 +679,16 @@ let emit_a64_iccall(st, insn) =
   let _ = a64_slot(b, nth(insn, 1), true, 0) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
 
-/* Runtime $procs are named yac_* and keep the plain 8-register layout; every
- * other in-image target is an object-ABI proc (params from x1, x0 = the object
- * passed through from our own self). Mirrors x86_64's traw. */
-let is_yac_proc_name(nm) =
-  let n = str_len(nm) in
-  n >= 4 and str_ref(nm, 0) == 121 and str_ref(nm, 1) == 97
-    and str_ref(nm, 2) == 99 and str_ref(nm, 3) == 95
-
+/* The target's frame ABI comes from emit.yac's tcall_raw_of (the target's own
+ * first local insn), not from the yac_ name prefix: the prefix is only a
+ * convention, and a marked frame using it would be marshalled as unmarked.
+ * tcall_raw_of keeps the prefix as the fallback for names not in this image. */
 let emit_a64_tcall_other(st, insn, is_entry) =
   let b = nth(st, 0) in
   let fn = nth(insn, 2) in
   let args = nth(insn, 3) in
   let na = len(args) in
-  let traw = is_yac_proc_name(fn) in
+  let traw = tcall_raw_of(fn) in
   let nreg = if traw then 8 else 7 in
   let areg(j) = if traw then j else j + 1 in
   if na > nreg then
@@ -1868,6 +1864,8 @@ let emit_program_arm64(prog, load_vaddr, text_off, fmt) =
   /* Host slots: one named unimpl stub per leaf, so a missing @leaf says which
    * one it was (see host_unstub_procs in emit.yac). */
   let funs = append(nth(prog, 1), host_unstub_procs(0)) in
+  /* Target-frame ABI table for tcall (emit.yac tcall_raw_of). */
+  let _ = tcall_tab_set(funs) in
   let nfun = len(funs) in
   let entry = nth(prog, 2) in
   let out = bytes_new() in
