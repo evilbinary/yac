@@ -1024,12 +1024,12 @@ let vops(_) =
    "mref", "mset", "tag", "is_int", "alloc", "obj_sti", "obj_st_int",
    "alloc_s", "mref8", "mset8", "ld64", "st64", "write1", "clock", "glob",
    "gst", "time_ms", "time_str", "argc", "argv", "closure", "apply", "icall",
-   "tailapply", "ticall", "nil", "cons", "len", "nth", "tail", "append",
+   "nil", "cons", "len", "nth", "tail", "append",
    "list_rev", "list_new", "list_push", "strlit", "str_len", "str_ref",
    "bytes_new", "bytes_len", "bytes_ref", "bytes_put", "bytes_append",
    "bytes_extend", "str_cat", "str_slice", "int_to_str", "bytes_to_str",
    "drop", "foldl", "map", "read_file", "write_file", "mkcont", "throwk",
-   "cc_recv", "xcall", "untag", "syscall", "$syscall", "memcpy"]
+   "cc_recv", "untag", "syscall", "$syscall", "memcpy"]
 
 let vop_known(k) = in_list(k, vops(0))
 

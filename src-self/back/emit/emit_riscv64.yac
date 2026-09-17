@@ -1465,35 +1465,6 @@ let emit_rv_i_clos(st, insn, is_entry) =
       else rv_addi(b, 2, 2, bshl(nstack, 3) + pad) in
     let _ = rv_slot(b, dst, true, 10) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "tailapply" or k == "ticall" then
-    let clos = nth(insn, 2) in
-    let args = apply_args(insn) in
-    let nargs = len(args) in
-    /* Same object ABI as apply (object in a0, params from a1). This really
-     * jumps, so the frame is gone: stack args would have to live above it and
-     * stay unimplemented, and self is handed back to our own caller first. */
-    if nargs > 7 then
-      let _ = rv_unimp(b) in emit_st4(st, b, cur, labels, patches)
-    else
-      let _ = rv_slot(b, clos, false, 10) in
-      let _ = rv_untag_ptr(b, 10) in
-      let load(j) =
-        if j >= nargs then 0
-        else
-          let _ = rv_slot(b, nth(args, j), false, 11 + j) in
-          load(j + 1) in
-      let _ = load(0) in
-      let _ = rv_ld(b, 6, 10, 16) in
-      let _ = if is_entry then 0 else rv_slot(b, 0, false, 27) in
-      let _ =
-        if is_entry then 0
-        else
-          let _ = rv_addi(b, 2, 8, 0) in
-          let _ = rv_ld(b, 1, 2, 8) in
-          let _ = rv_ld(b, 8, 2, 0) in
-          rv_addi(b, 2, 2, 16) in
-      let _ = rv_jalr(b, 0, 6, 0) in
-      emit_st4(st, b, cur, labels, patches)
   else st
 
 let emit_rv_i_prim(st, insn) =
@@ -1731,8 +1702,7 @@ let emit_rv_i_cc(st, insn) =
 
 let emit_insn_rv_go(st, insn, is_entry) =
   let k = nth(insn, 0) in
-  if k == "closure" or k == "apply" or k == "icall"
-       or k == "tailapply" or k == "ticall" then
+  if k == "closure" or k == "apply" or k == "icall" then
     emit_rv_i_clos(st, insn, is_entry)
   else if is_frame_op(k) or k == "mov_imm" or k == "mov" or is_arith(k)
        or k == "cmp" or k == "icmp" or k == "label" or k == "fcall" or k == "ccall"
