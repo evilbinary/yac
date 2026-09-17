@@ -2206,11 +2206,14 @@ let rt_host_sym_ins(_) =
  * arg1 = tagged intern; returns the raw entry address, or 0 when absent.
  * jit.yac calls the host copy to resolve a blob's cross-image refs. */
 /* Top-level registries (12.14 flat ABI). Two association lists rooted in
- * this image's G area: G+440 = [ [name, value] ... ] published by gvst
- * (top-level values), G+448 = [ [name, entry] ... ] published by _start's
- * gfnst prologue (top-level function entries). Both are GC roots (marked
- * in yac_gc_collect); name matching happens in host yac code (content
- * compare) - no keys are baked, so nothing breaks across processes. */
+ * this image's G area: G+440 = [ [name, value] ... ] for top-level values,
+ * G+448 = [ [name, entry] ... ] for top-level function entries. Both are GC
+ * roots (marked in yac_gc_collect); name matching happens in host yac code
+ * (content compare) - no keys are baked, so nothing breaks across processes.
+ * The value list is published at run time by yac_gval_pub, which a
+ * non-immediate `gset` store calls on x86_64 (emit_x86_64.yac:1373); arm64 /
+ * riscv64 do NOT call it yet (FLAT_ABI.md 8.2 #13). The retired gvst / gfnst
+ * insn spellings named here before were deleted in the §6 opcode sweep. */
 let rt_gval_pub_ins(_) =
   [["$local", 24, 2],
    ["$gbase", 3],

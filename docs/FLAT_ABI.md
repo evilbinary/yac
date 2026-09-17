@@ -277,15 +277,24 @@ IR 收敛的完整方案（KISS / OCP 准则、六类维度泄漏、逐条迁移
 
 | 对象 | 原用途 |
 |---|---|
-| `bind_caps` / `outer_caps` / `cap_slots` | 前导 caps ABI 机制（顶层路径；嵌套闭包仍需要 `closure` 的 caps 槽位） |
+| `bind_caps` / `outer_caps` / `cap_slots` | 前导 caps ABI 机制（顶层路径；嵌套闭包仍需要 `closure` 的 caps 槽位）⇒ **核实：仍在用** ✗（`lir.yac:1492` 建 env、`:1615` 构造 `closure` insn ✓）—— 本行只剩"顶层前导 caps"那半是旧的 ✓ |
 | `host_env_extra`（backend） | blob 侧 G+136 槽填充 |
 | `rt_host_call_ins`（`yac_host_call` 桥） | 调用点的 caps 解包 |
 | `rt_gtab_get` / `xset` 表 | 名字→闭包注册表（flat 不需要传环境） |
 | `via_hid` / `gtcall` emit 路径 | blob 调用的特例 → 收进 `fn_entry` |
-| `yjit` clos_list / `host_tab_fill` 残留 | 首会话槽拷贝 |
+| `yjit` clos_list / `host_tab_fill` 残留 | 首会话槽拷贝 ⇒ **核实：`clos_list` 早已不存在** ✓，但 **`host_tab_fill` 是活的** ✗（7 处 ✓）—— 它就是 §8.10 里把宿主叶地址写进**会话** G+136 槽的那一位 ✓，**不能删** ✗（本行只剩前半段是旧的 ✓）|
 | `gcall` | rev1 的调用指令 |
 | `pass_lir` 的 `TOPVALS` 打印、`gvst_push` 的 `GVST?` 打印 | 调试残留 |
 | 第 6 步收敛掉的 opcode | `xcall` / `apply` / `ticall` / `tailapply` / `iccall` / `$icall` / `gvld` / `gvst` / `gfnst` —— **逐项核实后（§8.12 普查 ✓）**：`tailapply` / `ticall` / `xcall` **已删** ✓；`gvld` / `gvst` / `gfnst` 本来就没有 ✓；**`apply` / `iccall` / `$icall` 仍是活的** ✗（分别见 §8.12 的出现次数 ✓）⇒ 这行只剩 `apply` 一项待做（即下一行的"改形态" ✓）|
+
+**逐项核实（2026-09-17 ✓，方法同 §8.12 普查：全用例库 111 个 dump + 源码扫描 ✓）**：
+
+| 状态 | 对象 |
+|---|---|
+| **早已不存在** ✓（清单过期 ✓）| `host_env_extra` ✓、`rt_host_call_ins` ✓（只剩 `yac_host_call` 一条注释 ✓）、`rt_gtab_get` ✓、`xset` ✓、`via_hid` ✓、`gtcall` ✓、`clos_list` ✓、`pass_lir` 的 TOPVALS 打印 ✓、`gvst_push` 的 GVST? 打印 ✓、`gcall` ✓（已无 opcode，只剩注释 ✓）|
+| **仍在用** ✗（**不能删** ✗）| `bind_caps` / `outer_caps` / `cap_slots` ✓（闭包 caps ✓）、`host_tab_fill` ✓（§8.10 ✓）|
+| **已删** ✓（本轮及之前 ✓）| `tailapply` / `ticall` ✓（§8.12 ✓）、`xcall` ✓（名字已摘 ✓）|
+| **待做** ✗（本清单仅剩这一项 ✓）| **`apply` 的形态收敛** ✓ —— `apply` 仍是独立 opcode ✓（编译器自身 387 处 ✓），§6 下面那段"能力不删，只改形态"说的就是它 ✓ |
 
 **能力不删，只改形态**：`apply` / 间接调用的**能力**保留（嵌套闭包 +
 call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令的「运行期动态 caps」
@@ -341,11 +350,10 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 
 ### 8.1 剩余失败（0 条，2026-09-17 全绿）
 
-> 本节原为 2026-09-15 的"四类失败（全量 679 / 7）"。`pkg profile` 在 §8.7 修好、
-> `pkg compiler` 与 `import after use` 在 §8.9 修好、最后一条
-> `repl let fn after expr line` 在 §8.8 修好 ⇒ `pkg compiler` / `import after use` 在 §8.9 修好 ⇒
-> **全量 `make test` = 716 / 0** ✓（§8.8 的修复一度让"import 后的宿主叶调用"读到 0 而段错误，
-> 已在 §8.10 用"两个基址"修好并补了回归用例 ✓）。
+> 本节原为 2026-09-15 的"四类失败（全量 679 / 7）"。四条已全部修完 ✓：
+> `pkg profile`（§8.7 ✓）、`pkg compiler` 与 `import after use`（§8.9 ✓）、
+> 最后一条 `repl let fn after expr line`（§8.8 ✓，其副作用"import 后的宿主叶调用读 0 段错误"
+> 由 §8.10 的"两个基址"收尾 ✓）⇒ **全量 `make test` = 716 / 0** ✓。
 > 下表保留下来作"曾经红过什么"的台账。
 
 | 用例 | 现象 | 根因 | 证据 |
@@ -378,6 +386,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 
 | 11 | 本机 PATH | **没有 C 编译器**：`gcc` / `cc` / `clang` / `tcc` 全不在 PATH，`where.exe gcc` 也找不到；但 `/mingw64/bin/gcc.exe`（15.2.0）与 `/mingw32/bin/gcc.exe`（16.1.0）**存在**。⇒ 在**裸**的当前 shell 里 `gcc` 起不来（连 `-E` 都 rc=1：驱动 spawn 不了 `cc1` ✗），而 `make` 的隐式 `CC` 默认值就是 `cc` ⇒ `make test-*` 一旦需要重建 `$(BIN)`（`src/*.c` 比 `build/*.o` 新就会）**整组报错** ✗。可用的建法：走 MSYS2 MINGW64 环境再显式给编译器 —— `MSYSTEM=MINGW64 CHERE_INVOKING=1 MSYS2_PATH_TYPE=inherit /e/soft/msys2/usr/bin/bash.exe --login -i -c 'cd /e/workspace/yac && make CC=gcc yac.exe'`（实测可编、可链接 ✓） |
 | 12 | `make` 的 `$(YC_A)` 规则 | 两趟自举（`yc_a.exe` → `.new` → `.new2` → `mv`）**不能并行跑**：同时开两个 `make test-*`（各自都要重建 `$(YC_A)`）会撞在一起，第二趟产物缺失 ⇒ `mv: cannot stat 'build/yc_tmp/yc_a.exe.new2'` ✗（实测一次）。而且配方里 `echo pass 2` 前是 `;` ⇒ 第二趟失败后 `mv` 仍会跑 ⇒ 报错位置具有误导性。**串行跑 `make`** ✓。**2026-09-17 又踩一次**（症状不同 ✓）：一条 `make test` 因超时被切断 ✓ 但**仍在后台跑** ✓，此时又起一条 ⇒ 日志开头出现 **NUL 字节** + 3 条假失败 `FAIL: compiler capture_2args / ncap12_disp8 / capture_shadow_t`（`actual: compile rc=1`）✗ —— 用例本身没问题 ✓，等残留进程结束后单独重跑 ⇒ **0 FAIL** ✓。⇒ 跑测试前先确认没有正在跑的 `make` ✓。**2026-09-17 第三次**（新知识 ✓）：**被取消/超时的 `make test` 会把进程留在后台** ✗ —— `ps -W | grep -E 'make\.exe|run_tests'` 一次就能看到好几条（本次见到 13:26 起的一条 ✗）✓；清理：Windows PID 用 `taskkill //F //PID <pid>` ✓、MSYS PID 用 `kill -9 <pid>` ✓，清完再跑 ✓，一次就 **0 FAIL** ✓ |
+| 13 | `emit_arm64.yac:1336` / `emit_riscv64.yac:1338` | **GC 根发布只在 x86_64 做了** ✗：`gset` 用**非立即数**源（或任何 blob 里的 `gset` ✓）时，x86_64 会存完后调 `yac_gval_pub(name, value)` ✓（`emit_x86_64.yac:1373` ✓，FLAT_ABI.md 2.3 的 GC 根 ✓），而 arm64 / riscv64 只做存储 ✓ —— 两处注释自己就写着 "GC publish (`yac_gval_pub`) **TODO**" ✗。⇒ 在那两个架构上，**运行期**赋值的顶层值 cell 不是 GC 根 ✗ ⇒ 只被它引用的活值可能被回收 ✗（潜伏的错值/崩溃 ✓；套件没炸是因为没踩到触发条件 ✓）。修法：把 x86_64 那 8 行（取名字 strlit → rdi、值 → rsi、`call yac_gval_pub` ✓）按各架构的寄存器约定搬过去 ✓ |
 
 > ~~**工作树里一处未决**~~ ⇒ **已定** ✓（2026-09-17）：`src-self/back/jit.yac:76` 那条 **hushed 追踪**
 > （`log("jit", …)` ✓ = 每个 gref 名字 + 有没有 gfn 项 ✓）**已随提交进入 HEAD** ✓ ⇒ 当作"**留作 `--verbose` 开关**" ✓，
