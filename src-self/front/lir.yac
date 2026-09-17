@@ -1087,80 +1087,94 @@ let list_ext(dst, src, i, n) =
     let _ = list_push(dst, nth(src, i)) in
     list_ext(dst, src, i + 1, n)
 
+/* k-th argument slot of a builtin call. Out of range, `nth` yields [] -- and
+ * the emitter then read that [] as a SLOT NUMBER: `exit()`, `str_cat()`,
+ * `str_ref(1)`, `str_len()`, `read_file()`, `write_file("x")` and `system()`
+ * all segfaulted at run time (measured 2026-09-17), while the same mistake on
+ * a guest proc is harmless (missing params arrive as nil). A primitive's arity
+ * is whatever its own lowering reads below -- that stays the single
+ * description -- so a missing argument is reported right here, in the front's
+ * usual user-visible form (rc 2, like the other LIR errors). */
+let rt_arg(g, ss, k) =
+  if k < len(ss) then nth(ss, k)
+  else log_fatal(str_cat("LIR: builtin '",
+    str_cat(g, str_cat("' called with too few arguments (",
+      str_cat(int_to_str(len(ss)), ")")))))
+
 let lir_rt_list(g, dst, ss) =
-  if g == "cons" then ["fcall", dst, "yac_cons", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "len" then ["fcall", dst, "yac_len", [nth(ss, 0)]]
-  else if g == "nth" then ["fcall", dst, "yac_nth", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "tail" then ["fcall", dst, "yac_tail", [nth(ss, 0)]]
-  else if g == "append" then ["fcall", dst, "yac_append", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "drop" then ["fcall", dst, "yac_drop", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "foldl" then ["fcall", dst, "yac_foldl", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
-  else if g == "map" then ["fcall", dst, "yac_map", [nth(ss, 0), nth(ss, 1)]]
+  if g == "cons" then ["fcall", dst, "yac_cons", [rt_arg(g, ss, 0), rt_arg(g, ss, 1)]]
+  else if g == "len" then ["fcall", dst, "yac_len", [rt_arg(g, ss, 0)]]
+  else if g == "nth" then ["fcall", dst, "yac_nth", [rt_arg(g, ss, 0), rt_arg(g, ss, 1)]]
+  else if g == "tail" then ["fcall", dst, "yac_tail", [rt_arg(g, ss, 0)]]
+  else if g == "append" then ["fcall", dst, "yac_append", [rt_arg(g, ss, 0), rt_arg(g, ss, 1)]]
+  else if g == "drop" then ["fcall", dst, "yac_drop", [rt_arg(g, ss, 0), rt_arg(g, ss, 1)]]
+  else if g == "foldl" then ["fcall", dst, "yac_foldl", [rt_arg(g, ss, 0), rt_arg(g, ss, 1), rt_arg(g, ss, 2)]]
+  else if g == "map" then ["fcall", dst, "yac_map", [rt_arg(g, ss, 0), rt_arg(g, ss, 1)]]
   else if g == "list_new" then ["fcall", dst, "yac_list_new", []]
-  else if g == "list_push" then ["fcall", dst, "yac_list_push", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "list_push" then ["fcall", dst, "yac_list_push", [rt_arg(g, ss, 0), rt_arg(g, ss, 1)]]
   else if g == "list_set" then
-    ["fcall", dst, "yac_list_set", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
-  else if g == "list_rev" then ["fcall", dst, "yac_list_rev", [nth(ss, 0)]]
+    ["fcall", dst, "yac_list_set", [rt_arg(g, ss, 0), rt_arg(g, ss, 1), rt_arg(g, ss, 2)]]
+  else if g == "list_rev" then ["fcall", dst, "yac_list_rev", [rt_arg(g, ss, 0)]]
   else 0
 
 let lir_rt_str(g, dst, ss) =
-  if g == "str_len" then ["str_len", dst, nth(ss, 0)]
-  else if g == "str_hash" then ["fcall", dst, "yac_str_hash", [nth(ss, 0)]]
-  else if g == "ident_hash" then ["fcall", dst, "yac_ident_hash", [nth(ss, 0)]]
-  else if g == "str_ref" then ["str_ref", dst, nth(ss, 0), nth(ss, 1)]
-  else if g == "str_cat" then ["fcall", dst, "yac_str_cat", [nth(ss, 0), nth(ss, 1)]]
+  if g == "str_len" then ["str_len", dst, rt_arg(g, ss, 0)]
+  else if g == "str_hash" then ["fcall", dst, "yac_str_hash", [rt_arg(g, ss, 0)]]
+  else if g == "ident_hash" then ["fcall", dst, "yac_ident_hash", [rt_arg(g, ss, 0)]]
+  else if g == "str_ref" then ["str_ref", dst, rt_arg(g, ss, 0), rt_arg(g, ss, 1)]
+  else if g == "str_cat" then ["fcall", dst, "yac_str_cat", [rt_arg(g, ss, 0), rt_arg(g, ss, 1)]]
   else if g == "str_slice" then
-    ["fcall", dst, "yac_str_slice", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
-  else if g == "str_chr" then ["fcall", dst, "yac_str_chr", [nth(ss, 0)]]
-  else if g == "int_to_str" then ["fcall", dst, "yac_int_to_str", [nth(ss, 0)]]
+    ["fcall", dst, "yac_str_slice", [rt_arg(g, ss, 0), rt_arg(g, ss, 1), rt_arg(g, ss, 2)]]
+  else if g == "str_chr" then ["fcall", dst, "yac_str_chr", [rt_arg(g, ss, 0)]]
+  else if g == "int_to_str" then ["fcall", dst, "yac_int_to_str", [rt_arg(g, ss, 0)]]
   else if g == "time_ms" then ["fcall", dst, "time_ms", []]
   else if g == "time_ns" then ["fcall", dst, "time_ns", []]
   else if g == "time_str" then ["fcall", dst, "time_str", []]
   else if g == "box_new" then ["fcall", dst, "yac_box_new", []]
-  else if g == "box_get" then ["fcall", dst, "yac_box_get", [nth(ss, 0)]]
+  else if g == "box_get" then ["fcall", dst, "yac_box_get", [rt_arg(g, ss, 0)]]
   else if g == "box_set" then
-    ["fcall", dst, "yac_box_set", [nth(ss, 0), nth(ss, 1)]]
+    ["fcall", dst, "yac_box_set", [rt_arg(g, ss, 0), rt_arg(g, ss, 1)]]
   else if g == "yac_prof_cell" then ["fcall", dst, "yac_prof_cell", []]
   else if g == "argc" then ["fcall", dst, "yac_argc", []]
-  else if g == "argv" then ["fcall", dst, "yac_argv", [nth(ss, 0)]]
+  else if g == "argv" then ["fcall", dst, "yac_argv", [rt_arg(g, ss, 0)]]
   else 0
 
 let lir_rt_bytes(g, dst, ss) =
-  if g == "bytes_to_str" then ["fcall", dst, "yac_bytes_to_str", [nth(ss, 0)]]
+  if g == "bytes_to_str" then ["fcall", dst, "yac_bytes_to_str", [rt_arg(g, ss, 0)]]
   else if g == "bytes_new" then ["fcall", dst, "yac_bytes_new", []]
-  else if g == "bytes_len" then ["bytes_len", dst, nth(ss, 0)]
-  else if g == "bytes_ref" then ["fcall", dst, "yac_bytes_ref", [nth(ss, 0), nth(ss, 1)]]
+  else if g == "bytes_len" then ["bytes_len", dst, rt_arg(g, ss, 0)]
+  else if g == "bytes_ref" then ["fcall", dst, "yac_bytes_ref", [rt_arg(g, ss, 0), rt_arg(g, ss, 1)]]
   else if g == "bytes_put" then
-    ["fcall", dst, "yac_bytes_put", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
+    ["fcall", dst, "yac_bytes_put", [rt_arg(g, ss, 0), rt_arg(g, ss, 1), rt_arg(g, ss, 2)]]
   else if g == "mem_ref" then
-    ["fcall", dst, "yac_mem_ref", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
+    ["fcall", dst, "yac_mem_ref", [rt_arg(g, ss, 0), rt_arg(g, ss, 1), rt_arg(g, ss, 2)]]
   else if g == "mem_put" then
-    ["fcall", dst, "yac_mem_put", [nth(ss, 0), nth(ss, 1), nth(ss, 2), nth(ss, 3)]]
-  else if g == "bytes_append" then ["fcall", dst, "yac_bytes_append", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "bytes_extend" then ["fcall", dst, "yac_bytes_extend", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "read_file" then ["fcall", dst, "yac_read_file", [nth(ss, 0)]]
-  else if g == "write_file" then ["fcall", dst, "yac_write_file", [nth(ss, 0), nth(ss, 1)]]
-  else if g == "system" then ["fcall", dst, "yac_system", [nth(ss, 0)]]
+    ["fcall", dst, "yac_mem_put", [rt_arg(g, ss, 0), rt_arg(g, ss, 1), rt_arg(g, ss, 2), rt_arg(g, ss, 3)]]
+  else if g == "bytes_append" then ["fcall", dst, "yac_bytes_append", [rt_arg(g, ss, 0), rt_arg(g, ss, 1)]]
+  else if g == "bytes_extend" then ["fcall", dst, "yac_bytes_extend", [rt_arg(g, ss, 0), rt_arg(g, ss, 1)]]
+  else if g == "read_file" then ["fcall", dst, "yac_read_file", [rt_arg(g, ss, 0)]]
+  else if g == "write_file" then ["fcall", dst, "yac_write_file", [rt_arg(g, ss, 0), rt_arg(g, ss, 1)]]
+  else if g == "system" then ["fcall", dst, "yac_system", [rt_arg(g, ss, 0)]]
   else if g == "read_line" then ["fcall", dst, "yac_read_line", []]
   else if g == "jit_run" then
-    ["fcall", dst, "yac_jit_run", [nth(ss, 0), nth(ss, 1), nth(ss, 2)]]
-  else if g == "exit" then ["exit", nth(ss, 0)]
+    ["fcall", dst, "yac_jit_run", [rt_arg(g, ss, 0), rt_arg(g, ss, 1), rt_arg(g, ss, 2)]]
+  else if g == "exit" then ["exit", rt_arg(g, ss, 0)]
   else if g == "gc_collect" then ["fcall", dst, "gc_collect", []]
-  else if g == "band" then bin("&", dst, nth(ss, 0), nth(ss, 1))
-  else if g == "bor" then bin("|", dst, nth(ss, 0), nth(ss, 1))
-  else if g == "bxor" then bin("^", dst, nth(ss, 0), nth(ss, 1))
-  else if g == "bnot" then bin("~", dst, nth(ss, 0), nth(ss, 0))
-  else if g == "bshl" then bin("<<", dst, nth(ss, 0), nth(ss, 1))
-  else if g == "bshr" then bin(">>", dst, nth(ss, 0), nth(ss, 1))
+  else if g == "band" then bin("&", dst, rt_arg(g, ss, 0), rt_arg(g, ss, 1))
+  else if g == "bor" then bin("|", dst, rt_arg(g, ss, 0), rt_arg(g, ss, 1))
+  else if g == "bxor" then bin("^", dst, rt_arg(g, ss, 0), rt_arg(g, ss, 1))
+  else if g == "bnot" then bin("~", dst, rt_arg(g, ss, 0), rt_arg(g, ss, 0))
+  else if g == "bshl" then bin("<<", dst, rt_arg(g, ss, 0), rt_arg(g, ss, 1))
+  else if g == "bshr" then bin(">>", dst, rt_arg(g, ss, 0), rt_arg(g, ss, 1))
   else 0
 
 let lir_rt_num(g, dst, ss) =
-  if g == "is_int" then ["is_int", dst, nth(ss, 0)]
-  else if g == "iadd" then ["add", dst, nth(ss, 0), nth(ss, 1)]
-  else if g == "isub" then ["sub", dst, nth(ss, 0), nth(ss, 1)]
-  else if g == "imul" then ["mul", dst, nth(ss, 0), nth(ss, 1)]
-  else if g == "idiv" then ["div", dst, nth(ss, 0), nth(ss, 1)]
-  else if g == "irem" then ["rem", dst, nth(ss, 0), nth(ss, 1)]
+  if g == "is_int" then ["is_int", dst, rt_arg(g, ss, 0)]
+  else if g == "iadd" then ["add", dst, rt_arg(g, ss, 0), rt_arg(g, ss, 1)]
+  else if g == "isub" then ["sub", dst, rt_arg(g, ss, 0), rt_arg(g, ss, 1)]
+  else if g == "imul" then ["mul", dst, rt_arg(g, ss, 0), rt_arg(g, ss, 1)]
+  else if g == "idiv" then ["div", dst, rt_arg(g, ss, 0), rt_arg(g, ss, 1)]
+  else if g == "irem" then ["rem", dst, rt_arg(g, ss, 0), rt_arg(g, ss, 1)]
   else 0
 
 let lir_rt(g, dst, ss) =
