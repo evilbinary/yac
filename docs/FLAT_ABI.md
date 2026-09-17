@@ -380,7 +380,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | 6 | `qemu-*` 组 | `--shared ccall add` 在**转发 shim**下按设计 SKIP（每组 3 个）：shim 只上传可执行文件，`.so` 会被远端当 Windows 路径找。该用例只在**真 qemu** 环境回归 |
 | ~~7~~ | ~~前端~~ ⇒ **已修（2026-09-17，§8.14）** | **顶层 `let` 绑定的值不能当函数调用** ✗：`let f(x) = print(x)` + `let a = f` + `a("x")` ⇒ `error: LIR: call to undefined procedure 'a'`（`calli` 只认 Σ 里的**过程**与 Γ 里的局部槽 ✓，而顶层值 **两者都不在** ✓ —— 见 `lir_var` 的 `kind == 2` ✓）。是响亮报错而非静默 ✓，但与"值是一等函数"不一致 ✓。**修**：`calli` 增一分支 ✓ —— `kind == 2` 时把 cell 读进临时槽（`gval` ✓）再发**动态调用** `icall` ✓（对象 ABI ✓ = §8.1 规范结论 ✓）；新用例 `call_toplevel_value` ✓ 三架构 PASS ✓ |
 
-| 8 | `rt/runtime.yac` 的 profiler 重定向 | **钩子的 ABI 归属只做到"兼容"**：`rt_funs_rename_prof` 只重定向**运行期列表里**的钩子（rt base + 被链接的包）；程序**自带**的 `prof_enter_go` 不在其中 ⇒ 那条调用仍是平 ABI，靠"名字**同放 rdi 与 rsi**"让两种钩子都能读到（§8.7 修法 2）。⇒ 一旦钩子**多参**、或哪天只留一个寄存器，就会再错位 |
+| ~~8~~ | ~~`rt/runtime.yac` 的 profiler 重定向~~ ⇒ **已修（2026-09-17，§8.15）** | **钩子的 ABI 归属只做到"兼容"** ✗：`rt_funs_rename_prof` 只在**运行期列表**（rt base + 被链接的包）里找钩子 ✓，而它跑在**链接期** ⇒ 程序**自带**的 `prof_enter_go` 还没出现 ✗ ⇒ 那条调用仍是平 ABI ✓，靠"名字**同放 rdi 与 rsi**"兜 ✓（§8.7 修法 2 ✓）。⇒ 一旦钩子**多参**、或哪天只留一个寄存器，就会再错位 ✗。**修**：新增 `emit.yac` 的 `prof_hook_fix` ✓ —— 在**整个 proc 列表已知**时（发射前 ✓）按**目标帧 ABI** 决定 `fcall`/`ycall` ✓（与 `tcall_raw_of` 同一条规则 ✓），并撤掉那个双寄存器 hack ✓（实参表 `[1, 1]` → `[1]` ✓）|
 | 9 | `build/patch_funoffs.py` | 按**过程名**匹配 `(名, 偏移)` ⇒ 同名记录 / stub 会错配（实测同一个 `f`：`fun_off(fo,"f")` 一处给 52706、一处给 348 ✗）。要按**发射顺序**对齐，别按名字查 |
 | 10 | `jit.yac` / REPL 的调试面 | ~~`--dump-lir` 配 `--repl` **什么都不打**、`--dump-asm` 配 `--repl` 只 dump **第一行**~~ ⇒ **2026-09-17 已修**（§8.8 ✓）：两个开关都**逐行生效** ✓（`parse_args` 补记 spec 标志 ✓ + REPL 路径逐行 re-arm ✓ + 逐行 LIR dump ✓），asm dump 另加 `=== gref cells` / `=== tag22 cells` 两张表 ✓。仍要注意：jit 路径的 `log` 被 **hush**（发射期打印看不见 ✓）⇒ 发射期内只能用 `print` 或盒子 ✓。**批处理侧另有一处** ✓：`--dump-lir` 对**带包导入**的程序原本**不出 dump** ✗（`dump_lir` 没设 `link_need_box`/`link_local_box` ⇒ `rt_for_link` 链不到包 ⇒ 只吐 `error: LIR: call to undefined procedure 'host_arch'` ✗）⇒ **2026-09-17 已修**（§8.12 ✓）：先 `link_from_ast(ast)` ✓，现在编自身 bundle 能出 **2.6 MB** LIR ✓ |
 
@@ -1025,6 +1025,41 @@ print(s("ab", "cd"))      /* error: LIR: call to undefined procedure 's' */
 > **写用例时自己踩的坑** ✗（记一笔 ✓）：`len` 是**列表**的 ✓，字符串要用 **`str_len`** ✓ ——
 > 第一版用例写了 `len("42")` ✓，编译运行都不报错 ✗ 但值不是 2 ⇒ 表现为"用例失败"✗ 而编译器无辜 ✓。
 > ⇒ **新用例的期望值也要先手工跑一遍** ✓（本次就是这么发现的 ✓）。
+
+### 8.15 已修：profiler 钩子的 ABI 不再"两头兼容"（2026-09-17）
+
+**病灶** ✓（§8.7 留下的补丁 ✓）：内核用**裸名字**调钩子（`rt_prof_enter_ins` ✓ 里那一条 `fcall prof_enter_go` ✓）。
+`runtime_add` / `rt_funs_rename_prof` 会把这条指令改成对象 ABI 的 `ycall` ✓ —— 但它在**链接期**跑 ✓，
+那时**本单元自己的 proc 还不存在** ✗ ⇒ 程序**自带**的钩子（`let prof_enter_go(name) = …` ✓ = 普通 letfun = **对象 ABI** ✓）
+不在它看得见的列表里 ✗ ⇒ 调用保持平 ABI ✗，而名字只在 0 号参数寄存器里 ⇒ 对象 ABI 的钩子从 1 号读 ⇒ 读到 nil ✗
+（§8.7 的 139 段错误就是这么来的 ✓）。当时的兜法是把名字**同放两个寄存器**（实参表 `[1, 1]` ✓）✗ ——
+能用，但"一旦钩子多参、或哪天只留一个寄存器"就会再错位 ✗。
+
+**修法** ✓：把"按**目标帧的 ABI**决定调用种类"这条规则（§8.11 为 `tcall` 立的那条 ✓）也用到钩子上 ✓：
+
+| 位置 | 改动 |
+|---|---|
+| `back/emit/emit.yac` | 新增 `prof_marked_hook` / `prof_fix_insns` / `prof_fix_funs` / `prof_hook_fix` ✓：扫**最终** proc 列表 ✓，若存在**本单元定义**的、**marked**（对象 ABI）`prof_enter_go` / `prof_leave_go` ✓ ⇒ 把内核那两条 `fcall` 改成 `ycall` ✓；否则原样返回（**零开销** ✓）|
+| 三个后端 | 在构造 `funs` 时套一层 `prof_hook_fix(...)` ✓（在 `tcall_tab_set` 之前 ✓，三处各一行 ✓）|
+| `rt/runtime.yac` | 实参表 `[1, 1]` → **`[1]`** ✓（**撤掉双寄存器 hack** ✓）；两处注释改成描述新规则 ✓ |
+
+平 ABI 的那一半（运行期自带的 no-op 桩 `prof_enter_go` ✓ 是 `$proc` ✓）不受影响 ✓ ⇒ 仍是 `fcall` ✓ + 一个实参 ✓ ✓。
+
+**正证据** ✓（可推理 ✓）：撤掉 hack 之后，0 号寄存器以外**没有**第二份名字 ✓；若 `ycall` 改写没生效 ✓，
+marked 的钩子会从 1 号参数寄存器读到别的东西 ⇒ 输出**必然不是** `f` ✓。实测：
+
+| 用例 | 结果 |
+|---|---|
+| `tests/compiler/cases/prof_hook_name.yac` ✓（程序自带钩子 ✓）| 输出恰为 **`f`** ✓（改写生效 ✓）|
+| `tests/pkg/prof_hook.yac` ✓（包提供钩子 ✓）| rc **42** ✓ |
+| `tests/pkg/profile.yac` ✓ | rc **42** ✓ |
+| 全量 `make test` | **726 / 0** ✓（0 条 FAIL ✓）|
+
+**验收** ✓：两趟自举通过 ✓ + **stage2 ≡ stage3 逐字节相同** ✓；新 pass 只在"本单元有 marked 钩子"时才动手 ✓
+⇒ 对现有程序是**空操作** ✓（726/0 与改动前一致 ✓）。
+
+> 附带说明 ✓：`prof_hook_name.yac` 的注释里那段"同放 rdi 与 rsi"的描述已按新机制改写 ✓ ——
+> 否则它会变成下一份"过期真相" ✓。
 
 ---
 
