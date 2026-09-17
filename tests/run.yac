@@ -515,6 +515,12 @@ let repl_cases(_) = [
    * Guards FLAT_ABI.md 8.5/8.6 from the REPL side too. */
   ["let fn then eq", "let f(x) = x + 1\nlet a = f\na == f\n:q\n", "1"],
   ["let fn after expr line", "1+1\nlet f(x) = x + 1\nprint(f(2))\n:q\n", "3"],
+  /* A host leaf used on a line AFTER a completed line, immediately after the
+   * import that introduced it. Those calls go through G+136/G+456, which for a
+   * REPL blob are the SESSION's slots (back/jit.yac host_tab_fill writes
+   * them), not the blob's own image: addressing them per-image read zeroed
+   * memory and called 0 (SIGSEGV at RIP=0, measured 2026-09-17). */
+  ["nested compile after import", "1+1\nimport compiler\ncompile(\"1+2\")\n:q\n", "<bytes>"],
   ["import then printf d", "let a=42\nimport fmt\nprintf(\"%d\", [a])\n:q\n", "42"],
   ["import then printf one", "let a=42\nimport fmt\nprintf(a)\n:q\n", "42"],
   /* Host-view compiler pkg (12.11 @host): import must be fast, not crash,
