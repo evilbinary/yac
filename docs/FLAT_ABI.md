@@ -381,7 +381,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | ~~7~~ | ~~前端~~ ⇒ **已修（2026-09-17，§8.14）** | **顶层 `let` 绑定的值不能当函数调用** ✗：`let f(x) = print(x)` + `let a = f` + `a("x")` ⇒ `error: LIR: call to undefined procedure 'a'`（`calli` 只认 Σ 里的**过程**与 Γ 里的局部槽 ✓，而顶层值 **两者都不在** ✓ —— 见 `lir_var` 的 `kind == 2` ✓）。是响亮报错而非静默 ✓，但与"值是一等函数"不一致 ✓。**修**：`calli` 增一分支 ✓ —— `kind == 2` 时把 cell 读进临时槽（`gval` ✓）再发**动态调用** `icall` ✓（对象 ABI ✓ = §8.1 规范结论 ✓）；新用例 `call_toplevel_value` ✓ 三架构 PASS ✓ |
 
 | ~~8~~ | ~~`rt/runtime.yac` 的 profiler 重定向~~ ⇒ **已修（2026-09-17，§8.15）** | **钩子的 ABI 归属只做到"兼容"** ✗：`rt_funs_rename_prof` 只在**运行期列表**（rt base + 被链接的包）里找钩子 ✓，而它跑在**链接期** ⇒ 程序**自带**的 `prof_enter_go` 还没出现 ✗ ⇒ 那条调用仍是平 ABI ✓，靠"名字**同放 rdi 与 rsi**"兜 ✓（§8.7 修法 2 ✓）。⇒ 一旦钩子**多参**、或哪天只留一个寄存器，就会再错位 ✗。**修**：新增 `emit.yac` 的 `prof_hook_fix` ✓ —— 在**整个 proc 列表已知**时（发射前 ✓）按**目标帧 ABI** 决定 `fcall`/`ycall` ✓（与 `tcall_raw_of` 同一条规则 ✓），并撤掉那个双寄存器 hack ✓（实参表 `[1, 1]` → `[1]` ✓）|
-| ~~9~~ | ~~`build/patch_funoffs.py`~~ / `fun_off` ⇒ **已修（2026-09-17，§8.17）** | 按**过程名**匹配 `(名, 偏移)` ✗ ⇒ **不只是工具小疵** ✗：`backend.yac` 的 `fun_off(fo,"_eval")` 在 **JIT 入口**的生产路径上 ✓，REPL 里一行 `let _eval(x) = x + 1` 就能让**客体的 `_eval` 顶掉包装器** ⇒ **SIGSEGV** ✗（rc=139 ✓）。根因：`funOffsRev` 是**逆发射序** ✓，名字扫描从**表头**（= 最后发射的那个）开始 ✗。修法：**按顺序**取 —— 入口恒为 `funs[0]` ✓，即该表**最后一个**记录 ✓（`entry_off(fo)` ✓）|
+| ~~9~~ | ~~`build/patch_funoffs.py`~~ / `fun_off` ⇒ **生产路径已修（2026-09-17，§8.17）**；**工具本身未改** ✓ | 按**过程名**匹配 `(名, 偏移)` ✗ ⇒ **不只是工具小疵** ✗：`backend.yac` 的 `fun_off(fo,"_eval")` 在 **JIT 入口**的生产路径上 ✓，REPL 里一行 `let _eval(x) = x + 1` 就能让**客体的 `_eval` 顶掉包装器** ⇒ **SIGSEGV** ✗（rc=139 ✓）。根因：`funOffsRev` 是**逆发射序** ✓，名字扫描从**表头**（= 最后发射的那个）开始 ✗。修法：**按顺序**取 —— 入口恒为 `funs[0]` ✓，即该表**最后一个**记录 ✓（`entry_off(fo)` ✓）。**工具那半没修** ✗：把它改成按下标配对**仍然崩** ✗，实测表明崩因与配对**无关** ✓（见 §8.17 末）|
 | 10 | `jit.yac` / REPL 的调试面 | ~~`--dump-lir` 配 `--repl` **什么都不打**、`--dump-asm` 配 `--repl` 只 dump **第一行**~~ ⇒ **2026-09-17 已修**（§8.8 ✓）：两个开关都**逐行生效** ✓（`parse_args` 补记 spec 标志 ✓ + REPL 路径逐行 re-arm ✓ + 逐行 LIR dump ✓），asm dump 另加 `=== gref cells` / `=== tag22 cells` 两张表 ✓。仍要注意：jit 路径的 `log` 被 **hush**（发射期打印看不见 ✓）⇒ 发射期内只能用 `print` 或盒子 ✓。**批处理侧另有一处** ✓：`--dump-lir` 对**带包导入**的程序原本**不出 dump** ✗（`dump_lir` 没设 `link_need_box`/`link_local_box` ⇒ `rt_for_link` 链不到包 ⇒ 只吐 `error: LIR: call to undefined procedure 'host_arch'` ✗）⇒ **2026-09-17 已修**（§8.12 ✓）：先 `link_from_ast(ast)` ✓，现在编自身 bundle 能出 **2.6 MB** LIR ✓ |
 
 | 11 | 本机 PATH | **没有 C 编译器**：`gcc` / `cc` / `clang` / `tcc` 全不在 PATH，`where.exe gcc` 也找不到；但 `/mingw64/bin/gcc.exe`（15.2.0）与 `/mingw32/bin/gcc.exe`（16.1.0）**存在**。⇒ 在**裸**的当前 shell 里 `gcc` 起不来（连 `-E` 都 rc=1：驱动 spawn 不了 `cc1` ✗），而 `make` 的隐式 `CC` 默认值就是 `cc` ⇒ `make test-*` 一旦需要重建 `$(BIN)`（`src/*.c` 比 `build/*.o` 新就会）**整组报错** ✗。可用的建法：走 MSYS2 MINGW64 环境再显式给编译器 —— `MSYSTEM=MINGW64 CHERE_INVOKING=1 MSYS2_PATH_TYPE=inherit /e/soft/msys2/usr/bin/bash.exe --login -i -c 'cd /e/workspace/yac && make CC=gcc yac.exe'`（实测可编、可链接 ✓） |
@@ -1143,7 +1143,20 @@ JIT 用 `fun_off(fo, "_eval")` 找入口 ✗ —— `fo` 是 `funOffsRev` ✓（
 | 回归用例 | `repl guest _eval shadows wrapper` ✓ **PASS** ✓ |
 | 两趟自举 + 固定点 | 通过 ✓，**stage2 ≡ stage3 逐字节相同** ✓ |
 | 全量 `make test` | **728 / 0** ✓（0 条 FAIL ✓；`compiler` **188 / 0** ✓）|
-| 工具 | `python3 build/patch_funoffs.py` 注入 + `--revert` 后**重建产物逐字节不变** ✓ |
+
+**`build/patch_funoffs.py` 那半：没修成，但查清了真因** ✓（工具**已恢复原状** ✓，只留下注释与一条 `--revert` 修复 ✓）：
+
+| 变体（注入到 `emit_program_x86_64` 里）| 结果 |
+|---|---|
+| A：只 `write_file(..., "常量")` ✓ | 插桩编译器**正常** ✓、文件写出 ✓ |
+| B：A + 一个**局部递归函数** ✓（= 原工具的形状 ✓）| **SIGSEGV（rc=139）** ✗、文件不写 ✗ |
+
+⇒ 崩因是**往那个过程里注入"局部函数"** ✗（会改它的帧 ABI ✓），**与按名字 / 按下标配对无关** ✓ ——
+工具 docstring 里"printing from emit breaks the self-build"是**误判** ✗。所以：那条修法（改成 `funs[i]` ↔ `offs[i]`）
+**看似对、实测崩** ✗ ⇒ 已撤回 ✓。**可信的 dump 用 `--dump-asm`** ✓：`asm_dump_procs` 是**顶层过程** ✓
+（不新建闭包 ✓）、且本来就**按下标**把 `funs` 与 `offs` 配对 ✓（`asm_dump_procs` 里 `nth(offs, i)` ✓）。
+
+> **另记一条过程教训** ✗：查这条时我自己 `rm` 了 `build/funoffs.txt` ✓，又用**可能已被换掉的 `yc`** 下了"LIR 里没有 write_file"的结论 ✗ —— 判据本身不干净 ✓。后用**干净两趟构建**（与 728 / 0 那次**逐字节相同** ✓）重做，才有上面的 A/B 结论 ✓。
 
 > **顺带发现（未修，记为 §8.2 #15）** ✗：REPL 里**同名重定义**（`let f(x) = 1` → `let f(x) = 2` → `f(0)`）
 > 会 **SIGILL（rc=132）** ✗。与本节不是同一条路 ✓（jslot 槽号实测一致 ✓，坏的是**存进/取出的值** ✗），机理待查 ✓。
