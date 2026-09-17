@@ -1,0 +1,13 @@
+/* A top-level `let`-bound VALUE used as a function (FLAT_ABI.md 8.2 #7). Such
+ * a name is in neither Gamma nor Sigma -- lir_var resolves it as kind == 2 --
+ * so the call used to die with "LIR: call to undefined procedure '<name>'"
+ * before any code was emitted. It is now a dynamic (object-ABI) call through
+ * the cell, which is what a closure value requires (FLAT_ABI.md 8.1).
+ * 41 + 1 == 42 proves the letfun value; str_len("4" "2") == 2 proves the
+ * str_cat (a flat $proc arriving here as a thunk closure) value. */
+let f(x) = x + 1
+let a = f
+let s = str_cat
+let r = a(41)
+let t = s("4", "2")
+if r == 42 then str_len(t) else 0
