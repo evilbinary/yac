@@ -1983,14 +1983,17 @@ let rt_prof_enter_ins(_) =
    ["label", "pe_go"],
    ["mov_imm", 8, 1 + 1],
    ["gst", 4, 8],
-   /* The hook may be either the runtime's own no-op stub (a $proc: FLAT ABI,
-    * first param in rdi) or a USER prof_enter_go (an ordinary letfun: OBJECT
-    * ABI, first param in rsi -- runtime_add's redirect emits `ycall` for it).
-    * A program that defines the hook itself is not in the list runtime_add
-    * sees (it only gets rt_base + linked packages), so that case stays a flat
-    * `fcall`: handing the name through BOTH registers makes either callee read
-    * it. Without this the user hook saw nil and pkg profile died hashing it. */
-   ["fcall", 6, "prof_enter_go", [1, 1]],
+   /* The hook is either the runtime's own no-op stub (a $proc: plain ABI, first
+    * param in arg register 0) or a USER prof_enter_go (an ordinary letfun:
+    * object ABI, first param in arg register 1). runtime_add's redirect handles
+    * the runtime/packages case by rewriting this very instruction into `ycall`;
+    * for a hook defined IN THE PROGRAM that pass runs too early (it only sees
+    * rt_base + linked packages), so emit.yac's prof_hook_fix does it once the
+    * whole proc list is known -- and the call kind then follows the TARGET's
+    * frame ABI, the same rule as tcall_raw_of (FLAT_ABI.md 8.2 #8). The name
+    * goes in ONE register now: the old `[1, 1]` (name in both) was the papering
+    * over that broke as soon as a hook took a second parameter. */
+   ["fcall", 6, "prof_enter_go", [1]],
    ["mov_imm", 8, 0 + 0],
    ["gst", 4, 8],
    ["ret", 6]]

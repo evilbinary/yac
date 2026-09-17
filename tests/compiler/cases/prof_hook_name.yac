@@ -1,14 +1,16 @@
-/* The profiler hook is a USER letfun: OBJECT ABI, first param from rsi
- * (LIR.md 4.4.4). The runtime used to hand the name over in rdi only -- the
- * FLAT convention of its own no-op stub -- so a program-level prof_enter_go
- * read nil, and pkg/profile.yac then hashed that nil (yac_str_hash on [0+24])
- * and died with 139 before writing a single record.
+/* The profiler hook is a USER letfun: OBJECT ABI, first param from arg
+ * register 1 (LIR.md 4.4.4). The runtime used to hand the name over in arg
+ * register 0 only -- the FLAT convention of its own no-op stub -- so a
+ * program-level prof_enter_go read nil, and pkg/profile.yac then hashed that
+ * nil (yac_str_hash on [0+24]) and died with 139 before writing a single
+ * record.
  *
- * Two things keep both hook flavours working now:
- *   runtime_add's redirect emits `ycall` (object ABI) for a user hook found in
- *   the runtime base + linked packages, and the runtime's own call hands the
- *   name through BOTH rdi and rsi, so a hook that is NOT in that list (one the
- *   program defines itself) reads it too.
+ * The kernel's hook call now follows the TARGET's frame ABI: runtime_add's
+ * redirect handles a hook from the runtime base / a linked package, and
+ * emit.yac's prof_hook_fix (once the unit's own procs are known) turns the
+ * remaining plain `fcall` into a `ycall` for a hook the program defines
+ * itself (FLAT_ABI.md 8.2 #8). The name travels in ONE register; the old
+ * "both rdi and rsi" workaround is gone.
  *
  * Expect exactly one line -- "f". Only front-wrapped letfuns are hooked (the
  * runtime's own $procs are not), and the runtime's busy flag stops the hook's
