@@ -364,8 +364,8 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 
 | # | 位置 | 内容 |
 |---|---|---|
-| 1 | `emit_arm64.yac:1475`、`emit_riscv64.yac:1480` | `tailapply` / `ticall` 带**栈参数**（>7）时发 `brk` / `unimp` ⇒ 未实现；真跳到就 trap，偏"响亮失败"但仍是缺口 |
-| 2 | `emit_x86_64.yac:754` vs `emit_arm64.yac:685` / `emit_riscv64.yac:671` | 跨过程尾调用的目标 ABI：x86_64 **写死 `traw=true`**（当作平目标），arm64 / riscv64 按名字判（`is_yac_proc_name`）。假设不对称 —— 对象 ABI 的跨过程目标在 x86_64 上会被按平调用（与 §8.1 第 1 条同族） |
+| ~~1~~ | ~~`emit_arm64.yac:1475`、`emit_riscv64.yac:1480`~~ ⇒ **不是缺口：已退休的 opcode**（§6 清理清单第 288 行 ✓，详见 §8.12） | ~~`tailapply` / `ticall` 带**栈参数**（>7）时发 `brk` / `unimp` ⇒ 未实现~~ ⇒ **这两个 opcode 第 6 步就收敛掉了** ✓：唯一构造点 `lir.yac:211/215` **永不触发** ✓（`tco_find` 只认自调用 ✓），大样本 LIR 里 **0 处** ✓（§8.12 的普查表 ✓）。⇒ 三后端的 case 是**死代码** ✓，本项从"待实现"改判为"待删除"（§6） |
+| ~~2~~ | ~~`emit_x86_64.yac:754` vs `emit_arm64.yac:685` / `emit_riscv64.yac:671`~~ **已修（2026-09-17，§8.11）** | 跨过程尾调用的目标 ABI：x86_64 **写死 `traw=true`**（当作平目标）✗，arm64 / riscv64 按**名字前缀**判（`is_yac_proc_name`）✗ —— 两者都是近似：真判据是目标首条 `local`/`$local` 的**第 4 栏**（`selfabi`）✓。三个后端已统一到 `emit.yac` 的 `tcall_raw_of` ✓ |
 | 3 | 提交 `943d438` | 提交信息写 "correct riscv64 ycall param register offset"，实际内容是**回退 + 改注释**（`10 + j` 是对的，注释错了）⇒ 信息与内容不符 |
 | 4 | 仓库根的 `./yc`（无扩展名） | 早先记的是"`./yc` 会抢先命中陈旧的无扩展名文件"。**2026-09-16 更正**：实测本机 `yc` 与 `yc.exe`（以及 `yac` / `yac.exe`）是**同一 inode**（`ls -i` 同号 ⇒ 硬链接/同一文件），`cp -f yc.exe yc` 会报 "are the same file" ⇒ 该现象在本机不成立 ✗（可能是别的机器/文件系统上的经历）。仍要记住的是**构建方向**：`make` 只写 `yc.exe` / `yac.exe` ✓，`./yc` / `./yac` 能跑就不能证明它们是新二进制以外的什么 |
 | 5 | `build/` | 遗留 `patch_rv.py` 与 `emit_*.bak*` / `run.yac.bak` / `Makefile.bak` 等备份；无害，但别当源码读 |
@@ -377,7 +377,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | 10 | `jit.yac` / REPL 的调试面 | ~~`--dump-lir` 配 `--repl` **什么都不打**、`--dump-asm` 配 `--repl` 只 dump **第一行**~~ ⇒ **2026-09-17 已修**（§8.8 ✓）：两个开关都**逐行生效** ✓（`parse_args` 补记 spec 标志 ✓ + REPL 路径逐行 re-arm ✓ + 逐行 LIR dump ✓），asm dump 另加 `=== gref cells` / `=== tag22 cells` 两张表 ✓。仍要注意：jit 路径的 `log` 被 **hush**（发射期打印看不见 ✓）⇒ 发射期内只能用 `print` 或盒子 ✓ |
 
 | 11 | 本机 PATH | **没有 C 编译器**：`gcc` / `cc` / `clang` / `tcc` 全不在 PATH，`where.exe gcc` 也找不到；但 `/mingw64/bin/gcc.exe`（15.2.0）与 `/mingw32/bin/gcc.exe`（16.1.0）**存在**。⇒ 在**裸**的当前 shell 里 `gcc` 起不来（连 `-E` 都 rc=1：驱动 spawn 不了 `cc1` ✗），而 `make` 的隐式 `CC` 默认值就是 `cc` ⇒ `make test-*` 一旦需要重建 `$(BIN)`（`src/*.c` 比 `build/*.o` 新就会）**整组报错** ✗。可用的建法：走 MSYS2 MINGW64 环境再显式给编译器 —— `MSYSTEM=MINGW64 CHERE_INVOKING=1 MSYS2_PATH_TYPE=inherit /e/soft/msys2/usr/bin/bash.exe --login -i -c 'cd /e/workspace/yac && make CC=gcc yac.exe'`（实测可编、可链接 ✓） |
-| 12 | `make` 的 `$(YC_A)` 规则 | 两趟自举（`yc_a.exe` → `.new` → `.new2` → `mv`）**不能并行跑**：同时开两个 `make test-*`（各自都要重建 `$(YC_A)`）会撞在一起，第二趟产物缺失 ⇒ `mv: cannot stat 'build/yc_tmp/yc_a.exe.new2'` ✗（实测一次）。而且配方里 `echo pass 2` 前是 `;` ⇒ 第二趟失败后 `mv` 仍会跑 ⇒ 报错位置具有误导性。**串行跑 `make`** ✓ |
+| 12 | `make` 的 `$(YC_A)` 规则 | 两趟自举（`yc_a.exe` → `.new` → `.new2` → `mv`）**不能并行跑**：同时开两个 `make test-*`（各自都要重建 `$(YC_A)`）会撞在一起，第二趟产物缺失 ⇒ `mv: cannot stat 'build/yc_tmp/yc_a.exe.new2'` ✗（实测一次）。而且配方里 `echo pass 2` 前是 `;` ⇒ 第二趟失败后 `mv` 仍会跑 ⇒ 报错位置具有误导性。**串行跑 `make`** ✓。**2026-09-17 又踩一次**（症状不同 ✓）：一条 `make test` 因超时被切断 ✓ 但**仍在后台跑** ✓，此时又起一条 ⇒ 日志开头出现 **NUL 字节** + 3 条假失败 `FAIL: compiler capture_2args / ncap12_disp8 / capture_shadow_t`（`actual: compile rc=1`）✗ —— 用例本身没问题 ✓，等残留进程结束后单独重跑 ⇒ **0 FAIL** ✓。⇒ 跑测试前先确认没有正在跑的 `make` ✓ |
 
 > **工作树里一处未决** ✓：`src-self/back/jit.yac` 留着 §8.8 的一条 **hushed 追踪**（`log("jit", …)`，只在 `--verbose` 打印 ✓）——
 > 要么撤掉恢复"零残留" ✓，要么明说"留作 verbose 开关" ✓；不留在别处出现（已确认 `--verbose` 之外无输出 ✓）。
@@ -810,6 +810,97 @@ gdb 显示 **RIP = 0** ✓、返回地址在 JIT 会话镜像里 ✓ ⇒ 会话�
 **验收** ✓：A 组 rc **139 → 0** ✓（输出 `<bytes>` ✓）、§8.8 的 `1+1 / let f / print(f(2))` 仍为 **3** ✓、
 全量 `make test` **716 / 0** ✓（`compiler` 185/0 ✓、`pkg` 22/0 ✓、`interp` 36/0 ✓、
 `qemu-arm64` / `qemu-riscv64` 85/0 ×2 ✓）。
+
+### 8.11 已修：尾调用的目标 ABI 三方对齐（`traw`）—— 2026-09-17
+
+**病灶**：跨过程尾调用（`tcall`）必须按**目标帧的 ABI** 放参数，而三个后端用了**三套判据** ✗：
+
+| 后端 | 原判据 |
+|---|---|
+| x86_64 | 自调用用调用方自己的 `is_raw`（= `fun_is_raw` ✓），**其他一律写死 `true`**（当平目标）✗ |
+| arm64 / riscv64 | **名字前缀 `yac_`**（`is_yac_proc_name`）✗ |
+
+**真判据**（三个后端的 prologue 都这么读 ✓，注释写明 "never inferred here" ✓）：
+首条 `local` / `$local` 指令的**第 4 栏** —— `selfabi = len(insn) > 3` ✓。
+
+| 帧 | 参数寄存器 | 谁 |
+|---|---|---|
+| **标记**（对象 ABI ✓） | 从 **1 号**起，0 号是对象 | front 给每个可闭包调用的 proc 写第 4 栏 ✓ |
+| **未标记**（平 ABI ✓） | 从 **0 号**起 | `_start`、运行期 `$proc`、宿主叶、unimpl 桩 ✓ |
+
+`fun_is_raw`（§8.2 里常与它混着提 ✓）**不是**这个 ✗ —— 它描述的是**函数体的算子集**（`$` 系列 ✓）；`yac_` 前缀只是**约定** ✓。
+
+**修法** ✓：`back/emit/emit.yac` 新增 `fun_selfabi`（读第 4 栏 ✓）、`tcall_tab_*`（把本次发射的 `funs` 编成 `[名字, 是否未标记]` 表 ✓）与 `tcall_raw_of(name)` ✓（表里查不到的（外部 / 跨镜像）⇒ **退回 `yac_` 约定** ✓）；三个后端各自在 proc 循环前 `tcall_tab_set(funs)` ✓，`traw` 一律取 `tcall_raw_of(fn)` ✓（x86_64 的自调用分支也改用它 ✓ —— 与旧的 `is_raw` 等价 ✓，现有 proc 上 `fun_is_raw` 与"未标记"同解 ✓）。arm64 / riscv64 的本地 `is_yac_proc_name` 删除 ✓（已移到 `emit.yac` 作为兜底 ✓）。
+
+**验证** ✓：
+
+| 项 | 结果 |
+|---|---|
+| 正证据（临时 `--verbose` 统计，取证后已撤 ✓） | `print(1)`：procs **120** / plain **105**（= 内核 `$proc` + `_start` + 10 个 unimpl 桩 ✓）；compiler bundle：procs **3469** / plain **1780** ⇒ marked 全是 guest ✓ ⇒ 判据确实读到第 4 栏 ✓ |
+| 两趟自举 | 通过 ✓，且 **stage2 ≡ stage3 逐字节相同** ✓（md5 `3778b23d…` ✓）|
+| 全量 `make test` | **716 / 0** ✓（未变 ✓ —— 现存 5 处手写 `tcall` 的目标全是未标记 `$proc` ⇒ 新旧判据同解 ✓）|
+| `qemu-arm64` / `qemu-riscv64` | **85 / 0** ×2 ✓ |
+
+**可达性**（为什么全绿也要修 ✓）：`tcall` 只能由**手写 LIR** 产生 ✓（普通源码写不出 `$proc` 记录 ✗；`runtime.yac` 里 5 处目标全是 `yac_*` ✓）⇒ 今天**无活症状** ✓。但一旦出现"**未标记但名字不是 `yac_`**"的目标（例如以后加一个别的命名的内核 proc ✓）或"**被标记的目标**" ✓，同一份源码在 x86_64 与 arm64 之间就会**差一整个参数寄存器** ✗ —— 这类不对称没有编译期报错 ✓，只有跨架构跑起来才看得出来 ✓。
+
+> 顺带核对过的另一处同族判据 ✓：**普通调用** `ycall`（`emit_x86_64.yac:702` ✓）**一律按对象 ABI 发射** ✓（"flat callees ignore it" ✓）✓ ⇒ 与 `tcall` 不同 ✓，它不看目标 ✓，因此不受本次改动影响 ✓（平目标忽略 0 号寄存器 ✓）。
+
+### 8.12 改判：`tailapply` / `ticall` 是**已退休 opcode**，不是待实现缺口（2026-09-17）
+
+**起因** ✓：§8.2 第 1 条原记为"`tailapply`/`ticall` 带栈参数（>7）时 arm64 / riscv64 发 `brk` / `unimp` ⇒ 未实现" ✗，
+看起来像个待补的能力缺口 ✓。实际不是 ✗ —— 这两个 opcode **已经在第 6 步收敛掉** ✓，
+台账 §6「清理清单」（`FLAT_ABI.md` 第 288 行 ✓）里就列着它们 ✓：
+
+> `| 第 6 步收敛掉的 opcode | xcall / apply / ticall / tailapply / iccall / $icall / gvld / gvst / gfnst |`
+
+紧跟的一段还写明"**能力不删，只改形态**" ✓：动态调用（嵌套闭包 / call-cc 式）的**能力**保留 ✓，
+但不再是独立 opcode ⇒ 收进调用指令的"运行期动态 caps"布局 ✓（`LIR.md` §4.4 ✓）。
+
+**普查方法** ✓：`--dump-lir` 打出一个大程序的 LIR ✓，统计**指令位置**上（`[op, ` ✓）各拼写的出现次数 ✓。
+样本 = `tests/run.yac` ✓ —— 439 个 `ycall` / 2076 个 `fcall` / 11 个 `tcall` ✓，说明生成器真的在产出东西 ✓（不是空样本 ✓）。
+
+> **别踩的坑** ✗：`--dump-lir` 对**带包导入**的程序**根本不出 dump** ✗ —— `backend.yac:966 dump_lir` 只做 `rt_for_link` ✓、
+> 没走 `link_extend` ✗ ⇒ 拿它编 `yc_bundle.yac` 只会得到 52 字节的
+> `error: LIR: call to undefined procedure 'host_arch'` ✗。**空 dump 上 `grep` 也会得 0** ✗ ——
+> 本小节第一版那条"编译器自身 0 处"就是这么来的 ✗（已按下面的真实测量改正 ✓）。要用编译器自身当样本 ✓，
+> 得先给 dump 路径补上包前置 ✓（属 §8.2 #10 那一族诊断面缺口 ✓）。
+
+| 拼写 | 源码构造点 | emitter case | 样本出现 | 判定 |
+|---|---|---|---|---|
+| `xcall` | **0** ✓ | 0 ✓ | 0 ✓ | **纯死** ✓（只在 `vops(0)` 名单里 ✗）|
+| `gvld` | 0 ✓ | 0 ✓ | 0 ✓ | **纯死** ✓ |
+| `gvst` | 0 ✓ | 0 ✓ | 0 ✓ | **纯死** ✓ |
+| `gfnst` | 0 ✓ | 0 ✓ | 0 ✓ | **纯死** ✓ |
+| `$icall` | 0 ✓ | **4** ✓ | 0 ✓ | 死 ✓（emitter 里 4 处**死代码** ✓）|
+| `tailapply` | 1（`lir.yac:211` ✓）| 3 ✓ | 0 ✓ | 死 ✓（构造不可达 ✓，见下 ✓）|
+| `ticall` | 1（`lir.yac:215` ✓）| 3 ✓ | 0 ✓ | 死 ✓（同上 ✓）|
+| `iccall` | 1（`lir.yac:1417` ✓）| 3 ✓ | 0 ✓ | **存疑** ✗（见下 ✓）|
+| **`apply`** | **2**（`lir.yac:1195` / `:1203` ✓）| 3 ✓ | **64** ✗ | **仍在用** ✗ ⇒ **不能删** ✗ |
+
+**`tailapply` / `ticall` 为什么不可达** ✓：唯一构造点是 TCO 重写的**非自调用**分支 ✓，
+而 `tco_find`（`lir.yac:199` ✓）对 `apply` / `icall` 只在目标是**自调用**（`["self"]` ✓）时才返回命中下标 ✓
+⇒ `tco_one` 只会走 `tcall` 分支 ✓。
+
+**`iccall` 为什么存疑** ✗：`ccall_is` ✓ = "被调方是一个**值**，且该值标记为 `ccall`" ✓
+⇒ 这是"把装进来的 C 函数取成值再调"那一形（dylib / cimport 路 ✓）。套件里的 `--shared ccall add` 是**直接** ccall ✓
+（不走值 ✓）⇒ 样本里 0 ✓ 但**不能说死** ✗：删它之前先补一个"取成值再调"的用例 ✓。
+
+**顺带发现的死代码不一致** ✗（都在不可达路径上 ✓）：x86_64 的 `tailapply`/`ticall` 用 `nreg = min(ntot, 6)` ✓
+⇒ **>6 个值的多余参数被静默丢掉** ✗（返回错值 ✓）；arm64 / riscv64 同场景发 `brk` / `unimp` ✓（响亮 trap ✓）。
+今天都不可达 ✓，但**一旦**有人手写 `$proc` 发出它 ✓，三架构行为就分叉 ✗。
+
+**结论** ✓：`tailapply` / `ticall` **不做实现** ✗（给死 opcode 增肥 ✗），按 §6 删 ✓ ——
+顺序有讲究 ✓：三后端 emitter 的 case ✓、`emit.yac` 里 `ticall` 的取字段分支 ✓、`lir.yac` 的构造分支与名单 ✓、
+以及 `backend.yac:1010` 的 `vops(0)` 名单 ✓ **必须一起删** ✓。
+
+好在**有校验兜底** ✓（`backend.yac:1025 vop_known` ✓ → `vinsns` 里 `vbad(name, "unknown op '…'")` ✓）：
+`vops(0)` 里也没了它 ✓ ⇒ 任何残留都会在**校验期**响亮报错 ✓；反过来 ✗ 只删 emitter 的 case 而留着名单 ✓，
+就会落进 dispatcher 末尾的 `else st` ⇒ **静默不发射** ✗（比现在的 `brk` 更糟 ✗）。
+
+> **可以毫无悬念地起步** ✓：`xcall` / `gvld` / `gvst` / `gfnst` / `$icall` ✓ —— 五个都**没有构造点** ✓
+> ⇒ 只要删掉 `vops(0)` 里的名字 ✓ + `$icall` 那 4 处 emitter case ✓。
+> **`apply` 千万不能删** ✗ —— 它才是"动态调用能力"当前的实际拼写 ✓（样本里 64 处 ✗）：
+> §6 说的"**能力不删，只改形态**"这件事**还没做完** ✗（`apply` 仍是独立 opcode ✓）。
 
 ---
 

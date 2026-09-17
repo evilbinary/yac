@@ -969,6 +969,15 @@ let dump_lir(src) =
     let _ = report_syntax(ast) in 1
   else if report_unbound(src, ast) != 0 then 1
   else
+    /* Link the imported packages FIRST, exactly like compile_env_of does.
+     * rt_for_link only links what link_need_box/link_local_box name, and on
+     * this path nothing ever set them -- so a dump of a package-importing unit
+     * picked up whatever ran last and died with
+     * "error: LIR: call to undefined procedure '<host leaf>'" (e.g. `host_arch`
+     * for the self-hosting bundle). Measured 2026-09-17: the dump of
+     * yc_bundle.yac was 52 bytes of that error, which silently turned an
+     * opcode census into "0 occurrences of everything" (FLAT_ABI.md 8.2 #10). */
+    let _ = link_from_ast(ast) in
     let anf = pass_anf(ast) in
     let rt0 = rt_for_link(0) in
     let _ = pkg_prefix_set("") in
