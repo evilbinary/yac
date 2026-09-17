@@ -205,14 +205,20 @@ let tco_one(ins, gname) =
     ["tcall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
   else if nth(ins, 0) == "apply" then
     /* self -> tcall (tloop: same object, args shuffled, no new frame).
-     * non-self keeps the legacy tailapply spelling. */
+     * Only a SELF call can be turned into a loop here, and tco_find only ever
+     * reports one (lir.yac:199 -- it accepts apply/icall only when the callee
+     * operand is the ["self"] sentinel). The non-self branches used to build
+     * the legacy `tailapply` / `ticall` spellings; nothing consumes them any
+     * more (FLAT_ABI.md 6 cleanup list, 8.12 census), so a non-self apply /
+     * icall in tail position is simply left as it is: an ordinary call whose
+     * value the enclosing `ret` returns. */
     if tco_self_op(nth(ins, 2)) then
       ["tcall", nth(ins, 1), gname, nth(ins, 4)]
-    else ["tailapply", nth(ins, 1), nth(ins, 2), nth(ins, 3), nth(ins, 4)]
+    else ins
   else if nth(ins, 0) == "icall" then
     if tco_self_op(nth(ins, 2)) then
       ["tcall", nth(ins, 1), gname, nth(ins, 3)]
-    else ["ticall", nth(ins, 1), nth(ins, 2), nth(ins, 3)]
+    else ins
   else ins
 
 let tco_fun_at(f, idx) =
@@ -1553,11 +1559,10 @@ let prof_skip(nm) =
   else if is_prof_name(nm) then true
   else is_yac_prof_name(nm)
 
-let prof_is_tco(k) =
-  if k == "tcall" then true
-  else if k == "ticall" then true
-  else if k == "tailapply" then true
-  else false
+/* Only `tcall` survives the §6 opcode convergence (FLAT_ABI.md 6 / 8.12): the
+ * retired tailapply/ticall spellings no longer exist, so there is nothing else
+ * for the profiler to step over here. */
+let prof_is_tco(k) = k == "tcall"
 
 /* maybe_tcall rewrites tail self-calls before wrap. Insert leave in front of
  * those jumps or nstk leaks until dump (incl_ns becomes remaining wall time). */

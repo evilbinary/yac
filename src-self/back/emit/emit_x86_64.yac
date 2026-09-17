@@ -1567,29 +1567,6 @@ let emit_call_guard(b, st, patches, dst) =
   let _ = apply_patch(b, jover, over) in
   [ps, jend]
 
-/* Same check for a tail dynamic call (tailapply/ticall). There is no dst to
- * receive the 0, so the not-callable path puts yac_not_fn's address into rbx --
- * the register the tail sequence jumps through -- and the stub's own `ret`
- * returns 0 to the original caller after printing the line. */
-let emit_call_guard_tail(b, st, patches) =
-  /* The stub identifies the rejected value from arg0; the tail sequence loads
-   * its real arguments AFTER this guard, so rsi is free here. */
-  let _ = mov_rax_to_argreg(b, 1) in
-  let _ = mov_r11d_rax_disp32(b, 16) in
-  let _ = cmp_r11_imm8(b, 16) in
-  let _ = jcc_rel32(b, 2, 0) in
-  let jbad = bytes_len(b) - 4 in
-  let _ = mov_rbx_rax_disp32(b, 16) in
-  let _ = jmp_rel32(b, 0) in
-  let jjoin = bytes_len(b) - 4 in
-  let _ = mov_r64_imm64(b, 3, 0) in
-  let fnpos = bytes_len(b) - 8 in
-  let ps = emit_patch_clos(nth(st, 4), patches, fnpos, "yac_not_fn") in
-  let join = bytes_len(b) in
-  let _ = apply_patch(b, jbad, join) in
-  let _ = apply_patch(b, jjoin, join) in
-  ps
-
 let emit_x86_i_apply(st, insn, is_entry) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
@@ -1817,38 +1794,6 @@ let emit_x86_i_clos(st, insn, is_entry) =
       let _ = apply_patch(b, j4, lc) in
       let _ = apply_patch(b, j5, lc) in
       emit_st4(st, b, cur, labels, patches)
-  else if k == "tailapply" or k == "ticall" then
-    let clos = nth(insn, 2) in
-    let ncap = apply_ncap(insn) in
-    let args = apply_args(insn) in
-    let nargs = len(args) in
-    let ntot = ncap + nargs in
-    let nreg = if ntot < 6 then ntot else 6 in
-    let _ = emit_load_rax_slot(b, clos) in
-    let _ = and_rax_1(b) in
-    /* A REPL line's trailing call is in tail position, so this -- not
-     * emit_x86_i_apply -- is the path `a()` takes; without the guard here the
-     * check in apply was dead for exactly the case that crashed. A tail call
-     * has no dst to receive 0, so the not-callable path loads yac_not_fn's
-     * address into rbx (the register this sequence jumps through): the stub
-     * prints "error: not a function" and returns 0 to the original caller. */
-    let patches = emit_call_guard_tail(b, st, patches) in
-    let load_reg(i) =
-      if i >= nreg then 0
-      else if i < ncap then
-        let _ = emit_load_rax_slot(b, clos) in
-        let _ = and_rax_1(b) in
-        let _ = emit_obj_load_argreg(b, i, 32 + i * 8) in
-        load_reg(i + 1)
-      else
-        let _ = emit_load_rax_slot(b, nth(args, i - ncap)) in
-        let _ = mov_rax_to_argreg(b, i) in
-        load_reg(i + 1) in
-    let _ = load_reg(0) in
-    let _ = mov_rsp_rbp(b) in
-    let _ = pop_rbp(b) in
-    let _ = jmp_rbx(b) in
-    emit_st4(st, b, cur, labels, patches)
   else st
 
 let emit_x86_i_prim(st, insn) =
@@ -1997,8 +1942,7 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
      * compile-time error in lir.yac. */
     if k == "closure" then
       emit_x86_i_clos(st, insn, is_entry)
-    else if k == "apply" or k == "icall"
-         or k == "tailapply" or k == "ticall" then
+    else if k == "apply" or k == "icall" then
       emit_x86_i_apply(st, insn, is_entry)
     else if is_frame_op(k) or k == "mov_imm" or k == "mov" or is_arith(k)
          or k == "cmp" or k == "icmp" or k == "label" or k == "fcall" or k == "ccall"

@@ -62,15 +62,14 @@ let host_id(name, i) =
     else host_id(name, i + 1)
 
 
-/* icall/ticall have no ncap field; apply/tailapply do. */
+/* icall carries no ncap field; apply does. (The retired tailapply/ticall
+ * spellings are gone -- FLAT_ABI.md 6 cleanup list, 8.12 census.) */
 let apply_ncap(insn) =
   if nth(insn, 0) == "icall" then 0 - 1
-  else if nth(insn, 0) == "ticall" then 0 - 1
   else nth(insn, 3)
 
 let apply_args(insn) =
   if nth(insn, 0) == "icall" then nth(insn, 3)
-  else if nth(insn, 0) == "ticall" then nth(insn, 3)
   else nth(insn, 4)
 
 let b_append(dst, src) =
