@@ -1084,6 +1084,11 @@ let emit_resolve_patch(st, p) =
   let offs = nth(st, 1) in
   let codebase = nth(st, 2) in
   let globbase = nth(st, 3) in
+  /* G-relative area (tags 3..8 and 21): the SESSION's G for a REPL blob, this
+   * image's own for AOT -- see emit_x86_64's GSESS_BASE note. States built
+   * before field 6 existed have no such distinction, and there the two
+   * coincide, so falling back to globbase is the same thing. */
+  let gsess = if len(st) > 6 then nth(st, 6) else globbase in
   let tag = nth(p, 0) in
   if tag == 1 then
     apply_patch(b, nth(p, 1), nth(offs, nth(p, 2)))
@@ -1092,22 +1097,22 @@ let emit_resolve_patch(st, p) =
     apply_u64_rel(b, nth(p, 1), codebase + nth(offs, nth(p, 2)))
   else if tag == 3 then
     let _ = relocs_add(nth(p, 1)) in
-    apply_u64_rel(b, nth(p, 1), globbase)
+    apply_u64_rel(b, nth(p, 1), gsess)
   else if tag == 4 then
     let _ = relocs_add(nth(p, 1)) in
-    apply_u64_rel(b, nth(p, 1), globbase + 8)
+    apply_u64_rel(b, nth(p, 1), gsess + 8)
   else if tag == 5 then
     let _ = relocs_add(nth(p, 1)) in
-    apply_u64_rel(b, nth(p, 1), globbase + 16)
+    apply_u64_rel(b, nth(p, 1), gsess + 16)
   else if tag == 6 then
     let _ = relocs_add(nth(p, 1)) in
-    apply_u64_rel(b, nth(p, 1), globbase + 24)
+    apply_u64_rel(b, nth(p, 1), gsess + 24)
   else if tag == 7 then
     let _ = relocs_add(nth(p, 1)) in
-    apply_u64_rel(b, nth(p, 1), globbase + 120)
+    apply_u64_rel(b, nth(p, 1), gsess + 120)
   else if tag == 8 then
     let _ = relocs_add(nth(p, 1)) in
-    apply_u64_rel(b, nth(p, 1), globbase + 128)
+    apply_u64_rel(b, nth(p, 1), gsess + 128)
   else if tag == 11 then
     let _ = relocs_add(nth(p, 1)) in
     apply_u64_rel(b, nth(p, 1), nth(st, 4) + nth(p, 2) + 1)
@@ -1151,10 +1156,12 @@ let emit_resolve_patch(st, p) =
   else if tag == 21 then
     let _ = relocs_add(nth(p, 1)) in
     /* host leaves: G+136+8*id (id<10); extsym id=10+i: the extern slots
-     * right before the gref slots (gref_base - extsym*8 + 8*i = 456+8*i). */
+     * right before the gref slots (gref_base - extsym*8 + 8*i = 456+8*i).
+     * These slots are the SESSION's for a REPL blob (host_tab_fill writes them
+     * there), hence gsess and not globbase -- see the note in emit_x86_64. */
     apply_u64_rel(b, nth(p, 1),
-      if nth(p, 2) < 10 then globbase + 136 + bshl(nth(p, 2), 3)
-      else globbase + 456 + bshl(nth(p, 2) - 10, 3))
+      if nth(p, 2) < 10 then gsess + 136 + bshl(nth(p, 2), 3)
+      else gsess + 456 + bshl(nth(p, 2) - 10, 3))
   else
     0
 

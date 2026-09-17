@@ -2193,10 +2193,30 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
    * [wrong+16] and jumped into garbage (SIGSEGV/SIGILL, or silently nothing).
    * Per-image base + the field shifted in emit_apply_unres is what fill_gref
    * already assumes. */
+  /* TWO bases, because two different areas are involved (FLAT_ABI.md 8.10):
+   *
+   *  GLOBALS_BASE -- tags 22/23/24, the gref stub cells: THIS image's data
+   *    area. fill_gref writes cells at data_start+gref_base()+i*32 (image
+   *    relative) and emit_apply_unres adds the append offset, so the code must
+   *    address them the same way: a session-let cell that the following line
+   *    reaches through the session slot has to live where fill_gref put it.
+   *
+   *  GSESS_BASE -- tags 3..8 and 21, i.e. the fixed globals G+0..+128 and the
+   *    host slot table (G+136 leaves, G+456 extsym): for a REPL blob these are
+   *    NOT this image's. emit_glob_data is skipped for a blob, and
+   *    back/jit.yac host_tab_fill writes the host leaf addresses into the
+   *    RUNNING session's data_start (yjit_layout_get), not into the blob's.
+   *    Addressing them per-image reads zeroed bytes -- measured: `import
+   *    compiler` on a later line, then `compile("1+2")`, called through a host
+   *    slot that read 0 and died at RIP=0. AOT (T == 0) bakes these into its
+   *    own image, where the two bases coincide. */
   let GLOBALS_BASE = LOAD_VADDR + TEXT_OFF + data_start in
+  let GSESS_BASE =
+    if T != 0 then nth(js, 1)
+    else LOAD_VADDR + TEXT_OFF + data_start in
   let _ = patches_extend(extra, patches) in
   let rst = [b, offs, LOAD_VADDR + TEXT_OFF, GLOBALS_BASE,
-             LOAD_VADDR + TEXT_OFF + pool_start, smap_start] in
+             LOAD_VADDR + TEXT_OFF + pool_start, smap_start, GSESS_BASE] in
   let _ = emit_unres_set([rst, extra, "x86_64"]) in
   let _ = log_i("emit", "code_len", bytes_len(b)) in
   let _ = log("emit", "done") in

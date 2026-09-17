@@ -1927,8 +1927,11 @@ let emit_program_arm64(prog, load_vaddr, text_off, fmt) =
   let _ = host_slot_bake(b, fo0, load_vaddr, text_off, data_start) in
   let extra = list_new() in
   let _ = patches_extend(extra, patches) in
+  /* Field 6 = the G/host-slot base (tags 3..8, 21). This backend always bakes
+   * those into its own image, so it equals GLOBALS_BASE -- see emit_x86_64's
+   * GSESS_BASE note for why the two are separate fields. */
   let rst = [b, offs, load_vaddr + text_off, GLOBALS_BASE, labels,
-             load_vaddr + text_off + pool_start] in
+             load_vaddr + text_off + pool_start, GLOBALS_BASE] in
   let _ = if want_asm then asm_dump_cells(b, data_start, 0) else 0 in
   let _ = emit_unres_set([rst, extra, "arm64"]) in
   let _ = funsym_set(fo0) in

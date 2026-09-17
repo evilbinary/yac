@@ -157,10 +157,10 @@ let emit_apply_unres(off) =
       if off == 0 then rst
       else if arch == "x86_64" then
         [nth(rst, 0), nth(rst, 1), nth(rst, 2) + off, nth(rst, 3) + off,
-         nth(rst, 4) + off, nth(rst, 5)]
+         nth(rst, 4) + off, nth(rst, 5), nth(rst, 6)]
       else
         [nth(rst, 0), nth(rst, 1), nth(rst, 2) + off, nth(rst, 3) + off,
-         nth(rst, 4), nth(rst, 5) + off] in
+         nth(rst, 4), nth(rst, 5) + off, nth(rst, 6)] in
     let _ = log("emit", "resolve") in
     let _ =
       if arch == "arm64" then a64_resolve_loop(st, extra, 0)
