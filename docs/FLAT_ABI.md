@@ -343,7 +343,9 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 
 > 本节原为 2026-09-15 的"四类失败（全量 679 / 7）"。`pkg profile` 在 §8.7 修好、
 > `pkg compiler` 与 `import after use` 在 §8.9 修好、最后一条
-> `repl let fn after expr line` 在 §8.8 修好 ⇒ **全量 `make test` = 714 / 0** ✓。
+> `repl let fn after expr line` 在 §8.8 修好 ⇒ `pkg compiler` / `import after use` 在 §8.9 修好 ⇒
+> **全量 `make test` = 716 / 0** ✓（§8.8 的修复一度让"import 后的宿主叶调用"读到 0 而段错误，
+> 已在 §8.10 用"两个基址"修好并补了回归用例 ✓）。
 > 下表保留下来作"曾经红过什么"的台账。
 
 | 用例 | 现象 | 根因 | 证据 |
@@ -391,9 +393,9 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | `qemu-riscv64` | **81 / 0**（3 SKIP） |
 | 全量 `make test` | **679 / 7** |
 
-> **2026-09-17 现状**（全量实跑 ✓）：host `compiler` **184 / 0** ✓、host `pkg` **22 / 0** ✓、
+> **2026-09-17 现状**（全量实跑 ✓）：host `compiler` **185 / 0** ✓、host `pkg` **22 / 0** ✓、
 > host `interp` **36 / 0** ✓、`qemu-arm64` **85 / 0** ✓、`qemu-riscv64` **85 / 0** ✓（各 3 SKIP ✓）、
-> 全量 `make test` **714 / 0** ✓ —— **全绿** ✓。
+> 全量 `make test` **716 / 0** ✓ —— **全绿** ✓。
 > 相对上表的增量来自新增用例：`fun_eq` / `print_dotted` / `prof_hook_name` / `import_late`（compiler）
 > + `pkg prof_hook`（pkg）；`pkg profile`、`pkg compiler`、`import after use`、`repl let fn after expr line`
 > 也从此表里的失败逐条转绿 ✓（分别见 §8.7 / §8.9 / §8.9 / §8.8）。
@@ -623,7 +625,7 @@ data 基址（`nth(js, 1)` ✗），而 `fill_gref` / `bake` 把 stub cell 写�
 `=== gref cells`（名字 / cell 偏移 / `+0` 值 / **`+16` 入口** ✓）与 `=== tag22 cells`
 （解析后的 cell 绝对地址 ✓）两张表 ✓ —— 这两个数就是这次定位的钥匙 ✓。
 
-**验收** ✓：全量 `make test` **714 / 0** ✓（原 712/2 ✓）；`compiler` **184 / 0** ✓、`pkg` 22/0 ✓、
+**验收** ✓：全量 `make test` **716 / 0** ✓（原 712/2 ✓）；`compiler` **185 / 0** ✓、`pkg` 22/0 ✓、
 `interp` 36/0 ✓、`qemu-arm64` / `qemu-riscv64` **85 / 0** ×2 ✓；REPL 花样：定义在第 2、第 3 行 ✓、
 两个跨行定义互相调用 ✓、跨行 `a == f` = **1** ✓、`foldl(f, 0, [1,2,3])` = **3** ✓。
 
@@ -768,6 +770,46 @@ if str_len(f(0)) > 0 then 1 else 0
 
 > **两条顺带记下的本机环境事实**（都在 §8.2）：#11 无 C 编译器 ⇒ 要 `make CC=gcc` 且走 MSYS2 MINGW64
 > shell（裸 shell 里 `gcc` 连 `-E` 都起不来 ✗）；#12 `$(YC_A)` 的两趟自举**不能并行** ✗。
+
+### 8.10 已修：REPL blob 的"两个基址"—— cell 用本镜像、G/宿主槽用会话（2026-09-17）
+
+**症状**（用户报的）：`./yc --repl app/demo/t2.yac` → `import compiler` → `compile("1+2")` ⇒ **SIGSEGV**；
+gdb 显示 **RIP = 0** ✓、返回地址在 JIT 会话镜像里 ✓ ⇒ 会话执行了一次 `call 0` ✓。
+
+**触发形态**（四组对照 ✓；A 需要"先有一行完整跑过"✓）：
+
+| # | 会话 | 结果 |
+|---|---|---|
+| A | `1+1` → `import compiler` → `compile("1+2")` | **139** ✗ |
+| B | `1+1` → `import fmt` → `printf("x")` | 0 ✓ |
+| C | `1+1` → `import compiler` → `print(1)` → `compile("1+2")` | 0 ✓ |
+| D | `1+1` → `let f(x) = x + 1` → `f(2)` | 0 ✓ |
+
+**根因**：§8.8 的修复把 blob 的 globals 基址从"会话第一张镜像的 data"改成"本镜像 data + append 偏移" ✓
+—— 这对**会话 let 的 cell**（tag 22/23/24）是必须的 ✓，但 **G / 宿主槽表**（tag 3..8、21）**不是本镜像的**：
+`emit_glob_data` 对 blob 直接跳过 ✗，而宿主叶地址由 `back/jit.yac:97 host_tab_fill` 写进
+**运行中会话**的 `data_start`（`yjit_layout_get` ✓）、不是写进 blob 自己的镜像 ✗ ⇒ 按"本镜像"去读那批槽
+读到的是**全零内存** ✗ ⇒ `call 0` ⇒ SIGSEGV ✓（C 组只因中间多一行把会话推迟了一拍才没踩到 ✓）。
+
+**修法**：把解析状态里的"一个 globals 基址"拆成**两个** ✓：
+
+| 栏 | 是谁 | 谁用 |
+|---|---|---|
+| 3 `GLOBALS_BASE` | **本镜像** data（+append 偏移 ✓） | tag 22 / 23 / 24（gvar stub cell、AOT 入口、立即数入 cell ✓） |
+| 6 `GSESS_BASE`（新增 ✓） | REPL blob = **会话**的 data；AOT = 本镜像 | tag 3..8（G+0..+128 ✓）、tag 21（宿主叶 G+136、extern G+456 ✓） |
+
+- `emit_x86_64` 构造 `rst` 时第 7 栏放 `GSESS_BASE = if T != 0 then nth(js,1) else 本镜像` ✓
+  （正是拆开之前的 `GLOBALS_BASE` 表达式 ✓）；arm64 / riscv64 两栏相同 ✓（它们总把宿主槽烘进本镜像 ✓）。
+- `emit_apply_unres(off)` 加 append 偏移时**不动第 7 栏** ✓（会话的 G 不随追加移动 ✓）。
+- `emit_resolve_patch` 里 `gsess = if len(st) > 6 then nth(st,6) else globbase` ✓（老状态兜底 ✓）。
+
+**回归用例** ✓：`tests/run.yac` 的 repl 组新增
+`["nested compile after import", "1+1\nimport compiler\ncompile(\"1+2\")\n:q\n", "<bytes>"]` ✓
+（compiler 组也会跑到 ⇒ 计数 +2 ✓）。
+
+**验收** ✓：A 组 rc **139 → 0** ✓（输出 `<bytes>` ✓）、§8.8 的 `1+1 / let f / print(f(2))` 仍为 **3** ✓、
+全量 `make test` **716 / 0** ✓（`compiler` 185/0 ✓、`pkg` 22/0 ✓、`interp` 36/0 ✓、
+`qemu-arm64` / `qemu-riscv64` 85/0 ×2 ✓）。
 
 ---
 
