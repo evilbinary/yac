@@ -14,8 +14,8 @@ and `libsocket.a`.
 
 | path | role |
 | --- | --- |
-| `pkg/yui.yac` | Yac bindings (`import yui`). Game: `spawn`/`box`/`vel`/`pos`/`get`/`hit`/`cull`/`burst` |
-| `native/yui.yac` | `import yui` shim if you still `cat` this file |
+| `pkg/gui/yui.yac` | Yac bindings (`import gui.yui`). Game: `spawn`/`box`/`vel`/`pos`/`get`/`hit`/`cull`/`burst` |
+| `native/yui.yac` | `import gui.yui` shim if you still `cat` this file |
 | `native/yui_yac.c` | C glue: init, tick, set_text, click_is |
 | `native/libyui_yac.so` | shared lib (built by make) |
 | `counter/` | increment / decrement / reset |
