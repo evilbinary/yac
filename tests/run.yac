@@ -389,6 +389,7 @@ let pkg_cases(_) = [
   ["bytes", "rc", "42"], ["ffi", "rc", "42"], ["json", "rc", "42"],
   ["env", "rc", "42"], ["cli", "rc", "42"], ["http", "rc", "42"], ["yui", "rc", "42"],
   ["math", "rc", "42"],
+  ["lang_js", "rc", "42"],
   ["profile", "rc", "42"],
   ["prof_hook", "rc", "42"],
   /* `compiler` is a THIN wrapper over host leaves: pkg/tools/compiler.yac binds every
@@ -401,9 +402,15 @@ let pkg_cases(_) = [
   ["import_as", "rc", "42"]
 ]
 
-let pkg_all(st, yc) =
+let pkg_all(st, yc, stem) =
   let _ = banner("pkg", nth(yc, 0)) in
-  foldl(fun(s, c) -> pkg_one(s, yc, c), st, pkg_cases(0))
+  let xs = cases_pick(pkg_cases(0), stem) in
+  if len(xs) == 0 then
+    let _ = print(str_cat("error: unknown pkg test '",
+      str_cat(stem, "' (pkg_cases name, or a substring)"))) in
+    exit(2)
+  else
+    foldl(fun(s, c) -> pkg_one(s, yc, c), st, xs)
 
 /* List lives in a small function: a 60-element literal in _start miscompiles. */
 let compiler_cases(_) = [
@@ -1087,7 +1094,7 @@ let boot_suite(st, ya) =
   let st3 = check(st2, "boot yc_b exists", "0", int_to_str(exists_rc(yb))) in
   let st4 = check(st3, "boot yc_b not .bin", "1", int_to_str(exists_rc(str_cat(yb, ".bin")))) in
   let _ = run(["chmod", "+x", yb]) in
-  let stB = pkg_all(compiler_all(st4, yc_pkg(yb)), yc_pkg(yb)) in
+  let stB = pkg_all(compiler_all(st4, yc_pkg(yb)), yc_pkg(yb), "") in
   let psrc = str_cat(TMP, "/p42.yac") in
   let pbin = native(str_cat(TMP, "/p42")) in
   let _ = write_file(psrc, "42\n") in
@@ -1162,7 +1169,9 @@ let main =
   let _ = run(["chmod", "+x", ya]) in
   let yc = yc_pkg(ya) in
   let s = suite_name(0) in
-  if s == "pkg" then suite_done(pkg_all([0, 0], yc))
+  if s == "pkg" then
+    let stem = if argc() < 3 then "" else argv(2) in
+    suite_done(pkg_all([0, 0], yc, stem))
   else if s == "link" then suite_done(link_front([0, 0], ya))
   else if s == "interp" then suite_done(interp_suite([0, 0]))
   else if s == "compiler" then suite_done(compiler_all([0, 0], yc))
@@ -1182,7 +1191,7 @@ let main =
   else
     let st0 = interp_suite([0, 0]) in
     let st1 = boot_front(st0, ya) in
-    let st2 = pkg_all(compiler_all(st1, yc), yc) in
+    let st2 = pkg_all(compiler_all(st1, yc), yc, "") in
     let st3 = link_front(st2, ya) in
     suite_done(boot_suite(qemu_both(st3, yc), ya))
 in main

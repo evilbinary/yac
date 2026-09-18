@@ -1,0 +1,45 @@
+/* lang_js.yac — lang.js translator regression (AOT pkg case, rc 42).
+ *
+ * Checks the shape of translated output for the core constructs, and that a
+ * malformed program reports "error: …" instead of silently succeeding.
+ * (Execution of generated programs is covered by the interpreter/AOT pipeline;
+ * the in-process `tools.compiler.run` host path is not used here.) */
+
+import lang.js
+
+/* Substring test (no builtin contains for strings). */
+let has(s, sub) =
+  let n = str_len(s) in
+  let m = str_len(sub) in
+  let rec(i) =
+    if i + m > n then false
+    else if str_slice(s, i, m) == sub then true
+    else rec(i + 1) in
+  if m == 0 then true else rec(0)
+
+/* Mutable variable -> box. */
+let c1 = has(js_to_yac("let x = 1; x = x + 1;"), "box_new")
+
+/* Function with early return -> per-call flag boxes. */
+let c2 = has(js_to_yac("function f(n){ if (n <= 0) { return 0; } return n; }"), "_retf")
+
+/* Array literal -> list_new / list_push. */
+let c3 = has(js_to_yac("let a = [1, 2, 3];"), "list_new")
+
+/* Object literal -> fmap and the data.fmap import header. */
+let c4 = has(js_to_yac("let o = { a: 1 };"), "fmap_put")
+let c5 = has(js_to_yac("let o = { a: 1 };"), "import data.fmap")
+
+/* for loop -> self-recursive let. */
+let c6 = has(js_to_yac("for (let i = 0; i < 3; i = i + 1) { }"), "(_) =")
+
+/* Multi-arg console.log -> _js_str helper. */
+let c7 = has(js_to_yac("console.log(\"a\", 1);"), "_js_str")
+
+/* Math.* -> num.math import. */
+let c8 = has(js_to_yac("console.log(Math.sqrt(4));"), "import num.math")
+
+/* Malformed input is reported. */
+let c9 = has(js_to_yac("let = 1;"), "error:")
+
+if c1 and c2 and c3 and c4 and c5 and c6 and c7 and c8 and c9 then 42 else 0
