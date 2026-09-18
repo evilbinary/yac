@@ -28,6 +28,7 @@ export runtime_funs, runtime_add, yac_cimport_host_sym, yac_gval_pub, yac_gval_l
  * import binds the name in the package case -- sigma_host_seed only covers
  * @name host bindings, which intern is not. */
 import lib.map {intern}
+import rt.os {host_os}
 
 let rt_cons_ins(_) =
   [["local", 6, 2],
@@ -1185,18 +1186,27 @@ let rt_print_int_ins(_) =
    ["mov_imm", 8, 0 + 0],
    ["ret", 8]]
 
+/* Newline byte(s) written after print. A Windows console needs CRLF: the
+ * native image writes bytes straight to the handle (no C text-mode
+ * translation), so a lone LF leaves the cursor in its current column and the
+ * output staircases. The C interpreter's stdout is text-mode and already
+ * emits CRLF, so match it there. */
+let rt_nl_ins(_) =
+  if host_os(0) == "windows" then
+    [["mov_imm", 6, 13 + 13], ["write1", 6], ["mov_imm", 6, 10 + 10], ["write1", 6]]
+  else
+    [["mov_imm", 6, 10 + 10], ["write1", 6]]
+
 /* print(v, nl): print_val then optional newline. Returns v. */
 let rt_print_ins(_) =
-  [["local", 8, 2],
-   ["fcall", 3, "print_val", [1]],
-   ["mov_imm", 4, 0 + 0],
-   ["icmp", "==", 5, 2, 4],
-   ["cmpjmp", 5, "pr_done", "pr_nl"],
-   ["label", "pr_nl"],
-   ["mov_imm", 6, 10 + 10],
-   ["write1", 6],
-   ["label", "pr_done"],
-   ["ret", 1]]
+  append(
+    [["local", 8, 2],
+     ["fcall", 3, "print_val", [1]],
+     ["mov_imm", 4, 0 + 0],
+     ["icmp", "==", 5, 2, 4],
+     ["cmpjmp", 5, "pr_done", "pr_nl"],
+     ["label", "pr_nl"]],
+    append(rt_nl_ins(0), [["label", "pr_done"], ["ret", 1]]))
 
 /* Mark: bitmap O(1) if G+64 set, else walk gc_head. Recurse by kind. */
 let rt_gc_mark_ins(_) =
