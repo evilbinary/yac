@@ -328,6 +328,37 @@ let compiler_cross_pkg(st, yc) =
     else check(st1, "compiler cross-pkg format ncap missing import",
       "unbound variable 'format'", blob)
 
+/* Package-scope top-level VALUE (a box singleton) read by same-package
+ * functions. AOT always initialized it; the REPL path (pass_lir_eval) used to
+ * skip package init calls, so `gval` dereferenced a zero cell -> SIGSEGV.
+ * Both paths must now run the init and answer 42. */
+let compiler_pkg_box(st, yc) =
+  let lib = str_cat(TMP, "/boxlib.yac") in
+  let main = str_cat(TMP, "/box_main.yac") in
+  let bin = native(str_cat(TMP, "/c_boxlib")) in
+  let _ = write_file(lib, str_cat(
+    "package boxlib\nexport get, bump\n",
+    str_cat(
+      "let counter = let b = box_new() in let _ = box_set(b, 40) in b\n",
+      str_cat(
+        "let get(_) = box_get(counter)\n",
+        "let bump(n) = let _ = box_set(counter, box_get(counter) + n) in box_get(counter)\n")))) in
+  let _ = write_file(main, "import boxlib\nprint(bump(2))\nprint(get(0))\n") in
+  let yc2 = [nth(yc, 0), "--pkg", str_cat("src-self,", TMP)] in
+  let cr = run(append(yc2, [main, "-o", bin])) in
+  if nth(run(["test", "-f", bin]), 0) != 0 then
+    check(st, "compiler pkg top-level box", "wrote binary",
+          str_cat("compile rc=", int_to_str(nth(cr, 0))))
+  else
+    let _ = run(["chmod", "+x", bin]) in
+    let st1 = check(st, "compiler pkg top-level box aot", "42", int_to_str(nth(run([bin]), 0))) in
+    let r = run_stdin(append(yc2, ["--repl", main]), ":q\n") in
+    let blob = str_cat(nth(r, 1), nth(r, 2)) in
+    if nth(r, 0) != 0 then
+      check(st1, "compiler pkg top-level box repl", "0", int_to_str(nth(r, 0)))
+    else if contains(blob, "42") then check(st1, "compiler pkg top-level box repl", "1", "1")
+    else check(st1, "compiler pkg top-level box repl", "42", blob)
+
 /* `yc --cps`: rc cases print the value; out may also print it. */
 let cps_one(st, yc, c) =
   let name = nth(c, 0) in
@@ -677,6 +708,7 @@ let compiler_all(st, yc) =
     foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)), yc) in
   let st1 = foldl(fun(s, c) -> compiler_err_one(s, yc, c), st1, compiler_err_cases(0)) in
   let st1c = compiler_cross_pkg(st1, yc) in
+  let st1c = compiler_pkg_box(st1c, yc) in
   let st1s =
     if nth(run(["sh", "-c", "command -v nm >/dev/null 2>&1"]), 0) != 0 then st1c
     else

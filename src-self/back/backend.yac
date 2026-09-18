@@ -1,7 +1,7 @@
 /* backend.yac — pipeline + image. lir_expr = ANF→LIR；lower_expr = LIR→emit. */
 
 package back.backend
-export pkg_src, link_is_dylib, compile_native, compile_env_of, compile_env_new, dump_ast, dump_anf, dump_cps, dump_uncps, dump_lex, dump_lir, verify_lir, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, link_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, entry_off, link_need_box, rewrite_imports, rt_for_link
+export pkg_src, link_is_dylib, compile_native, compile_env_of, compile_env_new, dump_ast, dump_anf, dump_cps, dump_uncps, dump_lex, dump_lir, verify_lir, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, link_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, entry_off, link_need_box, rewrite_imports, rt_for_link, pkg_init_list, pkg_init_calls
 import back.lower
 import back.pack.elf {elf_shared_set, funsym_get, pack_elf, pack_elf_libc}
 import back.pack.target {target_arch, target_emachine, target_format, target_shared, target_text_off, target_vaddr}

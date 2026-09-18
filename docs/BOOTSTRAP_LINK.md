@@ -862,6 +862,18 @@ guest 样例 = `tests/pkg/path.yac`（import `path`）；dylib 样例在运行�
 同包顶层 `box` 在运行时崩溃（仅 main 文件支持该写法；已实测并回退，见
 `a258755`）。
 
+> **2026-09-18 更新（崩溃已修，缓存仍不可行）**：根因是 REPL 的
+> `pass_lir_eval`（`back/jit.yac`）没有像 AOT 的 `pass_lir` / yjit 的
+> `pass_lir_yjit` 那样在 `_eval` 前插 `pkg_init_calls`，于是包的顶层值 cell
+> 从未被 `gset` 填充，`gval` 解到 0 即 SIGSEGV。修法：`pass_lir_eval` 也把
+> `pkg_init_list` 的 init 调用插进 `_eval`（frame 增长 `nin`，init 结果占
+> `[nslots, nslots+nin)`）。
+> 注意 REPL 每个 line 是独立 blob，顶层值 cell **不跨行共享**，所以 init 每行都会
+> 重跑（AOT 只跑一次）⇒ 用"顶层 box + 函数读写"做**跨行可变缓存仍不可行**；若要
+> 真正一次初始化并跨行保持，需要把包顶层值改走会话槽（jslot）或镜像内全局槽
+> （见下方 A/B 方案）。回归：`tests/run.yac` 的 `compiler pkg top-level box`
+> （AOT + REPL preload 都要求 42）。
+
 **拟定方案（二选一，实现时再定）**：
 - **A 镜像内全局槽**：在 `emit_glob_data` 的表区（`G+216` 之后或扩一段）为每个
   extern/导出预留 8B 槽；启动前槽值 = 0（= 未解析）。合成包装判断槽为 0 才
