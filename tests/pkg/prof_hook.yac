@@ -13,9 +13,9 @@
  * must exist AND must contain the profiled function's name. Before the fix it
  * printed "wrote ..." and then reported nfuncs=0 (the name never arrived).
  */
-import profile
-import io
-import str
+import tools.profile
+import fs.io
+import text.str
 
 let bump(x) =
     x + 1

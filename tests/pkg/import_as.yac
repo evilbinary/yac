@@ -1,6 +1,6 @@
-import env as e
-import hash
-import env { get as env_get, get_or }
+import os.env as e
+import data.hash
+import os.env { get as env_get, get_or }
 let p = e.get("PATH") in
 if p == 0 then 0
 else

@@ -1,4 +1,4 @@
-import cli
+import os.cli
 if argc() < 1 then 0
 else
   if len(args(0)) == argc() - 1 then

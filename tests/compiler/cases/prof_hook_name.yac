@@ -1,7 +1,7 @@
 /* The profiler hook is a USER letfun: OBJECT ABI, first param from arg
  * register 1 (LIR.md 4.4.4). The runtime used to hand the name over in arg
  * register 0 only -- the FLAT convention of its own no-op stub -- so a
- * program-level prof_enter_go read nil, and pkg/profile.yac then hashed that
+ * program-level prof_enter_go read nil, and pkg/tools/profile.yac then hashed that
  * nil (yac_str_hash on [0+24]) and died with 139 before writing a single
  * record.
  *

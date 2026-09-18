@@ -1,4 +1,4 @@
-import path
+import fs.path
 let d = dirname("a/b.yac") in
 let j = join("a", "b") in
 let e = ext("a/b.yac") in

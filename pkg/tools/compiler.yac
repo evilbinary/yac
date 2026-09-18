@@ -14,7 +14,7 @@
  *   compile(src)                   src -> compiled machine blob (bytes)
  *   load(path)                     path -> run it as a yjit guest
  */
-package compiler
+package tools.compiler
 export compile_file, compile, load, run, compile_it
 import back.backend {@compile_native}
 import back.pack.target {@mk_jit_target, @mk_target}
@@ -26,7 +26,7 @@ import rt.os {@host_arch, @host_format}
  * and returned 0 with no message -- the same silent-garbage shape as calling a
  * function with the wrong argument count. Say it out loud instead. is_int is
  * the only type predicate the language exposes, and the codebase's idiom is
- * "not an int => a string" (see pkg/map.yac), which is what makes this enough
+ * "not an int => a string" (see pkg/data/map.yac), which is what makes this enough
  * to catch the realistic mistake. */
 let want_src(src, who) =
     if src == 0 then 0

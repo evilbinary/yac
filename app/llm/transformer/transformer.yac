@@ -28,7 +28,7 @@ export sc, dim, ctx, u8len, ch_at, fill, mat, find_char, add_char, build_vocab,
   encode, argmax, rng_next, sample, prompt_tail, model_new, train_step,
   forward_last, generate, generate_s, save_model, load_model, vocab_of, ntok
 
-import io
+import fs.io
 
 /* 定点尺度 S。真实 1.0 ↔ 整数 64。 */
 let sc(_) = 64

@@ -1,4 +1,4 @@
-import json
+import text.json
 let n = parse("12") in
 let a = parse("[1,2]") in
 let o = parse("{\"a\":1}") in

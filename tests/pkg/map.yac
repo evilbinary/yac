@@ -1,4 +1,4 @@
-import map
+import data.map
 let m0 = put(put(new(0), "a", 1), "b", 2) in
 let mi = new(0) in
 let rec(i) =

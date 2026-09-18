@@ -1,6 +1,6 @@
 /* math.yac — integer helpers plus IEEE f64 (range-reduced, few rec calls). */
 
-package math
+package num.math
 export abs, min, max, clamp, sign, gcd, lcm, even, odd, pow, fact,
   isqrt, sqrt, hypot, pi, e, ln2, sin, cos, exp, exp_fast, log, log2, powf, ftoi,
   f64s, fget, fset

@@ -6,8 +6,8 @@
  *   ./app/llm/snapshot/test_file.exe io app/llm/snapshot/snapshot.w
  */
 
-import io
-import fmt
+import fs.io
+import text.fmt
 import snapshot
 
 let try_read(tag, path) =

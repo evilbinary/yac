@@ -1,6 +1,6 @@
 /* yui.yac — ccall bindings for libyui_yac. JSON onClick: yac_click. */
 
-package yui
+package gui.yui
 export yui_open, yui_init, yui_tick, yui_set_text, yui_click_is, yui_shutdown, yui_game_boot, yui_key, yui_game_vel, yui_game_get, yui_game_pos, yui_game_spawn, yui_game_box, yui_game_hit, yui_game_cull, yui_game_burst, yui_rand
 
 /* ASCII prefix. */

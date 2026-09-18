@@ -1,4 +1,4 @@
-import list
+import data.list
 if last([1, 2, 3]) == 3 then
   if contains([1, 2, 3], 2) then
     if contains([1, 2, 3], 9) == false then

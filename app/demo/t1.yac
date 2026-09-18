@@ -1,5 +1,5 @@
-import compiler
-import fmt
+import tools.compiler
+import text.fmt
 
 printf("hello world")
 
