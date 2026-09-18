@@ -1,11 +1,24 @@
-/* lang_js.yac — lang.js translator regression (AOT pkg case, rc 42).
+/* lang_js.yac — lang.js translator + execution regression (host pkg case).
  *
- * Checks the shape of translated output for the core constructs, and that a
- * malformed program reports "error: …" instead of silently succeeding.
- * (Execution of generated programs is covered by the interpreter/AOT pipeline;
- * the in-process `tools.compiler.run` host path is not used here.) */
+ * Runs as a `host` case (tests/run.yac): tools.compiler's `run` is a host leaf,
+ * so each generated yac source is compiled and executed in-process by the
+ * REPL. The console.log output lands in the harness blob and the final value
+ * is 42, so the expected result is "42". */
 
 import lang.js
+import tools.compiler
+
+/* Arithmetic + variable + single-arg console.log -> prints 42. */
+let _ = run(js_to_yac("let x = 41 + 1; console.log(x);"))
+
+/* Recursion with early return -> prints "fact 120". */
+let _ = run(js_to_yac("function f(n){ if (n <= 1) { return 1; } return n * f(n - 1); } console.log(\"fact\", f(5));"))
+
+/* for loop + array + indexed read -> prints 6. */
+let _ = run(js_to_yac("let a = [1,2,3]; let s = 0; for (let i = 0; i < 3; i = i + 1) { s = s + a[i]; } console.log(s);"))
+
+/* Object literal + member read -> prints 30. */
+let _ = run(js_to_yac("let o = { a: 10, b: 20 }; console.log(o.a + o.b);"))
 
 /* Substring test (no builtin contains for strings). */
 let has(s, sub) =
@@ -17,29 +30,16 @@ let has(s, sub) =
     else rec(i + 1) in
   if m == 0 then true else rec(0)
 
-/* Mutable variable -> box. */
+/* Translated shape: boxes, return flags, list / fmap, helper imports. */
 let c1 = has(js_to_yac("let x = 1; x = x + 1;"), "box_new")
-
-/* Function with early return -> per-call flag boxes. */
 let c2 = has(js_to_yac("function f(n){ if (n <= 0) { return 0; } return n; }"), "_retf")
-
-/* Array literal -> list_new / list_push. */
 let c3 = has(js_to_yac("let a = [1, 2, 3];"), "list_new")
-
-/* Object literal -> fmap and the data.fmap import header. */
 let c4 = has(js_to_yac("let o = { a: 1 };"), "fmap_put")
 let c5 = has(js_to_yac("let o = { a: 1 };"), "import data.fmap")
-
-/* for loop -> self-recursive let. */
-let c6 = has(js_to_yac("for (let i = 0; i < 3; i = i + 1) { }"), "(_) =")
-
-/* Multi-arg console.log -> _js_str helper. */
-let c7 = has(js_to_yac("console.log(\"a\", 1);"), "_js_str")
-
-/* Math.* -> num.math import. */
-let c8 = has(js_to_yac("console.log(Math.sqrt(4));"), "import num.math")
+let c6 = has(js_to_yac("console.log(\"a\", 1);"), "_js_str")
+let c7 = has(js_to_yac("console.log(Math.sqrt(4));"), "import num.math")
 
 /* Malformed input is reported. */
-let c9 = has(js_to_yac("let = 1;"), "error:")
+let c8 = has(js_to_yac("let = 1;"), "error:")
 
-if c1 and c2 and c3 and c4 and c5 and c6 and c7 and c8 and c9 then 42 else 0
+if c1 and c2 and c3 and c4 and c5 and c6 and c7 and c8 then 42 else 0

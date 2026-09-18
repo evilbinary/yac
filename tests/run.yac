@@ -389,7 +389,10 @@ let pkg_cases(_) = [
   ["bytes", "rc", "42"], ["ffi", "rc", "42"], ["json", "rc", "42"],
   ["env", "rc", "42"], ["cli", "rc", "42"], ["http", "rc", "42"], ["yui", "rc", "42"],
   ["math", "rc", "42"],
-  ["lang_js", "rc", "42"],
+  /* Needle "fact 120" can only appear if the generated recursion program was
+   * actually compiled and run in-process, so this host case proves execution,
+   * not just translation. */
+  ["lang_js", "host", "fact 120"],
   ["profile", "rc", "42"],
   ["prof_hook", "rc", "42"],
   /* `compiler` is a THIN wrapper over host leaves: pkg/tools/compiler.yac binds every
