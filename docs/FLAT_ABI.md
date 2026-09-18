@@ -1059,7 +1059,7 @@ marked 的钩子会从 1 号参数寄存器读到别的东西 ⇒ 输出**必然
 |---|---|
 | `tests/compiler/cases/prof_hook_name.yac` ✓（程序自带钩子 ✓）| 输出恰为 **`f`** ✓（改写生效 ✓）|
 | `tests/pkg/prof_hook.yac` ✓（包提供钩子 ✓）| rc **42** ✓ |
-| `tests/pkg/tools/profile.yac` ✓ | rc **42** ✓ |
+| `tests/pkg/profile.yac` ✓ | rc **42** ✓ |
 | 全量 `make test` | **726 / 0** ✓（0 条 FAIL ✓）|
 
 **验收** ✓：两趟自举通过 ✓ + **stage2 ≡ stage3 逐字节相同** ✓；新 pass 只在"本单元有 marked 钩子"时才动手 ✓

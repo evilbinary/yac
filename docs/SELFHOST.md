@@ -124,7 +124,7 @@ src-self/
   lang/          lang.scheme
   yc.yac         入口（匿名主包；import 其余编译器包）
   drivers/       各阶段测试驱动（不进 yc）
-pkg/             客常见库（path / str / io / …；查找默认 ./pkg）
+pkg/             客常见库（分类：text / data / num / fs / os / net / gui / native / tools / test；查找默认 ./pkg）
 ```
 
 没有单独的 `regalloc.yac` / `link.yac`：M3 值为栈槽（`[rbp+off]`），符号/入口在 emit+pack 里完成。
