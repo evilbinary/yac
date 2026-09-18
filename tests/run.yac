@@ -473,10 +473,19 @@ let unbound_bads(_) = [
 let repl_feed(yc, src) =
   run_stdin(append(yc, ["--repl"]), src)
 
-let repl_check(st, yc, name, src, needle) =
+let repl_check(st, yc, name, src, needle, wantrc) =
   let r = repl_feed(yc, src) in
   let blob = str_cat(nth(r, 1), nth(r, 2)) in
-  if nth(r, 0) != 0 then check(st, name, "0", int_to_str(nth(r, 0)))
+  if wantrc >= 0 then
+    /* Negative case: the run MUST end with this status (a front / LIR error
+     * reports 2) and still say why. Until now every repl case had to come back
+     * 0, so "must fail cleanly instead of crashing" was untestable -- which is
+     * how `exit()` segfaulted unnoticed (FLAT_ABI.md 8.18). */
+    if nth(r, 0) != wantrc then
+      check(st, name, int_to_str(wantrc), int_to_str(nth(r, 0)))
+    else if contains(blob, needle) then check(st, name, "1", "1")
+    else check(st, name, needle, blob)
+  else if nth(r, 0) != 0 then check(st, name, "0", int_to_str(nth(r, 0)))
   else if contains(blob, "4294967296") then check(st, name, "no junk int", blob)
   else if contains(blob, needle) then check(st, name, "1", "1")
   else check(st, name, needle, blob)
@@ -533,6 +542,14 @@ let repl_cases(_) = [
    * proc emitted), which picked the guest's proc and jumped there -- SIGSEGV,
    * measured 2026-09-17. The entry is funs[0], i.e. that list's LAST record
    * (backend.yac entry_off; FLAT_ABI.md 8.2 #9). */
+  /* Builtin arity: a missing argument must be a reported front error (rc 2),
+   * not a read of `[]` as a slot number. These were SIGSEGVs (FLAT_ABI.md
+   * 8.18); the 4th field is the expected status, so the case really checks the
+   * failure instead of just tolerating it. The last one is not an error at all:
+   * exit(n) leaves the REPL with status n. */
+  ["exit() too few args", "exit()\n:q\n", "builtin 'exit' called with too few arguments", 2],
+  ["str_cat() too few args", "str_cat()\n:q\n", "builtin 'str_cat' called with too few arguments", 2],
+  ["exit(3) status", "exit(3)\n:q\n", "", 3],
   ["guest _eval shadows wrapper", "let _eval(x) = x + 1\nprint(_eval(41))\n:q\n", "42"],
   /* Host-view compiler pkg (12.11 @host): import must be fast, not crash,
    * and bind the thin wrappers. Do NOT invoke compile/load here: calling a
@@ -551,7 +568,8 @@ let repl_all(st, yc, stem) =
     exit(2)
   else
     foldl(fun(s, c) ->
-      repl_check(s, yc, str_cat("repl ", nth(c, 0)), nth(c, 1), nth(c, 2)),
+      repl_check(s, yc, str_cat("repl ", nth(c, 0)), nth(c, 1), nth(c, 2),
+                 if len(c) > 3 then nth(c, 3) else 0 - 1),
       st, xs)
 
 let cps_all(st, yc, stem) =

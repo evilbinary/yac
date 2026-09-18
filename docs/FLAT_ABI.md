@@ -353,7 +353,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 > 本节原为 2026-09-15 的"四类失败（全量 679 / 7）"。四条已全部修完 ✓：
 > `pkg profile`（§8.7 ✓）、`pkg compiler` 与 `import after use`（§8.9 ✓）、
 > 最后一条 `repl let fn after expr line`（§8.8 ✓，其副作用"import 后的宿主叶调用读 0 段错误"
-> 由 §8.10 的"两个基址"收尾 ✓）⇒ **全量 `make test` = 728 / 0** ✓（2026-09-17 晚：新增 `gcroot_pub` ✓、`call_toplevel_value` ✓、`guest _eval shadows wrapper` ✓ 三个用例 ✓）。
+> 由 §8.10 的"两个基址"收尾 ✓）⇒ **全量 `make test` = 734 / 0** ✓（2026-09-17 晚：新增 `gcroot_pub` ✓、`call_toplevel_value` ✓、`guest _eval shadows wrapper` ✓ 以及三条内建元数用例 ✓ —— 后三条要 harness 支持"期望 rc" ✓，见 §8.18 ✓）。
 > 下表保留下来作"曾经红过什么"的台账。
 
 | 用例 | 现象 | 根因 | 证据 |
@@ -409,9 +409,9 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | `qemu-riscv64` | **81 / 0**（3 SKIP） |
 | 全量 `make test` | **679 / 7** |
 
-> **2026-09-17 现状**（全量实跑 ✓）：host `compiler` **188 / 0** ✓、host `pkg` **22 / 0** ✓、
+> **2026-09-17 现状**（全量实跑 ✓）：host `compiler` **191 / 0** ✓、host `pkg` **22 / 0** ✓、
 > host `interp` **36 / 0** ✓、`qemu-arm64` **85 / 0** ✓、`qemu-riscv64` **85 / 0** ✓（各 3 SKIP ✓）、
-> 全量 `make test` **728 / 0** ✓ —— **全绿** ✓（2026-09-17 晚 ✓：`tailapply`/`ticall` 退役 opcode 清理 ✓、`gset` 的 GC 根发布补到 arm64/riscv64 ✓、arm64 G 区大偏移修复 ✓、顶层 `let` 的值可当函数调用 ✓、REPL 入口改按**发射顺序**定位 ✓（§8.17 ✓），新增用例 `gcroot_pub` ✓ / `call_toplevel_value` ✓ / `guest _eval shadows wrapper` ✓）。
+> 全量 `make test` **734 / 0** ✓ —— **全绿** ✓（2026-09-17 晚 ✓：`tailapply`/`ticall` 退役 opcode 清理 ✓、`gset` 的 GC 根发布补到 arm64/riscv64 ✓、arm64 G 区大偏移修复 ✓、顶层 `let` 的值可当函数调用 ✓、REPL 入口改按**发射顺序**定位 ✓（§8.17 ✓）、内建原语的元数检查 ✓（§8.18 ✓）、harness 支持"期望 rc"的负例 ✓）。
 > 相对上表的增量来自新增用例：`fun_eq` / `print_dotted` / `prof_hook_name` / `import_late`（compiler）
 > + `pkg prof_hook`（pkg）；`pkg profile`、`pkg compiler`、`import after use`、`repl let fn after expr line`
 > 也从此表里的失败逐条转绿 ✓（分别见 §8.7 / §8.9 / §8.9 / §8.8）。
@@ -1200,11 +1200,23 @@ let rt_arg(g, ss, k) = if k < len(ss) then nth(ss, k) else log_fatal(...)
 | 上表 6 个写法 | **139 → rc 2 + 明确文案** ✓（不再有段错误 ✓）|
 | 正确写法（`exit(7)` ✓ / `str_cat("a","b")` ✓ / `gc_collect(1)` ✓）| 行为不变 ✓（`exit(7)` 仍是 rc 7 ✓）|
 | 用户报的 REPL 场景 | `exit()` 从**段错误** ⇒ **干净报错** ✓；`exit(3)` 仍以 3 退出 ✓（离开 REPL 用 `:q` / `exit(0)` ✓）|
-| 全量 `make test` | **728 / 0** ✓（0 条 FAIL ✓ ⇒ 无误伤合法调用 ✓）|
+| 全量 `make test` | **734 / 0** ✓（0 条 FAIL ✓ ⇒ 无误伤合法调用 ✓；含新增三条负例 ✓）|
 
-> **测试网的限制**（记下来 ✓）：`repl_check` 要求 **rc = 0**（注释就写着 "rc must be 0 (not SIGSEGV)" ✓），
-> 所以"**应当编译失败**"的负例表达不出来 ✗ ⇒ 本条只能记档 ✓ + 手工验 ✓。
-> 想让这类"报错不崩"进网，需要给 harness 加一个"期望 rc / 期望错误文案"的字段 ✓（属测试基建 ✓，未做 ✗）。
+> **测试基建也随之补上了** ✓：原来 `repl_check` 要求 **rc = 0**（注释就写着 "rc must be 0 (not SIGSEGV)" ✓），
+> "**应当失败**"的负例表达不出来 ✗ —— 这正是 `exit()` 能悄悄崩掉的原因之一 ✓。
+> 现在 repl 用例可以带**可选第 4 栏 = 期望退出码** ✓（`tests/run.yac` 的 `repl_check(st, yc, name, src, needle, wantrc)` ✓，
+> 不带则仍是"必须 0 且含 needle" ✓），并补了三条 ✓：
+>
+> | 用例 | 期望 | 修复前 |
+> |---|---|---|
+> | `repl exit() too few args` ✓ | rc **2** + 文案含 `builtin 'exit' called with too few arguments` ✓ | **139** ✗（⇒ 会判 FAIL ✓ 已实测 ✓）|
+> | `repl str_cat() too few args` ✓ | rc **2** + 文案 ✓ | **139** ✗ ✓ |
+> | `repl exit(3) status` ✓ | rc **3** ✓（这不是错误 ✓：`exit(n)` 真以 n 退出 ✓）| 3 ✓ |
+>
+> **反向验证** ✓：拿**修复前**那次构建（与 728/0 同哈希 ✓）跑同三条输入 ⇒ `exit()` / `str_cat()` 都 **139** ✗、
+> `exit(3)` ⇒ 3 ✓ ⇒ 前两条**确实会红** ✓（能失败的测试才算测试 ✓）。
+> 编译器组想要同类负例还需另加（它的用例列表被 cps / eval 等组共用 ✓，
+> 塞一个"应当编译失败"的源文件会连带影响那些组 ✓）—— 未做 ✓。
 
 ---
 
