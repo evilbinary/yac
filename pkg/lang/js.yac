@@ -167,6 +167,7 @@ let st_ns(st) = nth(st, 1)
 let st_fmap(st) = nth(st, 2)
 let st_math(st) = nth(st, 3)
 let st_str(st) = nth(st, 4)
+let st_bool(st) = nth(st, 5)
 
 /* Record msg if no error yet; returns "0" so it can stand in for an expr. */
 let js_fail(st, msg) =
@@ -468,6 +469,20 @@ let js_in(xs, x) =
   rec(0)
 
 let js_str_lit(e) = nth(e, 0) == "str"
+
+/* True when a node is statically boolean-valued: a `true`/`false` literal, a
+ * comparison / equality / `&&` / `||`, or `!`. yac prints such a value as
+ * 1/0, so console.log and string concatenation route it through _js_bool to
+ * get JS's "true"/"false". */
+let js_is_boolish(e) =
+  let t = nth(e, 0) in
+  if t == "bool" then true
+  else if t == "un" then nth(e, 1) == "!"
+  else if t == "bin" then
+    let op = nth(e, 1) in
+    op == "&&" or op == "||" or op == "==" or op == "!=" or op == "==="
+      or op == "!==" or op == "<" or op == "<=" or op == ">" or op == ">="
+  else false
 
 /* Object key node (id/str/num) -> raw key text. */
 let js_lit_quote(e) =
