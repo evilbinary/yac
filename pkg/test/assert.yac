@@ -1,6 +1,6 @@
 /* test.yac — tiny asserts for guest programs. Fail calls exit(1). */
 
-package test
+package test.assert
 export fail, eq, ok
 
 /* Print FAIL: msg and abort. */

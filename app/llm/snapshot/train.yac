@@ -6,10 +6,10 @@
  */
 
 import snapshot
-import profile
-import json
-import io
-import fmt
+import tools.profile
+import text.json
+import fs.io
+import text.fmt
 
 /* 读不到语料文件时的兜底短文。 */
 let default_text(_) =

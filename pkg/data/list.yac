@@ -1,6 +1,6 @@
 /* list.yac — cons-list helpers. len / nth / map / filter / foldl stay prims. */
 
-package list
+package data.list
 export last, contains, take, range, zip
 
 /* Last element, or 0 if empty. */

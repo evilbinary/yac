@@ -77,6 +77,14 @@ $(YC_BIN): $(YC_A)
 	cp -f $(YC_A) $@
 	chmod +x $@
 
+# On Windows the file target is yc.exe / yac.exe, so `make yc` / `make yac`
+# would not match it. Add bare aliases there only; on Unix $(YC_BIN) IS `yc`,
+# and `yc: $(YC_BIN)` would be a self-dependency.
+ifneq ($(EXEEXT),)
+yc: $(YC_BIN)
+yac: $(BIN)
+endif
+
 yc_a: $(YC_A)
 
 yc_b: $(YC_B)
@@ -114,6 +122,7 @@ test-compiler: $(TEST_HARNESS)
 
 # compiler/cases via yc --cps:  make test-cps   |  make test-cps add  |  CASE=add
 # REPL: make test-repl   |  make test-repl import  |  CASE="let a then b"
+# pkg:  make test-pkg    |  make test-pkg lang_js  |  CASE=lang_js
 CASE ?=
 test-cps: $(TEST_HARNESS)
 	./$(TEST_HARNESS) cps "$(if $(CASE),$(CASE),$(word 2,$(MAKECMDGOALS)))"
@@ -121,7 +130,7 @@ test-cps: $(TEST_HARNESS)
 test-repl: $(TEST_HARNESS)
 	./$(TEST_HARNESS) repl "$(if $(CASE),$(CASE),$(word 2,$(MAKECMDGOALS)))"
 
-SUITE_CASE_TGTS := test-cps test-repl
+SUITE_CASE_TGTS := test-cps test-repl test-pkg
 ifneq ($(filter $(SUITE_CASE_TGTS),$(MAKECMDGOALS)),)
 EXTRA_SUITE_CASE := $(filter-out $(SUITE_CASE_TGTS) test test-interp test-compiler test-pkg test-boot test-qemu test-qemu-arm64 test-qemu-riscv64 test-iso prop yc yc_a yc_b bootstrap yc-iso all clean,$(MAKECMDGOALS))
 ifneq ($(EXTRA_SUITE_CASE),)
@@ -132,7 +141,7 @@ endif
 endif
 
 test-pkg: $(TEST_HARNESS)
-	./$(TEST_HARNESS) pkg
+	./$(TEST_HARNESS) pkg $(if $(CASE),$(CASE),$(word 2,$(MAKECMDGOALS)))
 
 # --link CLI / artifact probing regression (BOOTSTRAP_LINK.md 12.3).
 # Self-contained runner in tests/link/run.yac.

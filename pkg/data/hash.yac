@@ -1,6 +1,6 @@
 /* hash.yac — string/int-key assoc list. Newest put wins. Miss get is 0. */
 
-package hash
+package data.hash
 export new, get, put, has, of_str
 
 /* Empty map. Pass 0 (zero-arg lets are unused here). */

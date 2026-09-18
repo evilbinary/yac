@@ -1,6 +1,6 @@
 /* bytes.yac — helpers on the bytes buffer prims (bytes_new / bytes_ref stay prims). */
 
-package bytes
+package text.bytes
 export from_str, to_str, slice, eq, concat, alloc, copy, buf, tell, seek, remain, r8, w8, r_le16, w_le16, r_le32, w_le32, put_le16, put_le32, put_be16, put_be32, get_le16, get_le32, get_be16, get_be32
 
 /* Append each byte of string s onto b. */

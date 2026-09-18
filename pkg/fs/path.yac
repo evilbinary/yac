@@ -1,6 +1,6 @@
 /* path.yac — path strings, not OS calls. Do not import from backend pkg_src. */
 
-package path
+package fs.path
 export join, dirname, basename, ext
 
 /* ASCII '/' or '\\'. */

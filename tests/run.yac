@@ -137,7 +137,7 @@ let shared_pyadd(st, lib, tag) =
 let shared_ycadd(st, yc, lib, tag) =
   let pdrv = str_cat(TMP, "/dadd_drv.yac") in
   let _ = write_file(pdrv,
-    str_cat("import ffi\nlet h = load(\"",
+    str_cat("import native.ffi\nlet h = load(\"",
       str_cat(lib, "\")\nlet f = sym(h, \"add\")\nif ccall(f, 2, 3) == 5 then 42 else 0\n"))) in
   let bdrv = native(str_cat(TMP, "/dadd_drv")) in
   let _ = run(append(yc, [pdrv, "-o", bdrv])) in
@@ -289,7 +289,7 @@ let compiler_multi(st, yc) =
       let _ = run(["chmod", "+x", dbin]) in
       check(st2, "compiler dup source", "once\nonce", chomp(nth(run([dbin]), 1)))
 
-/* Cross-pkg string + format: with `import fmt` args stay in place (exit 42).
+/* Cross-pkg string + format: with `import text.fmt` args stay in place (exit 42).
  * Without it, format is unbound and compile must fail (not a silent ncap steal). */
 let compiler_cross_pkg(st, yc) =
   let lib = str_cat(TMP, "/crossarg.yac") in
@@ -297,13 +297,13 @@ let compiler_cross_pkg(st, yc) =
   let blob = str_cat(TMP, "/cross_blob.txt") in
   let bin = native(str_cat(TMP, "/c_crossarg")) in
   let _ = write_file(lib, str_cat(
-    "package crossarg\nexport echo_len, load_len\nimport io\nimport fmt\n",
+    "package crossarg\nexport echo_len, load_len\nimport fs.io\nimport text.fmt\n",
     str_cat(
       "let echo_len(s) =\n  let n = str_len(s) in\n  let _ = format(\"%d\", [n]) in\n  n\n",
       "let load_len(path) =\n  let raw = read_or_0(path) in\n  if raw == 0 then 0 else str_len(raw)\n"))) in
   let _ = write_file(blob, "abcdefghij") in
   let _ = write_file(main, str_cat(
-    "import crossarg\nimport io\n",
+    "import crossarg\nimport fs.io\n",
     "let a = echo_len(\"hello\") in\nlet b = load_len(\"build/test_tmp/cross_blob.txt\") in\nif a != 5 then a else if b != 10 then b else 42\n")) in
   let yc2 = [nth(yc, 0), "--pkg", str_cat("src-self,", TMP)] in
   let cr = run(append(yc2, [main, "-o", bin])) in
@@ -327,6 +327,37 @@ let compiler_cross_pkg(st, yc) =
     if ok then check(st1, "compiler cross-pkg format ncap missing import", "1", "1")
     else check(st1, "compiler cross-pkg format ncap missing import",
       "unbound variable 'format'", blob)
+
+/* Package-scope top-level VALUE (a box singleton) read by same-package
+ * functions. AOT always initialized it; the REPL path (pass_lir_eval) used to
+ * skip package init calls, so `gval` dereferenced a zero cell -> SIGSEGV.
+ * Both paths must now run the init and answer 42. */
+let compiler_pkg_box(st, yc) =
+  let lib = str_cat(TMP, "/boxlib.yac") in
+  let main = str_cat(TMP, "/box_main.yac") in
+  let bin = native(str_cat(TMP, "/c_boxlib")) in
+  let _ = write_file(lib, str_cat(
+    "package boxlib\nexport get, bump\n",
+    str_cat(
+      "let counter = let b = box_new() in let _ = box_set(b, 40) in b\n",
+      str_cat(
+        "let get(_) = box_get(counter)\n",
+        "let bump(n) = let _ = box_set(counter, box_get(counter) + n) in box_get(counter)\n")))) in
+  let _ = write_file(main, "import boxlib\nprint(bump(2))\nprint(get(0))\n") in
+  let yc2 = [nth(yc, 0), "--pkg", str_cat("src-self,", TMP)] in
+  let cr = run(append(yc2, [main, "-o", bin])) in
+  if nth(run(["test", "-f", bin]), 0) != 0 then
+    check(st, "compiler pkg top-level box", "wrote binary",
+          str_cat("compile rc=", int_to_str(nth(cr, 0))))
+  else
+    let _ = run(["chmod", "+x", bin]) in
+    let st1 = check(st, "compiler pkg top-level box aot", "42", int_to_str(nth(run([bin]), 0))) in
+    let r = run_stdin(append(yc2, ["--repl", main]), ":q\n") in
+    let blob = str_cat(nth(r, 1), nth(r, 2)) in
+    if nth(r, 0) != 0 then
+      check(st1, "compiler pkg top-level box repl", "0", int_to_str(nth(r, 0)))
+    else if contains(blob, "42") then check(st1, "compiler pkg top-level box repl", "1", "1")
+    else check(st1, "compiler pkg top-level box repl", "42", blob)
 
 /* `yc --cps`: rc cases print the value; out may also print it. */
 let cps_one(st, yc, c) =
@@ -389,9 +420,13 @@ let pkg_cases(_) = [
   ["bytes", "rc", "42"], ["ffi", "rc", "42"], ["json", "rc", "42"],
   ["env", "rc", "42"], ["cli", "rc", "42"], ["http", "rc", "42"], ["yui", "rc", "42"],
   ["math", "rc", "42"],
+  /* Needle "fact 120" can only appear if the generated recursion program was
+   * actually compiled and run in-process, so this host case proves execution,
+   * not just translation. */
+  ["lang_js", "host", "fact 120"],
   ["profile", "rc", "42"],
   ["prof_hook", "rc", "42"],
-  /* `compiler` is a THIN wrapper over host leaves: pkg/compiler.yac binds every
+  /* `compiler` is a THIN wrapper over host leaves: pkg/tools/compiler.yac binds every
    * symbol as an @host leaf, so the compiler tree is deliberately NOT linked
    * into the guest (see its header). An AOT image therefore answers
    * "host fn unavailable: <leaf>" and returns 0 -- by design, not a bug
@@ -401,9 +436,15 @@ let pkg_cases(_) = [
   ["import_as", "rc", "42"]
 ]
 
-let pkg_all(st, yc) =
+let pkg_all(st, yc, stem) =
   let _ = banner("pkg", nth(yc, 0)) in
-  foldl(fun(s, c) -> pkg_one(s, yc, c), st, pkg_cases(0))
+  let xs = cases_pick(pkg_cases(0), stem) in
+  if len(xs) == 0 then
+    let _ = print(str_cat("error: unknown pkg test '",
+      str_cat(stem, "' (pkg_cases name, or a substring)"))) in
+    exit(2)
+  else
+    foldl(fun(s, c) -> pkg_one(s, yc, c), st, xs)
 
 /* List lives in a small function: a 60-element literal in _start miscompiles. */
 let compiler_cases(_) = [
@@ -517,9 +558,9 @@ let repl_check(st, yc, name, src, needle, wantrc) =
 /* [name, stdin, needle]. () is unit (prints 0 natively); (exit) is grouping / quit. */
 let repl_cases(_) = [
   ["let a = 1", "let a = 1\n", "a = 1"],
-  ["import fmt", "import fmt\n:q\n", "fmt"],
-  ["import env as myenv", "import env as myenv\n:q\n", "myenv"],
-  ["import env brace as", "import env { get as env_get, get_or }\n:q\n", "env_get, get_or"],
+  ["import text.fmt", "import text.fmt\n:q\n", "fmt"],
+  ["import os.env as myenv", "import os.env as myenv\n:q\n", "myenv"],
+  ["import env brace as", "import os.env { get as env_get, get_or }\n:q\n", "env_get, get_or"],
   ["blank enter", "\r\n:q\n", "yc>"],
   ["1+2 then :q", "1+2\n:q\n", "3"],
   ["float then (exit)", "0.001+0.002\n(exit)\n", "0.003"],
@@ -557,9 +598,9 @@ let repl_cases(_) = [
    * REPL blob are the SESSION's slots (back/jit.yac host_tab_fill writes
    * them), not the blob's own image: addressing them per-image read zeroed
    * memory and called 0 (SIGSEGV at RIP=0, measured 2026-09-17). */
-  ["nested compile after import", "1+1\nimport compiler\ncompile(\"1+2\")\n:q\n", "<bytes>"],
-  ["import then printf d", "let a=42\nimport fmt\nprintf(\"%d\", [a])\n:q\n", "42"],
-  ["import then printf one", "let a=42\nimport fmt\nprintf(a)\n:q\n", "42"],
+  ["nested compile after import", "1+1\nimport tools.compiler\ncompile(\"1+2\")\n:q\n", "<bytes>"],
+  ["import then printf d", "let a=42\nimport text.fmt\nprintf(\"%d\", [a])\n:q\n", "42"],
+  ["import then printf one", "let a=42\nimport text.fmt\nprintf(a)\n:q\n", "42"],
   /* The blob's entry wrapper is `_eval`, so a guest `let _eval` makes that name
    * ambiguous: the JIT used to resolve its entry BY NAME over funOffsRev (a
    * list the emitters cons in emission order, scanned from its head = the last
@@ -591,9 +632,18 @@ let repl_cases(_) = [
    * and bind the thin wrappers. Do NOT invoke compile/load here: calling a
    * host leaf runs the real host compiler in-process and pollutes the REPL
    * session (state isolation is open, see BOOTSTRAP_LINK.md §12.11). */
-  ["import compiler", "import compiler\n:q\n", "compiler"],
-  ["import compiler binds compile", "import compiler\ncompile\n:q\n", "<fun>"],
-  ["compile unbound without import", "compile\n:q\n", "unbound variable 'compile'"]]
+  ["import tools.compiler", "import tools.compiler\n:q\n", "compiler"],
+  ["import tools.compiler binds compile", "import tools.compiler\ncompile\n:q\n", "<fun>"],
+  ["compile unbound without import", "compile\n:q\n", "unbound variable 'compile'"],
+  /* A REPL `let` value must survive later lines' compilation, even when that
+   * compilation runs the host GC. The session slots (yac_jslot_set, at
+   * JIT_VADDR+12MiB) are scanned as GC roots now; before that, a bytes bound
+   * on one line was reclaimed during the next line's compile and `ff` printed
+   * the new line's LIR (FLAT_ABI.md). Two compiles make the second line's GC
+   * pressure real, then bytes_len proves the first value is still intact. */
+  ["session value survives gc",
+   "import tools.compiler\nlet ff = compile(\"1 + 2\")\nlet g = compile(\"1 + 2 + 3\")\nif bytes_len(ff) > 1000 then print(\"SURVIVED\") else print(\"LOST\")\n:q\n",
+   "SURVIVED"]]
 
 let repl_all(st, yc, stem) =
   let _ = banner("repl", nth(yc, 0)) in
@@ -667,6 +717,7 @@ let compiler_all(st, yc) =
     foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)), yc) in
   let st1 = foldl(fun(s, c) -> compiler_err_one(s, yc, c), st1, compiler_err_cases(0)) in
   let st1c = compiler_cross_pkg(st1, yc) in
+  let st1c = compiler_pkg_box(st1c, yc) in
   let st1s =
     if nth(run(["sh", "-c", "command -v nm >/dev/null 2>&1"]), 0) != 0 then st1c
     else
@@ -949,7 +1000,7 @@ let qemu_shared(st, yc, qemu, arch) =
   let so = shared_out(yc, arch, "elf", ".so") in
   let pdrv = str_cat(TMP, str_cat("/q_", str_cat(arch, "_dadd.yac"))) in
   let _ = write_file(pdrv,
-    str_cat("import ffi\nlet h = load(\"",
+    str_cat("import native.ffi\nlet h = load(\"",
       str_cat(so, "\")\nlet f = sym(h, \"add\")\nif ccall(f, 2, 3) == 5 then 42 else 0\n"))) in
   let out = str_cat(TMP, str_cat("/q_", str_cat(arch, "_dadd"))) in
   let tag = str_cat(arch, " elf --shared ccall add") in
@@ -1087,7 +1138,7 @@ let boot_suite(st, ya) =
   let st3 = check(st2, "boot yc_b exists", "0", int_to_str(exists_rc(yb))) in
   let st4 = check(st3, "boot yc_b not .bin", "1", int_to_str(exists_rc(str_cat(yb, ".bin")))) in
   let _ = run(["chmod", "+x", yb]) in
-  let stB = pkg_all(compiler_all(st4, yc_pkg(yb)), yc_pkg(yb)) in
+  let stB = pkg_all(compiler_all(st4, yc_pkg(yb)), yc_pkg(yb), "") in
   let psrc = str_cat(TMP, "/p42.yac") in
   let pbin = native(str_cat(TMP, "/p42")) in
   let _ = write_file(psrc, "42\n") in
@@ -1162,7 +1213,9 @@ let main =
   let _ = run(["chmod", "+x", ya]) in
   let yc = yc_pkg(ya) in
   let s = suite_name(0) in
-  if s == "pkg" then suite_done(pkg_all([0, 0], yc))
+  if s == "pkg" then
+    let stem = if argc() < 3 then "" else argv(2) in
+    suite_done(pkg_all([0, 0], yc, stem))
   else if s == "link" then suite_done(link_front([0, 0], ya))
   else if s == "interp" then suite_done(interp_suite([0, 0]))
   else if s == "compiler" then suite_done(compiler_all([0, 0], yc))
@@ -1182,7 +1235,7 @@ let main =
   else
     let st0 = interp_suite([0, 0]) in
     let st1 = boot_front(st0, ya) in
-    let st2 = pkg_all(compiler_all(st1, yc), yc) in
+    let st2 = pkg_all(compiler_all(st1, yc), yc, "") in
     let st3 = link_front(st2, ya) in
     suite_done(boot_suite(qemu_both(st3, yc), ya))
 in main

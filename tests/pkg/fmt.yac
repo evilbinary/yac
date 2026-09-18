@@ -1,4 +1,4 @@
-import fmt
+import text.fmt
 if format("%s=%d", ["n", 3]) == "n=3" then
   if format("%%", []) == "%" then
     if format("%d", [42]) == "42" then

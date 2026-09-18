@@ -21,10 +21,10 @@ export sc, dim, ctx, freeze_n, u8len, ch_at, fill, mat, find_char, add_char, bui
   canvas_from_prompt, show_canvas, show_prompt, show_from, n_freeze, denoise, denoise_quiet, save_model, load_model,
   vocab_of, ntok, parse_int, zero_freq, maj_count, probe_shuffle, eval_step, fstr
 
-import io
-import fmt
-import math
-import fmap
+import fs.io
+import text.fmt
+import num.math
+import data.fmap
 
 /* 死代码 QKV 仍用整数 S。前向 H/Wout 已是 f64；.w 第 4 个数 file_s=0。 */
 let sc(_) = 64
@@ -1981,7 +1981,7 @@ let save_model(m, path) =
   let _ = emit_wout(b, nth(m, 4), 0, dim(0), ntok(m)) in
   write(path, b)
 
-/* 入参是路径。必须 import fmt：否则 format 变成 ncap，跨包调用会把 path 塞进 capture 槽。 */
+/* 入参是路径。必须 import text.fmt：否则 format 变成 ncap，跨包调用会把 path 塞进 capture 槽。 */
 let load_model(path) =
   let raw = read_or_0(path) in
   if raw == 0 then

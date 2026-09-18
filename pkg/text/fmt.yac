@@ -1,7 +1,7 @@
 /* fmt.yac — printf 占位符：%[flags][width][.prec]conv
  * flags: - 左对齐，0 数字补零。conv: s d i f x %% 。args 一格对应一个转换。 */
 
-package fmt
+package text.fmt
 export format, printf
 
 let fmt_trip(a, b, c) =

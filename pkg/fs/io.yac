@@ -1,6 +1,6 @@
 /* io.yac — read_file wrappers. Native miss is 0; C interp miss is (). */
 
-package io
+package fs.io
 export exists, read_or_0, read_or, write
 
 /* True if the path opened. Empty file is true. */

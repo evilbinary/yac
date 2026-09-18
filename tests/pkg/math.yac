@@ -1,4 +1,4 @@
-import math
+import num.math
 if abs(0 - 3) == 3 then
   if min(2, 9) == 2 then
     if max(2, 9) == 9 then

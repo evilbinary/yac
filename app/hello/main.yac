@@ -1,4 +1,4 @@
-import yui
+import gui.yui
 
 let so =
   if argc() > 2 then argv(2)

@@ -1,4 +1,4 @@
-import ffi
+import native.ffi
 let buf = zbuf(8) in
 let _ = mem_put(buf, 0, 4, 42) in
 let h = load(syslib(0)) in

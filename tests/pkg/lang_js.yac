@@ -1,0 +1,45 @@
+/* lang_js.yac — lang.js translator + execution regression (host pkg case).
+ *
+ * Runs as a `host` case (tests/run.yac): tools.compiler's `run` is a host leaf,
+ * so each generated yac source is compiled and executed in-process by the
+ * REPL. The console.log output lands in the harness blob and the final value
+ * is 42, so the expected result is "42". */
+
+import lang.js
+import tools.compiler
+
+/* Arithmetic + variable + single-arg console.log -> prints 42. */
+let _ = run(js_to_yac("let x = 41 + 1; console.log(x);"))
+
+/* Recursion with early return -> prints "fact 120". */
+let _ = run(js_to_yac("function f(n){ if (n <= 1) { return 1; } return n * f(n - 1); } console.log(\"fact\", f(5));"))
+
+/* for loop + array + indexed read -> prints 6. */
+let _ = run(js_to_yac("let a = [1,2,3]; let s = 0; for (let i = 0; i < 3; i = i + 1) { s = s + a[i]; } console.log(s);"))
+
+/* Object literal + member read -> prints 30. */
+let _ = run(js_to_yac("let o = { a: 10, b: 20 }; console.log(o.a + o.b);"))
+
+/* Substring test (no builtin contains for strings). */
+let has(s, sub) =
+  let n = str_len(s) in
+  let m = str_len(sub) in
+  let rec(i) =
+    if i + m > n then false
+    else if str_slice(s, i, m) == sub then true
+    else rec(i + 1) in
+  if m == 0 then true else rec(0)
+
+/* Translated shape: boxes, return flags, list / fmap, helper imports. */
+let c1 = has(js_to_yac("let x = 1; x = x + 1;"), "box_new")
+let c2 = has(js_to_yac("function f(n){ if (n <= 0) { return 0; } return n; }"), "_retf")
+let c3 = has(js_to_yac("let a = [1, 2, 3];"), "list_new")
+let c4 = has(js_to_yac("let o = { a: 1 };"), "fmap_put")
+let c5 = has(js_to_yac("let o = { a: 1 };"), "import data.fmap")
+let c6 = has(js_to_yac("console.log(\"a\", 1);"), "_js_str")
+let c7 = has(js_to_yac("console.log(Math.sqrt(4));"), "import num.math")
+
+/* Malformed input is reported. */
+let c8 = has(js_to_yac("let = 1;"), "error:")
+
+if c1 and c2 and c3 and c4 and c5 and c6 and c7 and c8 then 42 else 0

@@ -1,4 +1,4 @@
-import hash
+import data.hash
 if get(put(put(new(0), "a", 1), "b", 2), "a") == 1 then
   if get(put(put(new(0), "a", 1), "b", 2), "b") == 2 then
     if has(put(new(0), "a", 0), "a") then

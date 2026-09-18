@@ -1,4 +1,4 @@
-import bytes
+import text.bytes
 let a = alloc(3) in
 let c = buf(a) in
 let _ = w8(c, 7) in

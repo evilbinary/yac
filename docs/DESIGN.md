@@ -281,7 +281,7 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 |---|---|---|---|
 | 内核 | 无包名 | `src-self/rt/runtime.yac` 进镜像 | `print` / `cons` / `read_file` 等原语 |
 | 语言运行时 | `rt.*` | `src-self/rt/{num,os,ffi}.yac` | `import rt.os`；客默认还链 `rt.num` |
-| 常见库 | 短名，不用 `rt` 前缀 | 仓库根 `pkg/*.yac` | `import path`；项目自己的库也放 `./pkg` |
+| 常见库 | 分类短名（`text` / `data` / `num` / `fs` / `os` / `net` / `gui` / `native` / `tools` / `test`） | 仓库根 `pkg/<类>/<名>.yac` | `import fs.path`；项目自己的库也放 `./pkg` |
 
 `src-self/lib`（`lib.log` / `lib.map` / `lib.pass`，各一文件）只给编译器用，不是客库。不要用包名 `os`（与 `rt.os` 冲突）。编译器后端同理：`back.emit.emit`、`back.emit.emit_x86_64`、`back.encode.encode_x64` 各是一包；交叉编译器的入口 import 它需要的 arch 文件，而不是一个叫 `emit` 的粗包。
 
@@ -289,10 +289,10 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 
 常见库按需增加，不一次写完：
 
-- 已落地：`path`、`str`、`io`、`list`、`hash`、`fmt`、`log`、`test`、`net`、`bytes`、`ffi`、`json`、`env`、`cli`、`http`（`import http` 会链 `net`）、`yui`、`math`（整数 gcd/pow/isqrt；f64 用牛顿/泰勒，不链 libm）。`json` tagged：`["N",n]` / `["S",s]` / `["A",xs]` / `["O",pairs]` / `["T"]` `["F"]` `["Z"]`。
+- 已落地（按类）：`text`（`str` / `bytes` / `fmt` / `json`）、`data`（`list` / `map` / `fmap` / `hash`）、`num`（`math`）、`fs`（`io` / `path`）、`os`（`env` / `cli` / `log`）、`net`（`tcp` / `http`，`import net.http` 会链 `net.tcp`）、`gui`（`yui`）、`native`（`ffi`）、`tools`（`compiler` / `profile`）、`test`（`assert`）、`lang`（`js`：JS 子集 `js_to_yac` 转 yac 源码）。`math`：整数 gcd/pow/isqrt；f64 用牛顿/泰勒，不链 libm。`json` tagged：`["N",n]` / `["S",s]` / `["A",xs]` / `["O",pairs]` / `["T"]` `["F"]` `["Z"]`。
 - 先不要：`re` / `crypto` / `thread`。
 
-包查找器（`backend.yac` 的 `pkg_src`）本身不能 `import path` / `import io`，否则加载 `path.yac` 会循环。
+包查找器（`backend.yac` 的 `pkg_src`）本身不能 `import fs.path` / `import fs.io`，否则加载 `fs/path.yac` 会循环。
 
 语法（`program` 的顶层还可出现下列形式；`as` 不是关键字）：
 

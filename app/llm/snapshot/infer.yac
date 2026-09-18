@@ -6,8 +6,8 @@
  */
 
 import snapshot
-import io
-import fmt
+import fs.io
+import text.fmt
 
 /* 默认权重路径。 */
 let wpath =

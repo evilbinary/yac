@@ -1,6 +1,6 @@
 /* cli.yac — argv helpers. argc / argv stay prims. */
 
-package cli
+package os.cli
 export args, has, opt
 
 /* Acc for args; i from 1. */

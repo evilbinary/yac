@@ -1,0 +1,805 @@
+/* js.yac — JavaScript subset -> yac source (guest translator).
+ * js_to_yac(src) -> yac source string, or "error: ..." on failure.
+ *
+ * Core subset: literals (num/string/bool/null/undefined, array, object),
+ * arithmetic / compare / logic, ternary, member / index / call, assignment
+ * (incl. compound), let/const/var, if/else, while, for(;;), return, function
+ * declarations, console.log, Math.*.
+ *
+ * Mapping notes:
+ *   - JS variables are mutable, so each binding becomes a box
+ *     (box_new / box_set / box_get).
+ *   - Loops become self-recursive lets; `return` uses a per-call flag box so
+ *     it short-circuits out of nested if / loop bodies.
+ *   - Arrays use list_new + list_push / list_set, objects use data.fmap.
+ *   - `a + b` becomes str_cat when either side is a string literal, else `+`.
+ *
+ * State is threaded explicitly as `st` = [err, ns, use_fmap, use_math,
+ * use_str] (all boxes). It is created inside js_to_yac, NOT as a package-level
+ * binding: a package-scope function reading a same-package top-level box is
+ * unsupported and crashes in the REPL/JIT link path
+ * (docs/BOOTSTRAP_LINK.md §12.10).
+ *
+ * Known limitations (by design, not bugs):
+ *   - No function expressions, classes / this / prototypes, try/catch, break /
+ *     continue, async, regexp, getters.
+ *   - Function declarations are hoisted within their block, but a function may
+ *     only call itself or functions already declared before it (yac has no
+ *     forward references across top-level lets, so no mutual recursion).
+ *   - `.length` is str_len only for a string LITERAL; for a variable it is
+ *     `len` (strings have no type predicate to branch on).
+ *   - `if` needs a boolean condition; JS truthiness of a raw value is not
+ *     emulated. */
+
+package lang.js
+export js_to_yac
+
+/* ---- character classes ------------------------------------------------ */
+
+let js_sp(c) = c == 32 or c == 9 or c == 10 or c == 13
+let js_digit(c) = c >= 48 and c <= 57
+let js_alpha(c) = (c >= 65 and c <= 90) or (c >= 97 and c <= 122)
+
+/* Identifier start / continue: letters, `_`, `$`, then digits. */
+let js_id0(c) = js_alpha(c) or c == 95 or c == 36
+let js_idc(c) = js_id0(c) or js_digit(c)
+
+/* ---- lexer ------------------------------------------------------------ */
+
+/* Skip whitespace, `//` line comments and block comments; return next index. */
+let js_skip(src, i, n) =
+  let rec(k) =
+    if k >= n then k
+    else
+      let c = str_ref(src, k) in
+      if js_sp(c) then rec(k + 1)
+      else if c == 47 and k + 1 < n then
+        let d = str_ref(src, k + 1) in
+        if d == 47 then
+          let rec2(j) =
+            if j >= n then j
+            else if str_ref(src, j) == 10 then j
+            else rec2(j + 1) in
+          rec(rec2(k + 2))
+        else if d == 42 then
+          let rec3(j) =
+            if j + 1 >= n then n
+            else if str_ref(src, j) == 42 and str_ref(src, j + 1) == 47 then j + 2
+            else rec3(j + 1) in
+          rec(rec3(k + 2))
+        else k
+      else k in
+  rec(i)
+
+/* String literal starting after quote `q`; decodes \n \t \r \0 and \\ \q.
+ * Returns [decoded, next-index]. */
+let js_lex_str(src, i, n, q) =
+  let rec(j, acc) =
+    if j >= n then [acc, j]
+    else
+      let c = str_ref(src, j) in
+      if c == q then [acc, j + 1]
+      else if c == 92 then
+        if j + 1 >= n then [acc, j]
+        else
+          let e = str_ref(src, j + 1) in
+          let bit =
+            if e == 110 then "\n"
+            else if e == 116 then "\t"
+            else if e == 114 then str_chr(13)
+            else if e == 48 then str_chr(0)
+            else str_slice(src, j + 1, 1) in
+          rec(j + 2, str_cat(acc, bit))
+      else rec(j + 1, str_cat(acc, str_slice(src, j, 1))) in
+  rec(i, "")
+
+/* Number literal: digits with at most one `.`; returns [text, next-index]. */
+let js_lex_num(src, i, n) =
+  let rec(j, dot) =
+    if j >= n then j
+    else
+      let c = str_ref(src, j) in
+      if js_digit(c) then rec(j + 1, dot)
+      else if c == 46 and dot == false then rec(j + 1, true)
+      else j in
+  let e = rec(i, false) in
+  [str_slice(src, i, e - i), e]
+
+/* Identifier / keyword text; returns [text, next-index]. */
+let js_lex_id(src, i, n) =
+  let rec(j) =
+    if j >= n then j
+    else if js_idc(str_ref(src, j)) then rec(j + 1)
+    else j in
+  let e = rec(i) in
+  [str_slice(src, i, e - i), e]
+
+/* True for the two-character operators the lexer recognises. */
+let js_op2(s) =
+  s == "==" or s == "!=" or s == "<=" or s == ">=" or s == "&&" or s == "||" or s == "+=" or s == "-=" or s == "*=" or s == "/=" or s == "%="
+
+/* True for a single-character operator / punctuation code. */
+let js_op1c(c) =
+  c == 43 or c == 45 or c == 42 or c == 47 or c == 37 or c == 61 or c == 60 or c == 62 or c == 33 or c == 63 or c == 58 or c == 46 or c == 44 or c == 59 or c == 40 or c == 41 or c == 123 or c == 125 or c == 91 or c == 93
+
+/* Tokenize into a listbuf of [kind, text]; kind ∈ str/num/id/p/eof/unk. */
+let js_lex(src) =
+  let n = str_len(src) in
+  let acc = list_new() in
+  let rec(i) =
+    let j = js_skip(src, i, n) in
+    if j >= n then
+      let _ = list_push(acc, ["eof", ""]) in acc
+    else
+      let c = str_ref(src, j) in
+      if c == 34 or c == 39 then
+        let r = js_lex_str(src, j + 1, n, c) in
+        let _ = list_push(acc, ["str", nth(r, 0)]) in rec(nth(r, 1))
+      else if js_digit(c) then
+        let r = js_lex_num(src, j, n) in
+        let _ = list_push(acc, ["num", nth(r, 0)]) in rec(nth(r, 1))
+      else if js_id0(c) then
+        let r = js_lex_id(src, j, n) in
+        let _ = list_push(acc, ["id", nth(r, 0)]) in rec(nth(r, 1))
+      else if (j + 3 <= n) and (str_slice(src, j, 3) == "===") then
+        let _ = list_push(acc, ["p", "==="]) in rec(j + 3)
+      else if (j + 3 <= n) and (str_slice(src, j, 3) == "!==") then
+        let _ = list_push(acc, ["p", "!=="]) in rec(j + 3)
+      else if (j + 2 <= n) and js_op2(str_slice(src, j, 2)) then
+        let _ = list_push(acc, ["p", str_slice(src, j, 2)]) in rec(j + 2)
+      else if js_op1c(c) then
+        let _ = list_push(acc, ["p", str_slice(src, j, 1)]) in rec(j + 1)
+      else
+        let _ = list_push(acc, ["unk", str_slice(src, j, 1)]) in rec(j + 1) in
+  rec(0)
+
+/* ---- token access ----------------------------------------------------- */
+
+let js_k(t) = nth(t, 0)
+let js_t(t) = nth(t, 1)
+let js_at(toks, i) = if i >= len(toks) then ["eof", ""] else nth(toks, i)
+let js_is(toks, i, s) = js_t(js_at(toks, i)) == s
+
+/* ---- errors (state is threaded; see header) --------------------------- */
+
+let st_err(st) = nth(st, 0)
+let st_ns(st) = nth(st, 1)
+let st_fmap(st) = nth(st, 2)
+let st_math(st) = nth(st, 3)
+let st_str(st) = nth(st, 4)
+let st_bool(st) = nth(st, 5)
+
+/* Record msg if no error yet; returns "0" so it can stand in for an expr. */
+let js_fail(st, msg) =
+  let e = st_err(st) in
+  let cur = box_get(e) in
+  let _ = if cur == "" then box_set(e, msg) else 0 in
+  "0"
+
+/* Error AST node (also records the message). */
+let js_bad(st, msg) =
+  let _ = js_fail(st, msg) in
+  ["err", msg]
+
+/* ---- operator precedence --------------------------------------------- */
+
+/* Binary precedence: assignment (1) < `?` (2) < `||` < `&&` < eq < rel <
+ * add < mul. Everything lower than the current min stops the climb. */
+let js_prec2(op) =
+  if op == "||" then 3
+  else if op == "&&" then 4
+  else if op == "==" or op == "!=" or op == "===" or op == "!==" then 5
+  else if op == "<" or op == "<=" or op == ">" or op == ">=" then 6
+  else if op == "+" or op == "-" then 7
+  else if op == "*" or op == "/" or op == "%" then 8
+  else 0
+
+let js_assign_op(op) =
+  op == "=" or op == "+=" or op == "-=" or op == "*=" or op == "/=" or op == "%="
+
+/* ---- expression parser (Pratt) --------------------------------------- */
+
+/* Parse one expression at minimum precedence `min`. Self-recursive for
+ * prefix / grouping / args / infix, so it needs no forward references.
+ * A node is a tagged list:
+ *   ["num"|"str"/"bool", text] ["null"] ["undef"] ["id", name]
+ *   ["arr", xs] ["obj", [[key,val],…]]
+ *   ["un", op, e] ["bin", op, l, r] ["cond", c, a, b]
+ *   ["assign", op, target, value] ["call", callee, args]
+ *   ["idx", obj, i] ["mem", obj, name] ["err", msg]
+ * Returns [node, next-index]. */
+let js_parse_expr(toks, i, min, st) =
+  let tk = js_at(toks, i) in
+  let tx = js_t(tk) in
+  let kk = js_k(tk) in
+  let pre =
+    if tx == "!" then
+      let r = js_parse_expr(toks, i + 1, 9, st) in [["un", "!", nth(r, 0)], nth(r, 1)]
+    else if tx == "-" then
+      let r = js_parse_expr(toks, i + 1, 9, st) in [["un", "-", nth(r, 0)], nth(r, 1)]
+    else if tx == "+" then js_parse_expr(toks, i + 1, 9, st)
+    else if kk == "num" then [["num", tx], i + 1]
+    else if kk == "str" then [["str", tx], i + 1]
+    else if kk == "id" then
+      if tx == "true" or tx == "false" then [["bool", tx], i + 1]
+      else if tx == "null" then [["null"], i + 1]
+      else if tx == "undefined" then [["undef"], i + 1]
+      else [["id", tx], i + 1]
+    else if tx == "(" then
+      let r = js_parse_expr(toks, i + 1, 0, st) in
+      if js_is(toks, nth(r, 1), ")") then [nth(r, 0), nth(r, 1) + 1]
+      else [js_bad(st, "expected ')'"), nth(r, 1)]
+    else if tx == "[" then
+      /* Array literal: comma-separated expressions until `]`. */
+      let go(j, acc) =
+        if js_is(toks, j, "]") then [["arr", list_rev(acc)], j + 1]
+        else
+          let r = js_parse_expr(toks, j, 0, st) in
+          let j2 = nth(r, 1) in
+          if js_is(toks, j2, ",") then go(j2 + 1, cons(nth(r, 0), acc))
+          else if js_is(toks, j2, "]") then [["arr", list_rev(cons(nth(r, 0), acc))], j2 + 1]
+          else [js_bad(st, "expected ',' or ']' in array"), j2] in
+      go(i + 1, [])
+    else if tx == "{" then
+      /* Object literal: key (id/str/num) `:` value, comma-separated. */
+      let go(j, acc) =
+        if js_is(toks, j, "}") then [["obj", list_rev(acc)], j + 1]
+        else
+          let kt = js_at(toks, j) in
+          let key =
+            if js_k(kt) == "id" then ["str", js_t(kt)]
+            else if js_k(kt) == "str" then kt
+            else if js_k(kt) == "num" then ["str", js_t(kt)]
+            else ["str", ""] in
+          let j2 = j + 1 in
+          let r =
+            if js_is(toks, j2, ":") then js_parse_expr(toks, j2 + 1, 0, st)
+            else [js_bad(st, "expected ':' in object"), j2] in
+          let j3 = nth(r, 1) in
+          if js_is(toks, j3, ",") then go(j3 + 1, cons([key, nth(r, 0)], acc))
+          else if js_is(toks, j3, "}") then [["obj", list_rev(cons([key, nth(r, 0)], acc))], j3 + 1]
+          else [js_bad(st, "expected ',' or '}' in object"), j3] in
+      go(i + 1, [])
+    else [js_bad(st, str_cat("unexpected token '", str_cat(tx, "'"))), i + 1] in
+  /* Postfix (`.x` `[i]` `(args)`) binds tightest; then infix by precedence,
+   * with ternary and right-associative assignment handled specially. */
+  let loop(lhs, j) =
+    let t2 = js_at(toks, j) in
+    let x2 = js_t(t2) in
+    if x2 == "." then
+      let nt = js_at(toks, j + 1) in
+      loop(["mem", lhs, js_t(nt)], j + 2)
+    else if x2 == "[" then
+      let r = js_parse_expr(toks, j + 1, 0, st) in
+      if js_is(toks, nth(r, 1), "]") then loop(["idx", lhs, nth(r, 0)], nth(r, 1) + 1)
+      else [js_bad(st, "expected ']'"), nth(r, 1)]
+    else if x2 == "(" then
+      let args(jj, acc) =
+        if js_is(toks, jj, ")") then [list_rev(acc), jj + 1]
+        else
+          let r = js_parse_expr(toks, jj, 0, st) in
+          let j2 = nth(r, 1) in
+          if js_is(toks, j2, ",") then args(j2 + 1, cons(nth(r, 0), acc))
+          else if js_is(toks, j2, ")") then [list_rev(cons(nth(r, 0), acc)), j2 + 1]
+          else [0, j2] in
+      let ar = args(j + 1, []) in
+      loop(["call", lhs, nth(ar, 0)], nth(ar, 1))
+    else if (x2 == "?") and (min <= 2) then
+      let a = js_parse_expr(toks, j + 1, 0, st) in
+      if js_is(toks, nth(a, 1), ":") then
+        let b = js_parse_expr(toks, nth(a, 1) + 1, 2, st) in
+        loop(["cond", lhs, nth(a, 0), nth(b, 0)], nth(b, 1))
+      else [js_bad(st, "expected ':' in conditional"), nth(a, 1)]
+    else if js_assign_op(x2) and (min <= 1) then
+      let r = js_parse_expr(toks, j + 1, 1, st) in
+      loop(["assign", x2, lhs, nth(r, 0)], nth(r, 1))
+    else
+      let p = js_prec2(x2) in
+      if p == 0 or p < min then [lhs, j]
+      else
+        let r = js_parse_expr(toks, j + 1, p + 1, st) in
+        loop(["bin", x2, lhs, nth(r, 0)], nth(r, 1)) in
+  loop(nth(pre, 0), nth(pre, 1))
+
+/* ---- statement parser ------------------------------------------------- */
+
+/* Parse statements. mode is either ["one"] (one statement) or ["list", stop]
+ * (until `}` when stop=="}" or EOF). Statements:
+ *   ["let", kind, name, init] ["expr", e] ["ret", e|null] ["block", xs]
+ *   ["if", c, thenXs, elseXs] ["while", c, bodyXs]
+ *   ["for", init, test, update, bodyXs] ["func", name, params, bodyXs]
+ * Returns [stmt(s), next-index]. */
+let js_parse_stmts(toks, i, mode, st) =
+  let one(j) =
+    let tk = js_at(toks, j) in
+    let tx = js_t(tk) in
+    if tx == "let" or tx == "const" or tx == "var" then
+      let nt = js_at(toks, j + 1) in
+      if js_k(nt) != "id" then [js_bad(st, "expected identifier after declaration"), j + 1]
+      else
+        let nm = js_t(nt) in
+        let j2 = j + 2 in
+        let r =
+          if js_is(toks, j2, "=") then js_parse_expr(toks, j2 + 1, 0, st)
+          else [["null"], j2] in
+        let j3 = if js_is(toks, nth(r, 1), ";") then nth(r, 1) + 1 else nth(r, 1) in
+        [["let", tx, nm, nth(r, 0)], j3]
+    else if tx == "if" then
+      let c = js_parse_expr(toks, j + 2, 0, st) in
+      let j2 = if js_is(toks, nth(c, 1), ")") then nth(c, 1) + 1 else nth(c, 1) in
+      let th = js_parse_stmts(toks, j2, ["one"], st) in
+      let j3 = nth(th, 1) in
+      if js_is(toks, j3, "else") then
+        let el = js_parse_stmts(toks, j3 + 1, ["one"], st) in
+        [["if", nth(c, 0), [nth(th, 0)], [nth(el, 0)]], nth(el, 1)]
+      else [["if", nth(c, 0), [nth(th, 0)], []], j3]
+    else if tx == "while" then
+      let c = js_parse_expr(toks, j + 2, 0, st) in
+      let j2 = if js_is(toks, nth(c, 1), ")") then nth(c, 1) + 1 else nth(c, 1) in
+      let b = js_parse_stmts(toks, j2, ["one"], st) in
+      [["while", nth(c, 0), [nth(b, 0)]], nth(b, 1)]
+    else if tx == "for" then
+      /* for ( init ; test ; update ) body — each clause may be empty. */
+      let j0 = j + 2 in
+      let init =
+        if js_is(toks, j0, ";") then [["null"], j0 + 1]
+        else if js_t(js_at(toks, j0)) == "let" or js_t(js_at(toks, j0)) == "var" or js_t(js_at(toks, j0)) == "const" then
+          let nm = js_t(js_at(toks, j0 + 1)) in
+          let j2 = j0 + 2 in
+          let r = if js_is(toks, j2, "=") then js_parse_expr(toks, j2 + 1, 0, st) else [["null"], j2] in
+          let j3 = if js_is(toks, nth(r, 1), ";") then nth(r, 1) + 1 else nth(r, 1) in
+          [["let", "let", nm, nth(r, 0)], j3]
+        else
+          let r = js_parse_expr(toks, j0, 0, st) in
+          let j3 = if js_is(toks, nth(r, 1), ";") then nth(r, 1) + 1 else nth(r, 1) in
+          [["expr", nth(r, 0)], j3] in
+      let j1 = nth(init, 1) in
+      let test =
+        if js_is(toks, j1, ";") then [["bool", "true"], j1 + 1]
+        else
+          let r = js_parse_expr(toks, j1, 0, st) in
+          let j3 = if js_is(toks, nth(r, 1), ";") then nth(r, 1) + 1 else nth(r, 1) in
+          [nth(r, 0), j3] in
+      let j2 = nth(test, 1) in
+      let upd =
+        if js_is(toks, j2, ")") then [["null"], j2 + 1]
+        else
+          let r = js_parse_expr(toks, j2, 0, st) in
+          let j3 = if js_is(toks, nth(r, 1), ")") then nth(r, 1) + 1 else nth(r, 1) in
+          [nth(r, 0), j3] in
+      let j3 = nth(upd, 1) in
+      let b = js_parse_stmts(toks, j3, ["one"], st) in
+      [["for", nth(init, 0), nth(test, 0), nth(upd, 0), [nth(b, 0)]], nth(b, 1)]
+    else if tx == "return" then
+      let r =
+        if js_is(toks, j + 1, ";") or js_is(toks, j + 1, "}") or js_k(js_at(toks, j + 1)) == "eof" then [["null"], j + 1]
+        else js_parse_expr(toks, j + 1, 0, st) in
+      let j2 = if js_is(toks, nth(r, 1), ";") then nth(r, 1) + 1 else nth(r, 1) in
+      [["ret", nth(r, 0)], j2]
+    else if tx == "function" then
+      /* function name(params) { … } — body is the braces' interior. */
+      let nm = js_t(js_at(toks, j + 1)) in
+      let j2 = j + 3 in
+      let ps(jj, acc) =
+        if js_is(toks, jj, ")") then [list_rev(acc), jj + 1]
+        else
+          let pt = js_at(toks, jj) in
+          let j3 = if js_is(toks, jj + 1, ",") then jj + 2 else jj + 1 in
+          ps(j3, cons(js_t(pt), acc)) in
+      let pr = ps(j2, []) in
+      let body = js_parse_stmts(toks, nth(pr, 1) + 1, ["list", "}"], st) in
+      [["func", nm, nth(pr, 0), nth(body, 0)], nth(body, 1)]
+    else if tx == "{" then
+      let r = js_parse_stmts(toks, j + 1, ["list", "}"], st) in
+      [["block", nth(r, 0)], nth(r, 1)]
+    else if tx == ";" then [["block", []], j + 1]
+    else if js_k(tk) == "eof" then [["block", []], j]
+    else if js_k(tk) == "unk" then [js_bad(st, str_cat("unexpected character '", str_cat(tx, "'"))), j + 1]
+    else
+      let r = js_parse_expr(toks, j, 0, st) in
+      let j2 = if js_is(toks, nth(r, 1), ";") then nth(r, 1) + 1 else nth(r, 1) in
+      [["expr", nth(r, 0)], j2] in
+  let m0 = nth(mode, 0) in
+  if m0 == "list" then
+    let stop = nth(mode, 1) in
+    let go(j, acc) =
+      let tk = js_at(toks, j) in
+      if js_k(tk) == "eof" then [list_rev(acc), j]
+      else if stop == "}" and js_t(tk) == "}" then [list_rev(acc), j + 1]
+      else
+        let r = one(j) in
+        go(nth(r, 1), cons(nth(r, 0), acc)) in
+    go(i, [])
+  else one(i)
+
+/* ---- emit helpers ----------------------------------------------------- */
+
+/* Fresh-name counter: `_<prefix><n>`, unique across the whole program. */
+let js_fresh(st, p) =
+  let b = st_ns(st) in
+  let n = box_get(b) in
+  let _ = box_set(b, n + 1) in
+  str_cat("_", str_cat(p, int_to_str(n)))
+
+/* Join xs[i..] with sep, seeding the accumulator with xs[0]. */
+let js_join(xs, sep, i, acc) =
+  if i >= len(xs) then acc
+  else if i == 0 then js_join(xs, sep, 1, nth(xs, 0))
+  else js_join(xs, sep, i + 1, str_cat(acc, str_cat(sep, nth(xs, i))))
+
+/* Concatenate a list of fragments (avoids deep str_cat nesting). */
+let js_cat(xs) = js_join(xs, "", 0, "")
+
+/* Escape a string for use inside a generated yac `"…"` literal. */
+let js_esc(s) =
+  let n = str_len(s) in
+  let rec(i, acc) =
+    if i >= n then acc
+    else
+      let c = str_ref(s, i) in
+      let bit =
+        if c == 34 then "\\\""
+        else if c == 92 then "\\\\"
+        else if c == 10 then "\\n"
+        else if c == 9 then "\\t"
+        else if c == 13 then "\\r"
+        else if c == 0 then "\\0"
+        else str_slice(s, i, 1) in
+      rec(i + 1, str_cat(acc, bit)) in
+  rec(0, "")
+
+/* JS name -> yac name: `v_` prefix (avoids kernel/keyword clashes), `$` ->
+ * `_ds_`. Deterministic, so every reference to a name agrees. */
+let js_mangle(s) =
+  let n = str_len(s) in
+  let rec(i, acc) =
+    if i >= n then acc
+    else
+      let c = str_ref(s, i) in
+      let bit = if c == 36 then "_ds_" else str_slice(s, i, 1) in
+      rec(i + 1, str_cat(acc, bit)) in
+  str_cat("v_", rec(0, ""))
+
+/* Membership in a name list (scopes are small). */
+let js_in(xs, x) =
+  let rec(i) =
+    if i >= len(xs) then false
+    else if nth(xs, i) == x then true
+    else rec(i + 1) in
+  rec(0)
+
+let js_str_lit(e) = nth(e, 0) == "str"
+
+/* True when a node is statically boolean-valued: a `true`/`false` literal, a
+ * comparison / equality / `&&` / `||`, or `!`. yac prints such a value as
+ * 1/0, so console.log and string concatenation route it through _js_bool to
+ * get JS's "true"/"false". */
+let js_is_boolish(e) =
+  let t = nth(e, 0) in
+  if t == "bool" then true
+  else if t == "un" then nth(e, 1) == "!"
+  else if t == "bin" then
+    let op = nth(e, 1) in
+    op == "&&" or op == "||" or op == "==" or op == "!=" or op == "==="
+      or op == "!==" or op == "<" or op == "<=" or op == ">" or op == ">="
+  else false
+
+/* Object key node (id/str/num) -> raw key text. */
+let js_lit_quote(e) =
+  if nth(e, 0) == "str" then nth(e, 1)
+  else if nth(e, 0) == "id" then nth(e, 1)
+  else if nth(e, 0) == "num" then nth(e, 1)
+  else ""
+
+/* ---- expression emitter ---------------------------------------------- */
+
+/* ctx = [vars, funcs, retf, retv]: boxed variable names, declared function
+ * names, and the enclosing function's return flag/value boxes (0 at top
+ * level). Emits a yac expression string. Self-recursive. */
+let js_emit_expr(e, ctx, st) =
+  let vars = nth(ctx, 0) in
+  let funcs = nth(ctx, 1) in
+  let tag = nth(e, 0) in
+  if tag == "num" then nth(e, 1)
+  else if tag == "str" then str_cat("\"", str_cat(js_esc(nth(e, 1)), "\""))
+  else if tag == "bool" then nth(e, 1)
+  else if tag == "null" then "0"
+  else if tag == "undef" then "0"
+  else if tag == "err" then "0"
+  else if tag == "id" then
+    /* Function -> direct name; boxed var -> box_get; else assume global fn. */
+    let nm = nth(e, 1) in
+    if nm == "console" or nm == "Math" then "0"
+    else if js_in(funcs, nm) then js_mangle(nm)
+    else if js_in(vars, nm) then js_cat(["box_get(", js_mangle(nm), ")"])
+    else js_mangle(nm)
+  else if tag == "arr" then
+    /* Array literal: a fresh listbuf plus one list_push per element. */
+    let a = js_fresh(st, "arr") in
+    let go(ys, acc) =
+      if len(ys) == 0 then js_cat(["(let ", a, " = list_new() in ", acc, a, ")"])
+      else go(tail(ys), js_cat([acc, "let _ = list_push(", a, ", ", js_emit_expr(nth(ys, 0), ctx, st), ") in "])) in
+    go(nth(e, 1), "")
+  else if tag == "obj" then
+    /* Object literal: a fresh fmap plus one fmap_put per pair. */
+    let o = js_fresh(st, "obj") in
+    let _ = box_set(st_fmap(st), 1) in
+    let go(ys, acc) =
+      if len(ys) == 0 then js_cat(["(let ", o, " = fmap_new(0) in ", acc, o, ")"])
+      else
+        let pair = nth(ys, 0) in
+        let ks = js_lit_quote(nth(pair, 0)) in
+        let vs = js_emit_expr(nth(pair, 1), ctx, st) in
+        go(tail(ys), js_cat([acc, "let _ = fmap_put(", o, ", \"", js_esc(ks), "\", ", vs, ") in "])) in
+    go(nth(e, 1), "")
+  else if tag == "un" then
+    let op = nth(e, 1) in
+    let a = js_emit_expr(nth(e, 2), ctx, st) in
+    if op == "!" then js_cat(["(not ", a, ")"])
+    else if op == "-" then js_cat(["(0 - ", a, ")"])
+    else a
+  else if tag == "bin" then
+    /* `+` with a string operand concatenates; everything else is the same
+     * operator in yac (===/!== collapse to ==/!=). */
+    let op = nth(e, 1) in
+    let l = nth(e, 2) in
+    let r = nth(e, 3) in
+    if op == "+" and (js_str_lit(l) or js_str_lit(r)) then
+      let _ = box_set(st_str(st), 1) in
+      let ls = if js_str_lit(l) then js_emit_expr(l, ctx, st) else js_cat(["_js_str(", js_emit_expr(l, ctx, st), ")"]) in
+      let rs = if js_str_lit(r) then js_emit_expr(r, ctx, st) else js_cat(["_js_str(", js_emit_expr(r, ctx, st), ")"]) in
+      js_cat(["str_cat(", ls, ", ", rs, ")"])
+    else
+      let ls = js_emit_expr(l, ctx, st) in
+      let rs = js_emit_expr(r, ctx, st) in
+      if op == "&&" then js_cat(["(", ls, " and ", rs, ")"])
+      else if op == "||" then js_cat(["(", ls, " or ", rs, ")"])
+      else if op == "===" then js_cat(["(", ls, " == ", rs, ")"])
+      else if op == "!==" then js_cat(["(", ls, " != ", rs, ")"])
+      else js_cat(["(", ls, " ", op, " ", rs, ")"])
+  else if tag == "cond" then
+    js_cat(["(if ", js_emit_expr(nth(e, 1), ctx, st), " then ", js_emit_expr(nth(e, 2), ctx, st), " else ", js_emit_expr(nth(e, 3), ctx, st), ")"])
+  else if tag == "idx" then
+    js_cat(["nth(", js_emit_expr(nth(e, 1), ctx, st), ", ", js_emit_expr(nth(e, 2), ctx, st), ")"])
+  else if tag == "mem" then
+    /* `.length` -> str_len (string literal) or len; other members are fmap
+     * lookups. */
+    let obj = nth(e, 1) in
+    let nm = nth(e, 2) in
+    if nm == "length" then
+      if js_str_lit(obj) then js_cat(["str_len(", js_emit_expr(obj, ctx, st), ")"])
+      else js_cat(["len(", js_emit_expr(obj, ctx, st), ")"])
+    else
+      let _ = box_set(st_fmap(st), 1) in
+      js_cat(["fmap_get(", js_emit_expr(obj, ctx, st), ", \"", js_esc(nm), "\")"])
+  else if tag == "assign" then
+    /* Target is a box (id), fmap slot (mem) or list slot (idx). Compound ops
+     * read the target, apply the base operator, then store. */
+    let op = nth(e, 1) in
+    let tgt = nth(e, 2) in
+    let val = nth(e, 3) in
+    let v = js_emit_expr(val, ctx, st) in
+    let t = nth(tgt, 0) in
+    let base =
+      if t == "id" then js_cat(["box_get(", js_mangle(nth(tgt, 1)), ")"])
+      else if t == "mem" then
+        let _ = box_set(st_fmap(st), 1) in
+        js_cat(["fmap_get(", js_emit_expr(nth(tgt, 1), ctx, st), ", \"", js_esc(nth(tgt, 2)), "\")"])
+      else if t == "idx" then js_cat(["nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", ", js_emit_expr(nth(tgt, 2), ctx, st), ")"])
+      else "0" in
+    let rhs =
+      if op == "=" then v
+      else
+        let op0 =
+          if op == "+=" then "+"
+          else if op == "-=" then "-"
+          else if op == "*=" then "*"
+          else if op == "/=" then "/"
+          else "%" in
+        if op0 == "+" and js_str_lit(val) then
+          let _ = box_set(st_str(st), 1) in
+          js_cat(["str_cat(_js_str(", base, "), ", v, ")"])
+        else js_cat(["(", base, " ", op0, " ", v, ")"]) in
+    if t == "id" then
+      js_cat(["(let _v = ", rhs, " in (let _ = box_set(", js_mangle(nth(tgt, 1)), ", _v) in _v))"])
+    else if t == "mem" then
+      let _ = box_set(st_fmap(st), 1) in
+      js_cat(["(let _v = ", rhs, " in (let _ = fmap_put(", js_emit_expr(nth(tgt, 1), ctx, st), ", \"", js_esc(nth(tgt, 2)), "\", _v) in _v))"])
+    else if t == "idx" then
+      js_cat(["(let _v = ", rhs, " in (let _ = list_set(", js_emit_expr(nth(tgt, 1), ctx, st), ", ", js_emit_expr(nth(tgt, 2), ctx, st), ", _v) in _v))"])
+    else js_cat(["(let _v = ", rhs, " in _v)"])
+  else if tag == "call" then
+    /* Builtins: console.log, Math.*, arr.push, String/Number/parseInt. Any
+     * other callee becomes an (indirect) yac call. */
+    let callee = nth(e, 1) in
+    let args = nth(e, 2) in
+    let ctag = nth(callee, 0) in
+    let cobj = if ctag == "mem" then nth(callee, 1) else ["err", ""] in
+    let cnm = if ctag == "mem" then nth(callee, 2) else "" in
+    let is_console = ctag == "mem" and cnm == "log" and nth(cobj, 0) == "id" and nth(cobj, 1) == "console" in
+    let is_math = ctag == "mem" and nth(cobj, 0) == "id" and nth(cobj, 1) == "Math" in
+    if is_console then
+      if len(args) == 0 then "print(\"\")"
+      else if len(args) == 1 then js_cat(["print(", js_emit_expr(nth(args, 0), ctx, st), ")"])
+      else
+        /* Multi-arg: space-joined via the _js_str helper. */
+        let _ = box_set(st_str(st), 1) in
+        let go(i) =
+          if i == len(args) - 1 then js_cat(["_js_str(", js_emit_expr(nth(args, i), ctx, st), ")"])
+          else js_cat(["str_cat(_js_str(", js_emit_expr(nth(args, i), ctx, st), "), str_cat(\" \", ", go(i + 1), "))"]) in
+        js_cat(["print(", go(0), ")"])
+    else if is_math then
+      let _ = box_set(st_math(st), 1) in
+      if cnm == "floor" or cnm == "ceil" or cnm == "round" or cnm == "trunc" then
+        if len(args) == 0 then "0" else js_emit_expr(nth(args, 0), ctx, st)
+      else if cnm == "random" then "0"
+      else
+        let go(i) =
+          if i >= len(args) then ""
+          else if i == len(args) - 1 then js_emit_expr(nth(args, i), ctx, st)
+          else js_cat([js_emit_expr(nth(args, i), ctx, st), ", ", go(i + 1)]) in
+        let as = if len(args) == 0 then "0" else go(0) in
+        js_cat([cnm, "(", as, ")"])
+    else if ctag == "mem" and cnm == "push" then
+      let a0 = if len(args) == 0 then "0" else js_emit_expr(nth(args, 0), ctx, st) in
+      js_cat(["list_push(", js_emit_expr(nth(callee, 1), ctx, st), ", ", a0, ")"])
+    else if ctag == "id" and nth(callee, 1) == "String" then
+      let _ = box_set(st_str(st), 1) in
+      let a0 = if len(args) == 0 then "\"\"" else js_emit_expr(nth(args, 0), ctx, st) in
+      js_cat(["_js_str(", a0, ")"])
+    else if ctag == "id" and (nth(callee, 1) == "Number" or nth(callee, 1) == "parseInt" or nth(callee, 1) == "parseFloat") then
+      if len(args) == 0 then "0" else js_emit_expr(nth(args, 0), ctx, st)
+    else
+      /* Indirect call: `(callee)(args)`; a 0-arg call passes the dummy 0. */
+      let cf = js_emit_expr(callee, ctx, st) in
+      let go(i) =
+        if i >= len(args) then ""
+        else if i == len(args) - 1 then js_emit_expr(nth(args, i), ctx, st)
+        else js_cat([js_emit_expr(nth(args, i), ctx, st), ", ", go(i + 1)]) in
+      let as = if len(args) == 0 then "0" else go(0) in
+      js_cat(["(", cf, ")(", as, ")"])
+  else
+    let _ = js_fail(st, js_cat(["unsupported expression '", tag, "'"])) in
+    "0"
+
+/* ---- statement emitter ------------------------------------------------ */
+
+/* Compile a statement list to a yac expression whose value is that of the
+ * last statement (or the supplied continuation k). ctx as in js_emit_expr.
+ * - `let` adds a box and extends the scope for the rest of the list.
+ * - `if` / `while` / `for` bodies reuse js_emit_stmts.
+ * - `for` lowers to a self-recursive loop; when a `return` fires, the
+ *   per-function flag short-circuits the loop through the guard.
+ * Self-recursive; function bodies recurse through a fresh js_emit_stmts. */
+let js_emit_stmts(stmts, ctx, k, st) =
+  let retf = nth(ctx, 2) in
+  let retv = nth(ctx, 3) in
+  /* One statement, with its own continuation k2 (used by loop bodies). */
+  let sstmt(s, ctx2, k2) =
+    let tag = nth(s, 0) in
+    if tag == "expr" then js_emit_expr(nth(s, 1), ctx2, st)
+    else if tag == "block" then js_emit_stmts(nth(s, 1), ctx2, "0", st)
+    else if tag == "if" then
+      js_cat(["(if ", js_emit_expr(nth(s, 1), ctx2, st), " then ", js_emit_stmts(nth(s, 2), ctx2, "0", st), " else ", js_emit_stmts(nth(s, 3), ctx2, "0", st), ")"])
+    else if tag == "while" then
+      /* while (c) body  =>  (let _w(_) = if c then body; _w(0) else 0 in _w(0)) */
+      let w = js_fresh(st, "w") in
+      let body = js_emit_stmts(nth(s, 2), ctx2, js_cat([w, "(0)"]), st) in
+      js_cat(["(let ", w, "(_) = (if ", js_emit_expr(nth(s, 1), ctx2, st), " then ", body, " else 0) in ", w, "(0))"])
+    else if tag == "for" then
+      /* for (init; test; update) body => init; (let _w(_) = if test then
+       * body; update; _w(0) else 0 in _w(0)). A `let` init is scoped over
+       * test / update / body. */
+      let init = nth(s, 1) in
+      let test = nth(s, 2) in
+      let upd = nth(s, 3) in
+      let body = nth(s, 4) in
+      let w = js_fresh(st, "w") in
+      let cont =
+        if nth(upd, 0) == "null" then js_cat([w, "(0)"])
+        else js_cat(["(let _ = ", js_emit_expr(upd, ctx2, st), " in ", w, "(0))"]) in
+      let loopbody = js_cat(["(if ", js_emit_expr(test, ctx2, st), " then ", js_emit_stmts(body, ctx2, cont, st), " else 0)"]) in
+      let loop = js_cat(["(let ", w, "(_) = ", loopbody, " in ", w, "(0))"]) in
+      if nth(init, 0) == "let" then
+        let m = js_mangle(nth(init, 2)) in
+        let nm = nth(init, 2) in
+        let ie = js_emit_expr(nth(init, 3), ctx2, st) in
+        let ctx3 = [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3)] in
+        let cont3 =
+          if nth(upd, 0) == "null" then js_cat([w, "(0)"])
+          else js_cat(["(let _ = ", js_emit_expr(upd, ctx3, st), " in ", w, "(0))"]) in
+        let loopbody3 = js_cat(["(if ", js_emit_expr(test, ctx3, st), " then ", js_emit_stmts(body, ctx3, cont3, st), " else 0)"]) in
+        let loop3 = js_cat(["(let ", w, "(_) = ", loopbody3, " in ", w, "(0))"]) in
+        js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ie, ") in ", loop3, "))"])
+      else
+        if nth(init, 0) == "expr" then js_emit_stmts([init], ctx2, loop, st) else loop
+    else if tag == "ret" then
+      /* Set the flag + value boxes; the guard after each statement unwinds. */
+      let v = js_emit_expr(nth(s, 1), ctx2, st) in
+      if retf == 0 then v
+      else js_cat(["(let _ = box_set(", retf, ", true) in (let _ = box_set(", retv, ", ", v, ") in ", retv, "))"])
+    else "0" in
+  /* Function: bind each param to a fresh box, create fresh return flag/value
+   * boxes (flag initialised to boolean false), then the body. Returns
+   * [param-signature, body-expression]. */
+  let func_body(ps, body, ctx2) =
+    let retf2 = js_fresh(st, "retf") in
+    let retv2 = js_fresh(st, "retv") in
+    let ctx3 = [append(nth(ctx2, 0), ps), nth(ctx2, 1), retf2, retv2] in
+    let b0 = js_emit_stmts(body, ctx3, "0", st) in
+    let b1 = js_cat(["(let ", retv2, " = box_new() in ", b0, ")"]) in
+    let b2 = js_cat(["(let ", retf2, " = box_new() in (let _ = box_set(", retf2, ", false) in ", b1, "))"]) in
+    let pnames =
+      let n = len(ps) in
+      if n == 0 then ["_"]
+      else
+        let go(i, acc) =
+          if i >= n then list_rev(acc)
+          else go(i + 1, cons(str_cat("_p", int_to_str(i)), acc)) in
+        go(0, []) in
+    let wrap(i, inner) =
+      if i < 0 then inner
+      else
+        let m = js_mangle(nth(ps, i)) in
+        let pn = nth(pnames, i) in
+        wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", pn, ") in ", inner, "))"])) in
+    [js_join(pnames, ", ", 0, ""), wrap(len(ps) - 1, b2)] in
+  /* Walk the list, threading scope and continuation. Every non-declaration
+   * statement is followed by a flag guard so an early `return` stops the
+   * rest of the list. */
+  let go(xs, vars2, funcs2, k2) =
+    if len(xs) == 0 then k2
+    else
+      let s = nth(xs, 0) in
+      let rest = tail(xs) in
+      let tag = nth(s, 0) in
+      if tag == "func" then
+        let nm = nth(s, 1) in
+        let ps = nth(s, 2) in
+        let body = nth(s, 3) in
+        let m = js_mangle(nm) in
+        let funcs3 = cons(nm, funcs2) in
+        let fb = func_body(ps, body, [vars2, funcs3, retf, retv]) in
+        js_cat(["(let ", m, "(", nth(fb, 0), ") = ", nth(fb, 1), " in ", go(rest, vars2, funcs3, k2), ")"])
+      else if tag == "let" then
+        let nm = nth(s, 2) in
+        let m = js_mangle(nm) in
+        let ie = js_emit_expr(nth(s, 3), [vars2, funcs2, retf, retv], st) in
+        let vars3 = cons(nm, vars2) in
+        js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ie, ") in ", go(rest, vars3, funcs2, k2), "))"])
+      else
+        let se = sstmt(s, [vars2, funcs2, retf, retv], k2) in
+        let cont = go(rest, vars2, funcs2, k2) in
+        let guard =
+          if retf == 0 then cont
+          else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", cont, ")"]) in
+        js_cat(["(let _ = ", se, " in ", guard, ")"]) in
+  go(stmts, nth(ctx, 0), nth(ctx, 1), k)
+
+/* ---- entry point ------------------------------------------------------ */
+
+/* Translate a whole JS program. Allocates the per-translation state, lexes /
+ * parses / emits, and prepends only the imports and helpers the program
+ * actually needs. Returns "error: …" if the front end recorded a problem. */
+let js_to_yac(src) =
+  let err = box_new() in
+  let _ = box_set(err, "") in
+  let ns = box_new() in
+  let _ = box_set(ns, 0) in
+  let ufmap = box_new() in
+  let _ = box_set(ufmap, 0) in
+  let umath = box_new() in
+  let _ = box_set(umath, 0) in
+  let ustr = box_new() in
+  let _ = box_set(ustr, 0) in
+  let st = [err, ns, ufmap, umath, ustr] in
+  let toks = js_lex(src) in
+  let r = js_parse_stmts(toks, 0, ["list", 0], st) in
+  let body = js_emit_stmts(nth(r, 0), [[], [], 0, 0], "0", st) in
+  let e = box_get(err) in
+  if e != "" then js_cat(["error: ", e])
+  else
+    let h1 = if box_get(ufmap) == 1 then "import data.fmap { fmap_new, fmap_get, fmap_put }\n" else "" in
+    let h2 = if box_get(umath) == 1 then "import num.math { abs, min, max, pow, sqrt, pi }\n" else "" in
+    let h3 = if box_get(ustr) == 1 then "let _js_str(x) = if is_int(x) then int_to_str(x) else x\n" else "" in
+    js_cat([h1, h2, h3, body, "\n"])

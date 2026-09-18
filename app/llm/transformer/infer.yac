@@ -6,8 +6,8 @@
  */
 
 import transformer
-import io
-import fmt
+import fs.io
+import text.fmt
 
 let wpath =
   if argc() > 1 then argv(1)

@@ -10,7 +10,7 @@ export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live, 
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
 import back.emit.emit {apply_u64, asm_dump_set, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref22, gref22_reset, gref_base, host_names, yjit_layout_get, relocs_get, relocs_reset, relocs_set}
 import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog, toplevel_seed, lir_tlv_set}
-import back.backend {ast_imports, entry_off, link_from_ast, link_is_dylib, link_need_box, pass_anf, pass_lex, pass_parse, pkg_src, report_unbound, rewrite_imports, rt_for_link}
+import back.backend {ast_imports, entry_off, link_from_ast, link_is_dylib, link_need_box, pass_anf, pass_lex, pass_parse, pkg_init_calls, pkg_init_list, pkg_src, report_unbound, rewrite_imports, rt_for_link}
 import back.lower {emit_apply_unres, lower_expr}
 import back.pack.target {JIT_VADDR, target_arch}
 import back.pack.yjit {bytes_copy_range, pack_yjit_ex, yjit_arch_name, yjit_arch_num, yjit_export_dec, yjit_export_enc, yjit_imp_enc, yjit_imp_parse, yjit_read, yjit_reloc_enc}
@@ -358,8 +358,18 @@ let pass_lir_eval(anf_list, bind_name, quiet) =
   let is_fun =
     if bind_name == "" then false
     else anf_letfun_p(anf_list, bind_name, 0) in
+  /* Run package top-level inits before this line's body, exactly like the AOT
+   * (pass_lir) and yjit (pass_lir_yjit) entries. Without this a package's
+   * top-level VALUE cells (e.g. a `let b = box_new() ...` singleton) were
+   * never filled in the REPL: lir_var reads them with `gval`, so the first
+   * call dereferenced a zero cell (SIGSEGV). Init results occupy slots
+   * [nslots, nslots+nin); the frame is grown by nin so _eval's own scratch
+   * slots (nslots+8..) stay clear. */
+  let inits = pkg_init_list(0) in
+  let nin = len(inits) in
+  let body = insn_extend(pkg_init_calls(inits, 0, nth(st, 1), list_new()), nth(st, 4)) in
   let entry =
-    start_proc_eval(nth(st, 1), pslot, nth(st, 4), bind_name, quiet, is_fun) in
+    start_proc_eval(nth(st, 1) + nin, pslot, body, bind_name, quiet, is_fun) in
   /* prog[2] is the Linux process entry (is_entry in emit). JIT jumps to
    * _eval by name; it must not be prog[2] or it would get _start's ABI. */
   tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])

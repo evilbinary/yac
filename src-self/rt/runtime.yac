@@ -28,6 +28,7 @@ export runtime_funs, runtime_add, yac_cimport_host_sym, yac_gval_pub, yac_gval_l
  * import binds the name in the package case -- sigma_host_seed only covers
  * @name host bindings, which intern is not. */
 import lib.map {intern}
+import rt.os {host_os}
 
 let rt_cons_ins(_) =
   [["local", 6, 2],
@@ -1185,18 +1186,27 @@ let rt_print_int_ins(_) =
    ["mov_imm", 8, 0 + 0],
    ["ret", 8]]
 
+/* Newline byte(s) written after print. A Windows console needs CRLF: the
+ * native image writes bytes straight to the handle (no C text-mode
+ * translation), so a lone LF leaves the cursor in its current column and the
+ * output staircases. The C interpreter's stdout is text-mode and already
+ * emits CRLF, so match it there. */
+let rt_nl_ins(_) =
+  if host_os(0) == "windows" then
+    [["mov_imm", 6, 13 + 13], ["write1", 6], ["mov_imm", 6, 10 + 10], ["write1", 6]]
+  else
+    [["mov_imm", 6, 10 + 10], ["write1", 6]]
+
 /* print(v, nl): print_val then optional newline. Returns v. */
 let rt_print_ins(_) =
-  [["local", 8, 2],
-   ["fcall", 3, "print_val", [1]],
-   ["mov_imm", 4, 0 + 0],
-   ["icmp", "==", 5, 2, 4],
-   ["cmpjmp", 5, "pr_done", "pr_nl"],
-   ["label", "pr_nl"],
-   ["mov_imm", 6, 10 + 10],
-   ["write1", 6],
-   ["label", "pr_done"],
-   ["ret", 1]]
+  append(
+    [["local", 8, 2],
+     ["fcall", 3, "print_val", [1]],
+     ["mov_imm", 4, 0 + 0],
+     ["icmp", "==", 5, 2, 4],
+     ["cmpjmp", 5, "pr_done", "pr_nl"],
+     ["label", "pr_nl"]],
+    append(rt_nl_ins(0), [["label", "pr_done"], ["ret", 1]]))
 
 /* Mark: bitmap O(1) if G+64 set, else walk gc_head. Recurse by kind. */
 let rt_gc_mark_ins(_) =
@@ -1399,6 +1409,33 @@ let rt_gc_collect_ins(_) =
    ["label", "gc_fmark"],
    ["fcall", 12, "yac_gc_mark", [5]],
    ["label", "gc_fnone"],
+   /* REPL session roots: the jslot array at JIT_VADDR+12MiB holds top-level
+    * `let` values across lines (yac_jslot_set). Those slots are NOT in any
+    * image's G, so without this the compiler's own GC reclaimed a session
+    * value while it was still bound (measured: `let ff = compile(...)` then
+    * `ff` printed the next compile's LIR). G+112 holds the JIT map base once
+    * a session exists (rt_jit_run); 0 in a plain AOT process, so skip there.
+    * yac_jslot_set publishes the high-water end address at base-8. */
+   ["$ld64", 5, 1, 112],
+   ["$jcc", "==", 5, 8, "gc_jsx", "gc_js0"],
+   ["label", "gc_js0"],
+   ["mov_imm", 30, 8602517504],
+   ["mov_imm", 31, 8602517496],
+   ["$ld64", 31, 31, 0],
+   ["$jcc", "==", 31, 8, "gc_jsx", "gc_js1"],
+   ["label", "gc_js1"],
+   ["$jcc", ">=u", 30, 31, "gc_jsx", "gc_js2"],
+   ["label", "gc_js2"],
+   ["$ld64", 5, 30, 0],
+   ["$and", 9, 5, 7],
+   ["mov_imm", 10, 1],
+   ["$jcc", "==", 9, 10, "gc_jsm", "gc_jsn"],
+   ["label", "gc_jsm"],
+   ["fcall", 12, "yac_gc_mark", [5]],
+   ["label", "gc_jsn"],
+   ["$addi", 30, 30, 8],
+   ["jmp", "gc_js1"],
+   ["label", "gc_jsx"],
    ["$ld64", 2, 1, 24],
    ["$smap", 21],
    ["$jcc", "==", 21, 8, "gc_cons", "gc_smp"],
@@ -2361,6 +2398,16 @@ let rt_jslot_set_ins(_) =
    ["mov_imm", 4, 8602517504],
    ["$add", 4, 4, 3],
    ["$st64", 4, 0, 2],
+   /* Publish the high-water end of the session slots at base-8, so the GC
+    * (rt_gc_collect_ins) can scan exactly the live range as a root. Keep the
+    * max: a later line may re-bind an OLD index (redefinition). */
+   ["$addi", 5, 4, 8],
+   ["mov_imm", 6, 8602517496],
+   ["$ld64", 7, 6, 0],
+   ["$jcc", ">=u", 7, 5, "js_done", "js_upd"],
+   ["label", "js_upd"],
+   ["$st64", 6, 0, 5],
+   ["label", "js_done"],
    ["ret", 2]]
 
 let rt_num_add_ins(_) =
@@ -2570,7 +2617,7 @@ let rt_gname_by_src(funs, src, i, acc) =
       if intern(srcn) == intern(src) then intern(nth(f, 1)) else acc in
     rt_gname_by_src(funs, src, i + 1, acc2)
 
-/* Bind yac_prof_enter/leave to whatever gname pkg/profile.yac gave prof_*_go. */
+/* Bind yac_prof_enter/leave to whatever gname pkg/tools/profile.yac gave prof_*_go. */
 let runtime_add(funs) =
   let enter = rt_gname_by_src(funs, "prof_enter_go", 0, 0) in
   if enter == 0 then funs

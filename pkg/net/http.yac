@@ -1,8 +1,8 @@
-/* http.yac — HTTP/1.0 over net TCP. No TLS / DNS / chunked. Guest import http (pulls net). */
+/* http.yac — HTTP/1.0 over net TCP. No TLS / DNS / chunked. Guest import net.http (pulls net.tcp). */
 
-import net
+import net.tcp
 
-package http
+package net.http
 export crlf, request, status, get
 
 /* CR LF. */

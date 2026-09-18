@@ -1,4 +1,4 @@
-import str
+import text.str
 let xs = split("a,b", ",") in
 let ys = split("a,,b", ",") in
 if len(xs) == 2 then
