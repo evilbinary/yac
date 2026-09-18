@@ -112,7 +112,7 @@ let suite_done(st) =
                    str_cat(int_to_str(nth(st, 1)), " failed")))) in
   if nth(st, 1) == 0 then 0 else exit(1)
 
-/* ---- guest used by the CLI / chain cases: imports the `path` package. */
+/* ---- guest used by the CLI / chain cases: imports the `fs.path` package. */
 let link_guest(_) = pkg_case("path")
 
 /* Compile+run expecting the guest to exit 42 (source-link / stub fallback). */
@@ -143,13 +143,14 @@ let link_err_case(st, yc, name, extra, needle) =
 /* Fake artifact present + a mode with no loader -> "not implemented yet"
  * (embed/yjit; dylib now binds, covered by link_dylib_case below). */
 let link_art_case(st, ya, name, mode, suf) =
-  let fake = str_cat(TMP, str_cat("/path.yac", suf)) in
+  let fake = str_cat(TMP, str_cat("/fs/path.yac", suf)) in
   let y = native(str_cat(TMP, "/link_y")) in
   let _ = run(["rm", "-f", fake, y]) in
+  let _ = system(str_cat("mkdir -p ", str_cat(TMP, "/fs"))) in
   let _ = write_file(fake, "fake artifact\n") in
   let cr =
     run([ya, "--pkg", str_cat("src-self,", TMP),
-         "--link", str_cat("path=", mode), link_guest(0), "-o", y]) in
+         "--link", str_cat("fs.path=", mode), link_guest(0), "-o", y]) in
   let blob = str_cat(chomp(nth(cr, 1)), chomp(nth(cr, 2))) in
   let _ = run(["rm", "-f", fake]) in
   if nth(cr, 0) == 0 then
@@ -218,10 +219,10 @@ let link_all(st, yc) =
                   ["--link", "dylib"], "no precompiled artifact") in
   let st3 =
     link_run_case(st2, yc, "override dylib,stub -> source",
-                  ["--link", "path=dylib,stub"]) in
+                  ["--link", "fs.path=dylib,stub"]) in
   let st4 =
     link_run_case(st3, yc, "repeat override later wins -> source",
-                  ["--link", "path=dylib", "--link", "path=stub"]) in
+                  ["--link", "fs.path=dylib", "--link", "fs.path=stub"]) in
   let st5 =
     link_err_case(st4, yc, "bad mode", ["--link", "bogus"], "bad arguments") in
   let ya = nth(yc, 0) in

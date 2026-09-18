@@ -1981,7 +1981,7 @@ let save_model(m, path) =
   let _ = emit_wout(b, nth(m, 4), 0, dim(0), ntok(m)) in
   write(path, b)
 
-/* 入参是路径。必须 import fmt：否则 format 变成 ncap，跨包调用会把 path 塞进 capture 槽。 */
+/* 入参是路径。必须 import text.fmt：否则 format 变成 ncap，跨包调用会把 path 塞进 capture 槽。 */
 let load_model(path) =
   let raw = read_or_0(path) in
   if raw == 0 then
