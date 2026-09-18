@@ -634,7 +634,16 @@ let repl_cases(_) = [
    * session (state isolation is open, see BOOTSTRAP_LINK.md §12.11). */
   ["import tools.compiler", "import tools.compiler\n:q\n", "compiler"],
   ["import tools.compiler binds compile", "import tools.compiler\ncompile\n:q\n", "<fun>"],
-  ["compile unbound without import", "compile\n:q\n", "unbound variable 'compile'"]]
+  ["compile unbound without import", "compile\n:q\n", "unbound variable 'compile'"],
+  /* A REPL `let` value must survive later lines' compilation, even when that
+   * compilation runs the host GC. The session slots (yac_jslot_set, at
+   * JIT_VADDR+12MiB) are scanned as GC roots now; before that, a bytes bound
+   * on one line was reclaimed during the next line's compile and `ff` printed
+   * the new line's LIR (FLAT_ABI.md). Two compiles make the second line's GC
+   * pressure real, then bytes_len proves the first value is still intact. */
+  ["session value survives gc",
+   "import tools.compiler\nlet ff = compile(\"1 + 2\")\nlet g = compile(\"1 + 2 + 3\")\nif bytes_len(ff) > 1000 then print(\"SURVIVED\") else print(\"LOST\")\n:q\n",
+   "SURVIVED"]]
 
 let repl_all(st, yc, stem) =
   let _ = banner("repl", nth(yc, 0)) in
