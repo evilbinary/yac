@@ -1409,6 +1409,33 @@ let rt_gc_collect_ins(_) =
    ["label", "gc_fmark"],
    ["fcall", 12, "yac_gc_mark", [5]],
    ["label", "gc_fnone"],
+   /* REPL session roots: the jslot array at JIT_VADDR+12MiB holds top-level
+    * `let` values across lines (yac_jslot_set). Those slots are NOT in any
+    * image's G, so without this the compiler's own GC reclaimed a session
+    * value while it was still bound (measured: `let ff = compile(...)` then
+    * `ff` printed the next compile's LIR). G+112 holds the JIT map base once
+    * a session exists (rt_jit_run); 0 in a plain AOT process, so skip there.
+    * yac_jslot_set publishes the high-water end address at base-8. */
+   ["$ld64", 5, 1, 112],
+   ["$jcc", "==", 5, 8, "gc_jsx", "gc_js0"],
+   ["label", "gc_js0"],
+   ["mov_imm", 30, 8602517504],
+   ["mov_imm", 31, 8602517496],
+   ["$ld64", 31, 31, 0],
+   ["$jcc", "==", 31, 8, "gc_jsx", "gc_js1"],
+   ["label", "gc_js1"],
+   ["$jcc", ">=u", 30, 31, "gc_jsx", "gc_js2"],
+   ["label", "gc_js2"],
+   ["$ld64", 5, 30, 0],
+   ["$and", 9, 5, 7],
+   ["mov_imm", 10, 1],
+   ["$jcc", "==", 9, 10, "gc_jsm", "gc_jsn"],
+   ["label", "gc_jsm"],
+   ["fcall", 12, "yac_gc_mark", [5]],
+   ["label", "gc_jsn"],
+   ["$addi", 30, 30, 8],
+   ["jmp", "gc_js1"],
+   ["label", "gc_jsx"],
    ["$ld64", 2, 1, 24],
    ["$smap", 21],
    ["$jcc", "==", 21, 8, "gc_cons", "gc_smp"],
@@ -2371,6 +2398,16 @@ let rt_jslot_set_ins(_) =
    ["mov_imm", 4, 8602517504],
    ["$add", 4, 4, 3],
    ["$st64", 4, 0, 2],
+   /* Publish the high-water end of the session slots at base-8, so the GC
+    * (rt_gc_collect_ins) can scan exactly the live range as a root. Keep the
+    * max: a later line may re-bind an OLD index (redefinition). */
+   ["$addi", 5, 4, 8],
+   ["mov_imm", 6, 8602517496],
+   ["$ld64", 7, 6, 0],
+   ["$jcc", ">=u", 7, 5, "js_done", "js_upd"],
+   ["label", "js_upd"],
+   ["$st64", 6, 0, 5],
+   ["label", "js_done"],
    ["ret", 2]]
 
 let rt_num_add_ins(_) =
