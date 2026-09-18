@@ -566,6 +566,7 @@ let repl_cases(_) = [
    * proc emitted), which picked the guest's proc and jumped there -- SIGSEGV,
    * measured 2026-09-17. The entry is funs[0], i.e. that list's LAST record
    * (backend.yac entry_off; FLAT_ABI.md 8.2 #9). */
+<<<<<<< HEAD
   /* Builtin arity: a missing argument must be a reported front error (rc 2),
    * not a read of `[]` as a slot number. These were SIGSEGVs (FLAT_ABI.md
    * 8.18); the 4th field is the expected status, so the case really checks the
@@ -587,6 +588,9 @@ let repl_cases(_) = [
    * into bytes patched at the wrong offset and die with SIGSEGV -- see
    * emit_call_guard and FLAT_ABI.md 8.2 #18 (measured 2026-09-18). */
   ["call a non-function value", "let f = 1\nf()\n:q\n", "error: not a function"],
+=======
+  ["guest _eval shadows wrapper", "let _eval(x) = x + 1\nprint(_eval(41))\n:q\n", "42"],
+>>>>>>> 369aa972ee0590b89bedf7ecbed9f61f1b8c36c5
   /* Host-view compiler pkg (12.11 @host): import must be fast, not crash,
    * and bind the thin wrappers. Do NOT invoke compile/load here: calling a
    * host leaf runs the real host compiler in-process and pollutes the REPL
