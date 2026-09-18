@@ -77,6 +77,14 @@ $(YC_BIN): $(YC_A)
 	cp -f $(YC_A) $@
 	chmod +x $@
 
+# On Windows the file target is yc.exe / yac.exe, so `make yc` / `make yac`
+# would not match it. Add bare aliases there only; on Unix $(YC_BIN) IS `yc`,
+# and `yc: $(YC_BIN)` would be a self-dependency.
+ifneq ($(EXEEXT),)
+yc: $(YC_BIN)
+yac: $(BIN)
+endif
+
 yc_a: $(YC_A)
 
 yc_b: $(YC_B)
