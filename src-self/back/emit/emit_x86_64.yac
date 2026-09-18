@@ -1554,10 +1554,16 @@ let emit_call_guard(b, st, patches, dst) =
   let bad = bytes_len(b) in
   let _ = apply_patch(b, j1, bad) in
   let _ = apply_patch(b, j2, bad) in
-  let acall = bytes_len(b) in
   /* Hand the rejected value to the stub as arg0 so the message says WHAT was
    * applied; the checks above are the last use of the closure in rax. */
   let _ = mov_rax_to_argreg(b, 1) in
+  /* acall must be taken RIGHT BEFORE call_user -- it names the e8 opcode and
+   * the patch writes the rel32 at acall+1. Taking it one instruction earlier
+   * (before mov_rax_to_argreg's 3 bytes) put the rel32 inside that mov and
+   * left the call's own field 0, so the reject path ran garbage: measured
+   * 2026-09-18, `let f = 1; f()` died with SIGSEGV instead of reporting
+   * "error: not a function" (FLAT_ABI.md 8.2 #18). */
+  let acall = bytes_len(b) in
   let _ = call_user(b) in
   let ps = emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_not_fn") in
   let _ = emit_store_rax_slot(b, dst) in

@@ -582,6 +582,11 @@ let repl_cases(_) = [
   ["str_cat() too few args", "str_cat()\n:q\n", "builtin 'str_cat' called with too few arguments", 2],
   ["exit(3) status", "exit(3)\n:q\n", "", 3],
   ["guest _eval shadows wrapper", "let _eval(x) = x + 1\nprint(_eval(41))\n:q\n", "42"],
+  /* A call through a NON-function value must be reported and continue: the
+   * guard's reject path calls yac_not_fn (prints, returns 0). It used to jump
+   * into bytes patched at the wrong offset and die with SIGSEGV -- see
+   * emit_call_guard and FLAT_ABI.md 8.2 #18 (measured 2026-09-18). */
+  ["call a non-function value", "let f = 1\nf()\n:q\n", "error: not a function"],
   /* Host-view compiler pkg (12.11 @host): import must be fast, not crash,
    * and bind the thin wrappers. Do NOT invoke compile/load here: calling a
    * host leaf runs the real host compiler in-process and pollutes the REPL
