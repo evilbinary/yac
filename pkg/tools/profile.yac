@@ -1,6 +1,6 @@
 /* profile.yac — runtime function profiler for native yc programs.
  *
- *   import profile
+ *   import tools.profile
  *   let _ = prof_enable("/tmp/app.prof") in  /* wraps yac_prof_enable */
  *   ...
  *   let _ = prof_dump(0) in                 /* wraps yac_prof_dump */
@@ -9,10 +9,10 @@
  * (src-self needed so the compiler can find back/profile.yac deps if any.)
  */
 
-package profile
+package tools.profile
 export prof_enable, prof_dump, yac_prof_enable, yac_prof_dump
-import fmap
-import fmt
+import data.fmap
+import text.fmt
 
 let prof_stk_fill(stk, i, n) =
   if i >= n then stk

@@ -1,6 +1,6 @@
 /* log.yac — guest stderr-style lines. Compiler logging stays in src-self/lib/log.yac. */
 
-package log
+package os.log
 export info, warn, error
 
 /* One line: [time] [tag] msg. Not exported. */

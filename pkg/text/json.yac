@@ -2,7 +2,7 @@
  * ["N", n] ["S", s] ["A", xs] ["O", pairs] ["T"] ["F"] ["Z"].
  * Integers only (no frac/exp). Objects are [k, val] pairs, k a string. */
 
-package json
+package text.json
 export parse, stringify, get, jnum, jstr, jarr, jobj, jtrue, jfalse, jnull
 
 /* Constructors. */

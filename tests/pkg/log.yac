@@ -1,4 +1,4 @@
-import log
+import os.log
 let _ = info("hi") in
 let _ = warn("w") in
 let _ = error("e") in

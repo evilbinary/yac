@@ -22,7 +22,7 @@
 
 顶层函数只要读任意一个顶层 `let` 值，`ncap > 0` → 不是 flat → 变回闭包 →
 调用方又得传前导 caps。于是这类函数在跨镜像场景下**依然拿不到环境**：
-名字表只给**入口地址**，不给环境。`import compiler` + `compile("1+2")`
+名字表只给**入口地址**，不给环境。`import tools.compiler` + `compile("1+2")`
 就会卡在这里。
 
 **顶层函数理论上 100% 可 flat** —— 它的自由变量只可能是顶层名，而顶层名的
@@ -237,7 +237,7 @@ IR 收敛的完整方案（KISS / OCP 准则、六类维度泄漏、逐条迁移
 | **2** | **顶层值静态化**（§2）：`scan_toplevel` 判据、`gval` / `gset`、发布时序、GC root | 顶层 letfun **全部** `ncap = 0`；LIR dump 里 `gval` 条数 == 顶层 `let` 条数 |
 | **3** | **判据下沉**（§1）：`flat ⇔ 真捕获数 == 0`，作用域扩到所有 lambda | 函数体内无捕获的 `fun` 也生成静态 cell；各阶段测试 |
 | **4** | **ANF 修正**（`ANF.md` §4.1）：尾位置结构化 `body = [bind*, tail]`；`letcallcc` 多值形状；`anf_expr` 兜底改为编译期报错 | 各阶段 golden 不变；删掉 `tail(x)` 谓词与 `maybe_tcall`；不再出现 `ticall` / `tailapply` 生成 |
-| **5** | **L2 跨镜像**（§2.4）：cell 共享（jsess patch）+ `fn_entry` 策略点 | link 13 PASS、repl 26/26、`import compiler` + `compile("1+2")` e2e、`blob_len > 0` |
+| **5** | **L2 跨镜像**（§2.4）：cell 共享（jsess patch）+ `fn_entry` 策略点 | link 13 PASS、repl 26/26、`import tools.compiler` + `compile("1+2")` e2e、`blob_len > 0` |
 | **6** | **IR 收敛**（`LIR.md` §5）：`call` / `tcall` / `ccall` + `caps` 字段 | 每阶段 golden 不变（纯重构：IR 形状变、语义不变） |
 | **7** | **调用图 + well-known + lift**（§3.3） | 分配计数下降；`map` / `foldl` + 无捕获回调不再产出 `closure` 指令 |
 
@@ -603,7 +603,7 @@ let _ = f(1)
 
 | # | 改动 | 覆盖的情形 |
 |---|---|---|
-| 1 | `rt_funs_rename_prof` 的重定向从 `fcall` 改为 **`ycall`**（对象 ABI） | 钩子来自**运行期 base + 被链接的包**（`pkg/profile.yac`、`src-self/back/profile.yac`）⇒ `runtime_add` 能看见并重定向 |
+| 1 | `rt_funs_rename_prof` 的重定向从 `fcall` 改为 **`ycall`**（对象 ABI） | 钩子来自**运行期 base + 被链接的包**（`pkg/tools/profile.yac`、`src-self/back/profile.yac`）⇒ `runtime_add` 能看见并重定向 |
 | 2 | 运行期那条钩子调用把名字**同时放进 rdi 与 rsi**（`[1, 1]`） | 钩子**写在程序自己**里 ⇒ 不在 `runtime_add` 的列表里（它只拿到 `rt_base` + 链接的包）⇒ 调用保持平 ABI，靠 rdi 也能被对象钩子…… 反之同理 |
 
 **测试**：
@@ -760,7 +760,7 @@ if str_len(f(0)) > 0 then 1 else 0
 
 **B. `pkg compiler` 该走进程内 host 路径，而不是独立二进制。**
 
-`pkg/compiler.yac` 头部写明：每个导出符号都是 **`@host` 宿主叶**，编译器树**故意不链进 guest**。
+`pkg/tools/compiler.yac` 头部写明：每个导出符号都是 **`@host` 宿主叶**，编译器树**故意不链进 guest**。
 ⇒ 独立跑必然打印 `host fn unavailable: host_format / host_arch / mk_target / compile_native` 并返回 0
 （实测 ✓）——这是**设计**，不是 bug。真正能用这些叶子的只有 **yc 进程**，且只有 **named（REPL）路径**
 会把宿主的槽表填进 blob（`back/jit.yac:97 host_tab_fill`、`:59 gref_fill`）；`--cps` 走
@@ -774,7 +774,7 @@ if str_len(f(0)) > 0 then 1 else 0
 
 **改法**（只动测试）：`tests/run.yac` 的 pkg 组新增 **`"host"` 类型**（新助手 `run_stdin` +
 `pkg_one` 的 host 分支），`["compiler", "rc", "42"]` → `["compiler", "host", "42"]` ✓；
-`pkg/compiler.yac` 与用例文件**未改** ✓。
+`pkg/tools/compiler.yac` 与用例文件**未改** ✓。
 
 **验收**：
 
@@ -791,16 +791,16 @@ if str_len(f(0)) > 0 then 1 else 0
 
 ### 8.10 已修：REPL blob 的"两个基址"—— cell 用本镜像、G/宿主槽用会话（2026-09-17）
 
-**症状**（用户报的）：`./yc --repl app/demo/t2.yac` → `import compiler` → `compile("1+2")` ⇒ **SIGSEGV**；
+**症状**（用户报的）：`./yc --repl app/demo/t2.yac` → `import tools.compiler` → `compile("1+2")` ⇒ **SIGSEGV**；
 gdb 显示 **RIP = 0** ✓、返回地址在 JIT 会话镜像里 ✓ ⇒ 会话执行了一次 `call 0` ✓。
 
 **触发形态**（四组对照 ✓；A 需要"先有一行完整跑过"✓）：
 
 | # | 会话 | 结果 |
 |---|---|---|
-| A | `1+1` → `import compiler` → `compile("1+2")` | **139** ✗ |
-| B | `1+1` → `import fmt` → `printf("x")` | 0 ✓ |
-| C | `1+1` → `import compiler` → `print(1)` → `compile("1+2")` | 0 ✓ |
+| A | `1+1` → `import tools.compiler` → `compile("1+2")` | **139** ✗ |
+| B | `1+1` → `import text.fmt` → `printf("x")` | 0 ✓ |
+| C | `1+1` → `import tools.compiler` → `print(1)` → `compile("1+2")` | 0 ✓ |
 | D | `1+1` → `let f(x) = x + 1` → `f(2)` | 0 ✓ |
 
 **根因**：§8.8 的修复把 blob 的 globals 基址从"会话第一张镜像的 data"改成"本镜像 data + append 偏移" ✓
@@ -822,7 +822,7 @@ gdb 显示 **RIP = 0** ✓、返回地址在 JIT 会话镜像里 ✓ ⇒ 会话�
 - `emit_resolve_patch` 里 `gsess = if len(st) > 6 then nth(st,6) else globbase` ✓（老状态兜底 ✓）。
 
 **回归用例** ✓：`tests/run.yac` 的 repl 组新增
-`["nested compile after import", "1+1\nimport compiler\ncompile(\"1+2\")\n:q\n", "<bytes>"]` ✓
+`["nested compile after import", "1+1\nimport tools.compiler\ncompile(\"1+2\")\n:q\n", "<bytes>"]` ✓
 （compiler 组也会跑到 ⇒ 计数 +2 ✓）。
 
 **验收** ✓：A 组 rc **139 → 0** ✓（输出 `<bytes>` ✓）、§8.8 的 `1+1 / let f / print(f(2))` 仍为 **3** ✓、
@@ -1059,7 +1059,7 @@ marked 的钩子会从 1 号参数寄存器读到别的东西 ⇒ 输出**必然
 |---|---|
 | `tests/compiler/cases/prof_hook_name.yac` ✓（程序自带钩子 ✓）| 输出恰为 **`f`** ✓（改写生效 ✓）|
 | `tests/pkg/prof_hook.yac` ✓（包提供钩子 ✓）| rc **42** ✓ |
-| `tests/pkg/profile.yac` ✓ | rc **42** ✓ |
+| `tests/pkg/tools/profile.yac` ✓ | rc **42** ✓ |
 | 全量 `make test` | **726 / 0** ✓（0 条 FAIL ✓）|
 
 **验收** ✓：两趟自举通过 ✓ + **stage2 ≡ stage3 逐字节相同** ✓；新 pass 只在"本单元有 marked 钩子"时才动手 ✓

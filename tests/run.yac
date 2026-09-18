@@ -137,7 +137,7 @@ let shared_pyadd(st, lib, tag) =
 let shared_ycadd(st, yc, lib, tag) =
   let pdrv = str_cat(TMP, "/dadd_drv.yac") in
   let _ = write_file(pdrv,
-    str_cat("import ffi\nlet h = load(\"",
+    str_cat("import native.ffi\nlet h = load(\"",
       str_cat(lib, "\")\nlet f = sym(h, \"add\")\nif ccall(f, 2, 3) == 5 then 42 else 0\n"))) in
   let bdrv = native(str_cat(TMP, "/dadd_drv")) in
   let _ = run(append(yc, [pdrv, "-o", bdrv])) in
@@ -297,13 +297,13 @@ let compiler_cross_pkg(st, yc) =
   let blob = str_cat(TMP, "/cross_blob.txt") in
   let bin = native(str_cat(TMP, "/c_crossarg")) in
   let _ = write_file(lib, str_cat(
-    "package crossarg\nexport echo_len, load_len\nimport io\nimport fmt\n",
+    "package crossarg\nexport echo_len, load_len\nimport fs.io\nimport text.fmt\n",
     str_cat(
       "let echo_len(s) =\n  let n = str_len(s) in\n  let _ = format(\"%d\", [n]) in\n  n\n",
       "let load_len(path) =\n  let raw = read_or_0(path) in\n  if raw == 0 then 0 else str_len(raw)\n"))) in
   let _ = write_file(blob, "abcdefghij") in
   let _ = write_file(main, str_cat(
-    "import crossarg\nimport io\n",
+    "import crossarg\nimport fs.io\n",
     "let a = echo_len(\"hello\") in\nlet b = load_len(\"build/test_tmp/cross_blob.txt\") in\nif a != 5 then a else if b != 10 then b else 42\n")) in
   let yc2 = [nth(yc, 0), "--pkg", str_cat("src-self,", TMP)] in
   let cr = run(append(yc2, [main, "-o", bin])) in
@@ -391,7 +391,7 @@ let pkg_cases(_) = [
   ["math", "rc", "42"],
   ["profile", "rc", "42"],
   ["prof_hook", "rc", "42"],
-  /* `compiler` is a THIN wrapper over host leaves: pkg/compiler.yac binds every
+  /* `compiler` is a THIN wrapper over host leaves: pkg/tools/compiler.yac binds every
    * symbol as an @host leaf, so the compiler tree is deliberately NOT linked
    * into the guest (see its header). An AOT image therefore answers
    * "host fn unavailable: <leaf>" and returns 0 -- by design, not a bug
@@ -517,9 +517,9 @@ let repl_check(st, yc, name, src, needle, wantrc) =
 /* [name, stdin, needle]. () is unit (prints 0 natively); (exit) is grouping / quit. */
 let repl_cases(_) = [
   ["let a = 1", "let a = 1\n", "a = 1"],
-  ["import fmt", "import fmt\n:q\n", "fmt"],
-  ["import env as myenv", "import env as myenv\n:q\n", "myenv"],
-  ["import env brace as", "import env { get as env_get, get_or }\n:q\n", "env_get, get_or"],
+  ["import fmt", "import text.fmt\n:q\n", "fmt"],
+  ["import os.env as myenv", "import os.env as myenv\n:q\n", "myenv"],
+  ["import env brace as", "import os.env { get as env_get, get_or }\n:q\n", "env_get, get_or"],
   ["blank enter", "\r\n:q\n", "yc>"],
   ["1+2 then :q", "1+2\n:q\n", "3"],
   ["float then (exit)", "0.001+0.002\n(exit)\n", "0.003"],
@@ -557,9 +557,9 @@ let repl_cases(_) = [
    * REPL blob are the SESSION's slots (back/jit.yac host_tab_fill writes
    * them), not the blob's own image: addressing them per-image read zeroed
    * memory and called 0 (SIGSEGV at RIP=0, measured 2026-09-17). */
-  ["nested compile after import", "1+1\nimport compiler\ncompile(\"1+2\")\n:q\n", "<bytes>"],
-  ["import then printf d", "let a=42\nimport fmt\nprintf(\"%d\", [a])\n:q\n", "42"],
-  ["import then printf one", "let a=42\nimport fmt\nprintf(a)\n:q\n", "42"],
+  ["nested compile after import", "1+1\nimport tools.compiler\ncompile(\"1+2\")\n:q\n", "<bytes>"],
+  ["import then printf d", "let a=42\nimport text.fmt\nprintf(\"%d\", [a])\n:q\n", "42"],
+  ["import then printf one", "let a=42\nimport text.fmt\nprintf(a)\n:q\n", "42"],
   /* The blob's entry wrapper is `_eval`, so a guest `let _eval` makes that name
    * ambiguous: the JIT used to resolve its entry BY NAME over funOffsRev (a
    * list the emitters cons in emission order, scanned from its head = the last
@@ -591,8 +591,8 @@ let repl_cases(_) = [
    * and bind the thin wrappers. Do NOT invoke compile/load here: calling a
    * host leaf runs the real host compiler in-process and pollutes the REPL
    * session (state isolation is open, see BOOTSTRAP_LINK.md §12.11). */
-  ["import compiler", "import compiler\n:q\n", "compiler"],
-  ["import compiler binds compile", "import compiler\ncompile\n:q\n", "<fun>"],
+  ["import tools.compiler", "import tools.compiler\n:q\n", "compiler"],
+  ["import tools.compiler binds compile", "import tools.compiler\ncompile\n:q\n", "<fun>"],
   ["compile unbound without import", "compile\n:q\n", "unbound variable 'compile'"]]
 
 let repl_all(st, yc, stem) =
@@ -949,7 +949,7 @@ let qemu_shared(st, yc, qemu, arch) =
   let so = shared_out(yc, arch, "elf", ".so") in
   let pdrv = str_cat(TMP, str_cat("/q_", str_cat(arch, "_dadd.yac"))) in
   let _ = write_file(pdrv,
-    str_cat("import ffi\nlet h = load(\"",
+    str_cat("import native.ffi\nlet h = load(\"",
       str_cat(so, "\")\nlet f = sym(h, \"add\")\nif ccall(f, 2, 3) == 5 then 42 else 0\n"))) in
   let out = str_cat(TMP, str_cat("/q_", str_cat(arch, "_dadd"))) in
   let tag = str_cat(arch, " elf --shared ccall add") in

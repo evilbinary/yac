@@ -14,8 +14,8 @@
  * 可变数组必须 list_new + list_push，字面量 [] 不能 list_set。
  */
 
-import io
-import fmt
+import fs.io
+import text.fmt
 
 /* 语料文件读不到时用的内置短对话。 */
 let default_text(_) =

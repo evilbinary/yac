@@ -8,8 +8,8 @@
  */
 
 import transformer
-import io
-import fmt
+import fs.io
+import text.fmt
 
 /* 语料文件读不到时的内置短对话。 */
 let default_text(_) =

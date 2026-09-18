@@ -1,6 +1,6 @@
 /* fmap.yac — open-addressing string map. Mutates in place. */
 
-package fmap
+package data.fmap
 export fmap_new, fmap_init_n, fmap_get, fmap_put
 
 let fmap_fill(b, i, cap) =

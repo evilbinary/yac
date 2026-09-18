@@ -1,7 +1,7 @@
 /* map.yac — open-addressing map (string or int keys). Mutates; put returns m.
  * Miss get is 0 (stored 0 looks like a miss; use has). Newest put wins. */
 
-package map
+package data.map
 export new, get, put, has, size
 
 /* [vec, n, cap]. vec is a listbuf of slots; empty slot is 0. */

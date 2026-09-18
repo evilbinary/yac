@@ -1,6 +1,6 @@
 /* str.yac — string helpers; str_len / str_cat / str_slice stay prims. */
 
-package str
+package text.str
 export split, starts_with, ends_with, join, trim, find, contains
 
 /* Walk s; sc is the separator code. Nested rec inside split scrambled ncap. */

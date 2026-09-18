@@ -169,7 +169,7 @@ pkg/             客常见库（path / str / io / …；查找默认 ./pkg）
 - **C 调用**：`ccall("name", …)` 走 C ABI PLT；`ccall(ptr, …)` 走间接调用。C 参数按
   arch ABI：x86_64 6 个寄存器 + 栈，arm64/riscv64 8 个寄存器 + 栈。`-g`/`--syms` 时
   ELF 带 `.symtab`。
-- **FFI**：客库 `import ffi`（`pkg/ffi.yac`：`load` / `sym` / `zbuf` / `cstr`）；
+- **FFI**：客库 `import native.ffi`（`pkg/native/ffi.yac`：`load` / `sym` / `zbuf` / `cstr`）；
   `cload` / `csym` 仍在 `rt/ffi.yac`。
 
 ### 6.2 后端流程

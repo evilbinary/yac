@@ -2,7 +2,7 @@
  * Windows: ws2_32 via GetProcAddress. Linux/macOS: libc socket(2).
  * Darwin sockaddr_in has sin_len; Linux/Windows do not. */
 
-package net
+package net.tcp
 export htons, ipv4, parse_ipv4, host_port, sockaddr4, tcp_connect, tcp_listen, tcp_accept, tcp_send, tcp_recv, tcp_close
 
 /* ASCII prefix match. */
