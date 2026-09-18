@@ -240,6 +240,30 @@ let compiler_one(st, yc, c) =
     if kind == "rc" then check(st, str_cat("compiler ", name), want, int_to_str(nth(r, 0)))
     else check(st, str_cat("compiler ", name), want, chomp(nth(r, 1)))
 
+/* Negative cases: the compile MUST fail with rc 2 (a front / LIR error) and
+ * say why; compiling cleanly, or crashing, fails the test. Kept OUT of
+ * compiler_cases(0) on purpose -- that list is shared with the cps / eval / iso
+ * groups, none of which has a notion of an expected failure (FLAT_ABI.md
+ * 8.18). Sources are inline so no case file is involved either. */
+let compiler_err_cases(_) = [
+  ["err_exit_arity", "let _ = exit()\n", "builtin 'exit' called with too few arguments"],
+  ["err_str_ref_arity", "let _ = str_ref(1)\n", "builtin 'str_ref' called with too few arguments"],
+]
+
+let compiler_err_one(st, yc, c) =
+  let name = nth(c, 0) in
+  let src = nth(c, 1) in
+  let want = nth(c, 2) in
+  let p = str_cat(TMP, str_cat("/", str_cat(name, ".yac"))) in
+  let bin = native(str_cat(TMP, str_cat("/o_", name))) in
+  let _ = write_file(p, src) in
+  let cr = run(append(yc, [p, "-o", bin])) in
+  let tag = str_cat("compiler err ", name) in
+  if nth(cr, 0) != 2 then check(st, tag, "rc=2", int_to_str(nth(cr, 0)))
+  else if not contains(nth(cr, 1), want) then check(st, tag, want, nth(cr, 1))
+  else if nth(run(["test", "-f", bin]), 0) == 0 then check(st, tag, "no output binary", bin)
+  else check(st, tag, "1", "1")
+
 let compiler_multi(st, yc) =
   let a = str_cat(TMP, "/multi_a.yac") in
   let b = str_cat(TMP, "/multi_b.yac") in
@@ -629,6 +653,7 @@ let compiler_all(st, yc) =
   let _ = compiler_prep_libs(0) in
   let st1 = compiler_multi(
     foldl(fun(s, c) -> compiler_one(s, yc, c), st, compiler_cases(0)), yc) in
+  let st1 = foldl(fun(s, c) -> compiler_err_one(s, yc, c), st1, compiler_err_cases(0)) in
   let st1c = compiler_cross_pkg(st1, yc) in
   let st1s =
     if nth(run(["sh", "-c", "command -v nm >/dev/null 2>&1"]), 0) != 0 then st1c
