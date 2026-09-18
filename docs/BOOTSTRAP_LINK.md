@@ -618,8 +618,8 @@ src/*.c                                                # C 参考实现不改（
 - [x] 12.1.4 验收（Windows 原生已实测）：
       - 裸调 `compile(...)` → 编译 rc=1，`1:1: unbound variable 'compile'`
       - 直接调用 `yac_host_unimpl(0)` → 打印 "host fn unavailable"，程序正常
-      - `l4_42`=42、`recursion`=120、`tests/pkg/fs/path.yac`=42 不回归
-      - `make test` 全量需在 Linux 跑（Windows 上 `tests/pkg/tools/compiler.yac`
+      - `l4_42`=42、`recursion`=120、`tests/pkg/path.yac`=42 不回归
+      - `make test` 全量需在 Linux 跑（Windows 上 `tests/pkg/compiler.yac`
         因嵌套 PE 自编译在改动前后均 SIGSEGV，为既有问题，非本改动引入）
 - [ ] 12.1.5 跟进：`make test` / `test-pkg` 在 Linux 上跑全量确认无回归
 
@@ -831,7 +831,7 @@ src/*.c                                                # C 参考实现不改（
 ### 12.9 link 测试清单（`make test-link`，实现见 `tests/link/run.yac`）
 
 自包含 runner：`yc --pkg src-self tests/link/run.yac` 编译，带编译器路径运行。
-guest 样例 = `tests/pkg/fs/path.yac`（import `path`）；dylib 样例在运行时生成到
+guest 样例 = `tests/pkg/path.yac`（import `path`）；dylib 样例在运行时生成到
 `build/test_tmp/`。
 
 | # | 名称 | 场景 | 断言 |
