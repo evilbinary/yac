@@ -353,7 +353,7 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 > 本节原为 2026-09-15 的"四类失败（全量 679 / 7）"。四条已全部修完 ✓：
 > `pkg profile`（§8.7 ✓）、`pkg compiler` 与 `import after use`（§8.9 ✓）、
 > 最后一条 `repl let fn after expr line`（§8.8 ✓，其副作用"import 后的宿主叶调用读 0 段错误"
-> 由 §8.10 的"两个基址"收尾 ✓）⇒ **全量 `make test` = 738 / 0** ✓（2026-09-17 晚：新增 `gcroot_pub` ✓、`call_toplevel_value` ✓、`guest _eval shadows wrapper` ✓ 以及三条内建元数用例 ✓ + 两条 AOT 负例 ✓ —— 后五条要 harness 支持"期望 rc / 期望失败" ✓，见 §8.18 ✓）。
+> 由 §8.10 的"两个基址"收尾 ✓）⇒ **全量 `make test` = 744 / 0** ✓（2026-09-18：新增 `gcroot_pub` ✓、`call_toplevel_value` ✓、`guest _eval shadows wrapper` ✓、三条内建元数用例 ✓、两条 AOT 负例 ✓ 以及三条重定义用例 ✓ —— 后五条要 harness 支持"期望 rc / 期望失败" ✓，见 §8.18 ✓）。
 > 下表保留下来作"曾经红过什么"的台账。
 
 | 用例 | 现象 | 根因 | 证据 |
@@ -384,12 +384,12 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | ~~9~~ | ~~`build/patch_funoffs.py`~~ / `fun_off` ⇒ **生产路径已修（2026-09-17，§8.17）**；**工具本身未改** ✓ | 按**过程名**匹配 `(名, 偏移)` ✗ ⇒ **不只是工具小疵** ✗：`backend.yac` 的 `fun_off(fo,"_eval")` 在 **JIT 入口**的生产路径上 ✓，REPL 里一行 `let _eval(x) = x + 1` 就能让**客体的 `_eval` 顶掉包装器** ⇒ **SIGSEGV** ✗（rc=139 ✓）。根因：`funOffsRev` 是**逆发射序** ✓，名字扫描从**表头**（= 最后发射的那个）开始 ✗。修法：**按顺序**取 —— 入口恒为 `funs[0]` ✓，即该表**最后一个**记录 ✓（`entry_off(fo)` ✓）。**工具那半没修** ✗：把它改成按下标配对**仍然崩** ✗，实测表明崩因与配对**无关** ✓（见 §8.17 末）|
 | 10 | `jit.yac` / REPL 的调试面 | ~~`--dump-lir` 配 `--repl` **什么都不打**、`--dump-asm` 配 `--repl` 只 dump **第一行**~~ ⇒ **2026-09-17 已修**（§8.8 ✓）：两个开关都**逐行生效** ✓（`parse_args` 补记 spec 标志 ✓ + REPL 路径逐行 re-arm ✓ + 逐行 LIR dump ✓），asm dump 另加 `=== gref cells` / `=== tag22 cells` 两张表 ✓。仍要注意：jit 路径的 `log` 被 **hush**（发射期打印看不见 ✓）⇒ 发射期内只能用 `print` 或盒子 ✓。**批处理侧另有一处** ✓：`--dump-lir` 对**带包导入**的程序原本**不出 dump** ✗（`dump_lir` 没设 `link_need_box`/`link_local_box` ⇒ `rt_for_link` 链不到包 ⇒ 只吐 `error: LIR: call to undefined procedure 'host_arch'` ✗）⇒ **2026-09-17 已修**（§8.12 ✓）：先 `link_from_ast(ast)` ✓，现在编自身 bundle 能出 **2.6 MB** LIR ✓ |
 
-| 11 | 本机 PATH | **没有 C 编译器**：`gcc` / `cc` / `clang` / `tcc` 全不在 PATH，`where.exe gcc` 也找不到；但 `/mingw64/bin/gcc.exe`（15.2.0）与 `/mingw32/bin/gcc.exe`（16.1.0）**存在**。⇒ 在**裸**的当前 shell 里 `gcc` 起不来（连 `-E` 都 rc=1：驱动 spawn 不了 `cc1` ✗），而 `make` 的隐式 `CC` 默认值就是 `cc` ⇒ `make test-*` 一旦需要重建 `$(BIN)`（`src/*.c` 比 `build/*.o` 新就会）**整组报错** ✗。可用的建法：走 MSYS2 MINGW64 环境再显式给编译器 —— `MSYSTEM=MINGW64 CHERE_INVOKING=1 MSYS2_PATH_TYPE=inherit /e/soft/msys2/usr/bin/bash.exe --login -i -c 'cd /e/workspace/yac && make CC=gcc yac.exe'`（实测可编、可链接 ✓） |
+| 11 | 本机 PATH | **没有 C 编译器**：`gcc` / `cc` / `clang` / `tcc` 全不在 PATH，`where.exe gcc` 也找不到；但 `/mingw64/bin/gcc.exe`（15.2.0）与 `/mingw32/bin/gcc.exe`（16.1.0）**存在**。⇒ 在**裸**的当前 shell 里 `gcc` 起不来（连 `-E` 都 rc=1：驱动 spawn 不了 `cc1` ✗），而 `make` 的隐式 `CC` 默认值就是 `cc` ⇒ `make test-*` 一旦需要重建 `$(BIN)`（`src/*.c` 比 `build/*.o` 新就会）**整组报错** ✗。可用的建法：走 MSYS2 MINGW64 环境再显式给编译器 —— `MSYSTEM=MINGW64 CHERE_INVOKING=1 MSYS2_PATH_TYPE=inherit /e/soft/msys2/usr/bin/bash.exe --login -i -c 'cd /e/workspace/yac && make CC=gcc yac.exe'`（实测可编、可链接 ✓）。**gdb 也在那里** ✓：`/mingw64/bin/gdb.exe` ✓（同样不在 PATH ✓，取陷阱现场要用绝对路径 ✓ —— §8.2 #15 就是这么拿到 RIP 的 ✓） |
 | 12 | `make` 的 `$(YC_A)` 规则 | 两趟自举（`yc_a.exe` → `.new` → `.new2` → `mv`）**不能并行跑**：同时开两个 `make test-*`（各自都要重建 `$(YC_A)`）会撞在一起，第二趟产物缺失 ⇒ `mv: cannot stat 'build/yc_tmp/yc_a.exe.new2'` ✗（实测一次）。而且配方里 `echo pass 2` 前是 `;` ⇒ 第二趟失败后 `mv` 仍会跑 ⇒ 报错位置具有误导性。**串行跑 `make`** ✓。**2026-09-17 又踩一次**（症状不同 ✓）：一条 `make test` 因超时被切断 ✓ 但**仍在后台跑** ✓，此时又起一条 ⇒ 日志开头出现 **NUL 字节** + 3 条假失败 `FAIL: compiler capture_2args / ncap12_disp8 / capture_shadow_t`（`actual: compile rc=1`）✗ —— 用例本身没问题 ✓，等残留进程结束后单独重跑 ⇒ **0 FAIL** ✓。⇒ 跑测试前先确认没有正在跑的 `make` ✓。**2026-09-17 第三次**（新知识 ✓）：**被取消/超时的 `make test` 会把进程留在后台** ✗ —— `ps -W | grep -E 'make\.exe|run_tests'` 一次就能看到好几条（本次见到 13:26 起的一条 ✗）✓；清理：Windows PID 用 `taskkill //F //PID <pid>` ✓、MSYS PID 用 `kill -9 <pid>` ✓，清完再跑 ✓，一次就 **0 FAIL** ✓ |
 | ~~13~~ | ~~`emit_arm64.yac:1336` / `emit_riscv64.yac:1338`~~ ⇒ **已修（2026-09-17，§8.13）** | **GC 根发布只在 x86_64 做了** ✗：`gset` 用**非立即数**源时，x86_64 会存完后调 `yac_gval_pub(name, value)` ✓（`emit_x86_64.yac:1373` ✓），而 arm64 / riscv64 只做存储 ✓（注释自己写着 "GC publish **TODO**" ✗）⇒ 运行期赋值的顶层值 cell 不是 GC 根 ✗。**修**：两架构各补上同样的发布调用 ✓；新用例 `tests/compiler/cases/gcroot_pub.yac` ✓ 在三架构都 PASS ✓ |
 | ~~14~~ | ~~`emit_arm64.yac` 的 `$ld64` / `$st64`~~ ⇒ **已修（2026-09-17，§8.13）**，**修 #13 时才发现** ✗ | arm64 的 `$ld64`/`$st64` 用 `ldur`/`stur` **直接编码偏移** ✗，而它们只有 **±256** 的 9 位空间 ✓；G 区要到 **440/448**（注册表根 ✓）⇒ 越界 ⇒ 读写错地址 ⇒ `yac_gval_pub` / `yac_gval_list` 在 arm64 **必崩** ✓（`$ld8` 一直懂得先 `add` ✓，64 位版漏了 ✗）。**修**：大偏移先折进地址寄存器再 `ldur`/`stur` ✓（与 `$ld8` 同形 ✓）|
 
-| 15 | REPL **同名重定义** | `let f(x) = 1` → `let f(x) = 2` → `f(0)` ⇒ **SIGILL（rc=132）** ✗（2026-09-17 实测 ✓）。三组对照：重定义**前**调用正常 ✓、不重定义正常 ✓ ⇒ **触发条件就是同名重定义** ✗。已知：两次提交的 `yac_jslot_set` 与调用的 `yac_jslot_get` **用的是同一个槽 id（0）** ✓ ⇒ 不是槽号错 ✗，是**存进/取出的值**不对 ✗（第 3 行吃调用守卫的 `brk` ✓）。**机理未定论** ✓（与包装器注释里记的 `gval` ⇒ "下一行 applied 0" 同族 ✓，怀疑在 `gvar` / tag 23 烘焙 与 §8.8/§8.10 的**追加偏移**交界处 ✗）—— 待查 |
+| ~~15~~ | ~~REPL **同名函数重定义**~~ ⇒ **已修（2026-09-18，§8.19）** | `let f(x) = 1` → `let f(x) = 2` → `f(0)` ⇒ **SIGILL（rc=132）** ✗（2026-09-17 实测 ✓）。**触发面已收窄到一点** ✓（判别矩阵 ✓）：**值**重定义（`let a=1` → `let a=2` → `a`）正常 ✓ rc=0 ✓；**换名字的第二个函数 blob**（`let f` → `let g` → `g(0)`）正常 ✓ rc=0 ✓；**只有同名函数重定义** ✗ 崩 ✓。已知证据 ✓：两次提交的 `yac_jslot_set` 与调用的 `yac_jslot_get` 用的是**同一槽 id（0）** ✓ ⇒ 不是槽号 ✗；而 `--dump-asm` 的 gref 表显示 blob 1 的 `cell f entry=JIT_VADDR+52776` ✓（正是它的 `f @52776` ✓）**正确** ✓，blob 2 的同一单元 **`entry=0`** ✗ ⇒ 重定义那份**从未烘焙进单元** ✓；同一 dump 里 blob 2 的逐过程偏移还是**垃圾** ✗（`f @l (6432 bytes)` ✗、`yac_host_unimpl @5` ✗，blob 1 是 `@36081` ✓）⇒ 该 blob 的**偏移登记表本身坏了** ✗。陷阱现场（`/mingw64/bin/gdb.exe` ✓）RIP = `JIT_VADDR+60031` ✗，JIT 区内**非代码**字节 ✓、`bt` 无帧 ✓。**根因已确认** ✓（2026-09-18）：发射循环用 `emit_jsess_skip(name)`（`emit.yac` ✓）**只按名字**查会话出口表 ✓ ⇒ 第二行 `let f(x) = 2` 时 `f` 已在表里 ⇒ **整个 `f` 被跳过** ✗ ⇒ 该 blob 的 `funOffsRev` 里没有 `f` ⇒ `fill_gref` 的 `find_gref` 得 -1 ⇒ 走上文的回退**绑到 `yac_host_unimpl` 桩** ✗ ⇒ 下一行一调 ⇒ **SIGILL** ✓（RIP = `JIT_VADDR+60031` ✓；dump 里的垃圾偏移 `f @l (6432 bytes)` ✓ 正是"被跳过"时 `offs` 存的 `skipat - T` ✗）。**旁证** ✓：重定义后**只求值不调用** ⇒ rc=0 ✓ 打印 `<fun>` ✓ ⇒ 定义阶段没问题 ✓，坏的只是**烘进单元的入口** ✗。**试过并撤回的修法** ✗：把跳过限制为"本镜像自带之外的（运行时/unstub）过程"（按下标 ✓）⇒ **反而更糟** ✗：连原本正常的"换名第二条"也崩 ✓ ⇒ 重发 guest 过程会破坏该 blob ✗，不是放开跳过就完事 ✗。**下一步方向** ✓（未做 ✗）：只对**本次提交自己定义的名字**失效出口表项 ✓（jit 层知道本行绑定了谁 ✓）⇒ 新 blob 才会重发那份定义 ✓；另外 `fill_gref` 把 **guest 名字**回退成宿主桩这件事本身也该改成响亮报错 ✗。**未修** ✓ |
 
 | ~~17~~ | ~~`front/lir.yac` 的 `lir_rt_*` 内建表~~ ⇒ **已修（2026-09-17，§8.18）** | **内建原语的参数个数不匹配 ⇒ 段错误** ✗：`exit()`（用户报的 ✓）、`str_cat()`、`str_ref(1)`、`str_len()`、`read_file()`、`write_file("x")`、`system()` —— 实测 7 个里 **6 个 SIGSEGV** ✗（`gc_collect(1)` 只因忽略参数才没事 ✓）。根因：表里直接 `nth(ss, k)` ✗，越界得 `[]` ✓，而发射器把 `[]` 当**槽号** ✗ ⇒ 读垃圾地址 ✓。修法：改为带守卫的 `rt_arg(g, ss, k)` ✓（§8.18 ✓）|
 | 16 | REPL 里的 **LIR 致命错** | `log_fatal` 会**结束整个会话**（rc=2 ✓），而前端错 / 语法错只报错**继续** ✓（rc=0 ✓）。**既有行为** ✓，与本次修法无关 ✓；`exit()` 只是撞上它 ✓（`exit(3)` 是真退出 ✓ rc=3 ✓；要离开 REPL 用 `:q` 或 `exit(0)` ✓）。**未修** ✗（要让它可恢复得给 `log_fatal` 加 REPL 的长跳 ✗，属结构改动 ✗）|
@@ -409,9 +409,9 @@ call/cc 式动态调用），但不再是独立 opcode —— 变成调用指令
 | `qemu-riscv64` | **81 / 0**（3 SKIP） |
 | 全量 `make test` | **679 / 7** |
 
-> **2026-09-17 现状**（全量实跑 ✓）：host `compiler` **193 / 0** ✓、host `pkg` **22 / 0** ✓、
+> **2026-09-18 现状**（全量实跑 ✓）：host `compiler` **196 / 0** ✓、host `pkg` **22 / 0** ✓、
 > host `interp` **36 / 0** ✓、`qemu-arm64` **85 / 0** ✓、`qemu-riscv64` **85 / 0** ✓（各 3 SKIP ✓）、
-> 全量 `make test` **738 / 0** ✓ —— **全绿** ✓（2026-09-17 晚 ✓：`tailapply`/`ticall` 退役 opcode 清理 ✓、`gset` 的 GC 根发布补到 arm64/riscv64 ✓、arm64 G 区大偏移修复 ✓、顶层 `let` 的值可当函数调用 ✓、REPL 入口改按**发射顺序**定位 ✓（§8.17 ✓）、内建原语的元数检查 ✓（§8.18 ✓）、harness 支持"期望 rc"的负例 ✓（repl 组 ✓ + compiler 组 ✓））。
+> 全量 `make test` **744 / 0** ✓ —— **全绿** ✓（2026-09-18 ✓：`tailapply`/`ticall` 退役 opcode 清理 ✓、`gset` 的 GC 根发布补到 arm64/riscv64 ✓、arm64 G 区大偏移修复 ✓、顶层 `let` 的值可当函数调用 ✓、REPL 入口改按**发射顺序**定位 ✓（§8.17 ✓）、内建原语的元数检查 ✓（§8.18 ✓）、**REPL 同名重定义不再挂掉**且给出覆盖告警 ✓（§8.19 ✓）、harness 支持"期望 rc"的负例 ✓（repl 组 ✓ + compiler 组 ✓））。
 > 相对上表的增量来自新增用例：`fun_eq` / `print_dotted` / `prof_hook_name` / `import_late`（compiler）
 > + `pkg prof_hook`（pkg）；`pkg profile`、`pkg compiler`、`import after use`、`repl let fn after expr line`
 > 也从此表里的失败逐条转绿 ✓（分别见 §8.7 / §8.9 / §8.9 / §8.8）。
@@ -1222,6 +1222,42 @@ let rt_arg(g, ss, k) = if k < len(ss) then nth(ss, k) else log_fatal(...)
 > 文案含预期片段 ✓、且**不留产物** ✓。两条 ✓：`err_exit_arity` ✓ / `err_str_ref_arity` ✓。
 > 反向验证 ✓：修复前 `let _ = exit()` **编译成功（rc 0 ✓）**、产出 95 KB 产物 ✓、而它**运行时段错误（139）** ✗
 > ⇒ 新用例判 `rc=2` 得 0 ⇒ **会红** ✓ ✓。
+
+### 8.19 已修：REPL 同名重定义 —— 不再挂掉，并给出覆盖告警 —— 2026-09-18
+
+**症状** ✓（用户报的 ✓）：REPL 里 `let f(x) = 1` → `let f(x) = 2` → `f(0)` ⇒ **SIGILL（rc=132）** ✗。
+
+**触发面** ✓（判别矩阵 ✓）：**值**重定义正常 ✓；**换名**的第二个函数 blob 正常 ✓；只有**同名函数重定义** ✗ 崩 ✓；
+重定义后**只求值不调用**是好的 ✓（打印 `<fun>` ✓）⇒ 定义阶段没问题 ✓，坏的是**烘进 gref 单元的入口** ✗。
+
+**根因** ✓（证据链 ✓）：
+
+1. 发射循环用 `emit_jsess_skip(name)`（`emit.yac` ✓）**只按名字**查会话出口表 ✓ ⇒ 第二行 `let f(x) = 2` 时 `f` 已在表里 ⇒ **整个 `f` 被跳过** ✗；
+2. 于是该 blob 的 `funOffsRev` 里没有 `f` ⇒ `fill_gref` 的 `find_gref` 得 -1 ⇒ 按回退**绑到 `yac_host_unimpl` 桩** ✗；
+3. 下一行一调 ⇒ **SIGILL** ✓（gdb：RIP = `JIT_VADDR+60031` ✓，落在该 blob 代码区之外 ✓、`bt` 无帧 ✓；
+   dump 里 `f @l (6432 bytes)` 的垃圾偏移 ✓ 正是"被跳过"时 `offs` 存的 `skipat - T` ✗）。
+
+**修法**（两处 ✓）：
+
+| 处 | 改动 |
+|---|---|
+| `emit_x86_64.yac` 的 proc 循环 | 跳过判据改成**记录种类** ✓：只有 `nth(f, 0) == "$proc"`（内核 / 运行期 ✓）才允许 `emit_jsess_skip` ✓；guest 过程（`["proc", …]` ✓）一律照发 ✓ —— 换名的新函数本来就不在出口表里 ✓，所以这条对它**零影响** ✓，只改"重定义"这一种情形 ✓ |
+| `back/jit.yac` 的 `compile_jit_go` | 在 `let bn = repl_last_let(ast1)` 之后 ✓，若 `bn != ""` 且 `jit_let_idx(bn) >= 0` ⇒ 打印 `warning: redefining '<名>' -- the new definition replaces the previous one` ✓（`jit_let_idx` 是**纯查询** ✓，登记的正是本会话绑定过的顶层名字 ✓ —— **值**也在内 ✓）|
+
+**为什么不是"按 `i < nguest` 分"** ✗（试过并撤回 ✗）：blob（T != 0）时 `funs` **不再追加 unstub 表** ✓ ⇒ `i < nguest` 恒真 ✗ ⇒ 等于把**整个运行期**重发进 blob ✓ ⇒ 布局全乱，连原本正常的"换名第二条"也崩 ✗。判据必须落在**记录种类**上 ✓。
+
+**验收** ✓：
+
+| 项 | 结果 |
+|---|---|
+| `let f(x)=1` → `let f(x)=2` → `f(0)` | **132 → rc 0，输出 2** ✓ + 告警 **1** 条 ✓ |
+| 三次重定义 | rc 0、输出 **3** ✓、告警 **2** 条 ✓ |
+| 值重定义 `let a=1` → `let a=2` → `a` | rc 0、**2** ✓ + 告警 ✓ |
+| 单定义 / 换名 | **无告警** ✓、行为不变 ✓ |
+| 回归用例（repl 组 ✓）| `redefine fn warns` ✓ / `redefine fn takes effect` ✓ / `redefine value warns` ✓ —— rc=0 管"不挂" ✓、needle 管告警 ✓ |
+| 全量 `make test` | **744 / 0** ✓（`compiler` **196 / 0** ✓）|
+
+> 另 ✓：`emit_jsess_skip` 只有 x86_64 调用 ✓（arm64 / riscv64 不追加会话 ✓）⇒ 本次无需同步另两后端 ✓。
 
 ---
 

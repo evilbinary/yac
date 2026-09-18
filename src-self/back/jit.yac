@@ -528,6 +528,19 @@ let compile_jit_go(src, t, named) =
           if live == 0 then emit_jsess_set(0)
           else emit_jsess_set(live) in
         let bn = repl_last_let(ast1) in
+        /* Say it out loud when a line replaces a name the session already has:
+         * the new definition wins for later lines, and silence here used to be
+         * actively misleading -- before FLAT_ABI.md 8.2 #15 the redefinition was
+         * not even emitted and the next call trapped (SIGILL). jit_let_idx is
+         * exactly the set of top-level names this session has bound (every
+         * `let` line registers one, value or function), and it is a pure
+         * lookup: nothing is inserted by asking. */
+        let _ =
+          if bn == "" then 0
+          else if jit_let_idx(bn) >= 0 then
+            print(str_cat("warning: redefining '", str_cat(bn,
+              "' -- the new definition replaces the previous one")))
+          else 0 in
         let q = repl_quiet_print(ast1) in
         let hush0 = log_get_hush(0) in
         let _ = log_set_hush(true) in

@@ -571,6 +571,13 @@ let repl_cases(_) = [
    * 8.18); the 4th field is the expected status, so the case really checks the
    * failure instead of just tolerating it. The last one is not an error at all:
    * exit(n) leaves the REPL with status n. */
+  /* Redefining a session name: the new definition must be the one that runs
+   * (the old code kept the FIRST body and trapped on the next call -- SIGILL,
+   * FLAT_ABI.md 8.2 #15) and the line must say so. Both checks in one case:
+   * rc 0 means it did not crash, the needle is the warning. */
+  ["redefine fn warns", "let f(x) = 1\nlet f(x) = 2\nf(0)\n:q\n", "redefining 'f'", 0],
+  ["redefine fn takes effect", "let f(x) = 1\nlet f(x) = 2\nf(0)\n:q\n", "2", 0],
+  ["redefine value warns", "let a = 1\nlet a = 2\na\n:q\n", "redefining 'a'", 0],
   ["exit() too few args", "exit()\n:q\n", "builtin 'exit' called with too few arguments", 2],
   ["str_cat() too few args", "str_cat()\n:q\n", "builtin 'str_cat' called with too few arguments", 2],
   ["exit(3) status", "exit(3)\n:q\n", "", 3],

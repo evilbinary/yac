@@ -1914,7 +1914,24 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
       let is_entry = name == entry in
       let _ = emit_self_set(name) in
       let _ = emit_tco_set(0) in
-      let skipat = if name == "_eval" then 0 - 1 else emit_jsess_skip(name) in
+      /* Only kernel / runtime $procs may be skipped as "the session already has
+       * this" -- emit_jsess_skip keys on the NAME alone, so a guest proc that
+       * merely shares a name with an earlier line's export was skipped too, and
+       * a REPL redefinition never got a body: `let f(x) = 1` / `let f(x) = 2` /
+       * `f(0)` left funOffsRev without f, fill_gref could not find an in-image
+       * offset and fell back to the yac_host_unimpl stub, and the call trapped
+       * -- SIGILL (measured 2026-09-18, FLAT_ABI.md 8.2 #15).
+       *
+       * The criterion is the record KIND, not the index: for a REPL blob
+       * (T != 0) nothing is appended after the program's own procs, so
+       * `i < nguest` is true for every one of them and would re-emit the whole
+       * runtime into the blob -- layout and all (tried, made it worse). A guest
+       * proc with a NEW name is unaffected either way: it is not in the export
+       * map, so emit_jsess_skip already said "emit". */
+      let skipat =
+        if name == "_eval" then 0 - 1
+        else if nth(f, 0) != "$proc" then 0 - 1
+        else emit_jsess_skip(name) in
       let fstart = nth(st, 1) in
       let st0 = [nth(st, 0), nth(st, 1), [], [], nth(st, 4)] in
       let insns = nth(f, 4) in
