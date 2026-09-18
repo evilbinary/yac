@@ -289,7 +289,11 @@ binop     ::= + | - | * | / | % | == | != | < | <= | > | >= | and | or
 
 常见库按需增加，不一次写完：
 
+<<<<<<< HEAD
 - 已落地（按类）：`text`（`str` / `bytes` / `fmt` / `json`）、`data`（`list` / `map` / `fmap` / `hash`）、`num`（`math`）、`fs`（`io` / `path`）、`os`（`env` / `cli` / `log`）、`net`（`tcp` / `http`，`import net.http` 会链 `net.tcp`）、`gui`（`yui`）、`native`（`ffi`）、`tools`（`compiler` / `profile`）、`test`（`assert`）、`lang`（`js`：JS 子集 `js_to_yac` 转 yac 源码）。`math`：整数 gcd/pow/isqrt；f64 用牛顿/泰勒，不链 libm。`json` tagged：`["N",n]` / `["S",s]` / `["A",xs]` / `["O",pairs]` / `["T"]` `["F"]` `["Z"]`。
+=======
+- 已落地（按类）：`text`（`str` / `bytes` / `fmt` / `json`）、`data`（`list` / `map` / `fmap` / `hash`）、`num`（`math`）、`fs`（`io` / `path`）、`os`（`env` / `cli` / `log`）、`net`（`tcp` / `http`，`import net.http` 会链 `net.tcp`）、`gui`（`yui`）、`native`（`ffi`）、`tools`（`compiler` / `profile`）、`test`（`assert`）。`math`：整数 gcd/pow/isqrt；f64 用牛顿/泰勒，不链 libm。`json` tagged：`["N",n]` / `["S",s]` / `["A",xs]` / `["O",pairs]` / `["T"]` `["F"]` `["Z"]`。
+>>>>>>> 68fd801bf0b90f0faf1fb5e7c371fb43b4809bd3
 - 先不要：`re` / `crypto` / `thread`。
 
 包查找器（`backend.yac` 的 `pkg_src`）本身不能 `import fs.path` / `import fs.io`，否则加载 `fs/path.yac` 会循环。
