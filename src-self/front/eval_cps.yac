@@ -110,6 +110,10 @@ let ce_prim_one(op, args) =
   else if op == "list_new" then list_new()
   else if op == "int_to_str" then int_to_str(a0)
   else if op == "is_int" then is_int(a0)
+  else if op == "kind" then
+    if is_int(a0) then 0
+    else if a0 == 1 then 1
+    else 6
   else if op == "str_len" then str_len(a0)
   else if op == "str_hash" then str_hash(a0)
   else if op == "ident_hash" then ident_hash(a0)

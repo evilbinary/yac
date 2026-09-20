@@ -1282,7 +1282,7 @@ static const Prim PRIMS[] = {
     {"idiv", 2, true, true, prim_div},
     {"irem", 2, true, true, prim_mod},
     {"is_int", 1, true, false, prim_is_int},
-    {"obj_kind", 1, true, false, prim_obj_kind},
+    {"kind", 1, true, false, prim_obj_kind},
     {"==", 2, true, false, prim_eq},
     {"!=", 2, true, false, prim_ne},
     {"<", 2, true, false, prim_lt},
