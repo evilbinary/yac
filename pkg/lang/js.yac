@@ -831,7 +831,7 @@ let js_pnames(ps) =
 let js_func_body(ps, body, ctx, st) =
   let retf2 = js_fresh(st, "retf") in
   let retv2 = js_fresh(st, "retv") in
-  let ctx3 = [append(nth(ctx, 0), ps), nth(ctx, 1), retf2, retv2, nth(ctx, 4), 0] in
+  let ctx3 = [append(nth(ctx, 0), js_pnames(ps)), nth(ctx, 1), retf2, retv2, nth(ctx, 4), 0] in
   let b0 = js_call_stmts(body, ctx3, "0", st) in
   let b1 = js_cat(["(let ", retv2, " = box_new() in ", b0, ")"]) in
   let b2 = js_cat(["(let ", retf2, " = box_new() in (let _ = box_set(", retf2, ", false) in ", b1, "))"]) in
