@@ -1380,7 +1380,7 @@ let emit_x86_i_heap(st, insn) =
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
   let k = nth(insn, 0) in
-  if k == "obj_kind" then
+  if k == "kind" then
     let dst = nth(insn, 1) in
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let _ = test_rax_1(b) in
@@ -1854,7 +1854,7 @@ let emit_insn_go(st, insn, is_entry, is_raw) =
     else if is_raw_op(k) or k == "gvar" or k == "gval"
          or k == "gset" then
       emit_x86_i_raw(st, insn)
-    else if k == "obj_kind" or k == "mref" or k == "mset" or k == "tag"
+    else if k == "kind" or k == "mref" or k == "mset" or k == "tag"
          or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
          or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64"
          or k == "write1" or k == "clock" or k == "glob" or k == "gst" or k == "time_ms"

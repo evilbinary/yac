@@ -64,7 +64,7 @@ op        ::= "local" | "$sp" | "$fp" | "$carg" | "$smap"                    ; �
             | "cmp" | "icmp" | "label" | "jmp" | "cmpjmp" | "$jcc"          ; §4.3
             | "ycall" | "fcall" | "tcall" | "xcall" | "icall" | "ccall"  ; §4.4 / §4.4.7
             | "gvar" | "gval" | "gset" | "glob" | "gst" | "$gbase"          ; §4.5
-            | "closure" | "alloc" | "obj_kind" | "mref" | "mset"            ; §4.6
+            | "closure" | "alloc" | "kind" | "mref" | "mset"            ; §4.6
             | "tag" | "untag" | "is_int"
             | "$ld64" | "$st64" | "$ld8" | "$st8"                            ; §4.7
             | "$memcpy" | "$memset" | "$syscall"
@@ -502,7 +502,7 @@ cell + 32… : env…
 |---|---|---|
 | `closure` | `["closure", dst, fnName, [capSlots]]` | 堆闭包 `[next][mark][fnptr][nenv][env…]`；`capSlots` 是**外层帧**的槽号 |
 | `alloc` | `["alloc", dst, size]` | GC 堆分配；`size` 可为立即数或槽（**合并 `alloc_s`**） |
-| `obj_kind` | `["obj_kind", dst, obj]` | 取对象种类 |
+| `kind` | `["kind", dst, obj]` | 取对象种类 |
 | `mref` | `["mref", dst, obj, off, w]` | 读字段。`obj` **先去 tag**；`off` = 立即数 disp32 或槽（动态，值 = 字节偏移×2）；`w ∈ {8,64}`，`w=8` 时结果重打 tag。**合并 `mref8` / `ld64`** |
 | `mset` | `["mset", obj, off, src, w, conv]` | 写字段。`obj` 先去 tag；`conv ∈ {slot, untag, imm32}`（src 原样 / 去 tag / 32 位立即数+零高半）。**合并 `mset8` / `st64` / `obj_sti` / `obj_st_int`** |
 | `tag` | `["tag", dst, src]` | 打 tag |

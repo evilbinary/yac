@@ -1199,7 +1199,7 @@ let emit_a64_i_heap(st, insn) =
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
   let k = nth(insn, 0) in
-  if k == "obj_kind" then
+  if k == "kind" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
     let _ = a64_movz(b, 9, 1, 0) in
     let _ = a64_and_reg(b, 10, 0, 9) in
@@ -1785,7 +1785,7 @@ let emit_insn_a64_go(st, insn, is_entry) =
     emit_a64_i_sys(st, insn)
   else if is_raw_op(k) then
     emit_a64_i_raw(st, insn)
-  else if k == "obj_kind" or k == "mref" or k == "mset" or k == "tag"
+  else if k == "kind" or k == "mref" or k == "mset" or k == "tag"
        or k == "is_int" or k == "alloc" or k == "obj_sti" or k == "obj_st_int"
        or k == "alloc_s" or k == "mref8" or k == "mset8" or k == "ld64" or k == "st64"
        or k == "write1" or k == "clock" or k == "glob" or k == "gst"

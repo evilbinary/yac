@@ -378,10 +378,10 @@ static Value prim_is_int(Value *args, int nargs, PrimCtx *ctx) {
     return v_bool(args[0].tag == V_INT);
 }
 
-/* Heap-object kind, matching the native runtime's obj_kind numbering:
+/* Heap-object kind, matching the native runtime's kind numbering:
  * 2=cons, 3=STR, 4=BYTES, 5=listbuf, 7=FLOAT. 0 for anything else. Only
  * meaningful on a heap object (callers guard with is_int / a range check). */
-static Value prim_obj_kind(Value *args, int nargs, PrimCtx *ctx) {
+static Value prim_kind(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
     (void)ctx;
     Value v = args[0];
@@ -1282,7 +1282,7 @@ static const Prim PRIMS[] = {
     {"idiv", 2, true, true, prim_div},
     {"irem", 2, true, true, prim_mod},
     {"is_int", 1, true, false, prim_is_int},
-    {"kind", 1, true, false, prim_obj_kind},
+    {"kind", 1, true, false, prim_kind},
     {"==", 2, true, false, prim_eq},
     {"!=", 2, true, false, prim_ne},
     {"<", 2, true, false, prim_lt},
