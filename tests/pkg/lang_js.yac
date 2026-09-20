@@ -8,6 +8,7 @@
 import lang.js
 import test.assert
 import yc.compiler
+import fs.io
 
 /* Substring test (no builtin contains for strings). */
 let has(s, sub) =
@@ -70,3 +71,125 @@ let _ = assert_has("compound bitand", "let x = 6; x &= 3;", "band(")
 
 /* Execution: prints JS_OK only if the control flow is actually correct. */
 let _ = run(js_to_yac("let ok = true;\nlet i=0; while(true){ i=i+1; if(i===3){break;} } if(i!==3){ ok=false; }\nlet s=0; for(let k=0;k<5;k++){ if(k===2){continue;} s=s+k; } if(s!==8){ ok=false; }\nlet d=0; do { d=d+1; } while(d<3); if(d!==3){ ok=false; }\nlet x=2; let r='z'; switch(x){ case 1: r='a'; break; case 2: r='b'; break; default: r='c'; } if(r!=='b'){ ok=false; }\nif(!(3>2)){ ok=false; }\nif((6 & 3) !== 2){ ok=false; }\nif((1 << 4) !== 16){ ok=false; }\nif((~0) !== (0 - 1)){ ok=false; }\nlet oo={a:1}; if(!('a' in oo)){ ok=false; }\nif(typeof 1 !== 'number'){ ok=false; }\nif(ok){ console.log('JS_OK'); } else { console.log('JS_BAD'); }"))
+
+/* ---- value tests: compile + run each example, compare stdout ---- */
+
+let strip_cr(s) =
+  let b = bytes_new() in
+  let n = str_len(s) in
+  let rec(i) =
+    if i >= n then bytes_to_str(b)
+    else
+      let c = str_ref(s, i) in
+      let _ = if c == 13 then 0 else bytes_append(b, c) in
+      rec(i + 1) in
+  rec(0)
+
+let trim_nl(s) =
+  let k = str_len(s) in
+  let rec(j) = if j <= 0 then 0 else if str_ref(s, j - 1) == 10 then rec(j - 1) else j in
+  str_slice(s, 0, rec(k))
+
+/* Translate, compile to an executable, run it, return its trimmed stdout. */
+let run_js(js) =
+  let src = js_to_yac(js) in
+  let yf = "build/test_tmp/lang_js_val.yac" in
+  let xf = "build/test_tmp/lang_js_val.exe" in
+  let of = "build/test_tmp/lang_js_val.out" in
+  let _ = write_file(yf, src) in
+  let rc = compile_file(yf, xf) in
+  if rc != 0 then "<compile_fail>"
+  else
+    let _ = system(str_cat(xf, str_cat(" > ", str_cat(of, " 2>&1")))) in
+    let o = read_or_0(of) in
+    if o == 0 then "<no_out>" else trim_nl(strip_cr(o))
+
+let check(name, js, want) =
+  let got = run_js(js) in
+  if got == want then 0
+  else
+    let _ = print(str_cat("FAIL: ", name)) in
+    eq(want, got)
+
+/* expressions */
+let _ = check("arith", "console.log(1 + 2 * 3);", "7")
+let _ = check("concat", "console.log('a' + 'b' + 'c');", "abc")
+let _ = check("mixcat", "console.log('x=' + 5);", "x=5")
+let _ = check("cmp", "console.log(3 > 2);", "true")
+let _ = check("logic", "console.log(true && false);", "false")
+let _ = check("not", "console.log(!false);", "true")
+let _ = check("ternary", "console.log(1 < 2 ? 'yes' : 'no');", "yes")
+let _ = check("mod", "console.log(17 % 5);", "2")
+let _ = check("reassign", "let x = 1; x = x + 4; console.log(x);", "5")
+let _ = check("compound", "let x = 10; x += 5; x *= 2; console.log(x);", "30")
+let _ = check("neg", "console.log(0 - 1);", "-1")
+let _ = check("float", "console.log(0.5 + 1.5);", "2")
+let _ = check("iplusplus", "let i = 0; i++; console.log(i);", "1")
+let _ = check("strvar", "let s = 'a'; let t = s + 'b'; console.log(t + 1);", "ab1")
+let _ = check("boolcat", "console.log('r=' + (3 > 2));", "r=true")
+
+/* control flow */
+let _ = check("break", "let i=0; while(true){ i=i+1; if(i===3){break;} } console.log(i);", "3")
+let _ = check("continue", "let s=0; for(let k=0;k<5;k++){ if(k===2){continue;} s=s+k; } console.log(s);", "8")
+let _ = check("dowhile", "let d=0; do { d=d+1; } while(d<3); console.log(d);", "3")
+let _ = check("switch", "let x=2; switch(x){ case 1: console.log('a'); break; case 2: console.log('b'); break; default: console.log('c'); }", "b")
+let _ = check("switchdef", "let x=9; switch(x){ case 1: console.log('a'); break; default: console.log('c'); }", "c")
+let _ = check("nestedbreak", "let s=0; for(let i=0;i<3;i++){ for(let j=0;j<3;j++){ if(j===1){break;} s=s+1; } } console.log(s);", "3")
+let _ = check("retloop", "function f(){ let i=0; while(true){ i=i+1; if(i===4){ return i*10; } } } console.log(f());", "40")
+let _ = check("ifchain", "let x=3; if(x==1){ console.log('a'); } else if(x==3){ console.log('b'); } else { console.log('c'); }", "b")
+
+/* functions */
+let _ = check("fn2", "function add(a, b){ return a + b; } console.log(add(20, 22));", "42")
+let _ = check("noparam", "function f(){ return 7; } console.log(f());", "7")
+let _ = check("fact", "function f(n){ if(n<=1){ return 1; } return n*f(n-1); } console.log(f(5));", "120")
+let _ = check("earlyret", "function f(n){ if(n>0){ return 1; } let z=100; return 2; } console.log(f(5)); console.log(f(0-1));", "1\n2")
+
+/* arrays / objects */
+let _ = check("array", "let a=[10,20,30]; a[1]=99; console.log(a[1]); console.log(a.length);", "99\n3")
+let _ = check("push", "let a=[1]; a.push(2); a.push(3); console.log(a.length);", "3")
+let _ = check("nestedarr", "let a=[[1,2],[3,4]]; console.log(a[1][0]);", "3")
+let _ = check("arr_obj", "let a=[{v:5},{v:6}]; console.log(a[0].v + a[1].v);", "11")
+let _ = check("object", "let o={a:1,b:2}; o.c=3; console.log(o.a+o.b+o.c);", "6")
+let _ = check("objstr", "let o={'x y':5}; console.log(o['x y']);", "5")
+let _ = check("obj_arr", "let o={list:[1,2,3]}; console.log(o.list[2]);", "3")
+
+/* booleans / null / multiple args */
+let _ = check("multi", "console.log('a', 1, true);", "a 1 true")
+let _ = check("zero", "console.log();", "")
+let _ = check("null", "console.log(null); console.log(undefined);", "null\nundefined")
+let _ = check("strcmp", "console.log('ab' === 'ab');", "true")
+
+/* operators */
+let _ = check("band", "console.log(6 & 3);", "2")
+let _ = check("bor", "console.log(6 | 1);", "7")
+let _ = check("bxor", "console.log(6 ^ 3);", "5")
+let _ = check("bnot", "console.log(~0);", "-1")
+let _ = check("shl", "console.log(1 << 4);", "16")
+let _ = check("shr", "console.log(32 >> 2);", "8")
+let _ = check("precshift", "console.log(1 + 2 << 3);", "24")
+let _ = check("typeofnum", "console.log(typeof 1);", "number")
+let _ = check("typeofstr", "console.log(typeof 's');", "string")
+let _ = check("typeofbool", "console.log(typeof true);", "boolean")
+let _ = check("typeofnull", "console.log(typeof null);", "object")
+let _ = check("typeoffn", "function f(){ return 1; } console.log(typeof f);", "function")
+let _ = check("void", "console.log(void 0);", "undefined")
+let _ = check("in", "let o={a:1}; console.log('a' in o); console.log('b' in o);", "true\nfalse")
+let _ = check("cband", "let x=6; x &= 3; console.log(x);", "2")
+
+/* string / array standard library */
+let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
+let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")
+let _ = check("upper", "console.log('hello'.toUpperCase());", "HELLO")
+let _ = check("lower", "console.log('HELLO'.toLowerCase());", "hello")
+let _ = check("trim", "console.log('  hi  '.trim());", "hi")
+let _ = check("splitlen", "console.log('a,b,c'.split(',').length);", "3")
+let _ = check("strslice", "console.log('hello'.slice(1,3));", "el")
+let _ = check("repeat", "console.log('ab'.repeat(3));", "ababab")
+let _ = check("strindexof", "console.log('hello'.indexOf('l'));", "2")
+let _ = check("strlenvar", "let s='hi'; console.log(s.length);", "2")
+let _ = check("starts", "console.log('hello'.startsWith('he'));", "true")
+let _ = check("ends", "console.log('hello'.endsWith('lo'));", "true")
+let _ = check("includes", "console.log('hello'.includes('ell'));", "true")
+let _ = check("aslice", "let a=[1,2,3]; console.log(a.slice(1,3).length);", "2")
+let _ = check("aindexof", "let a=[1,2,3]; console.log(a.indexOf(2));", "1")
+let _ = check("areverse", "let a=[1,2,3]; console.log(a.reverse().length);", "3")
