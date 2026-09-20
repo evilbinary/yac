@@ -226,3 +226,11 @@ let _ = check("new_noargs", "function C(){ this.n = 5; } let c = new C(); consol
 let _ = check("proto_method", "function A(){ this.v = 1; } A.prototype.get = function(){ return this.v; }; console.log((new A()).get());", "1")
 let _ = check("two_instances", "function P(x){ this.x = x; } P.prototype.dbl = function(){ return this.x*2; }; let a=new P(10); let b=new P(20); console.log(a.dbl()); console.log(b.dbl());", "20\n40")
 let _ = check("method_chain", "function Counter(){ this.n = 0; } Counter.prototype.inc = function(){ this.n = this.n + 1; return this; }; let c = new Counter(); c.inc(); c.inc(); console.log(c.n);", "2")
+
+/* throw / try / catch / finally */
+let _ = check("throw_catch", "try { throw 1; console.log('no'); } catch(e){ console.log(e); } console.log('after');", "1\nafter")
+let _ = check("throw_str", "try { throw 'boom'; } catch(e){ console.log('caught', e); }", "caught boom")
+let _ = check("fn_throw", "function f(){ throw 42; } try { f(); console.log('no'); } catch(e){ console.log(e); }", "42")
+let _ = check("catch_finally", "try { throw 1; } catch(e){ console.log('c', e); } finally { console.log('fin'); }", "c 1\nfin")
+let _ = check("try_finally", "try { console.log('a'); } finally { console.log('fin'); }", "a\nfin")
+let _ = check("loop_throw", "try { for(let i=0;i<3;i=i+1){ if(i==1){ throw i; } console.log('i', i); } } catch(e){ console.log('caught', e); }", "i 0\ncaught 1")

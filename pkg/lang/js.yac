@@ -501,6 +501,30 @@ let js_parse_stmts(toks, i, mode, st) =
           clauses(nth(r, 1), acc) in
       let cs = clauses(j3, []) in
       [["switch", nth(disc, 0), nth(cs, 0)], nth(cs, 1)]
+    else if tx == "throw" then
+      let r = js_parse_expr(toks, j + 1, 0, st) in
+      let j2 = if js_is(toks, nth(r, 1), ";") then nth(r, 1) + 1 else nth(r, 1) in
+      [["throw", nth(r, 0)], j2]
+    else if tx == "try" then
+      let blk = js_parse_stmts(toks, j + 1, ["one"], st) in
+      let tryXs = if nth(nth(blk, 0), 0) == "block" then nth(nth(blk, 0), 1) else [nth(blk, 0)] in
+      let j2 = nth(blk, 1) in
+      let c =
+        if js_is(toks, j2, "catch") then
+          let nm = if js_k(js_at(toks, j2 + 2)) == "id" then js_t(js_at(toks, j2 + 2)) else "" in
+          let jr = if js_is(toks, j2 + 3, ")") then j2 + 4 else j2 + 3 in
+          let cb = js_parse_stmts(toks, jr, ["one"], st) in
+          let cs = if nth(nth(cb, 0), 0) == "block" then nth(nth(cb, 0), 1) else [nth(cb, 0)] in
+          [(if nm == "" then ["null"] else ["str", nm]), cs, nth(cb, 1)]
+        else [["null"], [], j2] in
+      let j3 = nth(c, 2) in
+      let f =
+        if js_is(toks, j3, "finally") then
+          let fb = js_parse_stmts(toks, j3 + 1, ["one"], st) in
+          let fs = if nth(nth(fb, 0), 0) == "block" then nth(nth(fb, 0), 1) else [nth(fb, 0)] in
+          [fs, nth(fb, 1)]
+        else [[], j3] in
+      [["try", tryXs, nth(c, 0), nth(c, 1), nth(f, 0)], nth(f, 1)]
     else if js_k(tk) == "eof" then [["block", []], j]
     else if js_k(tk) == "unk" then [js_bad(st, str_cat("unexpected character '", str_cat(tx, "'"))), j + 1]
     else
@@ -1048,7 +1072,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
   /* After a loop body: a fired return wins, a break (status 1) stops, anything
    * else (normal / continue=2) runs `nxt` (next iteration, update included). */
   let after_loop(sc, nxt) =
-    let stop = js_cat(["(if box_get(", sc, ") == 1 then 0 else ", nxt, ")"]) in
+    let stop = js_cat(["(if box_get(_js_exc) != 0 then 0 else (if box_get(", sc, ") == 1 then 0 else ", nxt, "))"]) in
     if retf == 0 then stop
     else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", stop, ")"]) in
   /* One statement, with its own continuation k2 (only loops use k2). */
@@ -1128,6 +1152,26 @@ let js_emit_stmts(stmts, ctx, k, st) =
           let cl = nth(ys, i) in
           js_cat(["(if ", d, " == (", js_emit_expr(nth(cl, 0), c3, st), ") then ", js_emit_stmts(nth(cl, 1), c3, "0", st), " else ", chain(ys, i + 1), ")"]) in
       js_cat(["(let ", sc, " = box_new() in (let ", d, " = ", js_emit_expr(nth(s, 1), ctx2, st), " in ", chain(cs, 0), "))"])
+    else if tag == "throw" then
+      /* Record the value in the global exception box; the guard after this
+       * statement (and in every enclosing body / loop) stops the rest. */
+      js_cat(["(let _ = box_set(_js_exc, ", js_emit_expr(nth(s, 1), ctx2, st), ") in 0)"])
+    else if tag == "try" then
+      let tryXs = nth(s, 1) in
+      let cn = nth(s, 2) in
+      let cxs = nth(s, 3) in
+      let fxs = nth(s, 4) in
+      let tryE = js_emit_stmts(tryXs, ctx2, "0", st) in
+      let finE = if len(fxs) > 0 then js_emit_stmts(fxs, ctx2, "0", st) else "0" in
+      let cpart =
+        if nth(cn, 0) == "str" then
+          let nm = nth(cn, 1) in
+          let m = js_mangle(nm) in
+          let cctx = [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), nth(ctx2, 4), nth(ctx2, 5)] in
+          let cE = js_emit_stmts(cxs, cctx, "0", st) in
+          js_cat(["(if box_get(_js_exc) != 0 then (let ", m, " = box_new() in (let _ = box_set(", m, ", box_get(_js_exc)) in (let _ = box_set(_js_exc, 0) in ", cE, "))) else 0)"])
+        else "0" in
+      js_cat(["(let _ = box_set(_js_exc, 0) in (let _ = ", tryE, " in (let _ = ", cpart, " in (let _ = ", finE, " in 0))))"])
     else if tag == "ret" then
       /* Set the flag + value boxes; the guard after each statement unwinds. */
       let v = js_emit_expr(nth(s, 1), ctx2, st) in
@@ -1164,9 +1208,10 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let cont = go(rest, vars2, funcs2, strs2, brk2, k2) in
         let inner = if brk2 == 0 then cont
                     else js_cat(["(if box_get(", brk2, ") != 0 then 0 else ", cont, ")"]) in
+        let inner2 = js_cat(["(if box_get(_js_exc) != 0 then 0 else ", inner, ")"]) in
         let guard =
-          if retf == 0 then inner
-          else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", inner, ")"]) in
+          if retf == 0 then inner2
+          else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", inner2, ")"]) in
         js_cat(["(let _ = ", se, " in ", guard, ")"]) in
   go(stmts, nth(ctx, 0), nth(ctx, 1), nth(ctx, 4), nth(ctx, 5), k)
 
@@ -1205,6 +1250,7 @@ let js_to_yac(src) =
   let e = box_get(err) in
   if e != "" then js_cat(["error: ", e])
   else
+    let h0 = "let _js_exc = box_new()\n" in
     let h1 = if box_get(ufmap) == 1 or box_get(uobj) == 1 then "import data.fmap { fmap_new, fmap_get, fmap_put }\n" else "" in
     let h2 = if box_get(umath) == 1 then "import num.math { abs, min, max, pow, sqrt, pi, e, sin, cos, exp, log, log2, powf }\n" else "" in
     let h3 = if box_get(ustr) == 1 then "let _js_str(x) = if is_int(x) then int_to_str(x) else x\n" else "" in
@@ -1219,4 +1265,4 @@ let js_to_yac(src) =
       if box_get(uobj) == 1 then
         "let _js_this = box_new()\nlet _js_protos = box_new()\nlet _js_proto(nm) =\n  let m = box_get(_js_protos) in\n  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_protos, x) in x)) else m in\n  let p = fmap_get(m2, nm) in\n  if p == 0 then (let x = fmap_new(0) in (let _ = fmap_put(m2, nm, x) in x)) else p\nlet _js_obj(proto) =\n  let m = fmap_new(0) in\n  let _ = fmap_put(m, \"__proto__\", proto) in\n  m\nlet _js_get(o, k) =\n  let v = fmap_get(o, k) in\n  if v != 0 then v\n  else\n    let p = fmap_get(o, \"__proto__\") in\n    if p == 0 then 0 else _js_get(p, k)\n"
       else "" in
-    js_cat([h1, h2, h6, h3, h4, h5, h7, h8, body, "\n"])
+    js_cat([h0, h1, h2, h6, h3, h4, h5, h7, h8, body, "\n"])
