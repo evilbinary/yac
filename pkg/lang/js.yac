@@ -551,6 +551,11 @@ let js_pat_flat(pat, ae) =
         go(i + 1, append(acc, js_pat_flat(nth(pr, 1), ae2))) in
     go(0, [])
 
+let js_pat_names(flat) =
+  let n = len(flat) in
+  let go(i, acc) = if i >= n then list_rev(acc) else go(i + 1, cons(nth(nth(flat, i), 0), acc)) in
+  go(0, [])
+
 let js_pat_has_obj(pat) =
   if nth(pat, 0) == "objpat" then true
   else if nth(pat, 0) == "arrpat" then
@@ -594,6 +599,37 @@ let js_parse_stmts(toks, i, mode, st) =
           else [["null"], j2] in
         let j3 = if js_is(toks, nth(r, 1), ";") then nth(r, 1) + 1 else nth(r, 1) in
         [["let", tx, nm, nth(r, 0)], j3]
+    else if tx == "class" then
+      /* class Name [extends Base] { constructor(){} m(){} static s(){} } */
+      let nm = js_t(js_at(toks, j + 1)) in
+      let j0 = j + 2 in
+      let superName = if js_is(toks, j0, "extends") then js_t(js_at(toks, j0 + 1)) else "" in
+      let j1 = if superName == "" then j0 else j0 + 2 in
+      let cdef(jj, acc) =
+        if js_is(toks, jj, ")") then [list_rev(acc), jj + 1]
+        else
+          let pt = js_at(toks, jj) in
+          let j3 = jj + 1 in
+          if js_is(toks, j3, "=") then
+            let r = js_parse_expr(toks, j3 + 1, 0, st) in
+            let j4 = nth(r, 1) in
+            let a2 = cons([js_t(pt), nth(r, 0)], acc) in
+            if js_is(toks, j4, ",") then cdef(j4 + 1, a2) else [list_rev(a2), j4 + 1]
+          else if js_is(toks, j3, ",") then cdef(j3 + 1, cons(js_t(pt), acc))
+          else [list_rev(cons(js_t(pt), acc)), j3 + 1] in
+      let mgo(k, acc) =
+        if js_is(toks, k, "}") then [list_rev(acc), k + 1]
+        else if js_is(toks, k, ";") then mgo(k + 1, acc)
+        else
+          let is_static = js_is(toks, k, "static") in
+          let k1 = if is_static then k + 1 else k in
+          let mname = js_t(js_at(toks, k1)) in
+          let pr = cdef(k1 + 2, []) in
+          let bd = js_parse_stmts(toks, nth(pr, 1) + 1, ["list", "}"], st) in
+          let kind = if is_static then "static" else if mname == "constructor" then "ctor" else "method" in
+          mgo(nth(bd, 1), cons([kind, mname, nth(pr, 0), nth(bd, 0)], acc)) in
+      let mem = mgo(j1 + 1, []) in
+      [["class", nm, nth(mem, 0), superName], nth(mem, 1)]
     else if tx == "if" then
       let c = js_parse_expr(toks, j + 2, 0, st) in
       let j2 = if js_is(toks, nth(c, 1), ")") then nth(c, 1) + 1 else nth(c, 1) in
@@ -1556,23 +1592,25 @@ let js_emit_stmts(stmts, ctx, k, st) =
         js_cat(["(let ", m, "(", nth(fb, 0), ") = ", nth(fb, 1), " in ", go(rest, vars2, funcs3, strs2, brk2, k2), ")"])
       else if tag == "dlet" then
         /* Destructuring declaration: bind a temp to the initialiser, then one
-         * boxed let per name (array slots via nth, object keys via _js_get),
-         * threading the extended var list into the continuation. */
+         * boxed let per name (array slots via nth, object keys via _js_get).
+         * The names are added to the var list before the continuation so the
+         * rest of the block sees them. */
         let pat = nth(s, 1) in
         let ie = js_emit_expr(nth(s, 2), [vars2, funcs2, retf, retv, strs2, brk2], st) in
         let _ = if js_pat_has_obj(pat) then box_set(st_obj(st), 1) else 0 in
         let o = js_fresh(st, "d") in
         let flat = js_pat_flat(pat, js_cat(["box_get(", o, ")"])) in
-        let eb(bs, vs, cont) =
-          if len(bs) == 0 then cont(vs)
+        let extvars = append(js_pat_names(flat), vars2) in
+        let cont = go(rest, extvars, funcs2, strs2, brk2, k2) in
+        let n = len(flat) in
+        let wrap(i, inner) =
+          if i < 0 then inner
           else
-            let nm = nth(nth(bs, 0), 0) in
-            let ae = nth(nth(bs, 0), 1) in
+            let nm = nth(nth(flat, i), 0) in
+            let ae = nth(nth(flat, i), 1) in
             let m = js_mangle(nm) in
-            eb(tail(bs), cons(nm, vs), fun(vs2) ->
-              js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ae, ") in ", vs2, "))"])) in
-        let inner = eb(flat, vars2, fun(vs2) -> go(rest, vs2, funcs2, strs2, brk2, k2)) in
-        js_cat(["(let ", o, " = box_new() in (let _ = box_set(", o, ", ", ie, ") in ", inner, "))"])
+            wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ae, ") in ", inner, "))"])) in
+        js_cat(["(let ", o, " = box_new() in (let _ = box_set(", o, ", ", ie, ") in ", wrap(n - 1, cont), "))"])
       else if tag == "let" then
         let nm = nth(s, 2) in
         let m = js_mangle(nm) in
