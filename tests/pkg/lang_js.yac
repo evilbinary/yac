@@ -221,6 +221,12 @@ let _ = check("powr", "console.log(2 ** 3 ** 2);", "512")
 let _ = check("powprec", "console.log(2 * 3 ** 2);", "18")
 let _ = check("powassign", "let x=2; x **= 3; console.log(x);", "8")
 
+/* ES6 object literal shorthand / computed / method */
+let _ = check("obj_shorthand", "let a=1; let o={a}; console.log(o.a);", "1")
+let _ = check("obj_computed", "let k='x'; let o={[k]:5}; console.log(o.x);", "5")
+let _ = check("obj_method", "let o={m(){ return 7; }}; console.log(o.m());", "7")
+let _ = check("obj_mixed", "let k='y'; let o={[k]:1, z:2}; console.log(o.y+o.z);", "3")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")
