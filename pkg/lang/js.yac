@@ -93,6 +93,28 @@ let js_lex_str(src, i, n, q) =
       else rec(j + 1, str_cat(acc, str_slice(src, j, 1))) in
   rec(i, "")
 
+/* Template literal body after the opening backtick. `${…}` is kept verbatim
+ * for the parser; escapes are decoded (`\`` -> backtick, `\$` -> `$`).
+ * Returns [raw, next-index]. */
+let js_lex_tmpl(src, i, n) =
+  let rec(j, acc) =
+    if j >= n then [acc, j]
+    else
+      let c = str_ref(src, j) in
+      if c == 96 then [acc, j + 1]
+      else if c == 92 then
+        if j + 1 >= n then [acc, j]
+        else
+          let e = str_ref(src, j + 1) in
+          let bit =
+            if e == 110 then "\n"
+            else if e == 116 then "\t"
+            else if e == 114 then str_chr(13)
+            else str_slice(src, j + 1, 1) in
+          rec(j + 2, str_cat(acc, bit))
+      else rec(j + 1, str_cat(acc, str_slice(src, j, 1))) in
+  rec(i, "")
+
 /* Number literal: digits with at most one `.`; returns [text, next-index]. */
 let js_lex_num(src, i, n) =
   let rec(j, dot) =
@@ -116,9 +138,9 @@ let js_lex_id(src, i, n) =
 
 /* True for the two-character operators the lexer recognises. */
 let js_op2(s) =
-  s == "==" or s == "!=" or s == "<=" or s == ">=" or s == "&&" or s == "||" or s == "+=" or s == "-=" or s == "*=" or s == "/=" or s == "%=" or s == "++" or s == "--" or s == "<<" or s == ">>" or s == "&=" or s == "|=" or s == "^="
+  s == "==" or s == "!=" or s == "<=" or s == ">=" or s == "&&" or s == "||" or s == "+=" or s == "-=" or s == "*=" or s == "/=" or s == "%=" or s == "++" or s == "--" or s == "<<" or s == ">>" or s == "&=" or s == "|=" or s == "^=" or s == "=>" or s == "**"
 
-let js_op3(s) = s == ">>>" or s == "<<=" or s == ">>="
+let js_op3(s) = s == ">>>" or s == "<<=" or s == ">>=" or s == "**="
 
 let js_op4(s) = s == ">>>="
 
@@ -139,6 +161,9 @@ let js_lex(src) =
       if c == 34 or c == 39 then
         let r = js_lex_str(src, j + 1, n, c) in
         let _ = list_push(acc, ["str", nth(r, 0)]) in rec(nth(r, 1))
+      else if c == 96 then
+        let r = js_lex_tmpl(src, j + 1, n) in
+        let _ = list_push(acc, ["tmpl", nth(r, 0)]) in rec(nth(r, 1))
       else if js_digit(c) then
         let r = js_lex_num(src, j, n) in
         let _ = list_push(acc, ["num", nth(r, 0)]) in rec(nth(r, 1))
@@ -210,11 +235,13 @@ let js_prec2(op) =
   else if op == "<<" or op == ">>" or op == ">>>" then 10
   else if op == "+" or op == "-" then 11
   else if op == "*" or op == "/" or op == "%" then 12
+  else if op == "**" then 13
   else 0
 
 let js_assign_op(op) =
   op == "=" or op == "+=" or op == "-=" or op == "*=" or op == "/=" or op == "%="
     or op == "&=" or op == "|=" or op == "^=" or op == "<<=" or op == ">>=" or op == ">>>="
+    or op == "**="
 
 /* Function-expression bodies are statement lists, but js_parse_stmts is defined
  * after js_parse_expr (no forward references across top-level lets). Reach it
@@ -227,6 +254,22 @@ let js_stmts_parse_box =
 let js_parse_stmts_v(toks, i, mode, st) = (box_get(js_stmts_parse_box))(toks, i, mode, st)
 
 /* ---- expression parser (Pratt) --------------------------------------- */
+
+/* If toks[i] is `(` starting an arrow parameter list `(a, b) =>`, return
+ * [params, body-start-index] (index just past `=>`); else 0. Plain identifiers
+ * only (no defaults/rest/destructuring yet). */
+let js_arrow_params(toks, i) =
+  let go(j, acc) =
+    let t = js_at(toks, j) in
+    if js_k(t) == "id" then
+      let j2 = j + 1 in
+      if js_is(toks, j2, ",") then go(j2 + 1, cons(js_t(t), acc))
+      else if js_is(toks, j2, ")") and js_is(toks, j2 + 1, "=>") then
+        [list_rev(cons(js_t(t), acc)), j2 + 2]
+      else 0
+    else 0 in
+  if js_is(toks, i + 1, ")") and js_is(toks, i + 2, "=>") then [[], i + 3]
+  else go(i + 1, [])
 
 /* Parse one expression at minimum precedence `min`. Self-recursive for
  * prefix / grouping / args / infix, so it needs no forward references.
@@ -241,10 +284,49 @@ let js_parse_expr(toks, i, min, st) =
   let tk = js_at(toks, i) in
   let tx = js_t(tk) in
   let kk = js_k(tk) in
+  let arrow_body(j) =
+    if js_is(toks, j, "{") then
+      let bd = js_parse_stmts_v(toks, j + 1, ["list", "}"], st) in
+      [nth(bd, 0), nth(bd, 1)]
+    else
+      let r = js_parse_expr(toks, j, 0, st) in
+      [[["ret", nth(r, 0)]], nth(r, 1)] in
+  let tmpl_parts(raw) =
+    let n = str_len(raw) in
+    let find(j, depth, instr, q) =
+      if j >= n then n
+      else
+        let d = str_ref(raw, j) in
+        if instr then
+          (if d == 92 then find(j + 2, depth, instr, q)
+           else if d == q then find(j + 1, depth, false, q)
+           else find(j + 1, depth, instr, q))
+        else if d == 39 or d == 34 then find(j + 1, depth, true, d)
+        else if d == 123 then find(j + 1, depth + 1, false, q)
+        else if d == 125 then (if depth == 0 then j else find(j + 1, depth - 1, false, q))
+        else find(j + 1, depth, false, q) in
+    let go(i, acc) =
+      if i >= n then list_rev(acc)
+      else if str_ref(raw, i) == 36 and i + 1 < n and str_ref(raw, i + 1) == 123 then
+        let j0 = i + 2 in
+        let e = find(j0, 0, false, 0) in
+        let ex = str_slice(raw, j0, e - j0) in
+        let rt = js_parse_expr(js_lex(ex), 0, 0, st) in
+        go(e + 1, cons(nth(rt, 0), acc))
+      else
+        let lit(k) =
+          if k >= n then k
+          else if str_ref(raw, k) == 36 and k + 1 < n and str_ref(raw, k + 1) == 123 then k
+          else lit(k + 1) in
+        let k2 = lit(i) in
+        go(k2, cons(["str", str_slice(raw, i, k2 - i)], acc)) in
+    go(0, [])
+  in
   let pre =
     /* Literals first: a string token whose text is "!" / "-" / "function" ...
      * must NOT be mistaken for an operator or keyword. */
-    if kk == "num" then [["num", tx], i + 1]
+    if kk == "tmpl" then [["tmpl", tmpl_parts(tx)], i + 1]
+    else if kk == "num" then [["num", tx], i + 1]
     else if kk == "str" then [["str", tx], i + 1]
     else if kk == "id" then
       if tx == "typeof" then
@@ -283,9 +365,14 @@ let js_parse_expr(toks, i, min, st) =
     else if tx == "++" or tx == "--" then
       let r = js_parse_expr(toks, i + 1, 13, st) in [["prefix", tx, nth(r, 0)], nth(r, 1)]
     else if tx == "(" then
-      let r = js_parse_expr(toks, i + 1, 0, st) in
-      if js_is(toks, nth(r, 1), ")") then [nth(r, 0), nth(r, 1) + 1]
-      else [js_bad(st, "expected ')'"), nth(r, 1)]
+      let ap = js_arrow_params(toks, i) in
+      if ap != 0 then
+        let bd = arrow_body(nth(ap, 1)) in
+        [["funexpr", "", nth(ap, 0), nth(bd, 0)], nth(bd, 1)]
+      else
+        let r = js_parse_expr(toks, i + 1, 0, st) in
+        if js_is(toks, nth(r, 1), ")") then [nth(r, 0), nth(r, 1) + 1]
+        else [js_bad(st, "expected ')'"), nth(r, 1)]
     else if tx == "[" then
       /* Array literal: comma-separated expressions until `]`. */
       let go(j, acc) =
@@ -342,6 +429,10 @@ let js_parse_expr(toks, i, min, st) =
           else [0, j2] in
       let ar = args(j + 1, []) in
       loop(["call", lhs, nth(ar, 0)], nth(ar, 1))
+    else if k2 == "p" and x2 == "=>" then
+      let ps = if nth(lhs, 0) == "id" then [nth(lhs, 1)] else [] in
+      let bd = arrow_body(j + 1) in
+      [["funexpr", "", ps, nth(bd, 0)], nth(bd, 1)]
     else if k2 == "p" and (x2 == "++" or x2 == "--") then loop(["postfix", lhs, x2], j + 1)
     else if k2 == "p" and (x2 == "?") and (min <= 2) then
       let a = js_parse_expr(toks, j + 1, 0, st) in
@@ -359,7 +450,8 @@ let js_parse_expr(toks, i, min, st) =
       let p = if isop then js_prec2(x2) else 0 in
       if p == 0 or p < min then [lhs, j]
       else
-        let r = js_parse_expr(toks, j + 1, p + 1, st) in
+        let pn = if x2 == "**" then p else p + 1 in
+        let r = js_parse_expr(toks, j + 1, pn, st) in
         loop(["bin", x2, lhs, nth(r, 0)], nth(r, 1)) in
   loop(nth(pre, 0), nth(pre, 1))
 
@@ -375,7 +467,7 @@ let js_parse_stmts(toks, i, mode, st) =
   let one(j) =
     let tk = js_at(toks, j) in
     let tx = js_t(tk) in
-    let kk = js_k(tk) in
+  let kk = js_k(tk) in
     /* A string/number literal can never start a keyword statement; token text
      * like "if" inside a string must not be read as syntax. */
     if kk == "str" or kk == "num" then
@@ -654,6 +746,7 @@ let js_is_boolish(e) =
 let js_is_str_expr(e, strs) =
   let t = nth(e, 0) in
   if t == "str" then true
+  else if t == "tmpl" then true
   else if t == "id" then js_in(strs, nth(e, 1))
   else if t == "bin" then
     if nth(e, 1) == "+" then
@@ -908,6 +1001,17 @@ let js_emit_expr(e, ctx, st) =
         let vs = js_emit_expr(nth(pair, 1), ctx, st) in
         go(tail(ys), js_cat([acc, "let _ = fmap_put(nth(", o, ", 1), \"", js_esc(ks), "\", ", vs, ") in "])) in
     go(nth(e, 1), "")
+  else if tag == "tmpl" then
+    /* Template literal: str_cat of literal segments and stringified exprs. */
+    let parts = nth(e, 1) in
+    let seg(p) =
+      if nth(p, 0) == "str" then js_cat(["\"", js_esc(nth(p, 1)), "\""])
+      else str_of(p) in
+    let go(i) =
+      if i >= len(parts) then ""
+      else if i == len(parts) - 1 then seg(nth(parts, i))
+      else js_cat(["str_cat(", seg(nth(parts, i)), ", ", go(i + 1), ")"]) in
+    if len(parts) == 0 then "\"\"" else go(0)
   else if tag == "un" then
     let op = nth(e, 1) in
     let a = js_emit_expr(nth(e, 2), ctx, st) in
@@ -985,6 +1089,7 @@ let js_emit_expr(e, ctx, st) =
         js_cat(["(let ", t, " = ", ls, " in if ", js_truth(t, st), " then ", t, " else ", rs, ")"])
       else if op == "===" then js_cat(["(", ls, " == ", rs, ")"])
       else if op == "!==" then js_cat(["(", ls, " != ", rs, ")"])
+      else if op == "**" then (let _ = box_set(st_math(st), 1) in js_cat(["powf(", ls, ", ", rs, ")"]))
       else if op == "&" then js_cat(["band(", ls, ", ", rs, ")"])
       else if op == "|" then js_cat(["bor(", ls, ", ", rs, ")"])
       else if op == "^" then js_cat(["bxor(", ls, ", ", rs, ")"])
@@ -1060,6 +1165,7 @@ let js_emit_expr(e, ctx, st) =
       else "0" in
     let rhs =
       if op == "=" then v
+      else if op == "**=" then (let _ = box_set(st_math(st), 1) in js_cat(["powf(", base, ", ", v, ")"]))
       else
         let bitop =
           if op == "&=" then "band"
