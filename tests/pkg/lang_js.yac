@@ -241,3 +241,10 @@ let _ = check("forin_sum", "let o={a:1,b:2,c:3}; let s=0; for(let k in o){ s = s
 let _ = check("forin_count", "let o={a:1,b:2}; let n=0; for(k in o){ n=n+1; } console.log(n);", "2")
 let _ = check("obj_create", "function A(){} A.prototype.m = function(){ return 5; }; let o = Object.create(A.prototype); console.log(o.m());", "5")
 let _ = check("forin_break", "let o={a:1,b:2,c:3}; let n=0; for(let k in o){ n=n+1; if(n==1){break;} } console.log(n);", "1")
+
+/* Array.sort / String.replace / String.search / isNaN */
+let _ = check("sort", "let a=[3,1,2]; a.sort(); console.log(a.join(','));", "1,2,3")
+let _ = check("sort_cmp", "let a=[1,3,2]; a.sort(function(x,y){ return y-x; }); console.log(a.join(','));", "3,2,1")
+let _ = check("replace", "console.log('hello world'.replace('world','there'));", "hello there")
+let _ = check("search", "console.log('hello'.search('ll'));", "2")
+let _ = check("isnan", "console.log(isNaN(1)); console.log(isNaN('a'));", "false\nfalse")
