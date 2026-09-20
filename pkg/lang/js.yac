@@ -360,7 +360,31 @@ let js_parse_expr(toks, i, min, st) =
       else if tx == "undefined" then [["undef"], i + 1]
       else if tx == "this" then [["this"], i + 1]
       else if tx == "new" then
-        let r = js_parse_expr(toks, i + 1, 13, st) in [["new", nth(r, 0)], nth(r, 1)]
+        /* `new C(a).m()` — new binds only the constructor call `C(a)`; a
+         * trailing member/call is the outer expression's. */
+        let jn = i + 1 in
+        let base =
+          if js_k(js_at(toks, jn)) == "id" then [["id", js_t(js_at(toks, jn))], jn + 1]
+          else [js_bad(st, "expected identifier after 'new'"), jn] in
+        let memb(jj, cur) =
+          if js_is(toks, jj, ".") then memb(jj + 2, ["mem", cur, js_t(js_at(toks, jj + 1))])
+          else if js_is(toks, jj, "[") then
+            (let r = js_parse_expr(toks, jj + 1, 0, st) in
+             if js_is(toks, nth(r, 1), "]") then memb(nth(r, 1) + 1, ["idx", cur, nth(r, 0)]) else [cur, jj])
+          else [cur, jj] in
+        let mr = memb(nth(base, 1), nth(base, 0)) in
+        let nargs(jj, acc) =
+          if js_is(toks, jj, ")") then [list_rev(acc), jj + 1]
+          else
+            let r = js_parse_expr(toks, jj, 0, st) in
+            let j2 = nth(r, 1) in
+            if js_is(toks, j2, ",") then nargs(j2 + 1, cons(nth(r, 0), acc))
+            else if js_is(toks, j2, ")") then [list_rev(cons(nth(r, 0), acc)), j2 + 1]
+            else [0, j2] in
+        let ar =
+          if js_is(toks, nth(mr, 1), "(") then nargs(nth(mr, 1) + 1, [])
+          else [[], nth(mr, 1)] in
+        [["new", ["call", nth(mr, 0), nth(ar, 0)]], nth(ar, 1)]
       else [["id", tx], i + 1]
     else if tx == "!" then
       let r = js_parse_expr(toks, i + 1, 13, st) in [["un", "!", nth(r, 0)], nth(r, 1)]
@@ -550,6 +574,20 @@ let js_pat_flat(pat, ae) =
         let ae2 = str_cat("_js_get(", str_cat(ae, str_cat(", \"", str_cat(nth(pr, 0), "\")")))) in
         go(i + 1, append(acc, js_pat_flat(nth(pr, 1), ae2))) in
     go(0, [])
+
+/* Rewrite `super` references in a class method body: `super` -> parent name,
+ * `super.m` -> ["supermem", parent, m]. Rewrites in place (returns a new tree). */
+let js_rw_super(x, sname) =
+  if kind(x) == 3 then x
+  else
+    let h = nth(x, 0) in
+    if h == "id" and nth(x, 1) == "super" then ["id", sname]
+    else if h == "mem" and kind(nth(x, 1)) == 2 and nth(nth(x, 1), 0) == "id" and nth(nth(x, 1), 1) == "super" then
+      ["supermem", sname, nth(x, 2)]
+    else
+      let n = len(x) in
+      let go(i, acc) = if i >= n then list_rev(acc) else go(i + 1, cons(js_rw_super(nth(x, i), sname), acc)) in
+      go(0, [])
 
 let js_pat_names(flat) =
   let n = len(flat) in
@@ -1326,6 +1364,10 @@ let js_emit_expr(e, ctx, st) =
         let _ = box_set(st_obj(st), 1) in
         let _ = box_set(st_fmap(st), 1) in
         js_cat(["_js_get(", js_emit_expr(obj, ctx, st), ", \"", js_esc(nm), "\")"])
+  else if tag == "supermem" then
+    /* super.m -> the parent prototype's m (called as a plain fn keeps `this`). */
+    let _ = box_set(st_obj(st), 1) in
+    js_cat(["_js_get(_js_proto(\"", js_esc(nth(e, 1)), "\"), \"", js_esc(nth(e, 2)), "\")"])
   else if tag == "assign" then
     /* Target is a box (id), fmap slot (mem) or list slot (idx). Compound ops
      * read the target, apply the base operator, then store. */
@@ -1611,6 +1653,51 @@ let js_emit_stmts(stmts, ctx, k, st) =
             let m = js_mangle(nm) in
             wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ae, ") in ", inner, "))"])) in
         js_cat(["(let ", o, " = box_new() in (let _ = box_set(", o, ", ", ie, ") in ", wrap(n - 1, cont), "))"])
+      else if tag == "class" then
+        /* Class declaration -> constructor function + `Prototype.m = fn`
+         * assignments (static methods on the constructor itself). `extends`
+         * also links the prototype chain; `super`/`super.m` were rewritten. */
+        let nm = nth(s, 1) in
+        let methods = nth(s, 2) in
+        let superName = nth(s, 3) in
+        let mm = js_mangle(nm) in
+        let funcs3 = cons(nm, funcs2) in
+        let vars3 = cons(nm, vars2) in
+        let ctxC = [vars3, funcs3, retf, retv, strs2, brk2] in
+        let rw(x) = if superName == "" then x else js_rw_super(x, superName) in
+        let findctor(i) =
+          if i >= len(methods) then 0
+          else if nth(nth(methods, i), 0) == "ctor" then nth(methods, i)
+          else findctor(i + 1) in
+        let ctor = findctor(0) in
+        let cparams = if ctor == 0 then [] else nth(ctor, 2) in
+        let cbody = if ctor == 0 then [] else rw(nth(ctor, 3)) in
+        let fb = js_func_body(cparams, cbody, ctxC, st) in
+        let superlink =
+          if superName == "" then ""
+          else
+            let _ = box_set(st_obj(st), 1) in
+            let _ = box_set(st_fmap(st), 1) in
+            js_cat(["(let _ = fmap_put(nth(_js_proto(\"", js_esc(nm), "\"), 1), \"__proto__\", _js_proto(\"", js_esc(superName), "\")) in 0)"]) in
+        let n = len(methods) in
+        let defs =
+          let go2(i) =
+            if i >= n then "0"
+            else
+              let md = nth(methods, i) in
+              if nth(md, 0) == "ctor" then go2(i + 1)
+              else if nth(md, 0) == "static" then
+                (let _ = js_fail(st, js_cat(["static method '", js_cat(nth(md, 1), "' unsupported")])) in go2(i + 1))
+              else
+                let target =
+                  if nth(md, 0) == "static" then ["mem", ["id", nm], nth(md, 1)]
+                  else ["mem", ["mem", ["id", nm], "prototype"], nth(md, 1)] in
+                let fexpr = ["funexpr", "", nth(md, 2), rw(nth(md, 3))] in
+                let e = js_emit_expr(["assign", "=", target, fexpr], ctxC, st) in
+                js_cat(["(let _ = ", e, " in ", go2(i + 1), ")"]) in
+          go2(0) in
+        let defs2 = if superlink == "" then defs else js_cat(["(let _ = ", superlink, " in ", defs, ")"]) in
+        js_cat(["(let ", mm, "(", nth(fb, 0), ") = ", nth(fb, 1), " in (let _ = ", defs2, " in ", go(rest, vars3, funcs3, strs2, brk2, k2), "))"])
       else if tag == "let" then
         let nm = nth(s, 2) in
         let m = js_mangle(nm) in
