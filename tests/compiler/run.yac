@@ -156,7 +156,7 @@ let stage_cases(stage) =
     ["add", "letfun", "callcc_err"]
   else if stage == "lir" then
     ["literal", "addition", "precedence", "if_true", "if_var", "let_bind",
-     "prim_call", "rt_call", "unary_minus"]
+     "prim_call", "rt_call", "unary_minus", "kind_call"]
   else []
 
 let all_stages(_) = ["lex", "parse", "anf", "cps", "opt", "uncps", "lir"]
@@ -217,7 +217,11 @@ let lower_cases(_) = [
   ["cap_captured_closure", "rc", "42"],
   ["cap_args6_obj", "rc", "31"],
   ["cap_chain3", "rc", "17"],
-  ["topfun_value", "rc", "10"]
+  ["topfun_value", "rc", "10"],
+  /* kind 原语（is_prim_name -> obj_kind）全类型安全：int 0 / str 3 / float 7 */
+  ["kind_int", "rc", "0"],
+  ["kind_str", "rc", "3"],
+  ["kind_float", "rc", "7"]
 ]
 
 let lower_one(st, yc, c) =
