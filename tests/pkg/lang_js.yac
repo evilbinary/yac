@@ -20,6 +20,14 @@ let _ = run(js_to_yac("let a = [1,2,3]; let s = 0; for (let i = 0; i < 3; i = i 
 /* Object literal + member read -> prints 30. */
 let _ = run(js_to_yac("let o = { a: 10, b: 20 }; console.log(o.a + o.b);"))
 
+/* Boolean printing + multi-arg mixing + object string key + string +=. */
+let _ = run(js_to_yac("console.log(3 > 2); console.log(\"v\", 1, true);"))
+let _ = run(js_to_yac("let s = \"n=\"; s += 7; console.log(s); let o = { \"k\": 5 }; console.log(o[\"k\"]);"))
+
+/* i++ / --, null / undefined stringification, Math.PI constant. */
+let _ = run(js_to_yac("for (let i = 0; i < 3; i++) { console.log(i); }"))
+let _ = run(js_to_yac("console.log(null); console.log(undefined); console.log(Math.PI > 3);"))
+
 /* Substring test (no builtin contains for strings). */
 let has(s, sub) =
   let n = str_len(s) in
@@ -38,8 +46,26 @@ let c4 = has(js_to_yac("let o = { a: 1 };"), "fmap_put")
 let c5 = has(js_to_yac("let o = { a: 1 };"), "import data.fmap")
 let c6 = has(js_to_yac("console.log(\"a\", 1);"), "_js_str")
 let c7 = has(js_to_yac("console.log(Math.sqrt(4));"), "import num.math")
+/* JS booleans read true/false, not yac's 1/0: comparisons / logic / multi-arg
+ * bool all route through the _js_bool helper. */
+let c9 = has(js_to_yac("console.log(1 < 2);"), "_js_bool")
+let c10 = has(js_to_yac("console.log(\"a\", true);"), "_js_bool")
+let c11 = has(js_to_yac("console.log(true);"), "let _js_bool")
+/* Object string-key lookup is fmap_get, not nth; string variables concatenate
+ * (`+` / `+=`) instead of adding; floats still use numeric `+`. */
+let c12 = has(js_to_yac("let o = { a: 1 }; console.log(o[\"a\"]);"), "fmap_get")
+let c13 = has(js_to_yac("let s = \"a\"; s += 1;"), "str_cat")
+let c14 = has(js_to_yac("let s = \"a\"; console.log(s + 1);"), "str_cat")
+let c15 = has(js_to_yac("console.log(0.5 + 1.5);"), "0.5 + 1.5")
+/* i++ / -- lower to box reads + stores; Math.PI imports num.math; break is
+ * reported as unsupported rather than leaking an unbound name. */
+let c16 = has(js_to_yac("let i = 0; i++;"), "box_set")
+let c17 = has(js_to_yac("console.log(Math.PI);"), "import num.math")
+let c18 = has(js_to_yac("while (true) { break; }"), "error:")
 
 /* Malformed input is reported. */
 let c8 = has(js_to_yac("let = 1;"), "error:")
 
-if c1 and c2 and c3 and c4 and c5 and c6 and c7 and c8 then 42 else 0
+if c1 and c2 and c3 and c4 and c5 and c6 and c7 and c8
+  and c9 and c10 and c11 and c12 and c13 and c14 and c15
+  and c16 and c17 and c18 then 42 else 0
