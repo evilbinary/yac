@@ -420,13 +420,13 @@ let pkg_cases(_) = [
   ["bytes", "rc", "42"], ["ffi", "rc", "42"], ["json", "rc", "42"],
   ["env", "rc", "42"], ["cli", "rc", "42"], ["http", "rc", "42"], ["yui", "rc", "42"],
   ["math", "rc", "42"],
-  /* Needle "fact 120" can only appear if the generated recursion program was
-   * actually compiled and run in-process, so this host case proves execution,
-   * not just translation. */
-  ["lang_js", "host", "fact 120"],
+  /* Needle "JS_OK" is printed by the lang_js control-flow program only if
+   * break / continue / do-while / switch / i++ / booleans all run correctly,
+   * so this host case proves execution, not just translation. */
+  ["lang_js", "host", "JS_OK"],
   ["profile", "rc", "42"],
   ["prof_hook", "rc", "42"],
-  /* `compiler` is a THIN wrapper over host leaves: pkg/tools/compiler.yac binds every
+  /* `compiler` is a THIN wrapper over host leaves: pkg/yc/compiler.yac binds every
    * symbol as an @host leaf, so the compiler tree is deliberately NOT linked
    * into the guest (see its header). An AOT image therefore answers
    * "host fn unavailable: <leaf>" and returns 0 -- by design, not a bug
@@ -598,7 +598,7 @@ let repl_cases(_) = [
    * REPL blob are the SESSION's slots (back/jit.yac host_tab_fill writes
    * them), not the blob's own image: addressing them per-image read zeroed
    * memory and called 0 (SIGSEGV at RIP=0, measured 2026-09-17). */
-  ["nested compile after import", "1+1\nimport tools.compiler\ncompile(\"1+2\")\n:q\n", "<bytes>"],
+  ["nested compile after import", "1+1\nimport yc.compiler\ncompile(\"1+2\")\n:q\n", "<bytes>"],
   ["import then printf d", "let a=42\nimport text.fmt\nprintf(\"%d\", [a])\n:q\n", "42"],
   ["import then printf one", "let a=42\nimport text.fmt\nprintf(a)\n:q\n", "42"],
   /* The blob's entry wrapper is `_eval`, so a guest `let _eval` makes that name
@@ -632,8 +632,8 @@ let repl_cases(_) = [
    * and bind the thin wrappers. Do NOT invoke compile/load here: calling a
    * host leaf runs the real host compiler in-process and pollutes the REPL
    * session (state isolation is open, see BOOTSTRAP_LINK.md §12.11). */
-  ["import tools.compiler", "import tools.compiler\n:q\n", "compiler"],
-  ["import tools.compiler binds compile", "import tools.compiler\ncompile\n:q\n", "<fun>"],
+  ["import yc.compiler", "import yc.compiler\n:q\n", "compiler"],
+  ["import yc.compiler binds compile", "import yc.compiler\ncompile\n:q\n", "<fun>"],
   ["compile unbound without import", "compile\n:q\n", "unbound variable 'compile'"],
   /* A REPL `let` value must survive later lines' compilation, even when that
    * compilation runs the host GC. The session slots (yac_jslot_set, at
@@ -642,7 +642,7 @@ let repl_cases(_) = [
    * the new line's LIR (FLAT_ABI.md). Two compiles make the second line's GC
    * pressure real, then bytes_len proves the first value is still intact. */
   ["session value survives gc",
-   "import tools.compiler\nlet ff = compile(\"1 + 2\")\nlet g = compile(\"1 + 2 + 3\")\nif bytes_len(ff) > 1000 then print(\"SURVIVED\") else print(\"LOST\")\n:q\n",
+   "import yc.compiler\nlet ff = compile(\"1 + 2\")\nlet g = compile(\"1 + 2 + 3\")\nif bytes_len(ff) > 1000 then print(\"SURVIVED\") else print(\"LOST\")\n:q\n",
    "SURVIVED"]]
 
 let repl_all(st, yc, stem) =

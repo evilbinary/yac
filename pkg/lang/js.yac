@@ -397,7 +397,46 @@ let js_parse_stmts(toks, i, mode, st) =
       [["block", nth(r, 0)], nth(r, 1)]
     else if tx == ";" then [["block", []], j + 1]
     else if tx == "break" or tx == "continue" then
-      [js_bad(st, str_cat("unsupported statement '", str_cat(tx, "'"))), j + 1]
+      let j2 = if js_is(toks, j + 1, ";") then j + 2 else j + 1 in
+      [(if tx == "break" then ["break"] else ["continue"]), j2]
+    else if tx == "do" then
+      /* do body while (test); */
+      let b = js_parse_stmts(toks, j + 1, ["one"], st) in
+      let j2 = if js_is(toks, nth(b, 1), "while") then nth(b, 1) + 2 else nth(b, 1) in
+      let c = js_parse_expr(toks, j2, 0, st) in
+      let j3 = if js_is(toks, nth(c, 1), ")") then nth(c, 1) + 1 else nth(c, 1) in
+      let j4 = if js_is(toks, j3, ";") then j3 + 1 else j3 in
+      [["do", [nth(b, 0)], nth(c, 0)], j4]
+    else if tx == "switch" then
+      /* switch (disc) { case k: ... default: ... } -> ["switch", disc, clauses]
+       * clause = [testOrNull(default), [stmts]]. Fallthrough is not emulated:
+       * each clause is exclusive. */
+      let disc = js_parse_expr(toks, j + 2, 0, st) in
+      let j2 = if js_is(toks, nth(disc, 1), ")") then nth(disc, 1) + 1 else nth(disc, 1) in
+      let j3 = if js_is(toks, j2, "{") then j2 + 1 else j2 in
+      let body(jb, accb) =
+        if js_is(toks, jb, "case") or js_is(toks, jb, "default") or js_is(toks, jb, "}") or js_k(js_at(toks, jb)) == "eof" then
+          [list_rev(accb), jb]
+        else
+          let r = js_parse_stmts(toks, jb, ["one"], st) in
+          body(nth(r, 1), cons(nth(r, 0), accb)) in
+      let clauses(jj, acc) =
+        if js_is(toks, jj, "}") then [list_rev(acc), jj + 1]
+        else if js_k(js_at(toks, jj)) == "eof" then [list_rev(acc), jj]
+        else if js_is(toks, jj, "case") then
+          let k = js_parse_expr(toks, jj + 1, 0, st) in
+          let jk = if js_is(toks, nth(k, 1), ":") then nth(k, 1) + 1 else nth(k, 1) in
+          let bd = body(jk, []) in
+          clauses(nth(bd, 1), cons([nth(k, 0), nth(bd, 0)], acc))
+        else if js_is(toks, jj, "default") then
+          let jd = if js_is(toks, jj + 1, ":") then jj + 2 else jj + 1 in
+          let bd = body(jd, []) in
+          clauses(nth(bd, 1), cons([["null"], nth(bd, 0)], acc))
+        else
+          let r = js_parse_stmts(toks, jj, ["one"], st) in
+          clauses(nth(r, 1), acc) in
+      let cs = clauses(j3, []) in
+      [["switch", nth(disc, 0), nth(cs, 0)], nth(cs, 1)]
     else if js_k(tk) == "eof" then [["block", []], j]
     else if js_k(tk) == "unk" then [js_bad(st, str_cat("unexpected character '", str_cat(tx, "'"))), j + 1]
     else
@@ -750,7 +789,16 @@ let js_emit_expr(e, ctx, st) =
 let js_emit_stmts(stmts, ctx, k, st) =
   let retf = nth(ctx, 2) in
   let retv = nth(ctx, 3) in
-  /* One statement, with its own continuation k2 (used by loop bodies). */
+  let brk = nth(ctx, 5) in
+  /* ctx with a different innermost loop-status box (index 5). */
+  let with_brk(c, b) = [nth(c, 0), nth(c, 1), nth(c, 2), nth(c, 3), nth(c, 4), b] in
+  /* After a loop body: a fired return wins, a break (status 1) stops, anything
+   * else (normal / continue=2) runs `nxt` (next iteration, update included). */
+  let after_loop(sc, nxt) =
+    let stop = js_cat(["(if box_get(", sc, ") == 1 then 0 else ", nxt, ")"]) in
+    if retf == 0 then stop
+    else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", stop, ")"]) in
+  /* One statement, with its own continuation k2 (only loops use k2). */
   let sstmt(s, ctx2, k2) =
     let tag = nth(s, 0) in
     if tag == "expr" then js_emit_expr(nth(s, 1), ctx2, st)
@@ -758,38 +806,75 @@ let js_emit_stmts(stmts, ctx, k, st) =
     else if tag == "if" then
       js_cat(["(if ", js_emit_expr(nth(s, 1), ctx2, st), " then ", js_emit_stmts(nth(s, 2), ctx2, "0", st), " else ", js_emit_stmts(nth(s, 3), ctx2, "0", st), ")"])
     else if tag == "while" then
-      /* while (c) body  =>  (let _w(_) = if c then body; _w(0) else 0 in _w(0)) */
       let w = js_fresh(st, "w") in
-      let body = js_emit_stmts(nth(s, 2), ctx2, js_cat([w, "(0)"]), st) in
-      js_cat(["(let ", w, "(_) = (if ", js_emit_expr(nth(s, 1), ctx2, st), " then ", body, " else 0) in ", w, "(0))"])
+      let sc = js_fresh(st, "sc") in
+      let c3 = with_brk(ctx2, sc) in
+      let body = js_emit_stmts(nth(s, 2), c3, "0", st) in
+      let loopbody = js_cat(["(if ", js_emit_expr(nth(s, 1), c3, st), " then (let _ = box_set(", sc, ", 0) in (let _ = ", body, " in ", after_loop(sc, js_cat([w, "(0)"])), ")) else 0)"]) in
+      js_cat(["(let ", sc, " = box_new() in (let ", w, "(_) = ", loopbody, " in ", w, "(0)))"])
+    else if tag == "do" then
+      let w = js_fresh(st, "w") in
+      let sc = js_fresh(st, "sc") in
+      let c3 = with_brk(ctx2, sc) in
+      let body = js_emit_stmts(nth(s, 1), c3, "0", st) in
+      let nxt = js_cat(["(if ", js_emit_expr(nth(s, 2), c3, st), " then ", w, "(0) else 0)"]) in
+      let loopbody = js_cat(["(let _ = box_set(", sc, ", 0) in (let _ = ", body, " in ", after_loop(sc, nxt), "))"]) in
+      js_cat(["(let ", sc, " = box_new() in (let ", w, "(_) = ", loopbody, " in ", w, "(0)))"])
     else if tag == "for" then
-      /* for (init; test; update) body => init; (let _w(_) = if test then
-       * body; update; _w(0) else 0 in _w(0)). A `let` init is scoped over
-       * test / update / body. */
       let init = nth(s, 1) in
       let test = nth(s, 2) in
       let upd = nth(s, 3) in
       let body = nth(s, 4) in
       let w = js_fresh(st, "w") in
-      let cont =
+      let sc = js_fresh(st, "sc") in
+      let cvar =
+        if nth(init, 0) == "let" then
+          let nm = nth(init, 2) in
+          let strs3 = if js_is_str_expr(nth(init, 3), nth(ctx2, 4)) then cons(nm, nth(ctx2, 4)) else nth(ctx2, 4) in
+          [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), strs3, nth(ctx2, 5)]
+        else ctx2 in
+      let c3 = with_brk(cvar, sc) in
+      let nxt =
         if nth(upd, 0) == "null" then js_cat([w, "(0)"])
-        else js_cat(["(let _ = ", js_emit_expr(upd, ctx2, st), " in ", w, "(0))"]) in
-      let loopbody = js_cat(["(if ", js_emit_expr(test, ctx2, st), " then ", js_emit_stmts(body, ctx2, cont, st), " else 0)"]) in
-      let loop = js_cat(["(let ", w, "(_) = ", loopbody, " in ", w, "(0))"]) in
+        else js_cat(["(let _ = ", js_emit_expr(upd, c3, st), " in ", w, "(0))"]) in
+      let body_e = js_emit_stmts(body, c3, "0", st) in
+      let loopbody = js_cat(["(if ", js_emit_expr(test, c3, st), " then (let _ = box_set(", sc, ", 0) in (let _ = ", body_e, " in ", after_loop(sc, nxt), ")) else 0)"]) in
+      let loop = js_cat(["(let ", sc, " = box_new() in (let ", w, "(_) = ", loopbody, " in ", w, "(0)))"]) in
       if nth(init, 0) == "let" then
         let m = js_mangle(nth(init, 2)) in
-        let nm = nth(init, 2) in
-        let ie = js_emit_expr(nth(init, 3), ctx2, st) in
-        let ctx3 = [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3),
-                    (if js_is_str_expr(nth(init, 3), nth(ctx2, 4)) then cons(nm, nth(ctx2, 4)) else nth(ctx2, 4))] in
-        let cont3 =
-          if nth(upd, 0) == "null" then js_cat([w, "(0)"])
-          else js_cat(["(let _ = ", js_emit_expr(upd, ctx3, st), " in ", w, "(0))"]) in
-        let loopbody3 = js_cat(["(if ", js_emit_expr(test, ctx3, st), " then ", js_emit_stmts(body, ctx3, cont3, st), " else 0)"]) in
-        let loop3 = js_cat(["(let ", w, "(_) = ", loopbody3, " in ", w, "(0))"]) in
-        js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ie, ") in ", loop3, "))"])
-      else
-        if nth(init, 0) == "expr" then js_emit_stmts([init], ctx2, loop, st) else loop
+        js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", js_emit_expr(nth(init, 3), ctx2, st), ") in ", loop, "))"])
+      else if nth(init, 0) == "expr" then js_emit_stmts([init], ctx2, loop, st)
+      else loop
+    else if tag == "break" then
+      if brk == 0 then (let _ = js_fail(st, "'break' outside loop or switch") in "0")
+      else js_cat(["(let _ = box_set(", brk, ", 1) in 0)"])
+    else if tag == "continue" then
+      if brk == 0 then (let _ = js_fail(st, "'continue' outside loop") in "0")
+      else js_cat(["(let _ = box_set(", brk, ", 2) in 0)"])
+    else if tag == "switch" then
+      /* Exclusive case chain (no fallthrough): let _d = disc in
+       * if _d == k1 then c1 else if _d == k2 then c2 else default. A fresh
+       * status box makes `break` inside a case local to the switch. */
+      let d = js_fresh(st, "d") in
+      let sc = js_fresh(st, "sc") in
+      let c3 = with_brk(ctx2, sc) in
+      let cls = nth(s, 2) in
+      let is_def(cl) = nth(nth(cl, 0), 0) == "null" in
+      let defbody(i) =
+        if i < 0 then "0"
+        else if is_def(nth(cls, i)) then js_emit_stmts(nth(nth(cls, i), 1), c3, "0", st)
+        else defbody(i - 1) in
+      let cases(i, acc) =
+        if i < 0 then acc
+        else if is_def(nth(cls, i)) then cases(i - 1, acc)
+        else cases(i - 1, cons(nth(cls, i), acc)) in
+      let cs = cases(len(cls) - 1, []) in
+      let chain(ys, i) =
+        if i >= len(ys) then defbody(len(cls) - 1)
+        else
+          let cl = nth(ys, i) in
+          js_cat(["(if ", d, " == (", js_emit_expr(nth(cl, 0), c3, st), ") then ", js_emit_stmts(nth(cl, 1), c3, "0", st), " else ", chain(ys, i + 1), ")"]) in
+      js_cat(["(let ", sc, " = box_new() in (let ", d, " = ", js_emit_expr(nth(s, 1), ctx2, st), " in ", chain(cs, 0), "))"])
     else if tag == "ret" then
       /* Set the flag + value boxes; the guard after each statement unwinds. */
       let v = js_emit_expr(nth(s, 1), ctx2, st) in
@@ -797,12 +882,13 @@ let js_emit_stmts(stmts, ctx, k, st) =
       else js_cat(["(let _ = box_set(", retf, ", true) in (let _ = box_set(", retv, ", ", v, ") in ", retv, "))"])
     else "0" in
   /* Function: bind each param to a fresh box, create fresh return flag/value
-   * boxes (flag initialised to boolean false), then the body. Returns
+   * boxes (flag initialised to boolean false), then the body. A function has
+   * no enclosing loop, so its loop-status box is 0. Returns
    * [param-signature, body-expression]. */
   let func_body(ps, body, ctx2) =
     let retf2 = js_fresh(st, "retf") in
     let retv2 = js_fresh(st, "retv") in
-    let ctx3 = [append(nth(ctx2, 0), ps), nth(ctx2, 1), retf2, retv2, nth(ctx2, 4)] in
+    let ctx3 = [append(nth(ctx2, 0), ps), nth(ctx2, 1), retf2, retv2, nth(ctx2, 4), 0] in
     let b0 = js_emit_stmts(body, ctx3, "0", st) in
     let b1 = js_cat(["(let ", retv2, " = box_new() in ", b0, ")"]) in
     let b2 = js_cat(["(let ", retf2, " = box_new() in (let _ = box_set(", retf2, ", false) in ", b1, "))"]) in
@@ -810,21 +896,21 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let n = len(ps) in
       if n == 0 then ["_"]
       else
-        let go(i, acc) =
+        let pn(i, acc) =
           if i >= n then list_rev(acc)
-          else go(i + 1, cons(str_cat("_p", int_to_str(i)), acc)) in
-        go(0, []) in
+          else pn(i + 1, cons(str_cat("_p", int_to_str(i)), acc)) in
+        pn(0, []) in
     let wrap(i, inner) =
       if i < 0 then inner
       else
         let m = js_mangle(nth(ps, i)) in
-        let pn = nth(pnames, i) in
-        wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", pn, ") in ", inner, "))"])) in
+        let p = nth(pnames, i) in
+        wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", p, ") in ", inner, "))"])) in
     [js_join(pnames, ", ", 0, ""), wrap(len(ps) - 1, b2)] in
   /* Walk the list, threading scope and continuation. Every non-declaration
-   * statement is followed by a flag guard so an early `return` stops the
-   * rest of the list. */
-  let go(xs, vars2, funcs2, strs2, k2) =
+   * statement is followed by a guard so an early return / break stops the rest
+   * of the list. */
+  let go(xs, vars2, funcs2, strs2, brk2, k2) =
     if len(xs) == 0 then k2
     else
       let s = nth(xs, 0) in
@@ -836,23 +922,25 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let body = nth(s, 3) in
         let m = js_mangle(nm) in
         let funcs3 = cons(nm, funcs2) in
-        let fb = func_body(ps, body, [vars2, funcs3, retf, retv, strs2]) in
-        js_cat(["(let ", m, "(", nth(fb, 0), ") = ", nth(fb, 1), " in ", go(rest, vars2, funcs3, strs2, k2), ")"])
+        let fb = func_body(ps, body, [vars2, funcs3, retf, retv, strs2, brk2]) in
+        js_cat(["(let ", m, "(", nth(fb, 0), ") = ", nth(fb, 1), " in ", go(rest, vars2, funcs3, strs2, brk2, k2), ")"])
       else if tag == "let" then
         let nm = nth(s, 2) in
         let m = js_mangle(nm) in
-        let ie = js_emit_expr(nth(s, 3), [vars2, funcs2, retf, retv, strs2], st) in
+        let ie = js_emit_expr(nth(s, 3), [vars2, funcs2, retf, retv, strs2, brk2], st) in
         let vars3 = cons(nm, vars2) in
         let strs3 = if js_is_str_expr(nth(s, 3), strs2) then cons(nm, strs2) else strs2 in
-        js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ie, ") in ", go(rest, vars3, funcs2, strs3, k2), "))"])
+        js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ie, ") in ", go(rest, vars3, funcs2, strs3, brk2, k2), "))"])
       else
-        let se = sstmt(s, [vars2, funcs2, retf, retv, strs2], k2) in
-        let cont = go(rest, vars2, funcs2, strs2, k2) in
+        let se = sstmt(s, [vars2, funcs2, retf, retv, strs2, brk2], k2) in
+        let cont = go(rest, vars2, funcs2, strs2, brk2, k2) in
+        let inner = if brk2 == 0 then cont
+                    else js_cat(["(if box_get(", brk2, ") != 0 then 0 else ", cont, ")"]) in
         let guard =
-          if retf == 0 then cont
-          else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", cont, ")"]) in
+          if retf == 0 then inner
+          else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", inner, ")"]) in
         js_cat(["(let _ = ", se, " in ", guard, ")"]) in
-  go(stmts, nth(ctx, 0), nth(ctx, 1), nth(ctx, 4), k)
+  go(stmts, nth(ctx, 0), nth(ctx, 1), nth(ctx, 4), nth(ctx, 5), k)
 
 /* ---- entry point ------------------------------------------------------ */
 
@@ -875,7 +963,7 @@ let js_to_yac(src) =
   let st = [err, ns, ufmap, umath, ustr, ubool] in
   let toks = js_lex(src) in
   let r = js_parse_stmts(toks, 0, ["list", 0], st) in
-  let body = js_emit_stmts(nth(r, 0), [[], [], 0, 0, []], "0", st) in
+  let body = js_emit_stmts(nth(r, 0), [[], [], 0, 0, [], 0], "0", st) in
   let e = box_get(err) in
   if e != "" then js_cat(["error: ", e])
   else

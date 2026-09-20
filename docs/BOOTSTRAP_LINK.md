@@ -52,7 +52,7 @@ C 工具链**。
 
 | 对象 | 例子 | 现状（只有源码链接 / cimport） | 本篇新增 |
 |------|------|-------------------------------|----------|
-| **H** host 编译器函数 | `import tools.compiler` 的 `compile`/`compile_file`/`load` 及其叶子 | `emit.yac::host_id` 识别 10 名（`emit.yac:267-272`）；宿主 yc 由 `bake()` 把自身叶子烘进 `G+136` 槽、REPL 经 `host_tab_fill`（`jit.yac:25-34`）读取；**guest 作用域不含 host 名**（裸调即 `unbound`，12.1）；要用编译器须 `import tools.compiler`（靠 `--pkg src-self` 源码内联） | 三模式复用 |
+| **H** host 编译器函数 | `import yc.compiler` 的 `compile`/`compile_file`/`load` 及其叶子 | `emit.yac::host_id` 识别 10 名（`emit.yac:267-272`）；宿主 yc 由 `bake()` 把自身叶子烘进 `G+136` 槽、REPL 经 `host_tab_fill`（`jit.yac:25-34`）读取；**guest 作用域不含 host 名**（裸调即 `unbound`，12.1）；要用编译器须 `import yc.compiler`（靠 `--pkg src-self` 源码内联） | 三模式复用 |
 | **P** 普通 pkg 包 | `pkg/fs/io.yac`、`pkg/text/str.yac`、`pkg/native/ffi.yac` | **只有源码链接**（`backend.yac::lir_extend` 现编进 guest） | 包级 embed/dylib/yjit/stub |
 | **C** C 共享库 | `ccall("printf",…)`、`import native.ffi` | **只有 `ccall` + libc import**（`elf_cimport_*` / `pack_elf_libc`） | 任意 `.so` 的 embed/dylib/yjit/stub |
 
@@ -138,8 +138,8 @@ C 工具链**。
 
 > AOT 下容易误读的事实：槽**存在**（`emit_glob_data` 每次都写 216 字节），
 > 但 host 名**不在 guest 作用域**（12.1 后）：guest 裸调 `compile(...)` 在编译期
-> 就报 `unbound variable`。guest 想用编译器只有一条正路：`import tools.compiler`
-> （配合 `--pkg src-self`），`pkg/tools/compiler.yac` 里的 `import back.backend` 被
+> 就报 `unbound variable`。guest 想用编译器只有一条正路：`import yc.compiler`
+> （配合 `--pkg src-self`），`pkg/yc/compiler.yac` 里的 `import back.backend` 被
 > `pkg_src` 解析到**源码**，于是**整个编译器被源码内联进 guest**（guest 变成
 > 4MB 级）。也就是说 host 表在 AOT 下**从未被 guest 使用**，它只在 bundle
 > 构建的 yc 自己身上有值，并由 REPL 会话读取；12.1 的桩保证任何读到的空槽
@@ -252,7 +252,7 @@ RELA/JMPREL/PLT/GOT + `DT_NEEDED`（现在写死 `libc.so.6`）。新需求：
 > `-static`/`-ldl`、Rust 的 Cargo features、Go 的 `-linkmode` 一致——
 > import 表达"用到哪个接口"，模式表达"实现放哪"，两者分开。
 > yac 现状同样如此：`--shared`/`--format yjit`/`--arch`/`--os` 全部命令行，
-> 且 `import tools.compiler` 在 AOT 自动是 stub、JIT 是 hostcall，**源码从未
+> 且 `import yc.compiler` 在 AOT 自动是 stub、JIT 是 hostcall，**源码从未
 > 写过模式**。因此不新增 import 语法、不改 lexer/parser/AST。
 
 ```
@@ -516,18 +516,18 @@ src/*.c                                                # C 参考实现不改（
 - **host 语义 + stub（默认回归）** ← **12.1 的验收依据**：
   - **语义（2026-09 定稿）**：10 个 host 叶子名**不在 guest 作用域**。裸调
     `compile(...)` → 编译期 `unbound variable 'compile'`（与其它未导入名一致）；
-    必须 `import tools.compiler`（经 `pkg/tools/compiler.yac` 引入真实实现）才可用。
+    必须 `import yc.compiler`（经 `pkg/yc/compiler.yac` 引入真实实现）才可用。
     `report_unbound_ex` 已把 `host_fun_names` 移出 guest 作用域
     （`backend.yac`）；host 表仅供宿主 yc 自己（REPL `host_tab_fill`）使用。
   - **现状（修复前基线）**：裸调 `compile(...)` **编译通过、运行 SIGSEGV**
     （`G+136` 槽为 0 → `call [0]`）。
-  - **目标**：裸调在编译期即报错；`import tools.compiler` / `import native.ffi` guest 编译
+  - **目标**：裸调在编译期即报错；`import yc.compiler` / `import native.ffi` guest 编译
     运行正常；`yac_host_unimpl` 桩（打印 "host fn unavailable" 返回 0）作为
     **防御性兜底**仍被 `bake()` 填进任何空的 host 槽（例如宿主 yc 自己缺
     `compile`/`compile_file`/`load` 三个叶子的槽），避免未来任何路径读到 0。
   - 该两项已实测（Windows 原生）：裸调 rc=1 报 unbound；直接调用
     `yac_host_unimpl(0)` 打印消息并返回。`make test` 需在 Linux 跑全量。
-- **embed（H）**：含 `import tools.compiler` 的 guest `--link embed` 产出单文件；
+- **embed（H）**：含 `import yc.compiler` 的 guest `--link embed` 产出单文件；
   objdump 确认 host 函数落在 guest 文本段内；**无 yc 二进制环境**单独运行成功；
   与 JIT 同输入对拍。
 - **embed（P）**：`pkg/text/str.yac` 预编成 `.host` → 新 guest `--link text.str=embed` →
@@ -600,7 +600,7 @@ src/*.c                                                # C 参考实现不改（
 ### 12.1 P0 — H 的 host 语义 + `stub`
 
 > **定稿语义（编码时与用户确认）**：10 个 host 叶子名**不进 guest 作用域**。
-> guest 要使用必须 `import tools.compiler`（`pkg/tools/compiler.yac` 把实现作为源码/宿主
+> guest 要使用必须 `import yc.compiler`（`pkg/yc/compiler.yac` 把实现作为源码/宿主
 > 依赖引入）；裸调 `compile(...)` 是 `unbound variable`。host 表与桩只作为
 > **宿主 yc 自身的运行机制 + 防御性兜底**。
 
@@ -613,8 +613,8 @@ src/*.c                                                # C 参考实现不改（
 - [x] 12.1.3 host 名移出 guest 作用域：`backend.yac::report_unbound_ex` 去掉
       `host_fun_names(0)`。这使 arm64/riscv64 不再需要"host 分支"——裸调
       host 名在**前端**即报 `unbound variable`，不会到达 emit 的静默错跳；
-      且 `pkg/tools/compiler.yac` 通过 `import back.backend {compile_native, …}`
-      照常绑定这些名字，`import tools.compiler` 路径不受影响
+      且 `pkg/yc/compiler.yac` 通过 `import back.backend {compile_native, …}`
+      照常绑定这些名字，`import yc.compiler` 路径不受影响
 - [x] 12.1.4 验收（Windows 原生已实测）：
       - 裸调 `compile(...)` → 编译 rc=1，`1:1: unbound variable 'compile'`
       - 直接调用 `yac_host_unimpl(0)` → 打印 "host fn unavailable"，程序正常
@@ -899,8 +899,8 @@ guest 样例 = `tests/pkg/path.yac`（import `path`）；dylib 样例在运行�
 > 更贴近"这是该名字的固有来源"。§5.2 的"import 只是声明接口"仍然成立：
 > `@` 不改接口语义，只标注实现来源=宿主叶子。
 
-**动机**：`import tools.compiler` 旧路径把整棵 `back/front/emit` 编译器树
-source-embed 进 guest（REPL 实测 ~37s）。`pkg/tools/compiler.yac` 只是对 10 个
+**动机**：`import yc.compiler` 旧路径把整棵 `back/front/emit` 编译器树
+source-embed 进 guest（REPL 实测 ~37s）。`pkg/yc/compiler.yac` 只是对 10 个
 宿主叶子的薄包装，embed 整树纯属浪费。
 
 **已落地（2026-09，Windows 原生实测）**：
@@ -917,15 +917,15 @@ source-embed 进 guest（REPL 实测 ~37s）。`pkg/tools/compiler.yac` 只是�
 - `back/backend.yac`：`import_all_host` + `fill_import`（纯 host import 不读
   目标包导出、不进 `link_need_box`）+ `ast_imports`（DFS 不深入全 host import
   的包）。
-- `pkg/tools/compiler.yac` 改为 host 视图：6 个 import 全部 `@`，只留薄壳包装。
+- `pkg/yc/compiler.yac` 改为 host 视图：6 个 import 全部 `@`，只留薄壳包装。
 
 **验收现状**：
-- REPL `import tools.compiler` 0.6s（原 ~37s）；AOT/REPL 均不再段错误；
+- REPL `import yc.compiler` 0.6s（原 ~37s）；AOT/REPL 均不再段错误；
   `make test-link` 12/12；平凡 AOT 编译无回归。
 - 裸 `compile(...)`（未 import）仍 `unbound`（12.1 语义保持）。
 - REPL 会话内调用 host 编译函数（如 `compile`）会**污染宿主 REPL 状态**，
   会话后续行可段错误；单次调用后立即 `:q` 不崩（详见遗留 1）。本小节
-  `import tools.compiler` 的验收只承诺"瞬时 + 绑定 + 不触 host 不崩"。
+  `import yc.compiler` 的验收只承诺"瞬时 + 绑定 + 不触 host 不崩"。
   **语义澄清**：`compile` 正常返回值是**机器码 blob（bytes）**；当前 REPL
   里返回 int 0 是宿主后端在无 pkg 根/状态被污染下失败（非桩、非"编译出
   整数 0"）。判成功用 `compile(...) != 0`（或 len>0），不能把 0 当合法产物。
@@ -945,7 +945,7 @@ source-embed 进 guest（REPL 实测 ~37s）。`pkg/tools/compiler.yac` 只是�
      在无 `--pkg`/pkg 根状态下失败返回（不是桩）。
    - 因此要让 REPL `compile/load` 真正可用，必须做**宿主编译状态隔离**
      （host 调用前保存/恢复宿主全局，或 host leaf 只暴露无状态入口）——
-     架构级，与 12.4.C loader 无关。在此之前可承诺的语义：`import tools.compiler`
+     架构级，与 12.4.C loader 无关。在此之前可承诺的语义：`import yc.compiler`
      瞬时、绑定、无 host 副作用；调用 host 编译函数会污染当前 REPL 会话。
    - 补测试时只断言"import 瞬时 + 不崩 + 裸 `compile` unbound"，不把
      host 调用纳入（直到隔离落地）。

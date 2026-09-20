@@ -1,4 +1,4 @@
-import tools.compiler
+import yc.compiler
 import text.fmt
 
 printf("hello world")

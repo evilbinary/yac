@@ -14,7 +14,7 @@
  *   compile(src)                   src -> compiled machine blob (bytes)
  *   load(path)                     path -> run it as a yjit guest
  */
-package tools.compiler
+package yc.compiler
 export compile_file, compile, load, run, compile_it
 import back.backend {@compile_native}
 import back.pack.target {@mk_jit_target, @mk_target}

@@ -1,6 +1,6 @@
 /* Profiler dump must survive GC. glob 3 used to overlap the GC bitmap and
  * was not a root, so enable + collect left dump empty (train .prof missing). */
-import tools.profile
+import yc.profile
 import fs.io
 import text.str
 

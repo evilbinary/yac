@@ -1,6 +1,6 @@
 /* profile.yac — runtime function profiler for native yc programs.
  *
- *   import tools.profile
+ *   import yc.profile
  *   let _ = prof_enable("/tmp/app.prof") in  /* wraps yac_prof_enable */
  *   ...
  *   let _ = prof_dump(0) in                 /* wraps yac_prof_dump */
@@ -9,7 +9,7 @@
  * (src-self needed so the compiler can find back/profile.yac deps if any.)
  */
 
-package tools.profile
+package yc.profile
 export prof_enable, prof_dump, yac_prof_enable, yac_prof_dump
 import data.fmap
 import text.fmt

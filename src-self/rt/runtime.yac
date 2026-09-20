@@ -2617,7 +2617,7 @@ let rt_gname_by_src(funs, src, i, acc) =
       if intern(srcn) == intern(src) then intern(nth(f, 1)) else acc in
     rt_gname_by_src(funs, src, i + 1, acc2)
 
-/* Bind yac_prof_enter/leave to whatever gname pkg/tools/profile.yac gave prof_*_go. */
+/* Bind yac_prof_enter/leave to whatever gname pkg/yc/profile.yac gave prof_*_go. */
 let runtime_add(funs) =
   let enter = rt_gname_by_src(funs, "prof_enter_go", 0, 0) in
   if enter == 0 then funs

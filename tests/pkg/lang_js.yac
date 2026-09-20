@@ -1,12 +1,12 @@
 /* lang_js.yac — lang.js translator + execution regression (host pkg case).
  *
- * Runs as a `host` case (tests/run.yac): tools.compiler's `run` is a host leaf,
+ * Runs as a `host` case (tests/run.yac): yc.compiler's `run` is a host leaf,
  * so each generated yac source is compiled and executed in-process by the
- * REPL. The console.log output lands in the harness blob and the final value
- * is 42, so the expected result is "42". */
+ * REPL. The control-flow run prints "JS_OK" (the case's harness needle) and the
+ * final value is 42. */
 
 import lang.js
-import tools.compiler
+import yc.compiler
 
 /* Arithmetic + variable + single-arg console.log -> prints 42. */
 let _ = run(js_to_yac("let x = 41 + 1; console.log(x);"))
@@ -27,6 +27,11 @@ let _ = run(js_to_yac("let s = \"n=\"; s += 7; console.log(s); let o = { \"k\": 
 /* i++ / --, null / undefined stringification, Math.PI constant. */
 let _ = run(js_to_yac("for (let i = 0; i < 3; i++) { console.log(i); }"))
 let _ = run(js_to_yac("console.log(null); console.log(undefined); console.log(Math.PI > 3);"))
+
+/* Control-flow end-to-end: prints JS_OK only if break / continue / do-while /
+ * switch / i++ / boolean semantics all behave. The harness needle for this
+ * case is "JS_OK", so this run is asserted by `make test-pkg lang_js`. */
+let _ = run(js_to_yac("let ok = true;\nlet i=0; while(true){ i=i+1; if(i===3){break;} } if(i!==3){ ok=false; }\nlet s=0; for(let k=0;k<5;k++){ if(k===2){continue;} s=s+k; } if(s!==8){ ok=false; }\nlet d=0; do { d=d+1; } while(d<3); if(d!==3){ ok=false; }\nlet x=2; let r='z'; switch(x){ case 1: r='a'; break; case 2: r='b'; break; default: r='c'; } if(r!=='b'){ ok=false; }\nif(!(3>2)){ ok=false; }\nif(ok){ console.log('JS_OK'); } else { console.log('JS_BAD'); }"))
 
 /* Substring test (no builtin contains for strings). */
 let has(s, sub) =
@@ -57,15 +62,17 @@ let c12 = has(js_to_yac("let o = { a: 1 }; console.log(o[\"a\"]);"), "fmap_get")
 let c13 = has(js_to_yac("let s = \"a\"; s += 1;"), "str_cat")
 let c14 = has(js_to_yac("let s = \"a\"; console.log(s + 1);"), "str_cat")
 let c15 = has(js_to_yac("console.log(0.5 + 1.5);"), "0.5 + 1.5")
-/* i++ / -- lower to box reads + stores; Math.PI imports num.math; break is
- * reported as unsupported rather than leaking an unbound name. */
+/* i++ / -- lower to box reads + stores; Math.PI imports num.math. */
 let c16 = has(js_to_yac("let i = 0; i++;"), "box_set")
 let c17 = has(js_to_yac("console.log(Math.PI);"), "import num.math")
-let c18 = has(js_to_yac("while (true) { break; }"), "error:")
+/* break / continue / do-while / switch lower to a status-box loop driver. */
+let c18 = has(js_to_yac("while (true) { break; }"), "_sc")
+let c19 = has(js_to_yac("do { } while (false);"), "_sc")
+let c20 = has(js_to_yac("switch (1) { case 1: break; }"), "_sc")
 
 /* Malformed input is reported. */
 let c8 = has(js_to_yac("let = 1;"), "error:")
 
 if c1 and c2 and c3 and c4 and c5 and c6 and c7 and c8
   and c9 and c10 and c11 and c12 and c13 and c14 and c15
-  and c16 and c17 and c18 then 42 else 0
+  and c16 and c17 and c18 and c19 and c20 then 42 else 0

@@ -1,4 +1,4 @@
-import tools.compiler
+import yc.compiler
 compile_it("1")()
 
 print("hello")

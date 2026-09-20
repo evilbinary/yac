@@ -610,7 +610,7 @@ let kernel_let_names(_) =
 
 /* Host functions available to REPL lines and host packages. These are the
  * names baked into the yc host image's G+136..G+216 table; a *guest* must not
- * see them without an import (pkg/tools/compiler.yac binds them via `import`), so
+ * see them without an import (pkg/yc/compiler.yac binds them via `import`), so
  * a bare `compile(...)` is an unbound-variable error, exactly like any other
  * name. Only the kernel (rt.runtime) and imported names widen guest scope. */
 let host_fun_names(_) = host_names(0)

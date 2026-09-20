@@ -9,7 +9,7 @@ that are not local lets / prims / keywords are matched to another file's
 
   python3 tools/fill_imports.py              # dry-run
   python3 tools/fill_imports.py --apply      # write files
-  python3 tools/fill_imports.py --apply pkg/tools/compiler.yac
+  python3 tools/fill_imports.py --apply pkg/yc/compiler.yac
   python3 tools/test_fill_imports.py         # unit tests
 """
 

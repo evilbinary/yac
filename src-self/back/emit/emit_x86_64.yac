@@ -658,7 +658,7 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
      *  - an extern's slot holds a dlsym'd C address: SysV, formals from rdi.
      * Loading both into the SysV registers made every real host-leaf call
      * (AOT `import rt.os {@host_arch}` + host_arch(), REPL wrappers from
-     * pkg/tools/compiler.yac) die inside the callee.
+     * pkg/yc/compiler.yac) die inside the callee.
      * Neither is an in-image proc for the id table: emit_map_get hard-fails on
      * a miss and a host leaf is legitimately absent from it. */
     let via_slot0 = hid >= 0 or xid >= 0 in

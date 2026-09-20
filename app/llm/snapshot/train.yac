@@ -6,7 +6,7 @@
  */
 
 import snapshot
-import tools.profile
+import yc.profile
 import text.json
 import fs.io
 import text.fmt
