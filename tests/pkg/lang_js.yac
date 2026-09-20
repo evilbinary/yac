@@ -183,6 +183,25 @@ let _ = check("void", "console.log(void 0);", "undefined")
 let _ = check("in", "let o={a:1}; console.log('a' in o); console.log('b' in o);", "true\nfalse")
 let _ = check("cband", "let x=6; x &= 3; console.log(x);", "2")
 
+/* dynamic typeof via the `kind` prim (params are not statically typed) */
+let _ = check("typeof_dyn_str", "function f(s){ return typeof s; } console.log(f('hi'));", "string")
+let _ = check("typeof_dyn_num", "function f(n){ return typeof n; } console.log(f(1));", "number")
+let _ = check("typeof_dyn_obj", "function f(o){ return typeof o; } console.log(f({a:1}));", "object")
+
+/* JS truthiness: "" and 0 are falsy, non-empty string truthy */
+let _ = check("truthy_emptystr", "if ('') { console.log('T'); } else { console.log('F'); }", "F")
+let _ = check("truthy_str", "if ('x') { console.log('T'); } else { console.log('F'); }", "T")
+let _ = check("truthy_zero", "if (0) { console.log('T'); } else { console.log('F'); }", "F")
+let _ = check("truthy_zerofloat", "if (0.0) { console.log('T'); } else { console.log('F'); }", "F")
+let _ = check("not_emptystr", "console.log(!'');", "true")
+
+/* && / || short-circuit (RHS must not run) and JS value semantics */
+let _ = check("and_sc", "let x=0; let y = false && (x=1); console.log(x);", "0")
+let _ = check("or_sc", "let x=0; let y = true || (x=1); console.log(x);", "0")
+let _ = check("or_value", "console.log(0 || 'd');", "d")
+let _ = check("and_value", "console.log(0 && 'd');", "0")
+let _ = check("and_value2", "console.log(1 && 2);", "2")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")

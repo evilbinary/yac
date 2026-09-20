@@ -9,7 +9,7 @@
  * `_js_str_replace` needs text.str.find, so this package pulls text.str. */
 
 package lang.jsrt
-export _js_str, _js_bool, _js_typeof, _js_char_at, _js_upper, _js_lower, _js_repeat,
+export _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_lower, _js_repeat,
   _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each,
   _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_str_replace, _js_isnan
 import text.str {find}
@@ -20,8 +20,26 @@ let _js_str(x) = if is_int(x) then int_to_str(x) else x
 /* Boolean -> "true"/"false" (yac's own bool prints as 1/0). */
 let _js_bool(x) = if x then "true" else "false"
 
-/* typeof for the dynamic case: only int vs "object" can be told apart. */
-let _js_typeof(x) = if is_int(x) then "number" else "object"
+/* typeof for the dynamic case, using the total `kind` prim:
+ *   0 int, 1 nil, 2 cons, 3 str, 4 bytes, 5 listbuf, 6 other, 7 float.
+ * Functions are not distinguishable at runtime (they are heap closures), so a
+ * dynamic function value still reports "object"; static positions cover the
+ * common `typeof f` for a declared function. */
+let _js_typeof(x) =
+  let k = kind(x) in
+  if k == 3 then "string"
+  else if k == 7 then "number"
+  else if k == 0 then "number"
+  else "object"
+
+/* JavaScript truthiness: 0, "", NaN, null/undefined are falsy; everything else
+ * (including objects/lists and non-empty strings) is truthy. `kind` lets the
+ * string and float cases be told apart; nil/undef are 0. */
+let _js_truth(x) =
+  let k = kind(x) in
+  if k == 3 then str_len(x) > 0
+  else if k == 7 then x == x and x != 0.0
+  else x != 0
 
 let _js_char_at(s, i) = str_chr(str_ref(s, i))
 
