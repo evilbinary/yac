@@ -1166,29 +1166,30 @@ let js_emit_stmts(stmts, ctx, k, st) =
       if brk == 0 then (let _ = js_fail(st, "'continue' outside loop") in "0")
       else js_cat(["(let _ = box_set(", brk, ", 2) in 0)"])
     else if tag == "switch" then
-      /* Exclusive case chain (no fallthrough): let _d = disc in
-       * if _d == k1 then c1 else if _d == k2 then c2 else default. A fresh
-       * status box makes `break` inside a case local to the switch. */
+      /* JS fallthrough: the matched case runs its body then every later case's
+       * body in source order (a `break` stops it via the status box). For each
+       * clause i, body_i is the concatenation of bodies[i..]; the chain tests
+       * non-default clauses in order, and `default` (wherever it sits) is only
+       * the no-match fallback with body_default. */
       let d = js_fresh(st, "d") in
       let sc = js_fresh(st, "sc") in
       let c3 = with_brk(ctx2, sc) in
       let cls = nth(s, 2) in
+      let n = len(cls) in
       let is_def(cl) = nth(nth(cl, 0), 0) == "null" in
-      let defbody(i) =
-        if i < 0 then "0"
-        else if is_def(nth(cls, i)) then js_emit_stmts(nth(nth(cls, i), 1), c3, "0", st)
-        else defbody(i - 1) in
-      let cases(i, acc) =
-        if i < 0 then acc
-        else if is_def(nth(cls, i)) then cases(i - 1, acc)
-        else cases(i - 1, cons(nth(cls, i), acc)) in
-      let cs = cases(len(cls) - 1, []) in
-      let chain(ys, i) =
-        if i >= len(ys) then defbody(len(cls) - 1)
+      let suffix(i) = if i >= n then [] else append(nth(nth(cls, i), 1), suffix(i + 1)) in
+      let body(i) = js_emit_stmts(suffix(i), c3, "0", st) in
+      let defidx =
+        let fnd(i) = if i >= n then 0 - 1 else if is_def(nth(cls, i)) then i else fnd(i + 1) in
+        fnd(0) in
+      let fallback = if defidx < 0 then "0" else body(defidx) in
+      let chain(i) =
+        if i >= n then fallback
+        else if is_def(nth(cls, i)) then chain(i + 1)
         else
-          let cl = nth(ys, i) in
-          js_cat(["(if ", d, " == (", js_emit_expr(nth(cl, 0), c3, st), ") then ", js_emit_stmts(nth(cl, 1), c3, "0", st), " else ", chain(ys, i + 1), ")"]) in
-      js_cat(["(let ", sc, " = box_new() in (let ", d, " = ", js_emit_expr(nth(s, 1), ctx2, st), " in ", chain(cs, 0), "))"])
+          let cl = nth(cls, i) in
+          js_cat(["(if ", d, " == (", js_emit_expr(nth(cl, 0), c3, st), ") then ", body(i), " else ", chain(i + 1), ")"]) in
+      js_cat(["(let ", sc, " = box_new() in (let ", d, " = ", js_emit_expr(nth(s, 1), ctx2, st), " in ", chain(0), "))"])
     else if tag == "throw" then
       /* Record the value in the global exception box; the guard after this
        * statement (and in every enclosing body / loop) stops the rest. */

@@ -248,3 +248,9 @@ let _ = check("sort_cmp", "let a=[1,3,2]; a.sort(function(x,y){ return y-x; }); 
 let _ = check("replace", "console.log('hello world'.replace('world','there'));", "hello there")
 let _ = check("search", "console.log('hello'.search('ll'));", "2")
 let _ = check("isnan", "console.log(isNaN(1)); console.log(isNaN('a'));", "false\nfalse")
+
+/* switch fallthrough (JS semantics) */
+let _ = check("sw_fall1", "let x=1; switch(x){ case 1: console.log('a'); case 2: console.log('b'); break; case 3: console.log('c'); }", "a\nb")
+let _ = check("sw_fall2", "let x=2; switch(x){ case 1: console.log('a'); case 2: console.log('b'); case 3: console.log('c'); }", "b\nc")
+let _ = check("sw_defmid", "let x=9; switch(x){ case 1: console.log('a'); break; default: console.log('d'); case 2: console.log('b'); }", "d\nb")
+let _ = check("sw_nomatch", "let x=5; switch(x){ case 1: console.log('a'); break; } console.log('z');", "z")
