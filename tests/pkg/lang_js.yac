@@ -55,5 +55,18 @@ let _ = assert_has("switch", "switch (1) { case 1: break; }", "_sc")
 /* Malformed input is reported. */
 let _ = assert_has("malformed reported", "let = 1;", "error:")
 
+/* Phase 2: bitwise / shift -> band|bor|bxor|bshl|bshr; typeof / void / in. */
+let _ = assert_has("bitwise and", "console.log(6 & 3);", "band(")
+let _ = assert_has("bitwise or", "console.log(6 | 1);", "bor(")
+let _ = assert_has("bitwise xor", "console.log(6 ^ 3);", "bxor(")
+let _ = assert_has("bitwise not", "console.log(~0);", "bxor(")
+let _ = assert_has("shift left", "console.log(1 << 4);", "bshl(")
+let _ = assert_has("shift right", "console.log(32 >> 2);", "bshr(")
+let _ = assert_has("typeof static", "console.log(typeof 1);", "\"number\"")
+let _ = assert_has("typeof dynamic", "let x = 1; console.log(typeof x);", "_js_typeof")
+let _ = assert_has("void", "console.log(void 1);", "undefined")
+let _ = assert_has("in", "let o = { a: 1 }; console.log('a' in o);", "fmap_get")
+let _ = assert_has("compound bitand", "let x = 6; x &= 3;", "band(")
+
 /* Execution: prints JS_OK only if the control flow is actually correct. */
-let _ = run(js_to_yac("let ok = true;\nlet i=0; while(true){ i=i+1; if(i===3){break;} } if(i!==3){ ok=false; }\nlet s=0; for(let k=0;k<5;k++){ if(k===2){continue;} s=s+k; } if(s!==8){ ok=false; }\nlet d=0; do { d=d+1; } while(d<3); if(d!==3){ ok=false; }\nlet x=2; let r='z'; switch(x){ case 1: r='a'; break; case 2: r='b'; break; default: r='c'; } if(r!=='b'){ ok=false; }\nif(!(3>2)){ ok=false; }\nif(ok){ console.log('JS_OK'); } else { console.log('JS_BAD'); }"))
+let _ = run(js_to_yac("let ok = true;\nlet i=0; while(true){ i=i+1; if(i===3){break;} } if(i!==3){ ok=false; }\nlet s=0; for(let k=0;k<5;k++){ if(k===2){continue;} s=s+k; } if(s!==8){ ok=false; }\nlet d=0; do { d=d+1; } while(d<3); if(d!==3){ ok=false; }\nlet x=2; let r='z'; switch(x){ case 1: r='a'; break; case 2: r='b'; break; default: r='c'; } if(r!=='b'){ ok=false; }\nif(!(3>2)){ ok=false; }\nif((6 & 3) !== 2){ ok=false; }\nif((1 << 4) !== 16){ ok=false; }\nif((~0) !== (0 - 1)){ ok=false; }\nlet oo={a:1}; if(!('a' in oo)){ ok=false; }\nif(typeof 1 !== 'number'){ ok=false; }\nif(ok){ console.log('JS_OK'); } else { console.log('JS_BAD'); }"))

@@ -116,11 +116,15 @@ let js_lex_id(src, i, n) =
 
 /* True for the two-character operators the lexer recognises. */
 let js_op2(s) =
-  s == "==" or s == "!=" or s == "<=" or s == ">=" or s == "&&" or s == "||" or s == "+=" or s == "-=" or s == "*=" or s == "/=" or s == "%=" or s == "++" or s == "--"
+  s == "==" or s == "!=" or s == "<=" or s == ">=" or s == "&&" or s == "||" or s == "+=" or s == "-=" or s == "*=" or s == "/=" or s == "%=" or s == "++" or s == "--" or s == "<<" or s == ">>" or s == "&=" or s == "|=" or s == "^="
+
+let js_op3(s) = s == ">>>" or s == "<<=" or s == ">>="
+
+let js_op4(s) = s == ">>>="
 
 /* True for a single-character operator / punctuation code. */
 let js_op1c(c) =
-  c == 43 or c == 45 or c == 42 or c == 47 or c == 37 or c == 61 or c == 60 or c == 62 or c == 33 or c == 63 or c == 58 or c == 46 or c == 44 or c == 59 or c == 40 or c == 41 or c == 123 or c == 125 or c == 91 or c == 93
+  c == 43 or c == 45 or c == 42 or c == 47 or c == 37 or c == 61 or c == 60 or c == 62 or c == 33 or c == 63 or c == 58 or c == 46 or c == 44 or c == 59 or c == 40 or c == 41 or c == 123 or c == 125 or c == 91 or c == 93 or c == 38 or c == 94 or c == 124 or c == 126
 
 /* Tokenize into a listbuf of [kind, text]; kind ∈ str/num/id/p/eof/unk. */
 let js_lex(src) =
@@ -145,6 +149,10 @@ let js_lex(src) =
         let _ = list_push(acc, ["p", "==="]) in rec(j + 3)
       else if (j + 3 <= n) and (str_slice(src, j, 3) == "!==") then
         let _ = list_push(acc, ["p", "!=="]) in rec(j + 3)
+      else if (j + 4 <= n) and js_op4(str_slice(src, j, 4)) then
+        let _ = list_push(acc, ["p", str_slice(src, j, 4)]) in rec(j + 4)
+      else if (j + 3 <= n) and js_op3(str_slice(src, j, 3)) then
+        let _ = list_push(acc, ["p", str_slice(src, j, 3)]) in rec(j + 3)
       else if (j + 2 <= n) and js_op2(str_slice(src, j, 2)) then
         let _ = list_push(acc, ["p", str_slice(src, j, 2)]) in rec(j + 2)
       else if js_op1c(c) then
@@ -168,6 +176,7 @@ let st_fmap(st) = nth(st, 2)
 let st_math(st) = nth(st, 3)
 let st_str(st) = nth(st, 4)
 let st_bool(st) = nth(st, 5)
+let st_typeof(st) = nth(st, 6)
 
 /* Record msg if no error yet; returns "0" so it can stand in for an expr. */
 let js_fail(st, msg) =
@@ -188,14 +197,19 @@ let js_bad(st, msg) =
 let js_prec2(op) =
   if op == "||" then 3
   else if op == "&&" then 4
-  else if op == "==" or op == "!=" or op == "===" or op == "!==" then 5
-  else if op == "<" or op == "<=" or op == ">" or op == ">=" then 6
-  else if op == "+" or op == "-" then 7
-  else if op == "*" or op == "/" or op == "%" then 8
+  else if op == "|" then 5
+  else if op == "^" then 6
+  else if op == "&" then 7
+  else if op == "==" or op == "!=" or op == "===" or op == "!==" then 8
+  else if op == "<" or op == "<=" or op == ">" or op == ">=" or op == "in" or op == "instanceof" then 9
+  else if op == "<<" or op == ">>" or op == ">>>" then 10
+  else if op == "+" or op == "-" then 11
+  else if op == "*" or op == "/" or op == "%" then 12
   else 0
 
 let js_assign_op(op) =
   op == "=" or op == "+=" or op == "-=" or op == "*=" or op == "/=" or op == "%="
+    or op == "&=" or op == "|=" or op == "^=" or op == "<<=" or op == ">>=" or op == ">>>="
 
 /* ---- expression parser (Pratt) --------------------------------------- */
 
@@ -214,12 +228,20 @@ let js_parse_expr(toks, i, min, st) =
   let kk = js_k(tk) in
   let pre =
     if tx == "!" then
-      let r = js_parse_expr(toks, i + 1, 9, st) in [["un", "!", nth(r, 0)], nth(r, 1)]
+      let r = js_parse_expr(toks, i + 1, 13, st) in [["un", "!", nth(r, 0)], nth(r, 1)]
+    else if tx == "~" then
+      let r = js_parse_expr(toks, i + 1, 13, st) in [["un", "~", nth(r, 0)], nth(r, 1)]
     else if tx == "-" then
-      let r = js_parse_expr(toks, i + 1, 9, st) in [["un", "-", nth(r, 0)], nth(r, 1)]
-    else if tx == "+" then js_parse_expr(toks, i + 1, 9, st)
+      let r = js_parse_expr(toks, i + 1, 13, st) in [["un", "-", nth(r, 0)], nth(r, 1)]
+    else if tx == "+" then js_parse_expr(toks, i + 1, 13, st)
+    else if tx == "typeof" then
+      let r = js_parse_expr(toks, i + 1, 13, st) in [["typeof", nth(r, 0)], nth(r, 1)]
+    else if tx == "void" then
+      let r = js_parse_expr(toks, i + 1, 13, st) in [["un", "void", nth(r, 0)], nth(r, 1)]
+    else if tx == "delete" then
+      let r = js_parse_expr(toks, i + 1, 13, st) in [["del", nth(r, 0)], nth(r, 1)]
     else if tx == "++" or tx == "--" then
-      let r = js_parse_expr(toks, i + 1, 9, st) in [["prefix", tx, nth(r, 0)], nth(r, 1)]
+      let r = js_parse_expr(toks, i + 1, 13, st) in [["prefix", tx, nth(r, 0)], nth(r, 1)]
     else if kk == "num" then [["num", tx], i + 1]
     else if kk == "str" then [["str", tx], i + 1]
     else if kk == "id" then
@@ -526,6 +548,7 @@ let js_is_boolish(e) =
     let op = nth(e, 1) in
     op == "&&" or op == "||" or op == "==" or op == "!=" or op == "==="
       or op == "!==" or op == "<" or op == "<=" or op == ">" or op == ">="
+      or op == "in" or op == "instanceof"
   else false
 
 /* True when a node is statically known to be a string: a string literal, a
@@ -568,6 +591,7 @@ let js_emit_expr(e, ctx, st) =
   let str_of(x) =
     if nth(x, 0) == "null" then "\"null\""
     else if nth(x, 0) == "undef" then "\"undefined\""
+    else if nth(x, 0) == "un" and nth(x, 1) == "void" then "\"undefined\""
     else if js_is_boolish(x) then
       let _ = box_set(st_bool(st), 1) in
       js_cat(["_js_bool(", js_emit_expr(x, ctx, st), ")"])
@@ -633,7 +657,30 @@ let js_emit_expr(e, ctx, st) =
     let a = js_emit_expr(nth(e, 2), ctx, st) in
     if op == "!" then js_cat(["(not ", a, ")"])
     else if op == "-" then js_cat(["(0 - ", a, ")"])
+    else if op == "~" then js_cat(["bxor(", a, ", 0 - 1)"])
+    else if op == "void" then js_cat(["(let _ = ", a, " in 0)"])
     else a
+  else if tag == "typeof" then
+    /* Infer where static; otherwise the _js_typeof helper (int vs object). */
+    let t = nth(e, 1) in
+    if nth(t, 0) == "num" then "\"number\""
+    else if nth(t, 0) == "str" then "\"string\""
+    else if nth(t, 0) == "bool" or js_is_boolish(t) then "\"boolean\""
+    else if nth(t, 0) == "null" then "\"object\""
+    else if nth(t, 0) == "undef" then "\"undefined\""
+    else if nth(t, 0) == "arr" or nth(t, 0) == "obj" then "\"object\""
+    else if nth(t, 0) == "id" then
+      if js_in(funcs, nth(t, 1)) then "\"function\""
+      else if js_in(nth(ctx, 4), nth(t, 1)) then "\"string\""
+      else
+        let _ = box_set(st_typeof(st), 1) in
+        js_cat(["_js_typeof(", js_emit_expr(t, ctx, st), ")"])
+    else
+      let _ = box_set(st_typeof(st), 1) in
+      js_cat(["_js_typeof(", js_emit_expr(t, ctx, st), ")"])
+  else if tag == "del" then
+    let _ = js_fail(st, "unsupported 'delete'") in
+    "0"
   else if tag == "postfix" then
     /* x++ / x--: value is the OLD value; store old ± 1. */
     let tgt = nth(e, 1) in
@@ -662,6 +709,16 @@ let js_emit_expr(e, ctx, st) =
       else if op == "||" then js_cat(["(", ls, " or ", rs, ")"])
       else if op == "===" then js_cat(["(", ls, " == ", rs, ")"])
       else if op == "!==" then js_cat(["(", ls, " != ", rs, ")"])
+      else if op == "&" then js_cat(["band(", ls, ", ", rs, ")"])
+      else if op == "|" then js_cat(["bor(", ls, ", ", rs, ")"])
+      else if op == "^" then js_cat(["bxor(", ls, ", ", rs, ")"])
+      else if op == "<<" then js_cat(["bshl(", ls, ", ", rs, ")"])
+      else if op == ">>" then js_cat(["bshr(", ls, ", ", rs, ")"])
+      else if op == ">>>" then js_cat(["bshr(", ls, ", ", rs, ")"])
+      else if op == "in" then
+        let _ = box_set(st_fmap(st), 1) in
+        js_cat(["fmap_get(", rs, ", ", ls, ") != 0"])
+      else if op == "instanceof" then "0"
       else js_cat(["(", ls, " ", op, " ", rs, ")"])
   else if tag == "cond" then
     js_cat(["(if ", js_emit_expr(nth(e, 1), ctx, st), " then ", js_emit_expr(nth(e, 2), ctx, st), " else ", js_emit_expr(nth(e, 3), ctx, st), ")"])
@@ -709,15 +766,25 @@ let js_emit_expr(e, ctx, st) =
     let rhs =
       if op == "=" then v
       else
-        let op0 =
-          if op == "+=" then "+"
-          else if op == "-=" then "-"
-          else if op == "*=" then "*"
-          else if op == "/=" then "/"
-          else "%" in
-        if op0 == "+" and (js_str_lit(val) or js_is_boolish(val) or js_is_str_expr(val, nth(ctx, 4)) or (t == "id" and js_in(nth(ctx, 4), nth(tgt, 1)))) then
-          js_cat(["str_cat(", base, ", ", str_of(val), ")"])
-        else js_cat(["(", base, " ", op0, " ", v, ")"]) in
+        let bitop =
+          if op == "&=" then "band"
+          else if op == "|=" then "bor"
+          else if op == "^=" then "bxor"
+          else if op == "<<=" then "bshl"
+          else if op == ">>=" then "bshr"
+          else if op == ">>>=" then "bshr"
+          else "" in
+        if bitop != "" then js_cat([bitop, "(", base, ", ", v, ")"])
+        else
+          let op0 =
+            if op == "+=" then "+"
+            else if op == "-=" then "-"
+            else if op == "*=" then "*"
+            else if op == "/=" then "/"
+            else "%" in
+          if op0 == "+" and (js_str_lit(val) or js_is_boolish(val) or js_is_str_expr(val, nth(ctx, 4)) or (t == "id" and js_in(nth(ctx, 4), nth(tgt, 1)))) then
+            js_cat(["str_cat(", base, ", ", str_of(val), ")"])
+          else js_cat(["(", base, " ", op0, " ", v, ")"]) in
     if t == "id" then
       js_cat(["(let _v = ", rhs, " in (let _ = box_set(", js_mangle(nth(tgt, 1)), ", _v) in _v))"])
     else if t == "mem" then
@@ -960,7 +1027,9 @@ let js_to_yac(src) =
   let _ = box_set(ustr, 0) in
   let ubool = box_new() in
   let _ = box_set(ubool, 0) in
-  let st = [err, ns, ufmap, umath, ustr, ubool] in
+  let utype = box_new() in
+  let _ = box_set(utype, 0) in
+  let st = [err, ns, ufmap, umath, ustr, ubool, utype] in
   let toks = js_lex(src) in
   let r = js_parse_stmts(toks, 0, ["list", 0], st) in
   let body = js_emit_stmts(nth(r, 0), [[], [], 0, 0, [], 0], "0", st) in
@@ -971,4 +1040,5 @@ let js_to_yac(src) =
     let h2 = if box_get(umath) == 1 then "import num.math { abs, min, max, pow, sqrt, pi }\n" else "" in
     let h3 = if box_get(ustr) == 1 then "let _js_str(x) = if is_int(x) then int_to_str(x) else x\n" else "" in
     let h4 = if box_get(ubool) == 1 then "let _js_bool(x) = if x then \"true\" else \"false\"\n" else "" in
-    js_cat([h1, h2, h3, h4, body, "\n"])
+    let h5 = if box_get(utype) == 1 then "let _js_typeof(x) = if is_int(x) then \"number\" else \"object\"\n" else "" in
+    js_cat([h1, h2, h3, h4, h5, body, "\n"])

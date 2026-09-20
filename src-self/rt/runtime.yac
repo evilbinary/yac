@@ -606,7 +606,7 @@ let rt_str_chr_ins(_) =
    ["ret", 2]]
 
 let rt_int_to_str_ins(_) =
-  [["local", 12, 1],
+  [["local", 20, 1],
    ["mov_imm", 2, 0 + 0],
    ["icmp", "==", 3, 1, 2],
    ["cmpjmp", 3, "it_zero", "it_nz"],
@@ -614,6 +614,19 @@ let rt_int_to_str_ins(_) =
    ["mov_imm", 4, 48 + 48],
    ["tcall", 4, "yac_str_chr", [4]],
    ["label", "it_nz"],
+   /* Negative: "-" + int_to_str(-n). Without this the n<10 fast path added
+    * 48 to a negative tagged int and returned a single bogus char (measured:
+    * int_to_str(-1) => "/"). */
+   ["cmp", "<", 3, 1, 2],
+   ["cmpjmp", 3, "it_neg", "it_pos"],
+   ["label", "it_neg"],
+   ["sub", 11, 2, 1],
+   ["fcall", 12, "yac_int_to_str", [11]],
+   ["mov_imm", 13, 45 + 45],
+   ["fcall", 14, "yac_str_chr", [13]],
+   ["fcall", 15, "yac_str_cat", [14, 12]],
+   ["ret", 15],
+   ["label", "it_pos"],
    ["mov_imm", 5, 10 + 10],
    ["cmp", "<", 3, 1, 5],
    ["cmpjmp", 3, "it_one", "it_more"],
