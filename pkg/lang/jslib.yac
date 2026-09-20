@@ -1,0 +1,39 @@
+/* jslib.yac — JavaScript standard-library surface for lang.js output.
+ *
+ * Global functions and host-backed objects that the translator maps JS
+ * builtins onto. Kept separate from jsrt.yac (value/runtime helpers) and
+ * js.yac (the translator) so a generated program imports a small, stable API.
+ *
+ * Feasible today: parseInt / parseFloat, isNaN / isFinite, Date.now,
+ * String.fromCharCode. Math already maps to num.math directly. JSON is not
+ * here yet: telling our int / string / list(fmap) representations apart needs
+ * type predicates the runtime does not expose. */
+
+package lang.jslib
+export js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_date_now, js_from_char_code
+
+/* Decimal integer parse: optional leading '-', then digits (stops at the first
+ * non-digit, like parseInt without a radix). */
+let js_parse_int(s) =
+  let n = str_len(s) in
+  let rec(i, acc) =
+    if i >= n then acc
+    else
+      let c = str_ref(s, i) in
+      if c >= 48 and c <= 57 then rec(i + 1, acc * 10 + (c - 48))
+      else acc in
+  if n > 0 then
+    if str_ref(s, 0) == 45 then 0 - rec(1, 0) else rec(0, 0)
+  else 0
+
+/* Float parse falls back to the integer parser (integers are the supported
+ * numeric literals for arithmetic in this subset). */
+let js_parse_float(s) = js_parse_int(s)
+
+let js_is_nan(x) = x != x
+
+let js_is_finite(x) = x == x
+
+let js_date_now(_) = time_ms()
+
+let js_from_char_code(c) = str_chr(c)

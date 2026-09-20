@@ -37,7 +37,7 @@ let _ = assert_has("object string key", "let o = { a: 1 }; console.log(o[\"a\"])
 /* console.log / JS booleans / implicit string conversion. */
 let _ = assert_has("multi-arg console", "console.log(\"a\", 1);", "_js_str")
 let _ = assert_has("bool -> _js_bool", "console.log(1 < 2);", "_js_bool")
-let _ = assert_has("bool helper def", "console.log(true);", "let _js_bool")
+let _ = assert_has("bool helper import", "console.log(true);", "import lang.jsrt")
 
 /* String variables concatenate; floats stay numeric. */
 let _ = assert_has("string +=", "let s = \"a\"; s += 1;", "str_cat")
@@ -254,3 +254,11 @@ let _ = check("sw_fall1", "let x=1; switch(x){ case 1: console.log('a'); case 2:
 let _ = check("sw_fall2", "let x=2; switch(x){ case 1: console.log('a'); case 2: console.log('b'); case 3: console.log('c'); }", "b\nc")
 let _ = check("sw_defmid", "let x=9; switch(x){ case 1: console.log('a'); break; default: console.log('d'); case 2: console.log('b'); }", "d\nb")
 let _ = check("sw_nomatch", "let x=5; switch(x){ case 1: console.log('a'); break; } console.log('z');", "z")
+
+/* jslib: parseInt / isFinite / String.fromCharCode / Date.now */
+let _ = check("parseint", "console.log(parseInt('42'));", "42")
+let _ = check("parseint_neg", "console.log(parseInt('-15'));", "-15")
+let _ = check("parseint_part", "console.log(parseInt('12abc'));", "12")
+let _ = check("isfinite", "console.log(isFinite(1));", "true")
+let _ = check("fromcharcode", "console.log(String.fromCharCode(65));", "A")
+let _ = check("datenow_type", "console.log(typeof Date.now());", "number")

@@ -180,6 +180,7 @@ let st_typeof(st) = nth(st, 6)
 let st_lib(st) = nth(st, 7)
 let st_strpkg(st) = nth(st, 8)
 let st_obj(st) = nth(st, 9)
+let st_jslib(st) = nth(st, 10)
 
 /* Record msg if no error yet; returns "0" so it can stand in for an expr. */
 let js_fail(st, msg) =
@@ -630,7 +631,9 @@ let js_is_boolish(e) =
     if nth(c, 0) == "mem" then
       let m = nth(c, 2) in
       m == "startsWith" or m == "endsWith" or m == "includes"
-    else if nth(c, 0) == "id" then nth(c, 1) == "isNaN"
+    else if nth(c, 0) == "id" then
+      let f = nth(c, 1) in
+      f == "isNaN" or f == "isFinite"
     else false
   else false
 
@@ -803,7 +806,16 @@ let js_emit_expr(e, ctx, st) =
     else
       let is_obj =
         if nth(obj, 0) == "id" then nth(obj, 1) == "Object" else false in
-      if is_obj then
+      let is_date = if nth(obj, 0) == "id" then nth(obj, 1) == "Date" else false in
+      let is_str_ctor = if nth(obj, 0) == "id" then nth(obj, 1) == "String" else false in
+      if is_date then
+        (let _ = box_set(st_jslib(st), 1) in
+         if m == "now" then "js_date_now(0)" else failm(m))
+      else if is_str_ctor then
+        (if m == "fromCharCode" then
+           (let _ = box_set(st_jslib(st), 1) in js_cat(["js_from_char_code(", a0, ")"]))
+         else failm(m))
+      else if is_obj then
         (let _ = box_set(st_obj(st), 1) in
          let _ = box_set(st_fmap(st), 1) in
          if m == "keys" then js_cat(["_js_keys(", a0, ")"])
@@ -1073,11 +1085,16 @@ let js_emit_expr(e, ctx, st) =
     else if ctag == "mem" then mcall(callee, args)
     else if ctag == "id" and nth(callee, 1) == "String" then
       if len(args) == 0 then "\"\"" else str_of(nth(args, 0))
-    else if ctag == "id" and (nth(callee, 1) == "Number" or nth(callee, 1) == "parseInt" or nth(callee, 1) == "parseFloat") then
+    else if ctag == "id" and nth(callee, 1) == "Number" then
       if len(args) == 0 then "0" else js_emit_expr(nth(args, 0), ctx, st)
-    else if ctag == "id" and nth(callee, 1) == "isNaN" then
-      (let _ = box_set(st_lib(st), 1) in
-       if len(args) == 0 then "false" else js_cat(["_js_isnan(", js_emit_expr(nth(args, 0), ctx, st), ")"]))
+    else if ctag == "id" and (nth(callee, 1) == "parseInt" or nth(callee, 1) == "parseFloat") then
+      (let _ = box_set(st_jslib(st), 1) in
+       let f = if nth(callee, 1) == "parseInt" then "js_parse_int" else "js_parse_float" in
+       if len(args) == 0 then "0" else js_cat([f, "(", js_emit_expr(nth(args, 0), ctx, st), ")"]))
+    else if ctag == "id" and (nth(callee, 1) == "isNaN" or nth(callee, 1) == "isFinite") then
+      (let _ = box_set(st_jslib(st), 1) in
+       let f = if nth(callee, 1) == "isNaN" then "js_is_nan" else "js_is_finite" in
+       if len(args) == 0 then "false" else js_cat([f, "(", js_emit_expr(nth(args, 0), ctx, st), ")"]))
     else
       /* Indirect call: `(callee)(args)`; a 0-arg call passes the dummy 0. */
       let cf = js_emit_expr(callee, ctx, st) in
@@ -1293,7 +1310,9 @@ let js_to_yac(src) =
   let _ = box_set(ustrpkg, 0) in
   let uobj = box_new() in
   let _ = box_set(uobj, 0) in
-  let st = [err, ns, ufmap, umath, ustr, ubool, utype, ulib, ustrpkg, uobj] in
+  let ujslib = box_new() in
+  let _ = box_set(ujslib, 0) in
+  let st = [err, ns, ufmap, umath, ustr, ubool, utype, ulib, ustrpkg, uobj, ujslib] in
   let _ = box_set(js_stmts_parse_box, js_parse_stmts) in
   let _ = box_set(js_stmts_box, js_emit_stmts) in
   let toks = js_lex(src) in
@@ -1305,20 +1324,14 @@ let js_to_yac(src) =
     let h0 = "let _js_exc = box_new()\n" in
     let h1 = if box_get(ufmap) == 1 or box_get(uobj) == 1 then "import data.fmap { fmap_new, fmap_get, fmap_put }\n" else "" in
     let h2 = if box_get(umath) == 1 then "import num.math { abs, min, max, pow, sqrt, pi, e, sin, cos, exp, log, log2, powf }\n" else "" in
-    let h3 = if box_get(ustr) == 1 then "let _js_str(x) = if is_int(x) then int_to_str(x) else x\n" else "" in
-    let h4 = if box_get(ubool) == 1 then "let _js_bool(x) = if x then \"true\" else \"false\"\n" else "" in
-    let h5 = if box_get(utype) == 1 then "let _js_typeof(x) = if is_int(x) then \"number\" else \"object\"\n" else "" in
     let h6 = if box_get(ustrpkg) == 1 then "import text.str { split, starts_with, ends_with, join, trim, find, contains }\n" else "" in
-    let h7 =
-      if box_get(ulib) == 1 then
-        "let _js_char_at(s, i) = str_chr(str_ref(s, i))\nlet _js_upper(s) =\n  let n = str_len(s) in\n  let rec(i, acc) =\n    if i >= n then acc\n    else\n      let c = str_ref(s, i) in\n      let c2 = if c >= 97 and c <= 122 then c - 32 else c in\n      rec(i + 1, str_cat(acc, str_chr(c2))) in\n  rec(0, \"\")\nlet _js_lower(s) =\n  let n = str_len(s) in\n  let rec(i, acc) =\n    if i >= n then acc\n    else\n      let c = str_ref(s, i) in\n      let c2 = if c >= 65 and c <= 90 then c + 32 else c in\n      rec(i + 1, str_cat(acc, str_chr(c2))) in\n  rec(0, \"\")\nlet _js_repeat(s, n) =\n  let rec(i, acc) = if i >= n then acc else rec(i + 1, str_cat(acc, s)) in\n  rec(0, \"\")\nlet _js_arr_slice(a, s, e) =\n  let b = list_new() in\n  let rec(i) = if i >= e then b else (let _ = list_push(b, nth(a, i)) in rec(i + 1)) in\n  if s >= e then b else rec(s)\nlet _js_arr_index(a, x) =\n  let n = len(a) in\n  let rec(i) = if i >= n then 0 - 1 else if nth(a, i) == x then i else rec(i + 1) in\n  rec(0)\nlet _js_arr_map(a, f) =\n  let r = list_new() in\n  let n = len(a) in\n  let rec(i) = if i >= n then r else (let _ = list_push(r, f(nth(a, i))) in rec(i + 1)) in\n  rec(0)\nlet _js_arr_filter(a, f) =\n  let r = list_new() in\n  let n = len(a) in\n  let rec(i) =\n    if i >= n then r\n    else\n      let v = nth(a, i) in\n      let _ = if f(v) then list_push(r, v) else 0 in\n      rec(i + 1) in\n  rec(0)\nlet _js_arr_each(a, f) =\n  let n = len(a) in\n  let rec(i) = if i >= n then 0 else (let _ = f(nth(a, i)) in rec(i + 1)) in\n  rec(0)\nlet _js_arr_reduce(a, f, init) =\n  let n = len(a) in\n  let rec(i, acc) = if i >= n then acc else rec(i + 1, f(acc, nth(a, i))) in\n  rec(0, init)\nlet _js_arr_join(a, sep) =\n  let n = len(a) in\n  let rec(i, acc) =\n    if i >= n then acc\n    else\n      let v = nth(a, i) in\n      let s = if is_int(v) then int_to_str(v) else v in\n      let acc2 = if i == 0 then s else str_cat(acc, str_cat(sep, s)) in\n      rec(i + 1, acc2) in\n  rec(0, \"\")\nlet _js_arr_concat(a, b) =\n  let r = list_new() in\n  let na = len(a) in\n  let nb = len(b) in\n  let rec(ia) = if ia >= na then 0 else (let _ = list_push(r, nth(a, ia)) in rec(ia + 1)) in\n  let _ = rec(0) in\n  let rec2(ib) = if ib >= nb then 0 else (let _ = list_push(r, nth(b, ib)) in rec2(ib + 1)) in\n  let _ = rec2(0) in\n  r\nlet _js_arr_sort(a, f) =\n  let n = len(a) in\n  let go(pass) =\n    if pass >= n then a\n    else\n      let inr(i) =\n        if i >= n - 1 then 0\n        else\n          let x = nth(a, i) in\n          let y = nth(a, i + 1) in\n          let _ = if f(x, y) > 0 then (let _ = list_set(a, i, y) in list_set(a, i + 1, x)) else 0 in\n          inr(i + 1) in\n      let _ = inr(0) in\n      go(pass + 1) in\n  let _ = go(0) in\n  a\nlet _js_isnan(x) = x != x\n"
-      else "" in
     let h8 =
       if box_get(uobj) == 1 then
         "let _js_this = box_new()\nlet _js_protos = box_new()\nlet _js_proto(nm) =\n  let m = box_get(_js_protos) in\n  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_protos, x) in x)) else m in\n  let p = fmap_get(m2, nm) in\n  if p == 0 then (let x = fmap_new(0) in (let _ = fmap_put(m2, nm, x) in x)) else p\nlet _js_obj(proto) =\n  let m = fmap_new(0) in\n  let _ = fmap_put(m, \"__proto__\", proto) in\n  m\nlet _js_get(o, k) =\n  let v = fmap_get(o, k) in\n  if v != 0 then v\n  else\n    let p = fmap_get(o, \"__proto__\") in\n    if p == 0 then 0 else _js_get(p, k)\nlet _js_keys(m) =\n  if is_int(m) then list_new()\n  else\n    let vec = nth(m, 0) in\n    let cap = nth(m, 2) in\n    let r = list_new() in\n    let rec(i) =\n      if i >= cap then r\n      else\n        let e = nth(vec, i) in\n        let _ = if e == 0 then 0 else list_push(r, nth(e, 0)) in\n        rec(i + 1) in\n    rec(0)\n"
       else "" in
-    let h9 =
-      if box_get(ustrpkg) == 1 then
-        "let _js_str_replace(s, a, b) =\n  let i = find(s, a) in\n  if i < 0 then s\n  else str_cat(str_slice(s, 0, i), str_cat(b, str_slice(s, i + str_len(a), str_len(s) - i - str_len(a))))\n"
+    let h10 = if box_get(ujslib) == 1 then "import lang.jslib { js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_date_now, js_from_char_code }\n" else "" in
+    let hjsrt =
+      if box_get(ustr) == 1 or box_get(ubool) == 1 or box_get(utype) == 1 or box_get(ulib) == 1 then
+        "import lang.jsrt { _js_str, _js_bool, _js_typeof, _js_char_at, _js_upper, _js_lower, _js_repeat, _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each, _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_str_replace, _js_isnan }\n"
       else "" in
-    js_cat([h0, h1, h2, h6, h3, h4, h5, h7, h8, h9, body, "\n"])
+    js_cat([h0, h1, h2, h6, h10, hjsrt, h8, body, "\n"])

@@ -1,0 +1,135 @@
+/* jsrt.yac — lang.js runtime helpers (stateless).
+ *
+ * A program translated by lang.js imports the helpers it needs from here via
+ * the `_js_*` names the translator emits, instead of inlining them into every
+ * generated source. Only genuinely shared mutable state stays in the generated
+ * program (the exception box, `this`, and the prototype registry); everything
+ * here is a pure/loop helper over the kernel prims.
+ *
+ * `_js_str_replace` needs text.str.find, so this package pulls text.str. */
+
+package lang.jsrt
+export _js_str, _js_bool, _js_typeof, _js_char_at, _js_upper, _js_lower, _js_repeat,
+  _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each,
+  _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_str_replace, _js_isnan
+import text.str {find}
+
+/* Stringify a JS value for console.log / `+`: int -> decimal, else as-is. */
+let _js_str(x) = if is_int(x) then int_to_str(x) else x
+
+/* Boolean -> "true"/"false" (yac's own bool prints as 1/0). */
+let _js_bool(x) = if x then "true" else "false"
+
+/* typeof for the dynamic case: only int vs "object" can be told apart. */
+let _js_typeof(x) = if is_int(x) then "number" else "object"
+
+let _js_char_at(s, i) = str_chr(str_ref(s, i))
+
+let _js_upper(s) =
+  let n = str_len(s) in
+  let rec(i, acc) =
+    if i >= n then acc
+    else
+      let c = str_ref(s, i) in
+      let c2 = if c >= 97 and c <= 122 then c - 32 else c in
+      rec(i + 1, str_cat(acc, str_chr(c2))) in
+  rec(0, "")
+
+let _js_lower(s) =
+  let n = str_len(s) in
+  let rec(i, acc) =
+    if i >= n then acc
+    else
+      let c = str_ref(s, i) in
+      let c2 = if c >= 65 and c <= 90 then c + 32 else c in
+      rec(i + 1, str_cat(acc, str_chr(c2))) in
+  rec(0, "")
+
+let _js_repeat(s, n) =
+  let rec(i, acc) = if i >= n then acc else rec(i + 1, str_cat(acc, s)) in
+  rec(0, "")
+
+/* Array.slice(a, s, e) -> a new listbuf of a[s..e). */
+let _js_arr_slice(a, s, e) =
+  let b = list_new() in
+  let rec(i) = if i >= e then b else (let _ = list_push(b, nth(a, i)) in rec(i + 1)) in
+  if s >= e then b else rec(s)
+
+let _js_arr_index(a, x) =
+  let n = len(a) in
+  let rec(i) = if i >= n then 0 - 1 else if nth(a, i) == x then i else rec(i + 1) in
+  rec(0)
+
+let _js_arr_map(a, f) =
+  let r = list_new() in
+  let n = len(a) in
+  let rec(i) = if i >= n then r else (let _ = list_push(r, f(nth(a, i))) in rec(i + 1)) in
+  rec(0)
+
+let _js_arr_filter(a, f) =
+  let r = list_new() in
+  let n = len(a) in
+  let rec(i) =
+    if i >= n then r
+    else
+      let v = nth(a, i) in
+      let _ = if f(v) then list_push(r, v) else 0 in
+      rec(i + 1) in
+  rec(0)
+
+let _js_arr_each(a, f) =
+  let n = len(a) in
+  let rec(i) = if i >= n then 0 else (let _ = f(nth(a, i)) in rec(i + 1)) in
+  rec(0)
+
+let _js_arr_reduce(a, f, init) =
+  let n = len(a) in
+  let rec(i, acc) = if i >= n then acc else rec(i + 1, f(acc, nth(a, i))) in
+  rec(0, init)
+
+let _js_arr_join(a, sep) =
+  let n = len(a) in
+  let rec(i, acc) =
+    if i >= n then acc
+    else
+      let v = nth(a, i) in
+      let s = if is_int(v) then int_to_str(v) else v in
+      let acc2 = if i == 0 then s else str_cat(acc, str_cat(sep, s)) in
+      rec(i + 1, acc2) in
+  rec(0, "")
+
+let _js_arr_concat(a, b) =
+  let r = list_new() in
+  let na = len(a) in
+  let nb = len(b) in
+  let rec(ia) = if ia >= na then 0 else (let _ = list_push(r, nth(a, ia)) in rec(ia + 1)) in
+  let _ = rec(0) in
+  let rec2(ib) = if ib >= nb then 0 else (let _ = list_push(r, nth(b, ib)) in rec2(ib + 1)) in
+  let _ = rec2(0) in
+  r
+
+/* In-place bubble sort; f(x, y) > 0 means swap. */
+let _js_arr_sort(a, f) =
+  let n = len(a) in
+  let go(pass) =
+    if pass >= n then a
+    else
+      let inr(i) =
+        if i >= n - 1 then 0
+        else
+          let x = nth(a, i) in
+          let y = nth(a, i + 1) in
+          let _ = if f(x, y) > 0 then (let _ = list_set(a, i, y) in list_set(a, i + 1, x)) else 0 in
+          inr(i + 1) in
+      let _ = inr(0) in
+      go(pass + 1) in
+  let _ = go(0) in
+  a
+
+/* First literal occurrence of a replaced by b. */
+let _js_str_replace(s, a, b) =
+  let i = find(s, a) in
+  if i < 0 then s
+  else str_cat(str_slice(s, 0, i), str_cat(b, str_slice(s, i + str_len(a), str_len(s) - i - str_len(a))))
+
+let _js_isnan(x) = x != x
