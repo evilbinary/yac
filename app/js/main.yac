@@ -1,0 +1,285 @@
+/* main.yac — JavaScript 编译器 / REPL（app/js）。
+ *
+ * 在 pkg 之上做一层 CLI：lang.js 负责把 JS 子集翻成 yac 源码，
+ * yc.compiler 负责把 yac 源码编成本机可执行文件或就地运行。
+ * 不直接依赖 src-self 下的实现。
+ *
+ * 用法（在仓库根目录，必须走 host 模式，否则 yc.compiler 是 stub）：
+ *
+ *   ./yc --repl app/js/main.yac            # 进入 JS REPL
+ *   printf ':run examples/hello.js\n:quit\n' | ./yc --repl app/js/main.yac
+ *
+ * 交互输入里以 `:` 开头的是命令，其余按 JS 处理：
+ *
+ *   :help                 帮助
+ *   :run FILE             翻译并就地运行 JS 文件
+ *   :compile FILE [OUT]   翻译并编成本机可执行文件
+ *   :dump FILE            只打印翻译出的 yac 源码
+ *   :eval JS              执行一段内联 JS
+ *   :quit / :q            退出
+ *
+ * 若 argv 里带了参数（嵌入 host 的构建），也支持同样的命令：
+ *   compile FILE [OUT] | run FILE | dump FILE | eval JS | repl | help
+ *
+ * 注意：lang.js 的变量在翻译后是局部 let，因此 REPL 每行相互独立，
+ * 上一行声明的变量不会带到下一行（文件内多行是正常的）。
+ */
+
+import yc.compiler
+import lang.js
+import fs.io
+import text.str {trim, starts_with, ends_with}
+import os.env {get}
+
+/* ---- 小工具 ---------------------------------------------------------- */
+
+let js_blank(s) = trim(s) == ""
+
+/* 去首尾空白后，s 是否以独立单词 w 开头（后面是空白或 `(`）。 */
+let js_word(s, w) =
+  if starts_with(s, w) then
+    let n = str_len(w) in
+    if str_len(s) == n then true
+    else
+      let c = str_ref(s, n) in
+      c == 32 or c == 9 or c == 40
+  else false
+
+let js_is_decl(s) =
+  js_word(s, "let") or js_word(s, "const") or js_word(s, "var")
+    or js_word(s, "function") or js_word(s, "class")
+
+let js_is_stmt(s) =
+  js_word(s, "if") or js_word(s, "for") or js_word(s, "while")
+    or js_word(s, "do") or js_word(s, "switch") or js_word(s, "try")
+    or js_word(s, "return") or js_word(s, "throw") or js_word(s, "break")
+    or js_word(s, "continue") or starts_with(s, "{")
+
+/* 翻译末尾加一个空 print，压掉 yc.compiler.run 回显的“名字 = 值”。 */
+let js_suppress(y) = str_cat(y, "print(\"\", false)\n")
+
+let js_is_error(y) = starts_with(y, "error:")
+
+/* 去掉结尾分号（把表达式包进 console.log 之前用）。 */
+let js_strip_semi(s) =
+  let n = str_len(s) in
+  if n > 0 and str_ref(s, n - 1) == 59 then trim(str_slice(s, 0, n - 1)) else s
+
+/* 按空白切词，连续空白折叠。 */
+let js_words(s) =
+  let n = str_len(s) in
+  let rec(i, acc, cur) =
+    if i >= n then
+      if cur == "" then list_rev(acc) else list_rev(cons(cur, acc))
+    else
+      let c = str_ref(s, i) in
+      if c == 32 or c == 9 then
+        if cur == "" then rec(i + 1, acc, "")
+        else rec(i + 1, cons(cur, acc), "")
+      else rec(i + 1, acc, str_cat(cur, str_chr(c))) in
+  rec(0, [], "")
+
+/* 去掉第一个词，返回其后的正文（保留原样，仅去掉前导空白）。 */
+let js_tail(line) =
+  let n = str_len(line) in
+  let rec(i) =
+    if i >= n then ""
+    else
+      let c = str_ref(line, i) in
+      if c == 32 or c == 9 then
+        let rec2(j) =
+          if j >= n then ""
+          else
+            let d = str_ref(line, j) in
+            if d == 32 or d == 9 then rec2(j + 1)
+            else str_slice(line, j, n - j) in
+        rec2(i + 1)
+      else rec(i + 1) in
+  rec(0)
+
+/* foo.js -> foo（Windows 上加 .exe）。 */
+let js_stem(p) =
+  let n = str_len(p) in
+  if n >= 3 and ends_with(p, ".js") then str_slice(p, 0, n - 3) else p
+
+/* Windows 上 OS=Windows_NT；据此给可执行文件加 .exe。 */
+let js_is_win(_) = get("OS") == "Windows_NT"
+
+let js_default_out(p) =
+  let s = js_stem(p) in
+  if js_is_win(0) then str_cat(s, ".exe") else s
+
+/* ---- 动作 ------------------------------------------------------------ */
+
+/* 跑一段翻译结果：出错就打印，否则 host 就地执行（末尾压掉回显）。 */
+let js_exec_y(y) =
+  if js_is_error(y) then print(y)
+  else run(js_suppress(y))
+
+/* 就地运行一段 JS。
+ * lang.js 把语句序列的最后一个值丢掉（续延是 0），所以“表达式行”先包成
+ * console.log(...) 再翻译，才能把值打出来；声明 / 语句 / console.* 原样翻译。 */
+let js_exec(src) =
+  let t = trim(src) in
+  if js_is_decl(t) or js_is_stmt(t) or starts_with(t, "console") then
+    js_exec_y(js_to_yac(src))
+  else
+    let e = js_strip_semi(t) in
+    js_exec_y(js_to_yac(str_cat("console.log(", str_cat(e, ")"))))
+
+let js_run_file(path) =
+  let src = read_or_0(path) in
+  if src == 0 then print(str_cat("error: cannot read ", path))
+  else js_exec_y(js_to_yac(src))
+
+let js_dump_file(path) =
+  let src = read_or_0(path) in
+  if src == 0 then print(str_cat("error: cannot read ", path))
+  else print(js_to_yac(src))
+
+let js_compile_file(path, out0) =
+  let src = read_or_0(path) in
+  if src == 0 then print(str_cat("error: cannot read ", path))
+  else
+    let y = js_to_yac(src) in
+    if js_is_error(y) then print(y)
+    else
+      let out = if out0 == 0 then js_default_out(path) else out0 in
+      let bin = compile(y) in
+      if bin == 0 then print("error: native compilation failed")
+      else
+        let _ = write(out, bin) in
+        print(str_cat("wrote ", out))
+
+/* ---- 帮助 ------------------------------------------------------------ */
+
+let js_help(_) =
+  let _ = print("JavaScript compiler (lang.js + yc.compiler)") in
+  let _ = print("") in
+  let _ = print("  :run FILE              翻译并就地运行") in
+  let _ = print("  :compile FILE [OUT]    翻译并编成本机可执行文件") in
+  let _ = print("  :dump FILE             打印翻译出的 yac 源码") in
+  let _ = print("  :eval JS               执行内联 JS") in
+  let _ = print("  :help                  本帮助") in
+  let _ = print("  :quit / :q             退出") in
+  let _ = print("") in
+  let _ = print("直接输入 JS 会立即求值（每行独立）。") in
+  0
+
+let js_banner(_) =
+  let _ = print("js — JavaScript compiler / REPL  (:help for commands)") in
+  0
+
+/* ---- 命令分发 -------------------------------------------------------- */
+
+/* 返回 1 表示退出。 */
+let js_cmd(line) =
+  let ws = js_words(line) in
+  let n = len(ws) in
+  if n == 0 then 0
+  else
+    let c = nth(ws, 0) in
+    if c == ":q" or c == ":quit" or c == ":exit" then 1
+    else if c == ":help" then js_help(0)
+    else if c == ":run" or c == ":load" then
+      let _ =
+        if n < 2 then print("usage: :run FILE")
+        else js_run_file(nth(ws, 1)) in
+      0
+    else if c == ":compile" then
+      let _ =
+        if n < 2 then print("usage: :compile FILE [OUT]")
+        else js_compile_file(nth(ws, 1), if n >= 3 then nth(ws, 2) else 0) in
+      0
+    else if c == ":dump" then
+      let _ =
+        if n < 2 then print("usage: :dump FILE")
+        else js_dump_file(nth(ws, 1)) in
+      0
+    else if c == ":eval" then
+      let _ =
+        if n < 2 then print("usage: :eval JS")
+        else js_exec(js_tail(line)) in
+      0
+    else
+      let _ = print(str_cat("unknown command '", str_cat(c, "'  (:help)"))) in
+      0
+
+/* ---- 交互循环 -------------------------------------------------------- */
+
+let js_repl(_) =
+  let _ = print("js> ", false) in
+  let line = read_line() in
+  if line == 0 then 0
+  else if js_blank(line) then js_repl(0)
+  else
+    let t = trim(line) in
+    if str_len(t) > 0 and str_ref(t, 0) == 58 then
+      let q = js_cmd(t) in
+      if q == 1 then 0 else js_repl(0)
+    else
+      let _ = js_exec(line) in
+      js_repl(0)
+
+/* ---- 入口：argv 命令（嵌入 host 时）或交互 --------------------------- */
+
+/* 把 argv[i..] 用空格拼成一个字符串（eval 的 JS 正文）。 */
+let js_join_from(i, acc) =
+  if i >= argc() then acc
+  else if acc == "" then js_join_from(i + 1, argv(i))
+  else js_join_from(i + 1, str_cat(acc, str_cat(" ", argv(i))))
+
+/* 命令行解析：--flag 形式。返回 [mode, file, out, eval]。
+ * mode ∈ "" | repl | run | compile | dump | eval | help | version。 */
+let js_scan(i, mode, file, out, ev) =
+  if i >= argc() then [mode, file, out, ev]
+  else
+    let a = argv(i) in
+    if a == "--help" or a == "-h" then js_scan(i + 1, "help", file, out, ev)
+    else if a == "--version" or a == "-V" then js_scan(i + 1, "version", file, out, ev)
+    else if a == "--repl" then js_scan(i + 1, if mode == "" then "repl" else mode, file, out, ev)
+    else if a == "--run" then
+      js_scan(i + 2, if mode == "" then "run" else mode, argv(i + 1), out, ev)
+    else if a == "--compile" then
+      js_scan(i + 2, if mode == "" then "compile" else mode, argv(i + 1), out, ev)
+    else if a == "--dump" then
+      js_scan(i + 2, if mode == "" then "dump" else mode, argv(i + 1), out, ev)
+    else if a == "--eval" then
+      js_scan(argc(), if mode == "" then "eval" else mode, file, out, js_join_from(i + 1, ""))
+    else if a == "--out" or a == "-o" then
+      js_scan(i + 2, mode, file, argv(i + 1), ev)
+    else js_scan(i + 1, mode, file, out, ev)
+
+let js_version(_) =
+  let _ = print("js (app/js) — lang.js + yc.compiler") in
+  0
+
+let js_cli(_) =
+  let p = js_scan(1, "", 0, 0, "") in
+  let mode = nth(p, 0) in
+  let file = nth(p, 1) in
+  let out = nth(p, 2) in
+  let ev = nth(p, 3) in
+  if mode == "help" then js_help(0)
+  else if mode == "version" then js_version(0)
+  else if mode == "run" then
+    let _ = if file == 0 then print("usage: --run FILE") else js_run_file(file) in
+    0
+  else if mode == "compile" then
+    let _ = if file == 0 then print("usage: --compile FILE [--out OUT]")
+            else js_compile_file(file, out) in
+    0
+  else if mode == "dump" then
+    let _ = if file == 0 then print("usage: --dump FILE") else js_dump_file(file) in
+    0
+  else if mode == "eval" then
+    let _ = js_exec(ev) in
+    0
+  else
+    let _ = js_banner(0) in
+    js_repl(0)
+
+let main =
+  let _ = js_cli(0) in
+  exit(0)
+in main

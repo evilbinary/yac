@@ -68,3 +68,4 @@ tmp_tests/v1.yac
 tmp_tests/y1t.yac
 *.asm
 *.lir
+app/js/examples/hello
