@@ -116,7 +116,7 @@ let js_lex_id(src, i, n) =
 
 /* True for the two-character operators the lexer recognises. */
 let js_op2(s) =
-  s == "==" or s == "!=" or s == "<=" or s == ">=" or s == "&&" or s == "||" or s == "+=" or s == "-=" or s == "*=" or s == "/=" or s == "%=" or s == "++" or s == "--" or s == "<<" or s == ">>" or s == "&=" or s == "|=" or s == "^="
+  s == "==" or s == "!=" or s == "<=" or s == ">=" or s == "&&" or s == "||" or s == "+=" or s == "-=" or s == "*=" or s == "/=" or s == "%=" or s == "++" or s == "--" or s == "<<" or s == <<" or s == "&=" or s == "|=" or s == "^="
 
 let js_op3(s) = s == ">>>" or s == "<<=" or s == ">>="
 
@@ -639,6 +639,19 @@ let js_is_str_expr(e, strs) =
     let callee = nth(e, 1) in
     if nth(callee, 0) == "id" then nth(callee, 1) == "String"
     else false
+  else false
+
+/* True when a node is statically known to be a string: a string literal, a
+ * `+` with a string operand, a String(...) call, or an id in `strs` (the
+ * names currently known to hold strings). Used so `s + x` / `s += x` on a
+ * string variable concatenates instead of adding. */
+let js_is_str_expr(e, strs) =
+  let t = nth(e, 0) in
+  if t == "str" then true
+  else if t == "id" then js_in(strs, nth(e, 1))
+  else if t == "bin" and nth(e, 1) == "+" then
+    js_is_str_expr(nth(e, 2), strs) or js_is_str_expr(nth(e, 3), strs)
+  else if t == "call" and nth(nth(e, 1), 0) == "id" and nth(nth(e, 1), 1) == "String" then true
   else false
 
 /* Object key node (id/str/num) -> raw key text. */
