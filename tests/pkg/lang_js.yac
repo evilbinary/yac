@@ -90,12 +90,19 @@ let trim_nl(s) =
   let rec(j) = if j <= 0 then 0 else if str_ref(s, j - 1) == 10 then rec(j - 1) else j in
   str_slice(s, 0, rec(k))
 
-/* Translate, compile to an executable, run it, return its trimmed stdout. */
+/* Translate, compile to an executable, run it, return its trimmed stdout.
+ * Unique temp filenames per call: reusing one path races with the OS still
+ * holding the previous executable (a transient extra pkg failure). */
+let run_seq = box_new()
+let _ = box_set(run_seq, 0)
 let run_js(js) =
+  let n = box_get(run_seq) in
+  let _ = box_set(run_seq, n + 1) in
+  let base = str_cat("build/test_tmp/lang_js_val", int_to_str(n)) in
   let src = js_to_yac(js) in
-  let yf = "build/test_tmp/lang_js_val.yac" in
-  let xf = "build/test_tmp/lang_js_val.exe" in
-  let of = "build/test_tmp/lang_js_val.out" in
+  let yf = str_cat(base, ".yac") in
+  let xf = str_cat(base, ".exe") in
+  let of = str_cat(base, ".out") in
   let _ = write_file(yf, src) in
   let rc = compile_file(yf, xf) in
   if rc != 0 then "<compile_fail>"
@@ -212,3 +219,10 @@ let _ = check("amap", "let a=[1,2,3]; console.log(a.map(function(x){ return x*2;
 
 /* an operator-like string literal must not be parsed as an operator */
 let _ = check("opstr", "console.log('!'); console.log('-');", "!\n-")
+
+/* this / new / prototype chain */
+let _ = check("ctor", "function Point(x,y){ this.x = x; this.y = y; } Point.prototype.sum = function(){ return this.x + this.y; }; let p = new Point(3,4); console.log(p.sum());", "7")
+let _ = check("new_noargs", "function C(){ this.n = 5; } let c = new C(); console.log(c.n);", "5")
+let _ = check("proto_method", "function A(){ this.v = 1; } A.prototype.get = function(){ return this.v; }; console.log((new A()).get());", "1")
+let _ = check("two_instances", "function P(x){ this.x = x; } P.prototype.dbl = function(){ return this.x*2; }; let a=new P(10); let b=new P(20); console.log(a.dbl()); console.log(b.dbl());", "20\n40")
+let _ = check("method_chain", "function Counter(){ this.n = 0; } Counter.prototype.inc = function(){ this.n = this.n + 1; return this; }; let c = new Counter(); c.inc(); c.inc(); console.log(c.n);", "2")
