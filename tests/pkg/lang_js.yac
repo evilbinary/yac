@@ -261,6 +261,18 @@ let _ = check("forin_count", "let o={a:1,b:2}; let n=0; for(k in o){ n=n+1; } co
 let _ = check("obj_create", "function A(){} A.prototype.m = function(){ return 5; }; let o = Object.create(A.prototype); console.log(o.m());", "5")
 let _ = check("forin_break", "let o={a:1,b:2,c:3}; let n=0; for(let k in o){ n=n+1; if(n==1){break;} } console.log(n);", "1")
 
+/* JSON (via the js_native dispatch) + object/array runtime distinction */
+let _ = check("json_str", "console.log(JSON.stringify('hi'));", "\"hi\"")
+let _ = check("json_num", "console.log(JSON.stringify(5));", "5")
+let _ = check("json_arr", "console.log(JSON.stringify([1,2,3]));", "[1,2,3]")
+let _ = check("json_obj", "console.log(JSON.stringify({a:1}));", "{\"a\":1}")
+let _ = check("json_parse_num", "console.log(JSON.parse('7'));", "7")
+let _ = check("json_parse_str", "console.log(JSON.parse('\"x\"'));", "x")
+let _ = check("json_parse_arr", "console.log(JSON.parse('[1,2,3]')[1]);", "2")
+let _ = check("json_parse_obj", "console.log(JSON.parse('{\"a\":5}').a);", "5")
+let _ = check("isarray", "console.log(Array.isArray([1,2]));", "true")
+let _ = check("isarray_obj", "console.log(Array.isArray({a:1}));", "false")
+
 /* Array.sort / String.replace / String.search / isNaN */
 let _ = check("sort", "let a=[3,1,2]; a.sort(); console.log(a.join(','));", "1,2,3")
 let _ = check("sort_cmp", "let a=[1,3,2]; a.sort(function(x,y){ return y-x; }); console.log(a.join(','));", "3,2,1")

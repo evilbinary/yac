@@ -640,7 +640,7 @@ let js_is_boolish(e) =
     let c = nth(e, 1) in
     if nth(c, 0) == "mem" then
       let m = nth(c, 2) in
-      m == "startsWith" or m == "endsWith" or m == "includes"
+      m == "startsWith" or m == "endsWith" or m == "includes" or m == "isArray"
     else if nth(c, 0) == "id" then
       let f = nth(c, 1) in
       f == "isNaN" or f == "isFinite"
@@ -738,7 +738,7 @@ let js_emit_expr(e, ctx, st) =
     if t == "id" then js_cat(["box_get(", js_mangle(nth(tgt, 1)), ")"])
     else if t == "mem" then
       let _ = box_set(st_fmap(st), 1) in
-      js_cat(["fmap_get(", js_emit_expr(nth(tgt, 1), ctx, st), ", \"", js_esc(nth(tgt, 2)), "\")"])
+      js_cat(["fmap_get(nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", 1), \"", js_esc(nth(tgt, 2)), "\")"])
     else if t == "idx" then js_cat(["nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", ", js_emit_expr(nth(tgt, 2), ctx, st), ")"])
     else "0"
   in
@@ -747,7 +747,7 @@ let js_emit_expr(e, ctx, st) =
     if t == "id" then js_cat(["(let _ = box_set(", js_mangle(nth(tgt, 1)), ", ", vs, ") in ", vs, ")"])
     else if t == "mem" then
       let _ = box_set(st_fmap(st), 1) in
-      js_cat(["(let _ = fmap_put(", js_emit_expr(nth(tgt, 1), ctx, st), ", \"", js_esc(nth(tgt, 2)), "\", ", vs, ") in ", vs, ")"])
+      js_cat(["(let _ = fmap_put(nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", 1), \"", js_esc(nth(tgt, 2)), "\", ", vs, ") in ", vs, ")"])
     else if t == "idx" then
       js_cat(["(let _ = list_set(", js_emit_expr(nth(tgt, 1), ctx, st), ", ", js_emit_expr(nth(tgt, 2), ctx, st), ", ", vs, ") in ", vs, ")"])
     else vs
@@ -759,6 +759,26 @@ let js_emit_expr(e, ctx, st) =
       else if i == len(args) - 1 then js_emit_expr(nth(args, i), ctx, st)
       else js_cat([js_emit_expr(nth(args, i), ctx, st), ", ", go(i + 1)]) in
     if len(args) == 0 then "0" else go(0)
+  in
+  /* A callee object name in UpperCamelCase is a JS built-in object (JSON,
+   * Date, String, Number, RegExp, …). Method calls on it are dispatched
+   * through lang.jslib's `js_native`, so adding an object/method library needs
+   * no change here -- only a branch in js_native. `Math` and `Object` keep
+   * their inline fast paths. */
+  let builtin_name(obj) =
+    let nm = if nth(obj, 0) == "id" then nth(obj, 1) else "" in
+    if nm == "" then ""
+    else
+      let c = str_ref(nm, 0) in
+      if c >= 65 and c <= 90 then nm else ""
+  in
+  /* `[a, b, …]` for js_native's argument list. */
+  let args_arr(args) =
+    let go(i) =
+      if i >= len(args) then ""
+      else if i == len(args) - 1 then js_emit_expr(nth(args, i), ctx, st)
+      else js_cat([js_emit_expr(nth(args, i), ctx, st), ", ", go(i + 1)]) in
+    if len(args) == 0 then "[]" else js_cat(["[", go(0), "]"])
   in
   /* Method dispatch for `obj.m(args)`. String vs array is decided statically
    * (string literal or a name known to hold a string); else assume array.
@@ -816,15 +836,15 @@ let js_emit_expr(e, ctx, st) =
     else
       let is_obj =
         if nth(obj, 0) == "id" then nth(obj, 1) == "Object" else false in
-      let is_date = if nth(obj, 0) == "id" then nth(obj, 1) == "Date" else false in
-      let is_str_ctor = if nth(obj, 0) == "id" then nth(obj, 1) == "String" else false in
-      if is_date then
+      let bn = builtin_name(obj) in
+      let is_builtin =
+        if bn == "" then false
+        else if bn == "Object" then false
+        else if bn == "Math" then false
+        else true in
+      if is_builtin then
         (let _ = box_set(st_jslib(st), 1) in
-         if m == "now" then "js_date_now(0)" else failm(m))
-      else if is_str_ctor then
-        (if m == "fromCharCode" then
-           (let _ = box_set(st_jslib(st), 1) in js_cat(["js_from_char_code(", a0, ")"]))
-         else failm(m))
+         js_cat(["js_native(\"", bn, "\", \"", js_esc(m), "\", ", args_arr(args), ")"]))
       else if is_obj then
         (let _ = box_set(st_obj(st), 1) in
          let _ = box_set(st_fmap(st), 1) in
@@ -876,16 +896,17 @@ let js_emit_expr(e, ctx, st) =
       else go(tail(ys), js_cat([acc, "let _ = list_push(", a, ", ", js_emit_expr(nth(ys, 0), ctx, st), ") in "])) in
     go(nth(e, 1), "")
   else if tag == "obj" then
-    /* Object literal: a fresh fmap plus one fmap_put per pair. */
+    /* Object literal: a tagged object (["$o", fmap]), one fmap_put per pair. */
     let o = js_fresh(st, "obj") in
     let _ = box_set(st_fmap(st), 1) in
+    let _ = box_set(st_obj(st), 1) in
     let go(ys, acc) =
-      if len(ys) == 0 then js_cat(["(let ", o, " = fmap_new(0) in ", acc, o, ")"])
+      if len(ys) == 0 then js_cat(["(let ", o, " = _js_obj(0) in ", acc, o, ")"])
       else
         let pair = nth(ys, 0) in
         let ks = js_lit_quote(nth(pair, 0)) in
         let vs = js_emit_expr(nth(pair, 1), ctx, st) in
-        go(tail(ys), js_cat([acc, "let _ = fmap_put(", o, ", \"", js_esc(ks), "\", ", vs, ") in "])) in
+        go(tail(ys), js_cat([acc, "let _ = fmap_put(nth(", o, ", 1), \"", js_esc(ks), "\", ", vs, ") in "])) in
     go(nth(e, 1), "")
   else if tag == "un" then
     let op = nth(e, 1) in
@@ -971,8 +992,8 @@ let js_emit_expr(e, ctx, st) =
       else if op == ">>" then js_cat(["bshr(", ls, ", ", rs, ")"])
       else if op == ">>>" then js_cat(["bshr(", ls, ", ", rs, ")"])
       else if op == "in" then
-        let _ = box_set(st_fmap(st), 1) in
-        js_cat(["fmap_get(", rs, ", ", ls, ") != 0"])
+        let _ = box_set(st_obj(st), 1) in
+        js_cat(["_js_get(", rs, ", ", ls, ") != 0"])
       else if op == "instanceof" then "0"
       else js_cat(["(", ls, " ", op, " ", rs, ")"])
   else if tag == "cond" then
@@ -1034,7 +1055,7 @@ let js_emit_expr(e, ctx, st) =
       if t == "id" then js_cat(["box_get(", js_mangle(nth(tgt, 1)), ")"])
       else if t == "mem" then
         let _ = box_set(st_fmap(st), 1) in
-        js_cat(["fmap_get(", js_emit_expr(nth(tgt, 1), ctx, st), ", \"", js_esc(nth(tgt, 2)), "\")"])
+        js_cat(["fmap_get(nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", 1), \"", js_esc(nth(tgt, 2)), "\")"])
       else if t == "idx" then js_cat(["nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", ", js_emit_expr(nth(tgt, 2), ctx, st), ")"])
       else "0" in
     let rhs =
@@ -1063,7 +1084,7 @@ let js_emit_expr(e, ctx, st) =
       js_cat(["(let _v = ", rhs, " in (let _ = box_set(", js_mangle(nth(tgt, 1)), ", _v) in _v))"])
     else if t == "mem" then
       let _ = box_set(st_fmap(st), 1) in
-      js_cat(["(let _v = ", rhs, " in (let _ = fmap_put(", js_emit_expr(nth(tgt, 1), ctx, st), ", \"", js_esc(nth(tgt, 2)), "\", _v) in _v))"])
+      js_cat(["(let _v = ", rhs, " in (let _ = fmap_put(nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", 1), \"", js_esc(nth(tgt, 2)), "\", _v) in _v))"])
     else if t == "idx" then
       js_cat(["(let _v = ", rhs, " in (let _ = list_set(", js_emit_expr(nth(tgt, 1), ctx, st), ", ", js_emit_expr(nth(tgt, 2), ctx, st), ", _v) in _v))"])
     else js_cat(["(let _v = ", rhs, " in _v)"])
@@ -1334,7 +1355,9 @@ let js_to_yac(src) =
   let _ = box_set(ujslib, 0) in
   let utruth = box_new() in
   let _ = box_set(utruth, 0) in
-  let st = [err, ns, ufmap, umath, ustr, ubool, utype, ulib, ustrpkg, uobj, ujslib, utruth] in
+  let ubuiltin = box_new() in
+  let _ = box_set(ubuiltin, 0) in
+  let st = [err, ns, ufmap, umath, ustr, ubool, utype, ulib, ustrpkg, uobj, ujslib, utruth, ubuiltin] in
   let _ = box_set(js_stmts_parse_box, js_parse_stmts) in
   let _ = box_set(js_stmts_box, js_emit_stmts) in
   let toks = js_lex(src) in
@@ -1349,9 +1372,9 @@ let js_to_yac(src) =
     let h6 = if box_get(ustrpkg) == 1 then "import text.str { split, starts_with, ends_with, join, trim, find, contains }\n" else "" in
     let h8 =
       if box_get(uobj) == 1 then
-        "let _js_this = box_new()\nlet _js_protos = box_new()\nlet _js_proto(nm) =\n  let m = box_get(_js_protos) in\n  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_protos, x) in x)) else m in\n  let p = fmap_get(m2, nm) in\n  if p == 0 then (let x = fmap_new(0) in (let _ = fmap_put(m2, nm, x) in x)) else p\nlet _js_obj(proto) =\n  let m = fmap_new(0) in\n  let _ = fmap_put(m, \"__proto__\", proto) in\n  m\nlet _js_get(o, k) =\n  let v = fmap_get(o, k) in\n  if v != 0 then v\n  else\n    let p = fmap_get(o, \"__proto__\") in\n    if p == 0 then 0 else _js_get(p, k)\nlet _js_keys(m) =\n  if is_int(m) then list_new()\n  else\n    let vec = nth(m, 0) in\n    let cap = nth(m, 2) in\n    let r = list_new() in\n    let rec(i) =\n      if i >= cap then r\n      else\n        let e = nth(vec, i) in\n        let _ = if e == 0 then 0 else list_push(r, nth(e, 0)) in\n        rec(i + 1) in\n    rec(0)\n"
+        "let _js_this = box_new()\nlet _js_protos = box_new()\nlet _js_obj(proto) =\n  let m = fmap_new(0) in\n  let _ = fmap_put(m, \"__proto__\", proto) in\n  [\"$o\", m]\nlet _js_get(o, k) =\n  if o == 0 then 0\n  else\n    let m = nth(o, 1) in\n    let v = fmap_get(m, k) in\n    if v != 0 then v\n    else\n      let p = fmap_get(m, \"__proto__\") in\n      if p == 0 then 0 else _js_get(p, k)\nlet _js_keys(o) =\n  if is_int(o) then list_new()\n  else\n    let m = nth(o, 1) in\n    let vec = nth(m, 0) in\n    let cap = nth(m, 2) in\n    let r = list_new() in\n    let rec(i) =\n      if i >= cap then r\n      else\n        let e = nth(vec, i) in\n        let _ =\n          if e == 0 then 0\n          else\n            let kk = nth(e, 0) in\n            if kk == \"__proto__\" then 0 else list_push(r, kk) in\n        rec(i + 1) in\n    rec(0)\nlet _js_proto(nm) =\n  let m = box_get(_js_protos) in\n  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_protos, x) in x)) else m in\n  let p = fmap_get(m2, nm) in\n  if p == 0 then (let x = _js_obj(0) in (let _ = fmap_put(m2, nm, x) in x)) else p\n"
       else "" in
-    let h10 = if box_get(ujslib) == 1 then "import lang.jslib { js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_date_now, js_from_char_code }\n" else "" in
+    let h10 = if box_get(ujslib) == 1 then "import lang.jslib { js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_native }\n" else "" in
     let hjsrt =
       if box_get(ustr) == 1 or box_get(ubool) == 1 or box_get(utype) == 1 or box_get(ulib) == 1 or box_get(utruth) == 1 then
         "import lang.jsrt { _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_lower, _js_repeat, _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each, _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_str_replace, _js_isnan }\n"

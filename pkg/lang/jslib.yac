@@ -1,16 +1,14 @@
-/* jslib.yac — JavaScript standard-library surface for lang.js output.
+/* jslib.yac — JavaScript standard library for lang.js output.
  *
- * Global functions and host-backed objects that the translator maps JS
- * builtins onto. Kept separate from jsrt.yac (value/runtime helpers) and
- * js.yac (the translator) so a generated program imports a small, stable API.
- *
- * Feasible today: parseInt / parseFloat, isNaN / isFinite, Date.now,
- * String.fromCharCode. Math already maps to num.math directly. JSON is not
- * here yet: telling our int / string / list(fmap) representations apart needs
- * type predicates the runtime does not expose. */
-
+ * Global functions (parseInt / parseFloat / isNaN / isFinite) and host-backed
+ * built-in objects (Date.now, String.fromCharCode) live here, plus the JSON
+ * object. Math maps onto num.math directly (see js.yac). Kept separate from
+ * jsrt.yac (stateless value/array/string helpers). */
 package lang.jslib
-export js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_date_now, js_from_char_code
+export js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_date_now, js_from_char_code,
+  js_native, js_json_stringify, js_json_parse
+import data.fmap { fmap_new, fmap_get, fmap_put }
+import num.math { ftoi }
 
 /* Decimal integer parse: optional leading '-', then digits (stops at the first
  * non-digit, like parseInt without a radix). */
@@ -34,6 +32,214 @@ let js_is_nan(x) = x != x
 
 let js_is_finite(x) = x == x
 
+/* Date.now() -- milliseconds since the epoch. */
 let js_date_now(_) = time_ms()
 
+/* String.fromCharCode(c) -- code point to a one-char string. */
 let js_from_char_code(c) = str_chr(c)
+
+/* ---- JSON.stringify --------------------------------------------------- */
+
+/* Objects are tagged ["$o", fmap]; arrays are cons/listbufs. */
+let js_json_is_obj(x) =
+  let k = kind(x) in
+  (k == 2 or k == 5) and len(x) > 0 and nth(x, 0) == "$o"
+
+let js_json_quote(s) =
+  let b = bytes_new() in
+  let _ = bytes_append(b, 34) in
+  let n = str_len(s) in
+  let rec(i) =
+    if i >= n then 0
+    else
+      let c = str_ref(s, i) in
+      let _ =
+        if c == 34 then (let _ = bytes_append(b, 92) in bytes_append(b, 34))
+        else if c == 92 then (let _ = bytes_append(b, 92) in bytes_append(b, 92))
+        else if c == 10 then (let _ = bytes_append(b, 92) in bytes_append(b, 110))
+        else if c == 9 then (let _ = bytes_append(b, 92) in bytes_append(b, 116))
+        else bytes_append(b, c) in
+      rec(i + 1) in
+  let _ = rec(0) in
+  let _ = bytes_append(b, 34) in
+  bytes_to_str(b)
+
+/* Value -> JSON text. int/string/float are leaves; bool and null share the int
+ * representation, so they stringify as numbers (a known limitation). */
+let js_json_stringify(x) =
+  let arr_go(a, i, n) =
+    if i >= n then ""
+    else if i == 0 then str_cat(js_json_stringify(nth(a, i)), arr_go(a, i + 1, n))
+    else str_cat(",", str_cat(js_json_stringify(nth(a, i)), arr_go(a, i + 1, n))) in
+  let obj_go(m, i, cap, first) =
+    if i >= cap then ""
+    else
+      let e = nth(nth(m, 0), i) in
+      if e == 0 then obj_go(m, i + 1, cap, first)
+      else
+        let kk = nth(e, 0) in
+        if kk == "__proto__" then obj_go(m, i + 1, cap, first)
+        else
+          let piece = str_cat(js_json_quote(kk), str_cat(":", js_json_stringify(nth(e, 1)))) in
+          if first == 1 then str_cat(piece, obj_go(m, i + 1, cap, 0))
+          else str_cat(",", str_cat(piece, obj_go(m, i + 1, cap, 0))) in
+  let k = kind(x) in
+  if k == 3 then js_json_quote(x)
+  else if k == 0 then int_to_str(x)
+  else if k == 7 then int_to_str(ftoi(x))
+  else if js_json_is_obj(x) then
+    str_cat("{", str_cat(obj_go(nth(x, 1), 0, nth(nth(x, 1), 2), 1), "}"))
+  else if k == 2 or k == 5 then str_cat("[", str_cat(arr_go(x, 0, len(x)), "]"))
+  else "null"
+
+/* ---- JSON.parse ------------------------------------------------------- */
+
+let jw_ws(c) = c == 32 or c == 9 or c == 10 or c == 13
+
+let jw_skip(s, i) =
+  if i >= str_len(s) then i
+  else if jw_ws(str_ref(s, i)) then jw_skip(s, i + 1)
+  else i
+
+let jw_str_go(s, i, acc) =
+  let n = str_len(s) in
+  if i >= n then 0
+  else
+    let c = str_ref(s, i) in
+    if c == 34 then [bytes_to_str(acc), i + 1]
+    else if c == 92 then
+      if i + 1 >= n then 0
+      else
+        let e = str_ref(s, i + 1) in
+        let ch = if e == 110 then 10 else if e == 116 then 9 else if e == 34 then 34 else if e == 92 then 92 else e in
+        let _ = bytes_append(acc, ch) in
+        jw_str_go(s, i + 2, acc)
+    else
+      let _ = bytes_append(acc, c) in
+      jw_str_go(s, i + 1, acc)
+
+let jw_str(s, i) =
+  if i >= str_len(s) then 0
+  else if str_ref(s, i) != 34 then 0
+  else jw_str_go(s, i + 1, bytes_new())
+
+let jw_skip_digits(s, i) =
+  let n = str_len(s) in
+  if i < n and str_ref(s, i) >= 48 and str_ref(s, i) <= 57 then jw_skip_digits(s, i + 1) else i
+
+/* Integer part; a fraction/exponent is skipped (truncated to int). */
+let jw_num_go(s, i, acc, started) =
+  let n = str_len(s) in
+  if i >= n then (if started == 0 then 0 else [acc, i])
+  else
+    let c = str_ref(s, i) in
+    if c >= 48 and c <= 57 then jw_num_go(s, i + 1, acc * 10 + (c - 48), 1)
+    else if c == 46 then jw_num_go(s, jw_skip_digits(s, i + 1), acc, started)
+    else if c == 101 or c == 69 then
+      let k = i + 1 in
+      let k2 = if k < n and (str_ref(s, k) == 43 or str_ref(s, k) == 45) then k + 1 else k in
+      jw_num_go(s, jw_skip_digits(s, k2), acc, started)
+    else if started == 0 then 0
+    else [acc, i]
+
+let jw_num(s, i) =
+  if i >= str_len(s) then 0
+  else if str_ref(s, i) == 45 then
+    (let r = jw_num_go(s, i + 1, 0, 0) in
+     if r == 0 then 0 else [0 - nth(r, 0), nth(r, 1)])
+  else jw_num_go(s, i, 0, 0)
+
+let jw_word(s, i, w) =
+  let m = str_len(w) in
+  if i + m > str_len(s) then 0 - 1
+  else if str_slice(s, i, m) == w then i + m
+  else 0 - 1
+
+let jw_putall(m, ps) =
+  if len(ps) == 0 then 0
+  else
+    let p = nth(ps, 0) in
+    let _ = fmap_put(m, nth(p, 0), nth(p, 1)) in
+    jw_putall(m, tail(ps))
+
+/* op 0=value, 1=array body, 2=object body. Self-recursive. */
+let jw_work(op, s, i, acc) =
+  let n = str_len(s) in
+  if op == 0 then
+    let j = jw_skip(s, i) in
+    if j >= n then 0
+    else
+      let c = str_ref(s, j) in
+      if c == 34 then jw_str(s, j)
+      else if c == 91 then jw_work(1, s, j + 1, [])
+      else if c == 123 then jw_work(2, s, j + 1, [])
+      else if c == 116 then (let k = jw_word(s, j, "true") in if k < 0 then 0 else [true, k])
+      else if c == 102 then (let k = jw_word(s, j, "false") in if k < 0 then 0 else [false, k])
+      else if c == 110 then (let k = jw_word(s, j, "null") in if k < 0 then 0 else [0, k])
+      else jw_num(s, j)
+  else if op == 1 then
+    let j = jw_skip(s, i) in
+    if j >= n then 0
+    else if str_ref(s, j) == 93 then [list_rev(acc), j + 1]
+    else
+      let r = jw_work(0, s, j, 0) in
+      if r == 0 then 0
+      else
+        let k = jw_skip(s, nth(r, 1)) in
+        if k >= n then 0
+        else if str_ref(s, k) == 44 then jw_work(1, s, k + 1, cons(nth(r, 0), acc))
+        else if str_ref(s, k) == 93 then [list_rev(cons(nth(r, 0), acc)), k + 1]
+        else 0
+  else
+    let j = jw_skip(s, i) in
+    if j >= n then 0
+    else if str_ref(s, j) == 125 then
+      (let m = fmap_new(0) in (let _ = jw_putall(m, list_rev(acc)) in [["$o", m], j + 1]))
+    else
+      let kr = jw_str(s, j) in
+      if kr == 0 then 0
+      else
+        let c = jw_skip(s, nth(kr, 1)) in
+        if c >= n then 0
+        else if str_ref(s, c) != 58 then 0
+        else
+          let vr = jw_work(0, s, c + 1, 0) in
+          if vr == 0 then 0
+          else
+            let pair = [nth(kr, 0), nth(vr, 0)] in
+            let k = jw_skip(s, nth(vr, 1)) in
+            if k >= n then 0
+            else if str_ref(s, k) == 44 then jw_work(2, s, k + 1, cons(pair, acc))
+            else if str_ref(s, k) == 125 then
+              (let m = fmap_new(0) in (let _ = jw_putall(m, list_rev(cons(pair, acc))) in [["$o", m], k + 1]))
+            else 0
+
+let js_json_parse(s) =
+  let r = jw_work(0, s, 0, 0) in
+  if r == 0 then 0
+  else
+    let k = jw_skip(s, nth(r, 1)) in
+    if k == str_len(s) then nth(r, 0) else 0
+
+/* ---- built-in object dispatch ----------------------------------------- */
+
+/* `js_native("JSON", "stringify", [x])` etc. Generated code routes every
+ * UpperCamelCase object method here, so adding an object or method is a change
+ * to this one function; a new object needs no translator registration beyond
+ * being UpperCamelCase. Math / Object keep their inline fast paths. */
+let js_native(obj, m, args) =
+  if obj == "Date" then
+    (if m == "now" then js_date_now(0) else 0)
+  else if obj == "String" then
+    (if m == "fromCharCode" then js_from_char_code(nth(args, 0)) else 0)
+  else if obj == "JSON" then
+    (if m == "stringify" then js_json_stringify(nth(args, 0))
+     else if m == "parse" then js_json_parse(nth(args, 0))
+     else 0)
+  else if obj == "Array" then
+    (if m == "isArray" then
+       (let x = nth(args, 0) in
+        let k = kind(x) in
+        if (k == 2 or k == 5) and not js_json_is_obj(x) then true else false)
+     else 0)
+  else 0
