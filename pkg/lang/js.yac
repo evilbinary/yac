@@ -291,6 +291,18 @@ let js_parse_expr(toks, i, min, st) =
     else
       let r = js_parse_expr(toks, j, 0, st) in
       [[["ret", nth(r, 0)]], nth(r, 1)] in
+  let pdef(jj, acc) =
+    if js_is(toks, jj, ")") then [list_rev(acc), jj + 1]
+    else
+      let nm = js_t(js_at(toks, jj)) in
+      let j2 = jj + 1 in
+      if js_is(toks, j2, "=") then
+        let r = js_parse_expr(toks, j2 + 1, 0, st) in
+        let j3 = nth(r, 1) in
+        let a2 = cons([nm, nth(r, 0)], acc) in
+        if js_is(toks, j3, ",") then pdef(j3 + 1, a2) else [list_rev(a2), j3 + 1]
+      else if js_is(toks, j2, ",") then pdef(j2 + 1, cons(nm, acc))
+      else [list_rev(cons(nm, acc)), j2 + 1] in
   let tmpl_parts(raw) =
     let n = str_len(raw) in
     let find(j, depth, instr, q) =
@@ -340,12 +352,7 @@ let js_parse_expr(toks, i, min, st) =
         let nm = if js_k(js_at(toks, jn)) == "id" then js_t(js_at(toks, jn)) else "" in
         let jparen = if nm == "" then jn else jn + 1 in
         let j2 = if js_is(toks, jparen, "(") then jparen + 1 else jparen in
-        let ps(jj, acc) =
-          if js_is(toks, jj, ")") then [list_rev(acc), jj + 1]
-          else
-            let j3 = if js_is(toks, jj + 1, ",") then jj + 2 else jj + 1 in
-            ps(j3, cons(js_t(js_at(toks, jj)), acc)) in
-        let pr = ps(j2, []) in
+        let pr = pdef(j2, []) in
         let bd = js_parse_stmts_v(toks, nth(pr, 1) + 1, ["list", "}"], st) in
         [["funexpr", nm, nth(pr, 0), nth(bd, 0)], nth(bd, 1)]
       else if tx == "true" or tx == "false" then [["bool", tx], i + 1]
@@ -407,12 +414,7 @@ let js_parse_expr(toks, i, min, st) =
                 else ["str", ""] in
               let j2 = j + 1 in
               if js_is(toks, j2, "(") then
-                let ps(jj, a2) =
-                  if js_is(toks, jj, ")") then [list_rev(a2), jj + 1]
-                  else
-                    let j3 = if js_is(toks, jj + 1, ",") then jj + 2 else jj + 1 in
-                    ps(j3, cons(js_t(js_at(toks, jj)), a2)) in
-                let pr = ps(j2 + 1, []) in
+                let pr = pdef(j2 + 1, []) in
                 let bd = js_parse_stmts_v(toks, nth(pr, 1) + 1, ["list", "}"], st) in
                 [key, ["funexpr", "", nth(pr, 0), nth(bd, 0)], nth(bd, 1)]
               else if js_is(toks, j2, ":") then
@@ -574,13 +576,19 @@ let js_parse_stmts(toks, i, mode, st) =
       /* function name(params) { … } — body is the braces' interior. */
       let nm = js_t(js_at(toks, j + 1)) in
       let j2 = j + 3 in
-      let ps(jj, acc) =
+      let pdef(jj, acc) =
         if js_is(toks, jj, ")") then [list_rev(acc), jj + 1]
         else
           let pt = js_at(toks, jj) in
-          let j3 = if js_is(toks, jj + 1, ",") then jj + 2 else jj + 1 in
-          ps(j3, cons(js_t(pt), acc)) in
-      let pr = ps(j2, []) in
+          let j3 = jj + 1 in
+          if js_is(toks, j3, "=") then
+            let r = js_parse_expr(toks, j3 + 1, 0, st) in
+            let j4 = nth(r, 1) in
+            let a2 = cons([js_t(pt), nth(r, 0)], acc) in
+            if js_is(toks, j4, ",") then pdef(j4 + 1, a2) else [list_rev(a2), j4 + 1]
+          else if js_is(toks, j3, ",") then pdef(j3 + 1, cons(js_t(pt), acc))
+          else [list_rev(cons(js_t(pt), acc)), j3 + 1] in
+      let pr = pdef(j2, []) in
       let body = js_parse_stmts(toks, nth(pr, 1) + 1, ["list", "}"], st) in
       [["func", nm, nth(pr, 0), nth(body, 0)], nth(body, 1)]
     else if tx == "{" then
@@ -799,6 +807,23 @@ let js_stmts_box =
 
 let js_call_stmts(stmts, ctx, k, st) = (box_get(js_stmts_box))(stmts, ctx, k, st)
 
+/* js_emit_expr is defined after js_func_body (needed there for param default
+ * expressions), so it too is reached through a box filled by js_to_yac. */
+let js_expr_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let js_call_expr(e, ctx, st) = (box_get(js_expr_box))(e, ctx, st)
+
+/* Param node: a plain name (string, kind 3) or [name, defaultExpr]. */
+let js_pname(p) = if kind(p) == 3 then p else nth(p, 0)
+
+let js_pnames(ps) =
+  let n = len(ps) in
+  let go(i, acc) = if i >= n then list_rev(acc) else go(i + 1, cons(js_pname(nth(ps, i)), acc)) in
+  go(0, [])
+
 /* Bind each param to a fresh box, create fresh return flag/value boxes (flag
  * initialised to false), then the body. Returns [param-signature, body-expr].
  * Shared by function declarations and function expressions; a function has no
@@ -819,9 +844,16 @@ let js_func_body(ps, body, ctx, st) =
   let wrap(i, inner) =
     if i < 0 then inner
     else
-      let m = js_mangle(nth(ps, i)) in
-      let p = nth(pnames, i) in
-      wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", p, ") in ", inner, "))"])) in
+      let p = nth(ps, i) in
+      let m = js_mangle(js_pname(p)) in
+      let pv = nth(pnames, i) in
+      let binder =
+        if kind(p) == 3 then pv
+        else
+          let dv = js_call_expr(nth(p, 1), ctx3, st) in
+          let tmp = str_cat("_def", int_to_str(i)) in
+          js_cat(["(let ", tmp, " = ", pv, " in if ", tmp, " == 0 then ", dv, " else ", tmp, ")"]) in
+      wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", binder, ") in ", inner, "))"])) in
   [js_join(pnames, ", ", 0, ""), wrap(len(ps) - 1, b2)]
 
 /* ---- expression emitter ---------------------------------------------- */
@@ -1492,6 +1524,7 @@ let js_to_yac(src) =
   let st = [err, ns, ufmap, umath, ustr, ubool, utype, ulib, ustrpkg, uobj, ujslib, utruth, ubuiltin] in
   let _ = box_set(js_stmts_parse_box, js_parse_stmts) in
   let _ = box_set(js_stmts_box, js_emit_stmts) in
+  let _ = box_set(js_expr_box, js_emit_expr) in
   let toks = js_lex(src) in
   let r = js_parse_stmts(toks, 0, ["list", 0], st) in
   let body = js_emit_stmts(nth(r, 0), [[], [], 0, 0, [], 0], "0", st) in

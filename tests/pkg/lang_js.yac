@@ -227,6 +227,12 @@ let _ = check("obj_computed", "let k='x'; let o={[k]:5}; console.log(o.x);", "5"
 let _ = check("obj_method", "let o={m(){ return 7; }}; console.log(o.m());", "7")
 let _ = check("obj_mixed", "let k='y'; let o={[k]:1, z:2}; console.log(o.y+o.z);", "3")
 
+/* ES6 default parameters */
+let _ = check("default_missing", "function f(a=2){ return a; } console.log(f());", "2")
+let _ = check("default_given", "function f(a=2){ return a; } console.log(f(7));", "7")
+let _ = check("default_expr", "let g = function(x=1){return x;}; console.log(g());", "1")
+let _ = check("default_method", "let o={m(x=3){return x;}}; console.log(o.m());", "3")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")
