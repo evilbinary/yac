@@ -234,3 +234,10 @@ let _ = check("fn_throw", "function f(){ throw 42; } try { f(); console.log('no'
 let _ = check("catch_finally", "try { throw 1; } catch(e){ console.log('c', e); } finally { console.log('fin'); }", "c 1\nfin")
 let _ = check("try_finally", "try { console.log('a'); } finally { console.log('fin'); }", "a\nfin")
 let _ = check("loop_throw", "try { for(let i=0;i<3;i=i+1){ if(i==1){ throw i; } console.log('i', i); } } catch(e){ console.log('caught', e); }", "i 0\ncaught 1")
+
+/* for...in / Object.keys / Object.create */
+let _ = check("objkeys", "let o={a:1,b:2,c:3}; console.log(Object.keys(o).length);", "3")
+let _ = check("forin_sum", "let o={a:1,b:2,c:3}; let s=0; for(let k in o){ s = s + o[k]; } console.log(s);", "6")
+let _ = check("forin_count", "let o={a:1,b:2}; let n=0; for(k in o){ n=n+1; } console.log(n);", "2")
+let _ = check("obj_create", "function A(){} A.prototype.m = function(){ return 5; }; let o = Object.create(A.prototype); console.log(o.m());", "5")
+let _ = check("forin_break", "let o={a:1,b:2,c:3}; let n=0; for(let k in o){ n=n+1; if(n==1){break;} } console.log(n);", "1")
