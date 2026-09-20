@@ -233,6 +233,14 @@ let _ = check("default_given", "function f(a=2){ return a; } console.log(f(7));"
 let _ = check("default_expr", "let g = function(x=1){return x;}; console.log(g());", "1")
 let _ = check("default_method", "let o={m(x=3){return x;}}; console.log(o.m());", "3")
 
+/* ES6 destructuring */
+let _ = check("destr_arr", "let [a,b] = [1,2]; console.log(a+b);", "3")
+let _ = check("destr_obj", "let {x,y} = {x:4,y:5}; console.log(x+y);", "9")
+let _ = check("destr_shorthand", "let {p} = {p:6}; console.log(p);", "6")
+let _ = check("destr_nested", "let [[a],[b]] = [[1],[2]]; console.log(a+b);", "3")
+let _ = check("destr_mixed", "let {a, b:[c]} = {a:1, b:[2]}; console.log(a+c);", "3")
+let _ = check("destr_elision", "let [,b] = [1,2]; console.log(b);", "2")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")
