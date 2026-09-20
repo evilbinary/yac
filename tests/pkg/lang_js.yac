@@ -202,6 +202,25 @@ let _ = check("or_value", "console.log(0 || 'd');", "d")
 let _ = check("and_value", "console.log(0 && 'd');", "0")
 let _ = check("and_value2", "console.log(1 && 2);", "2")
 
+/* ES6 arrow functions */
+let _ = check("arrow1", "let f = x => x + 1; console.log(f(2));", "3")
+let _ = check("arrow2", "let g = (a, b) => a * b; console.log(g(3,4));", "12")
+let _ = check("arrow0", "let h = () => 5; console.log(h());", "5")
+let _ = check("arrowblock", "let k = x => { return x * 2; }; console.log(k(5));", "10")
+let _ = check("arrowmap", "console.log([1,2,3].map(x => x * 2).join(','));", "2,4,6")
+
+/* ES6 template literals */
+let _ = check("tmpl_plain", "console.log(`hi`);", "hi")
+let _ = check("tmpl_expr", "console.log(`a${1+2}b`);", "a3b")
+let _ = check("tmpl_num", "console.log(`x=${5}`);", "x=5")
+let _ = check("tmpl_str", "let s='q'; console.log(`${s}!`);", "q!")
+
+/* ES6 exponentiation */
+let _ = check("pow", "console.log(2 ** 3);", "8")
+let _ = check("powr", "console.log(2 ** 3 ** 2);", "512")
+let _ = check("powprec", "console.log(2 * 3 ** 2);", "18")
+let _ = check("powassign", "let x=2; x **= 3; console.log(x);", "8")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")
