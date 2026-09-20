@@ -644,7 +644,6 @@ let repl_cases(_) = [
   ["session value survives gc",
    "import yc.compiler\nlet ff = compile(\"1 + 2\")\nlet g = compile(\"1 + 2 + 3\")\nif bytes_len(ff) > 1000 then print(\"SURVIVED\") else print(\"LOST\")\n:q\n",
    "SURVIVED"]]
-
 let repl_all(st, yc, stem) =
   let _ = banner("repl", nth(yc, 0)) in
   let xs = cases_pick(repl_cases(0), stem) in
