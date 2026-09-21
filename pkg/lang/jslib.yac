@@ -224,6 +224,14 @@ let js_json_parse(s) =
 
 /* ---- extra built-in object helpers ------------------------------------ */
 
+/* Object.defineProperty(o, k, {get,set,value}): accessor if get/set present. */
+let js_obj_defprop(o, k, d) =
+  let g = fmap_get(nth(d, 1), "get") in
+  let s = fmap_get(nth(d, 1), "set") in
+  let v = fmap_get(nth(d, 1), "value") in
+  if g != 0 or s != 0 then (let _ = fmap_put(nth(o, 1), k, ["$acc", g, s]) in o)
+  else (let _ = fmap_put(nth(o, 1), k, v) in o)
+
 /* Own enumerable keys of a tagged object (skips prototype link). */
 let js_keys_of(o) =
   if kind(o) != 2 and kind(o) != 5 then list_new()
@@ -394,6 +402,9 @@ let js_native(obj, m, args) =
      else if m == "getOwnPropertyNames" then js_keys_of(nth(args, 0))
      else if m == "create" then
        (let o = ["$o", fmap_new(0)] in (let _ = fmap_put(nth(o, 1), "__proto__", nth(args, 0)) in o))
+     else if m == "getPrototypeOf" then fmap_get(nth(nth(args, 0), 1), "__proto__")
+     else if m == "defineProperty" then js_obj_defprop(nth(args, 0), nth(args, 1), nth(args, 2))
+     else if m == "freeze" or m == "seal" or m == "preventExtensions" then nth(args, 0)
      else if m == "is" then nth(args, 0) == nth(args, 1)
      else if m == "setPrototypeOf" then
        (let o = nth(args, 0) in (let _ = fmap_put(nth(o, 1), "__proto__", nth(args, 1)) in o))

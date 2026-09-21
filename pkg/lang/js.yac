@@ -1374,6 +1374,12 @@ let js_emit_expr(e, ctx, st) =
          let s0 = if len(args) >= 2 then a1 else "0" in
          let e0 = if len(args) >= 3 then js_emit_expr(nth(args, 2), ctx, st) else js_cat(["len(", o, ")"]) in
          js_cat(["_js_arr_fill(", o, ", ", a0, ", ", s0, ", ", e0, ")"]))
+      else if m == "lastIndexOf" then (let _ = box_set(st_lib(st), 1) in js_cat(["_js_arr_lastindex(", o, ", ", a0, ")"]))
+      else if m == "copyWithin" then
+        (let _ = box_set(st_lib(st), 1) in
+         let s0 = if len(args) >= 2 then a1 else "0" in
+         let e0 = if len(args) >= 3 then js_emit_expr(nth(args, 2), ctx, st) else js_cat(["len(", o, ")"]) in
+         js_cat(["_js_arr_copywithin(", o, ", ", a0, ", ", s0, ", ", e0, ")"]))
       else if m == "push" then js_cat(["list_push(", o, ", ", a0, ")"])
       else dyn_call(0)
   in
@@ -2036,7 +2042,7 @@ let js_to_yac(src) =
     let h10 = if box_get(ujslib) == 1 then "import lang.jslib { js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_native, js_str_pad, js_str_trim_start, js_str_trim_end, js_install }\n" else "" in
     let hjsrt =
       if box_get(ustr) == 1 or box_get(ubool) == 1 or box_get(utype) == 1 or box_get(ulib) == 1 or box_get(utruth) == 1 then
-        "import lang.jsrt { _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_lower, _js_repeat, _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each, _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_arr_find, _js_arr_findindex, _js_arr_fill, _js_arr_includes, _js_str_replace, _js_isnan, _js_iter }\n"
+        "import lang.jsrt { _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_lower, _js_repeat, _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each, _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_arr_find, _js_arr_findindex, _js_arr_fill, _js_arr_includes, _js_str_replace, _js_isnan, _js_iter, _js_arr_lastindex, _js_arr_copywithin }\n"
       else "" in
     let hinst = if box_get(uobj) == 1 and box_get(ujslib) == 1 then "let _ = js_install(_js_this, _js_proto) in " else "" in
     js_cat([h0, h1, h2, h6, h10, hjsrt, h8, hinst, body, "\n"])

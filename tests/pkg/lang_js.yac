@@ -331,6 +331,13 @@ let _ = check("math_cosh", "console.log(Math.cosh(0));", "1")
 let _ = check("num_maxsafe", "console.log(Number.MAX_SAFE_INTEGER);", "9007199254740991")
 let _ = check("num_epsilon", "console.log(Number.EPSILON > 0);", "true")
 
+/* more library coverage */
+let _ = check("arr_lastindex", "console.log([1,2,3,2].lastIndexOf(2));", "3")
+let _ = check("arr_copywithin", "let a=[1,2,3,4]; a.copyWithin(0,2); console.log(a.join(','));", "3,4,3,4")
+let _ = check("obj_defprop_get", "let o={}; Object.defineProperty(o,'x',{get:function(){return 7;}}); console.log(o.x);", "7")
+let _ = check("obj_defprop_value", "let o={}; Object.defineProperty(o,'v',{value:5}); console.log(o.v);", "5")
+let _ = check("obj_getproto", "let o={}; console.log(Object.getPrototypeOf(o) == 0);", "true")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")

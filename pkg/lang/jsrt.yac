@@ -12,7 +12,8 @@ package lang.jsrt
 export _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_lower, _js_repeat,
   _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each,
   _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_arr_find,
-  _js_arr_findindex, _js_arr_fill, _js_arr_includes, _js_str_replace, _js_isnan, _js_iter
+  _js_arr_findindex, _js_arr_fill, _js_arr_includes, _js_str_replace, _js_isnan, _js_iter,
+  _js_arr_lastindex, _js_arr_copywithin
 import text.str {find}
 import data.fmap { fmap_get }
 
@@ -200,3 +201,14 @@ let _js_iter(x) =
           else x)))
      else x)
   else x
+
+let _js_arr_lastindex(a, v) =
+  let rec(i) = if i < 0 then 0 - 1 else if nth(a, i) == v then i else rec(i - 1) in
+  rec(len(a) - 1)
+
+let _js_arr_copywithin(a, target, s, e) =
+  let n = e - s in
+  let rec(i) =
+    if i >= n then a
+    else (let _ = list_set(a, target + i, nth(a, s + i)) in rec(i + 1)) in
+  rec(0)
