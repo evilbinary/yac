@@ -259,6 +259,20 @@ let _ = check("spread_arr", "let a=[1,2]; let b=[0,...a,3]; console.log(b.join('
 let _ = check("spread_obj", "let o={a:1}; let p={...o, b:2}; console.log(p.a+p.b);", "3")
 let _ = check("rest_destr", "let [a,...r] = [1,2,3]; console.log(a + '/' + r.join(','));", "1/2,3")
 
+/* ES6 numeric literals + B-class built-ins */
+let _ = check("num_bin", "console.log(0b1010);", "10")
+let _ = check("num_oct", "console.log(0o17);", "15")
+let _ = check("num_hex", "console.log(0x1F);", "31")
+let _ = check("num_sep", "console.log(1_000 + 1);", "1001")
+let _ = check("obj_assign", "let t={a:1}; let s={b:2}; Object.assign(t,s); console.log(t.a+t.b);", "3")
+let _ = check("obj_values", "let o={a:1,b:2}; console.log(Object.values(o).length);", "2")
+let _ = check("arr_from", "console.log(Array.from([1,2,3]).length);", "3")
+let _ = check("arr_of", "console.log(Array.of(7,8,9).length);", "3")
+let _ = check("pad_start", "console.log('5'.padStart(3,'0'));", "005")
+let _ = check("trim_start", "console.log('  x'.trimStart());", "x")
+let _ = check("trim_end", "console.log('x  '.trimEnd());", "x")
+let _ = check("num_isint", "console.log(Number.isInteger(5));", "true")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")

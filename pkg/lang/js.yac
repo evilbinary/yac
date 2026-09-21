@@ -116,16 +116,58 @@ let js_lex_tmpl(src, i, n) =
   rec(i, "")
 
 /* Number literal: digits with at most one `.`; returns [text, next-index]. */
-let js_lex_num(src, i, n) =
-  let rec(j, dot) =
-    if j >= n then j
+/* Drop `_` separators from src[a..b). */
+let js_num_strip(s, a, b) =
+  let buf = bytes_new() in
+  let rec(j) =
+    if j >= b then bytes_to_str(buf)
     else
-      let c = str_ref(src, j) in
-      if js_digit(c) then rec(j + 1, dot)
-      else if c == 46 and dot == false then rec(j + 1, true)
-      else j in
-  let e = rec(i, false) in
-  [str_slice(src, i, e - i), e]
+      let c = str_ref(s, j) in
+      let _ = if c == 95 then 0 else bytes_append(buf, c) in
+      rec(j + 1) in
+  rec(a)
+
+/* Number literal: decimal (with optional `.`), or `0b`/`0o` (converted to
+ * decimal text); `_` separators are dropped. Returns [text, next-index]. */
+let js_lex_num(src, i, n) =
+  let c0 = str_ref(src, i) in
+  let radix =
+    if c0 == 48 and i + 1 < n then
+      let c1 = str_ref(src, i + 1) in
+      if c1 == 98 or c1 == 66 then 2
+      else if c1 == 111 or c1 == 79 then 8
+      else if c1 == 120 or c1 == 88 then 16
+      else 0
+    else 0 in
+  if radix != 0 then
+    let dchar(c) =
+      if radix == 2 then (c == 48 or c == 49)
+      else if radix == 8 then (c >= 48 and c <= 55)
+      else js_digit(c) or (c >= 97 and c <= 102) or (c >= 65 and c <= 70) in
+    let dval(c) =
+      if c >= 48 and c <= 57 then c - 48
+      else if c >= 97 and c <= 102 then c - 87
+      else c - 55 in
+    let rec(j, acc) =
+      if j >= n then [acc, j]
+      else
+        let c = str_ref(src, j) in
+        if dchar(c) then rec(j + 1, acc * radix + dval(c))
+        else if c == 95 then rec(j + 1, acc)
+        else [acc, j] in
+    let r = rec(i + 2, 0) in
+    [int_to_str(nth(r, 0)), nth(r, 1)]
+  else
+    let rec(j, dot) =
+      if j >= n then j
+      else
+        let c = str_ref(src, j) in
+        if js_digit(c) then rec(j + 1, dot)
+        else if c == 95 then rec(j + 1, dot)
+        else if c == 46 and dot == false then rec(j + 1, true)
+        else j in
+    let e = rec(i, false) in
+    [js_num_strip(src, i, e), e]
 
 /* Identifier / keyword text; returns [text, next-index]. */
 let js_lex_id(src, i, n) =
@@ -939,6 +981,7 @@ let js_is_boolish(e) =
     if nth(c, 0) == "mem" then
       let m = nth(c, 2) in
       m == "startsWith" or m == "endsWith" or m == "includes" or m == "isArray"
+        or m == "isInteger" or m == "isNaN" or m == "isFinite"
     else if nth(c, 0) == "id" then
       let f = nth(c, 1) in
       f == "isNaN" or f == "isFinite"
@@ -1154,6 +1197,12 @@ let js_emit_expr(e, ctx, st) =
          let _ = box_set(st_strpkg(st), 1) in
          js_cat(["_js_str_replace(", o, ", ", a0, ", ", a1, ")"]))
       else if m == "search" then (let _ = box_set(st_strpkg(st), 1) in js_cat(["find(", o, ", ", a0, ")"]))
+      else if m == "padStart" or m == "padEnd" then
+        (let _ = box_set(st_jslib(st), 1) in
+         let fill = if len(args) > 1 then a1 else "\"\"" in
+         js_cat(["js_str_pad(", o, ", ", a0, ", ", fill, ", ", (if m == "padStart" then "1" else "0"), ")"]))
+      else if m == "trimStart" then (let _ = box_set(st_jslib(st), 1) in js_cat(["js_str_trim_start(", o, ")"]))
+      else if m == "trimEnd" then (let _ = box_set(st_jslib(st), 1) in js_cat(["js_str_trim_end(", o, ")"]))
       else if m == "toString" or m == "valueOf" then o
       else dyn_call(0)
     else
@@ -1169,11 +1218,14 @@ let js_emit_expr(e, ctx, st) =
         (let _ = box_set(st_jslib(st), 1) in
          js_cat(["js_native(\"", bn, "\", \"", js_esc(m), "\", ", args_arr(args), ")"]))
       else if is_obj then
-        (let _ = box_set(st_obj(st), 1) in
-         let _ = box_set(st_fmap(st), 1) in
-         if m == "keys" then js_cat(["_js_keys(", a0, ")"])
-         else if m == "create" then js_cat(["_js_obj(", a0, ")"])
-         else failm(m))
+        (if m == "keys" or m == "create" then
+           (let _ = box_set(st_obj(st), 1) in
+            let _ = box_set(st_fmap(st), 1) in
+            if m == "keys" then js_cat(["_js_keys(", a0, ")"])
+            else js_cat(["_js_obj(", a0, ")"]))
+         else
+           (let _ = box_set(st_jslib(st), 1) in
+            js_cat(["js_native(\"Object\", \"", js_esc(m), "\", ", args_arr(args), ")"])))
       else if m == "join" then
         (let _ = box_set(st_lib(st), 1) in
          if len(args) == 0 then js_cat(["_js_arr_join(", o, ", \",\")"]) else js_cat(["_js_arr_join(", o, ", ", a0, ")"]))
@@ -1825,7 +1877,7 @@ let js_to_yac(src) =
       if box_get(uobj) == 1 then
         "let _js_this = box_new()\nlet _js_protos = box_new()\nlet _js_obj(proto) =\n  let m = fmap_new(0) in\n  let _ = fmap_put(m, \"__proto__\", proto) in\n  [\"$o\", m]\nlet _js_get(o, k) =\n  if o == 0 then 0\n  else\n    let m = nth(o, 1) in\n    let v = fmap_get(m, k) in\n    if v != 0 then v\n    else\n      let p = fmap_get(m, \"__proto__\") in\n      if p == 0 then 0 else _js_get(p, k)\nlet _js_keys(o) =\n  if is_int(o) then list_new()\n  else\n    let m = nth(o, 1) in\n    let vec = nth(m, 0) in\n    let cap = nth(m, 2) in\n    let r = list_new() in\n    let rec(i) =\n      if i >= cap then r\n      else\n        let e = nth(vec, i) in\n        let _ =\n          if e == 0 then 0\n          else\n            let kk = nth(e, 0) in\n            if kk == \"__proto__\" then 0 else list_push(r, kk) in\n        rec(i + 1) in\n    rec(0)\nlet _js_proto(nm) =\n  let m = box_get(_js_protos) in\n  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_protos, x) in x)) else m in\n  let p = fmap_get(m2, nm) in\n  if p == 0 then (let x = _js_obj(0) in (let _ = fmap_put(m2, nm, x) in x)) else p\n"
       else "" in
-    let h10 = if box_get(ujslib) == 1 then "import lang.jslib { js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_native }\n" else "" in
+    let h10 = if box_get(ujslib) == 1 then "import lang.jslib { js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_native, js_str_pad, js_str_trim_start, js_str_trim_end }\n" else "" in
     let hjsrt =
       if box_get(ustr) == 1 or box_get(ubool) == 1 or box_get(utype) == 1 or box_get(ulib) == 1 or box_get(utruth) == 1 then
         "import lang.jsrt { _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_lower, _js_repeat, _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each, _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_str_replace, _js_isnan }\n"

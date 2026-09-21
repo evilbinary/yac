@@ -6,7 +6,7 @@
  * jsrt.yac (stateless value/array/string helpers). */
 package lang.jslib
 export js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_date_now, js_from_char_code,
-  js_native, js_json_stringify, js_json_parse
+  js_native, js_json_stringify, js_json_parse, js_str_pad, js_str_trim_start, js_str_trim_end
 import data.fmap { fmap_new, fmap_get, fmap_put }
 import num.math { ftoi }
 
@@ -221,6 +221,95 @@ let js_json_parse(s) =
     let k = jw_skip(s, nth(r, 1)) in
     if k == str_len(s) then nth(r, 0) else 0
 
+/* ---- extra built-in object helpers ------------------------------------ */
+
+/* Own enumerable keys of a tagged object (skips prototype link). */
+let js_keys_of(o) =
+  if kind(o) != 2 and kind(o) != 5 then list_new()
+  else
+    let m = nth(o, 1) in
+    let vec = nth(m, 0) in
+    let cap = nth(m, 2) in
+    let r = list_new() in
+    let rec(i) =
+      if i >= cap then r
+      else
+        let e = nth(vec, i) in
+        let _ =
+          if e == 0 then 0
+          else
+            let kk = nth(e, 0) in
+            if kk == "__proto__" then 0 else list_push(r, kk) in
+        rec(i + 1) in
+    rec(0)
+
+/* Object.assign(target, ...sources) — mutates + returns target. */
+let js_obj_assign(tgt, srcs) =
+  let n = len(srcs) in
+  let rec(i) =
+    if i >= n then tgt
+    else
+      let s = nth(srcs, i) in
+      let ks = js_keys_of(s) in
+      let kn = len(ks) in
+      let rec2(j) =
+        if j >= kn then 0
+        else
+          let kk = nth(ks, j) in
+          let _ = fmap_put(nth(tgt, 1), kk, fmap_get(nth(s, 1), kk)) in
+          rec2(j + 1) in
+      let _ = rec2(0) in
+      rec(i + 1) in
+  rec(0)
+
+let js_obj_values(o) =
+  let ks = js_keys_of(o) in
+  let n = len(ks) in
+  let r = list_new() in
+  let rec(i) = if i >= n then r else (let _ = list_push(r, fmap_get(nth(o, 1), nth(ks, i))) in rec(i + 1)) in
+  rec(0)
+
+let js_obj_entries(o) =
+  let ks = js_keys_of(o) in
+  let n = len(ks) in
+  let r = list_new() in
+  let rec(i) =
+    if i >= n then r
+    else (let _ = list_push(r, [nth(ks, i), fmap_get(nth(o, 1), nth(ks, i))]) in rec(i + 1)) in
+  rec(0)
+
+/* Array.from/Array.of — copy a list of elements (args is already a list). */
+let js_arr_copy(xs) =
+  let n = len(xs) in
+  let r = list_new() in
+  let rec(i) = if i >= n then r else (let _ = list_push(r, nth(xs, i)) in rec(i + 1)) in
+  rec(0)
+
+let js_num_is_nan(x) = x != x
+let js_num_is_finite(x) = x == x
+let js_num_is_integer(x) = is_int(x) or (kind(x) == 7 and ftoi(x) == x)
+
+let js_str_pad(s, target, fill, left) =
+  let fill1 = if str_len(fill) == 0 then " " else fill in
+  let need = target - str_len(s) in
+  if need <= 0 then s
+  else
+    let grow(p) = if str_len(p) >= need then p else grow(str_cat(p, fill1)) in
+    let p = str_slice(grow(""), 0, need) in
+    if left then str_cat(p, s) else str_cat(s, p)
+
+let js_str_ws(c) = c == 32 or c == 9 or c == 10 or c == 13
+
+let js_str_trim_start(s) =
+  let n = str_len(s) in
+  let i0 = (let rec(i) = if i >= n then i else if js_str_ws(str_ref(s, i)) then rec(i + 1) else i in rec(0)) in
+  str_slice(s, i0, n - i0)
+
+let js_str_trim_end(s) =
+  let n = str_len(s) in
+  let j0 = (let rec(j) = if j <= 0 then j else if js_str_ws(str_ref(s, j - 1)) then rec(j - 1) else j in rec(n)) in
+  str_slice(s, 0, j0)
+
 /* ---- built-in object dispatch ----------------------------------------- */
 
 /* `js_native("JSON", "stringify", [x])` etc. Generated code routes every
@@ -241,5 +330,20 @@ let js_native(obj, m, args) =
        (let x = nth(args, 0) in
         let k = kind(x) in
         if (k == 2 or k == 5) and not js_json_is_obj(x) then true else false)
+     else if m == "from" then js_arr_copy(nth(args, 0))
+     else if m == "of" then js_arr_copy(args)
+     else 0)
+  else if obj == "Object" then
+    (if m == "assign" then js_obj_assign(nth(args, 0), drop(args, 1))
+     else if m == "values" then js_obj_values(nth(args, 0))
+     else if m == "entries" then js_obj_entries(nth(args, 0))
+     else if m == "keys" then js_keys_of(nth(args, 0))
+     else 0)
+  else if obj == "Number" then
+    (if m == "isNaN" then js_num_is_nan(nth(args, 0))
+     else if m == "isFinite" then js_num_is_finite(nth(args, 0))
+     else if m == "isInteger" then js_num_is_integer(nth(args, 0))
+     else if m == "parseInt" then js_parse_int(nth(args, 0))
+     else if m == "parseFloat" then js_parse_float(nth(args, 0))
      else 0)
   else 0
