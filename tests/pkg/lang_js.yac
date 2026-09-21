@@ -339,6 +339,8 @@ let _ = check("obj_defprop_value", "let o={}; Object.defineProperty(o,'v',{value
 let _ = check("obj_getproto", "let o={}; console.log(Object.getPrototypeOf(o) == 0);", "true")
 let _ = check("forof_closure", "let fns=[]; for (let x of [1,2,3]) { fns.push(function(){ return x; }); } console.log(fns[0]() + ',' + fns[1]() + ',' + fns[2]());", "1,2,3")
 let _ = check("forin_closure", "let o={a:1,b:2}; let fns=[]; for (let k in o) { fns.push(function(){ return k; }); } console.log(fns.length);", "2")
+let _ = check("shadow_block", "let x=1; { let x=2; } console.log(x);", "1")
+let _ = check("shadow_if", "let x=1; if (true) { let x=2; console.log(x); } console.log(x);", "2\n1")
 
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")

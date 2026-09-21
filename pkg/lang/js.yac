@@ -994,6 +994,20 @@ let js_mangle(s) =
       rec(i + 1, str_cat(acc, bit)) in
   str_cat("v_", rec(0, ""))
 
+/* Variable scope entry: [jsName, boxName]. Box names are unique per binding so
+ * a block-local `let x` shadows an outer `x` instead of overwriting its box. */
+let js_lookup(vars, nm) =
+  let rec(xs) =
+    if len(xs) == 0 then ""
+    else if nth(nth(xs, 0), 0) == nm then nth(nth(xs, 0), 1)
+    else rec(tail(xs)) in
+  rec(vars)
+
+/* Box name for a variable reference, or the global mangled name if unbound. */
+let js_var(vars, nm) =
+  let b = js_lookup(vars, nm) in
+  if b == "" then js_mangle(nm) else b
+
 /* Membership in a name list (scopes are small). */
 let js_in(xs, x) =
   let rec(i) =
@@ -1128,10 +1142,28 @@ let js_def_if0(raw, dv) =
  * initialised to false), then the body. Returns [param-signature, body-expr].
  * Shared by function declarations and function expressions; a function has no
  * enclosing loop, so its loop-status box is 0. */
+/* Parameter bindings as [name, box] pairs (unique box names). */
+let js_binds_of(p, st) =
+  if kind(p) == 3 then [[p, js_fresh(st, js_mangle(p))]]
+  else if nth(p, 0) == "def" then [[nth(p, 1), js_fresh(st, js_mangle(nth(p, 1)))]]
+  else map(fun(e) -> [nth(e, 0), js_fresh(st, js_mangle(nth(e, 0)))], js_pat_flat(nth(p, 1), "0", st))
+
+let js_bind_flat2(flat, boxes, inner) =
+  let n = len(flat) in
+  let wrap2(i, acc) =
+    if i < 0 then acc
+    else
+      let ae = nth(nth(flat, i), 1) in
+      let m = nth(boxes, i) in
+      wrap2(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ae, ") in ", acc, "))"])) in
+  wrap2(n - 1, inner)
+
 let js_func_body(ps, body, ctx, st) =
   let retf2 = js_fresh(st, "retf") in
   let retv2 = js_fresh(st, "retv") in
-  let ctx3 = [append(nth(ctx, 0), js_pnames(ps, st)), nth(ctx, 1), retf2, retv2, nth(ctx, 4), 0] in
+  let pbs = map(fun(p) -> js_binds_of(p, st), ps) in
+  let allb = foldl(fun(acc, xs) -> append(acc, xs), [], pbs) in
+  let ctx3 = [append(allb, nth(ctx, 0)), nth(ctx, 1), retf2, retv2, nth(ctx, 4), 0] in
   let b0 = js_call_stmts(body, ctx3, "0", st) in
   let b1 = js_cat(["(let ", retv2, " = box_new() in ", b0, ")"]) in
   let b2 = js_cat(["(let ", retf2, " = box_new() in (let _ = box_set(", retf2, ", false) in ", b1, "))"]) in
@@ -1146,11 +1178,12 @@ let js_func_body(ps, body, ctx, st) =
     else
       let p = nth(ps, i) in
       let raw = nth(pnames, i) in
+      let binds = nth(pbs, i) in
       if kind(p) == 3 then
-        let m = js_mangle(p) in
+        let m = nth(nth(binds, 0), 1) in
         wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", raw, ") in ", inner, "))"]))
       else if nth(p, 0) == "def" then
-        let m = js_mangle(nth(p, 1)) in
+        let m = nth(nth(binds, 0), 1) in
         let dv = js_call_expr(nth(p, 2), ctx3, st) in
         wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", js_def_if0(raw, dv), ") in ", inner, "))"]))
       else
@@ -1158,7 +1191,8 @@ let js_func_body(ps, body, ctx, st) =
         let isdef = nth(p, 0) == "patdef" in
         let base = if isdef then str_cat("_pv", int_to_str(i)) else raw in
         let flat = js_pat_flat(pat, base, st) in
-        let des = js_bind_flat(flat, inner) in
+        let boxes = map(fun(e) -> nth(e, 1), binds) in
+        let des = js_bind_flat2(flat, boxes, inner) in
         let des2 =
           if isdef then
             let dv = js_call_expr(nth(p, 2), ctx3, st) in
@@ -1166,6 +1200,7 @@ let js_func_body(ps, body, ctx, st) =
           else des in
         wrap(i - 1, des2) in
   [js_join(pnames, ", ", 0, ""), wrap(len(ps) - 1, b2)]
+
 
 /* ---- expression emitter ---------------------------------------------- */
 
@@ -1194,7 +1229,7 @@ let js_emit_expr(e, ctx, st) =
    * stored value. Shared by `=`, `+=`, and `x++` / `++x`. */
   let rd_tgt(tgt) =
     let t = nth(tgt, 0) in
-    if t == "id" then js_cat(["box_get(", js_mangle(nth(tgt, 1)), ")"])
+    if t == "id" then js_cat(["box_get(", js_var(vars, nth(tgt, 1)), ")"])
     else if t == "mem" then
       let _ = box_set(st_fmap(st), 1) in
       let _ = box_set(st_obj(st), 1) in
@@ -1204,7 +1239,7 @@ let js_emit_expr(e, ctx, st) =
   in
   let st_tgt(tgt, vs) =
     let t = nth(tgt, 0) in
-    if t == "id" then js_cat(["(let _ = box_set(", js_mangle(nth(tgt, 1)), ", ", vs, ") in ", vs, ")"])
+    if t == "id" then js_cat(["(let _ = box_set(", js_var(vars, nth(tgt, 1)), ", ", vs, ") in ", vs, ")"])
     else if t == "mem" then
       let _ = box_set(st_fmap(st), 1) in
       let _ = box_set(st_obj(st), 1) in
@@ -1217,7 +1252,7 @@ let js_emit_expr(e, ctx, st) =
    * from `ae` (an already-evaluated value expression). */
   let dest(pat, ae) =
     let t = nth(pat, 0) in
-    if t == "id" then js_cat(["(let _ = box_set(", js_mangle(nth(pat, 1)), ", ", ae, ") in 0)"])
+    if t == "id" then js_cat(["(let _ = box_set(", js_var(vars, nth(pat, 1)), ", ", ae, ") in 0)"])
     else if t == "mem" or t == "idx" then js_cat(["(let _ = ", st_tgt(pat, ae), " in 0)"])
     else if t == "arr" then
       let xs = nth(pat, 1) in
@@ -1394,8 +1429,7 @@ let js_emit_expr(e, ctx, st) =
     let nm = nth(e, 1) in
     if nm == "console" or nm == "Math" then "0"
     else if js_in(funcs, nm) then js_mangle(nm)
-    else if js_in(vars, nm) then js_cat(["box_get(", js_mangle(nm), ")"])
-    else js_mangle(nm)
+    else let b = js_lookup(vars, nm) in (if b != "" then js_cat(["box_get(", b, ")"]) else js_mangle(nm))
   else if tag == "arr" then
     /* Array literal: a fresh listbuf plus one list_push per element; a `...x`
      * element appends x's elements with a small loop. */
@@ -1632,7 +1666,7 @@ let js_emit_expr(e, ctx, st) =
     let v = js_emit_expr(val, ctx, st) in
     let t = nth(tgt, 0) in
     let base =
-      if t == "id" then js_cat(["box_get(", js_mangle(nth(tgt, 1)), ")"])
+      if t == "id" then js_cat(["box_get(", js_var(vars, nth(tgt, 1)), ")"])
       else if t == "mem" then
         let _ = box_set(st_fmap(st), 1) in
         let _ = box_set(st_obj(st), 1) in
@@ -1663,7 +1697,7 @@ let js_emit_expr(e, ctx, st) =
             js_cat(["str_cat(", base, ", ", str_of(val), ")"])
           else js_cat(["(", base, " ", op0, " ", v, ")"]) in
     if t == "id" then
-      js_cat(["(let _v = ", rhs, " in (let _ = box_set(", js_mangle(nth(tgt, 1)), ", _v) in _v))"])
+      js_cat(["(let _v = ", rhs, " in (let _ = box_set(", js_var(vars, nth(tgt, 1)), ", _v) in _v))"])
     else if t == "mem" then
       let _ = box_set(st_fmap(st), 1) in
       let _ = box_set(st_obj(st), 1) in
@@ -1768,11 +1802,12 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let body = nth(s, 4) in
       let w = js_fresh(st, "w") in
       let sc = js_fresh(st, "sc") in
+      let im = if nth(init, 0) == "let" then js_fresh(st, js_mangle(nth(init, 2))) else "" in
       let cvar =
         if nth(init, 0) == "let" then
           let nm = nth(init, 2) in
           let strs3 = if js_is_str_expr(nth(init, 3), nth(ctx2, 4)) then cons(nm, nth(ctx2, 4)) else nth(ctx2, 4) in
-          [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), strs3, nth(ctx2, 5)]
+          [cons([nm, im], nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), strs3, nth(ctx2, 5)]
         else ctx2 in
       let c3 = with_brk(cvar, sc) in
       let nxt =
@@ -1783,7 +1818,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let loopbody = js_cat(["(if ", js_truth(testc, st), " then (let _ = box_set(", sc, ", 0) in (let _ = ", body_e, " in ", after_loop(sc, nxt), ")) else 0)"]) in
       let loop = js_cat(["(let ", sc, " = box_new() in (let ", w, "(_) = ", loopbody, " in ", w, "(0)))"]) in
       if nth(init, 0) == "let" then
-        let m = js_mangle(nth(init, 2)) in
+        let m = im in
         js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", js_emit_expr(nth(init, 3), ctx2, st), ") in ", loop, "))"])
       else if nth(init, 0) == "expr" then js_emit_stmts([init], ctx2, loop, st)
       else loop
@@ -1832,8 +1867,8 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let cpart =
         if nth(cn, 0) == "str" then
           let nm = nth(cn, 1) in
-          let m = js_mangle(nm) in
-          let cctx = [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), nth(ctx2, 4), nth(ctx2, 5)] in
+          let m = js_fresh(st, js_mangle(nm)) in
+          let cctx = [cons([nm, m], nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), nth(ctx2, 4), nth(ctx2, 5)] in
           let cE = js_emit_stmts(cxs, cctx, "0", st) in
           js_cat(["(if box_get(_js_exc) != 0 then (let ", m, " = box_new() in (let _ = box_set(", m, ", box_get(_js_exc)) in (let _ = box_set(_js_exc, 0) in ", cE, "))) else 0)"])
         else "0" in
@@ -1846,10 +1881,10 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let _ = box_set(st_fmap(st), 1) in
       let ks = js_fresh(st, "ks") in
       let w = js_fresh(st, "w") in
-      let m = js_mangle(nm) in
+      let m = js_fresh(st, js_mangle(nm)) in
       let sc = js_fresh(st, "sc") in
       let p = js_fresh(st, "i") in
-      let c3 = [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), cons(nm, nth(ctx2, 4)), sc] in
+      let c3 = [cons([nm, m], nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), cons(nm, nth(ctx2, 4)), sc] in
       let bodyE = js_emit_stmts(body, c3, "0", st) in
       let thenP = js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", nth(", ks, ", ", p, ")) in (let _ = box_set(", sc, ", 0) in (let _ = ", bodyE, " in (if box_get(_js_exc) != 0 then 0 else (if box_get(", sc, ") == 1 then 0 else ", w, "(", p, " + 1)))))))"]) in
       let lb = js_cat(["(if ", p, " < len(", ks, ") then ", thenP, " else 0)"]) in
@@ -1859,14 +1894,14 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let nm = nth(s, 1) in
       let obj = nth(s, 2) in
       let body = nth(s, 3) in
-      let m = js_mangle(nm) in
+      let m = js_fresh(st, js_mangle(nm)) in
       let sc = js_fresh(st, "sc") in
       let p = js_fresh(st, "i") in
       let w = js_fresh(st, "w") in
       let av = js_fresh(st, "a") in
       let _ = box_set(st_lib(st), 1) in
       let arr = js_cat(["_js_iter(", js_emit_expr(obj, ctx2, st), ")"]) in
-      let c3 = [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), nth(ctx2, 4), sc] in
+      let c3 = [cons([nm, m], nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), nth(ctx2, 4), sc] in
       let bodyE = js_emit_stmts(body, c3, "0", st) in
       let thenP = js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", nth(", av, ", ", p, ")) in (let _ = box_set(", sc, ", 0) in (let _ = ", bodyE, " in (if box_get(_js_exc) != 0 then 0 else (if box_get(", sc, ") == 1 then 0 else ", w, "(", p, " + 1)))))))"]) in
       let lb = js_cat(["(if ", p, " < len(", av, ") then ", thenP, " else 0)"]) in
@@ -1905,15 +1940,19 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let _ = if js_pat_has_obj(pat) then box_set(st_obj(st), 1) else 0 in
         let o = js_fresh(st, "d") in
         let flat = js_pat_flat(pat, js_cat(["box_get(", o, ")"]), st) in
-        let extvars = append(js_pat_names(flat), vars2) in
-        let cont = go(rest, extvars, funcs2, strs2, brk2, k2) in
         let n = len(flat) in
+        let boxes =
+          let rec(i, acc) = if i >= n then list_rev(acc) else rec(i + 1, cons(js_fresh(st, js_mangle(nth(nth(flat, i), 0))), acc)) in
+          rec(0, []) in
+        let extvars =
+          let rec(i, acc) = if i >= n then acc else rec(i + 1, cons([nth(nth(flat, i), 0), nth(boxes, i)], acc)) in
+          rec(0, vars2) in
+        let cont = go(rest, extvars, funcs2, strs2, brk2, k2) in
         let wrap(i, inner) =
           if i < 0 then inner
           else
-            let nm = nth(nth(flat, i), 0) in
             let ae = nth(nth(flat, i), 1) in
-            let m = js_mangle(nm) in
+            let m = nth(boxes, i) in
             wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ae, ") in ", inner, "))"])) in
         js_cat(["(let ", o, " = box_new() in (let _ = box_set(", o, ", ", ie, ") in ", wrap(n - 1, cont), "))"])
       else if tag == "class" then
@@ -1927,7 +1966,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let _ = box_set(st_fmap(st), 1) in
         let mm = js_mangle(nm) in
         let funcs3 = cons(nm, funcs2) in
-        let vars3 = cons(nm, vars2) in
+        let vars3 = cons([nm, mm], vars2) in
         let ctxC = [vars3, funcs3, retf, retv, strs2, brk2] in
         let rw(x) = if superName == "" then x else js_rw_super(x, superName) in
         let findctor(i) =
@@ -1975,9 +2014,9 @@ let js_emit_stmts(stmts, ctx, k, st) =
         js_cat(["(let ", mm, "(", nth(fb, 0), ") = ", nth(fb, 1), " in (let _ = ", defs2, " in ", go(rest, vars3, funcs3, strs2, brk2, k2), "))"])
       else if tag == "let" then
         let nm = nth(s, 2) in
-        let m = js_mangle(nm) in
+        let m = js_fresh(st, js_mangle(nm)) in
         let ie = js_emit_expr(nth(s, 3), [vars2, funcs2, retf, retv, strs2, brk2], st) in
-        let vars3 = cons(nm, vars2) in
+        let vars3 = cons([nm, m], vars2) in
         let strs3 = if js_is_str_expr(nth(s, 3), strs2) then cons(nm, strs2) else strs2 in
         js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ie, ") in ", go(rest, vars3, funcs2, strs3, brk2, k2), "))"])
       else
