@@ -250,6 +250,14 @@ let st_obj(st) = nth(st, 9)
 let st_jslib(st) = nth(st, 10)
 let st_truth(st) = nth(st, 11)
 
+/* js_pat_parse is defined after js_parse_expr (it is also used by the
+ * statement parser); parameter parsing needs it, so reach it via a box. */
+let js_pat_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let js_pat_v(toks, i, st) = (box_get(js_pat_box))(toks, i, st)
+
 /* Record msg if no error yet; returns "0" so it can stand in for an expr. */
 let js_fail(st, msg) =
   let e = st_err(st) in
@@ -336,15 +344,23 @@ let js_parse_expr(toks, i, min, st) =
   let pdef(jj, acc) =
     if js_is(toks, jj, ")") then [list_rev(acc), jj + 1]
     else
-      let nm = js_t(js_at(toks, jj)) in
-      let j2 = jj + 1 in
-      if js_is(toks, j2, "=") then
-        let r = js_parse_expr(toks, j2 + 1, 0, st) in
-        let j3 = nth(r, 1) in
-        let a2 = cons([nm, nth(r, 0)], acc) in
-        if js_is(toks, j3, ",") then pdef(j3 + 1, a2) else [list_rev(a2), j3 + 1]
-      else if js_is(toks, j2, ",") then pdef(j2 + 1, cons(nm, acc))
-      else [list_rev(cons(nm, acc)), j2 + 1] in
+      let pt =
+        if js_is(toks, jj, "[") or js_is(toks, jj, "{") then
+          (let pr = js_pat_v(toks, jj, st) in [nth(pr, 0), nth(pr, 1)])
+        else [js_t(js_at(toks, jj)), jj + 1] in
+      let pnode = nth(pt, 0) in
+      let j2 = nth(pt, 1) in
+      let dd =
+        if js_is(toks, j2, "=") then
+          (let r = js_parse_expr(toks, j2 + 1, 0, st) in [nth(r, 0), nth(r, 1)])
+        else [0, j2] in
+      let p2 =
+        if nth(dd, 0) == 0 then (if kind(pnode) == 3 then pnode else ["pat", pnode])
+        else if kind(pnode) == 3 then ["def", pnode, nth(dd, 0)]
+        else ["patdef", pnode, nth(dd, 0)] in
+      let j3 = nth(dd, 1) in
+      if js_is(toks, j3, ",") then pdef(j3 + 1, cons(p2, acc))
+      else [list_rev(cons(p2, acc)), j3 + 1] in
   let tmpl_parts(raw) =
     let n = str_len(raw) in
     let find(j, depth, instr, q) =
@@ -704,15 +720,23 @@ let js_parse_stmts(toks, i, mode, st) =
       let cdef(jj, acc) =
         if js_is(toks, jj, ")") then [list_rev(acc), jj + 1]
         else
-          let pt = js_at(toks, jj) in
-          let j3 = jj + 1 in
-          if js_is(toks, j3, "=") then
-            let r = js_parse_expr(toks, j3 + 1, 0, st) in
-            let j4 = nth(r, 1) in
-            let a2 = cons([js_t(pt), nth(r, 0)], acc) in
-            if js_is(toks, j4, ",") then cdef(j4 + 1, a2) else [list_rev(a2), j4 + 1]
-          else if js_is(toks, j3, ",") then cdef(j3 + 1, cons(js_t(pt), acc))
-          else [list_rev(cons(js_t(pt), acc)), j3 + 1] in
+          let pt =
+            if js_is(toks, jj, "[") or js_is(toks, jj, "{") then
+              (let pr = js_pat_v(toks, jj, st) in [nth(pr, 0), nth(pr, 1)])
+            else [js_t(js_at(toks, jj)), jj + 1] in
+          let pnode = nth(pt, 0) in
+          let j3 = nth(pt, 1) in
+          let dd =
+            if js_is(toks, j3, "=") then
+              (let r = js_parse_expr(toks, j3 + 1, 0, st) in [nth(r, 0), nth(r, 1)])
+            else [0, j3] in
+          let p2 =
+            if nth(dd, 0) == 0 then (if kind(pnode) == 3 then pnode else ["pat", pnode])
+            else if kind(pnode) == 3 then ["def", pnode, nth(dd, 0)]
+            else ["patdef", pnode, nth(dd, 0)] in
+          let j4 = nth(dd, 1) in
+          if js_is(toks, j4, ",") then cdef(j4 + 1, cons(p2, acc))
+          else [list_rev(cons(p2, acc)), j4 + 1] in
       let mgo(k, acc) =
         if js_is(toks, k, "}") then [list_rev(acc), k + 1]
         else if js_is(toks, k, ";") then mgo(k + 1, acc)
@@ -796,15 +820,23 @@ let js_parse_stmts(toks, i, mode, st) =
       let pdef(jj, acc) =
         if js_is(toks, jj, ")") then [list_rev(acc), jj + 1]
         else
-          let pt = js_at(toks, jj) in
-          let j3 = jj + 1 in
-          if js_is(toks, j3, "=") then
-            let r = js_parse_expr(toks, j3 + 1, 0, st) in
-            let j4 = nth(r, 1) in
-            let a2 = cons([js_t(pt), nth(r, 0)], acc) in
-            if js_is(toks, j4, ",") then pdef(j4 + 1, a2) else [list_rev(a2), j4 + 1]
-          else if js_is(toks, j3, ",") then pdef(j3 + 1, cons(js_t(pt), acc))
-          else [list_rev(cons(js_t(pt), acc)), j3 + 1] in
+          let pt =
+            if js_is(toks, jj, "[") or js_is(toks, jj, "{") then
+              (let pr = js_pat_v(toks, jj, st) in [nth(pr, 0), nth(pr, 1)])
+            else [js_t(js_at(toks, jj)), jj + 1] in
+          let pnode = nth(pt, 0) in
+          let j3 = nth(pt, 1) in
+          let dd =
+            if js_is(toks, j3, "=") then
+              (let r = js_parse_expr(toks, j3 + 1, 0, st) in [nth(r, 0), nth(r, 1)])
+            else [0, j3] in
+          let p2 =
+            if nth(dd, 0) == 0 then (if kind(pnode) == 3 then pnode else ["pat", pnode])
+            else if kind(pnode) == 3 then ["def", pnode, nth(dd, 0)]
+            else ["patdef", pnode, nth(dd, 0)] in
+          let j4 = nth(dd, 1) in
+          if js_is(toks, j4, ",") then pdef(j4 + 1, cons(p2, acc))
+          else [list_rev(cons(p2, acc)), j4 + 1] in
       let pr = pdef(j2, []) in
       let body = js_parse_stmts(toks, nth(pr, 1) + 1, ["list", "}"], st) in
       [["func", nm, nth(pr, 0), nth(body, 0)], nth(body, 1)]
@@ -1040,13 +1072,34 @@ let js_expr_box =
 
 let js_call_expr(e, ctx, st) = (box_get(js_expr_box))(e, ctx, st)
 
-/* Param node: a plain name (string, kind 3) or [name, defaultExpr]. */
-let js_pname(p) = if kind(p) == 3 then p else nth(p, 0)
+/* Param node kinds: a plain name (string), ["def", name, expr],
+ * ["pat", patternNode], ["patdef", patternNode, expr]. */
+let js_param_names(p, st) =
+  if kind(p) == 3 then [p]
+  else if nth(p, 0) == "def" then [nth(p, 1)]
+  else js_pat_names(js_pat_flat(nth(p, 1), "0", st))
 
-let js_pnames(ps) =
+let js_pnames(ps, st) =
   let n = len(ps) in
-  let go(i, acc) = if i >= n then list_rev(acc) else go(i + 1, cons(js_pname(nth(ps, i)), acc)) in
+  let go(i, acc) = if i >= n then acc else go(i + 1, append(acc, js_param_names(nth(ps, i), st))) in
   go(0, [])
+
+/* Wrap `inner` with one boxed binding per [name, accessExpr] in `flat`. */
+let js_bind_flat(flat, inner) =
+  let n = len(flat) in
+  let wrap2(i, acc) =
+    if i < 0 then acc
+    else
+      let nm = nth(nth(flat, i), 0) in
+      let ae = nth(nth(flat, i), 1) in
+      let m = js_mangle(nm) in
+      wrap2(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ae, ") in ", acc, "))"])) in
+  wrap2(n - 1, inner)
+
+/* `if raw == 0 then dv else raw` (JS default when the argument is missing). */
+let js_def_if0(raw, dv) =
+  let t = str_cat("_d", raw) in
+  js_cat(["(let ", t, " = ", raw, " in if ", t, " == 0 then ", dv, " else ", t, ")"])
 
 /* Bind each param to a fresh box, create fresh return flag/value boxes (flag
  * initialised to false), then the body. Returns [param-signature, body-expr].
@@ -1055,7 +1108,7 @@ let js_pnames(ps) =
 let js_func_body(ps, body, ctx, st) =
   let retf2 = js_fresh(st, "retf") in
   let retv2 = js_fresh(st, "retv") in
-  let ctx3 = [append(nth(ctx, 0), js_pnames(ps)), nth(ctx, 1), retf2, retv2, nth(ctx, 4), 0] in
+  let ctx3 = [append(nth(ctx, 0), js_pnames(ps, st)), nth(ctx, 1), retf2, retv2, nth(ctx, 4), 0] in
   let b0 = js_call_stmts(body, ctx3, "0", st) in
   let b1 = js_cat(["(let ", retv2, " = box_new() in ", b0, ")"]) in
   let b2 = js_cat(["(let ", retf2, " = box_new() in (let _ = box_set(", retf2, ", false) in ", b1, "))"]) in
@@ -1069,15 +1122,26 @@ let js_func_body(ps, body, ctx, st) =
     if i < 0 then inner
     else
       let p = nth(ps, i) in
-      let m = js_mangle(js_pname(p)) in
-      let pv = nth(pnames, i) in
-      let binder =
-        if kind(p) == 3 then pv
-        else
-          let dv = js_call_expr(nth(p, 1), ctx3, st) in
-          let tmp = str_cat("_def", int_to_str(i)) in
-          js_cat(["(let ", tmp, " = ", pv, " in if ", tmp, " == 0 then ", dv, " else ", tmp, ")"]) in
-      wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", binder, ") in ", inner, "))"])) in
+      let raw = nth(pnames, i) in
+      if kind(p) == 3 then
+        let m = js_mangle(p) in
+        wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", raw, ") in ", inner, "))"]))
+      else if nth(p, 0) == "def" then
+        let m = js_mangle(nth(p, 1)) in
+        let dv = js_call_expr(nth(p, 2), ctx3, st) in
+        wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", js_def_if0(raw, dv), ") in ", inner, "))"]))
+      else
+        let pat = nth(p, 1) in
+        let isdef = nth(p, 0) == "patdef" in
+        let base = if isdef then str_cat("_pv", int_to_str(i)) else raw in
+        let flat = js_pat_flat(pat, base, st) in
+        let des = js_bind_flat(flat, inner) in
+        let des2 =
+          if isdef then
+            let dv = js_call_expr(nth(p, 2), ctx3, st) in
+            js_cat(["(let ", base, " = ", js_def_if0(raw, dv), " in ", des, ")"])
+          else des in
+        wrap(i - 1, des2) in
   [js_join(pnames, ", ", 0, ""), wrap(len(ps) - 1, b2)]
 
 /* ---- expression emitter ---------------------------------------------- */
@@ -1884,6 +1948,7 @@ let js_to_yac(src) =
   let _ = box_set(js_stmts_parse_box, js_parse_stmts) in
   let _ = box_set(js_stmts_box, js_emit_stmts) in
   let _ = box_set(js_expr_box, js_emit_expr) in
+  let _ = box_set(js_pat_box, js_pat_parse) in
   let toks = js_lex(src) in
   let r = js_parse_stmts(toks, 0, ["list", 0], st) in
   let body = js_emit_stmts(nth(r, 0), [[], [], 0, 0, [], 0], "0", st) in
