@@ -1008,6 +1008,16 @@ let js_str_lit(e) = nth(e, 0) == "str"
  * comparison / equality / `&&` / `||`, or `!`. yac prints such a value as
  * 1/0, so console.log and string concatenation route it through _js_bool to
  * get JS's "true"/"false". */
+/* Number static constants -> yac literal text ("" = not a constant). */
+let js_num_const(nm) =
+  if nm == "MAX_SAFE_INTEGER" then "9007199254740991"
+  else if nm == "MIN_SAFE_INTEGER" then "(0 - 9007199254740991)"
+  else if nm == "EPSILON" then "2.220446049250313e-16"
+  else if nm == "POSITIVE_INFINITY" then "1.7976931348623157e308"
+  else if nm == "NEGATIVE_INFINITY" then "(0 - 1.7976931348623157e308)"
+  else if nm == "NaN" then "(0.0 / 0.0)"
+  else ""
+
 /* Math methods that map straight onto a num.math export. */
 let js_math_known(nm) =
   nm == "abs" or nm == "min" or nm == "max" or nm == "pow" or nm == "sqrt"
@@ -1490,9 +1500,10 @@ let js_emit_expr(e, ctx, st) =
     let cname = if nth(c, 0) == "id" then nth(c, 1) else "" in
     let _ = box_set(st_obj(st), 1) in
     let _ = box_set(st_fmap(st), 1) in
-    if cname == "Map" or cname == "Set" then
+    if cname == "Map" or cname == "Set" or cname == "WeakMap" or cname == "WeakSet" then
       (let _ = box_set(st_jslib(st), 1) in
-       js_cat(["(let _o = _js_obj(_js_proto(\"", js_esc(cname), "\")) in (let _ = fmap_put(nth(_o, 1), \"$data\", list_new()) in (let _ = fmap_put(nth(_o, 1), \"size\", 0) in (let _ = fmap_put(nth(_o, 1), \"$kind\", \"", js_esc(cname), "\") in _o))))"]))
+       let canon = if cname == "Map" or cname == "WeakMap" then "Map" else "Set" in
+       js_cat(["(let _o = _js_obj(_js_proto(\"", js_esc(canon), "\")) in (let _ = fmap_put(nth(_o, 1), \"$data\", list_new()) in (let _ = fmap_put(nth(_o, 1), \"size\", 0) in (let _ = fmap_put(nth(_o, 1), \"$kind\", \"", js_esc(canon), "\") in _o))))"]))
     else
     js_cat(["(let _o = _js_obj(_js_proto(\"", js_esc(cname), "\")) in (let _s = box_get(_js_this) in (let _ = box_set(_js_this, _o) in (let _ = (", js_emit_expr(c, ctx, st), ")(", emit_args(args), ") in (let _ = box_set(_js_this, _s) in _o)))))"])
   else if tag == "postfix" then
@@ -1561,7 +1572,9 @@ let js_emit_expr(e, ctx, st) =
      * lookups. */
     let obj = nth(e, 1) in
     let nm = nth(e, 2) in
-    if nth(obj, 0) == "id" and nth(obj, 1) == "Math" and (nm == "PI" or nm == "E" or nm == "LN2") then
+    let nc = if nth(obj, 0) == "id" and nth(obj, 1) == "Number" then js_num_const(nm) else "" in
+    if nc != "" then nc
+    else if nth(obj, 0) == "id" and nth(obj, 1) == "Math" and (nm == "PI" or nm == "E" or nm == "LN2") then
       (let _ = box_set(st_math(st), 1) in
        if nm == "PI" then "pi(0)" else if nm == "E" then "e(0)" else "ln2(0)")
     else if nm == "length" then

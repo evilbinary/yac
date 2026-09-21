@@ -323,6 +323,14 @@ let _ = check("forof_string", "let s='abc'; let r=''; for (let c of s) { r = r +
 let _ = check("forof_map", "let m=new Map(); m.set('a',1); m.set('b',2); let t=0; for (let e of m) { t = t + e[1]; } console.log(t);", "3")
 let _ = check("forof_set", "let st=new Set(); st.add(1); st.add(2); let t=0; for (let v of st) { t = t + v; } console.log(t);", "3")
 
+/* WeakMap / WeakSet, Math hyperbolics, Number constants */
+let _ = check("weakmap", "let w=new WeakMap(); w.set('a',1); console.log(w.get('a'));", "1")
+let _ = check("weakset", "let w=new WeakSet(); w.add(5); console.log(w.has(5));", "true")
+let _ = check("math_sinh", "console.log(Math.sinh(0));", "0")
+let _ = check("math_cosh", "console.log(Math.cosh(0));", "1")
+let _ = check("num_maxsafe", "console.log(Number.MAX_SAFE_INTEGER);", "9007199254740991")
+let _ = check("num_epsilon", "console.log(Number.EPSILON > 0);", "true")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")

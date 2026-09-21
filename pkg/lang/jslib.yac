@@ -361,6 +361,12 @@ let js_math(m, args) =
   else if m == "max" then js_maxg(args)
   else if m == "min" then js_ming(args)
   else if m == "hypot" then js_hypotg(args)
+  else if m == "sinh" then (exp(nth(args, 0)) - exp(0.0 - nth(args, 0))) / 2.0
+  else if m == "cosh" then (exp(nth(args, 0)) + exp(0.0 - nth(args, 0))) / 2.0
+  else if m == "tanh" then (let e = exp(2.0 * nth(args, 0)) in (e - 1.0) / (e + 1.0))
+  else if m == "asinh" then (let x = nth(args, 0) in log(x + sqrt(x * x + 1.0)))
+  else if m == "acosh" then (let x = nth(args, 0) in log(x + sqrt(x * x - 1.0)))
+  else if m == "atanh" then (let x = nth(args, 0) in 0.5 * log((1.0 + x) / (1.0 - x)))
   else 0
 
 let js_native(obj, m, args) =
