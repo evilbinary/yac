@@ -787,6 +787,7 @@ let a64_op_jmp(b, patches, name) =
   let _ = a64_b(b, 0) in
   cons(["b26", pos, name], patches)
 let a64_op_cmpjmp(b, patches, tname, fname) =
+  let _ = a64_asr1(b, 0, 0) in
   let _ = a64_cmp_reg(b, 0, 31) in
   let peq = bytes_len(b) in
   let _ = a64_b_eq(b, 0) in

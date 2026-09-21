@@ -498,7 +498,55 @@ let emit_x86_i_cmp(st, insn) =
   if op == "==" or op == "!=" then emit_x86_i_cmp_eq(st, insn)
   else emit_x86_i_cmp_rel(st, insn)
 
-let emit_x86_i_core(st, insn, is_entry, is_raw) =
+/* Arch primitives for the shared i_core skeleton (docs/EMIT_BACKEND.md §5).
+ * Logical regs: T0 = rax, T1 = rbx. slot_store only ever targets T0. */
+let x86_op_slot_load(b, rg, slot) =
+  if rg == 1 then emit_load_rbx_slot(b, slot) else emit_load_rax_slot(b, slot)
+let x86_op_slot_store(b, slot, rg) = emit_store_rax_slot(b, slot)
+let x86_op_mov_imm(b, rg, v) = mov_r64_imm64(b, rg, v)
+let x86_op_asr1(b, rg) = if rg == 1 then sar_rbx_1(b) else sar_rax_1(b)
+let x86_op_lsl1(b, rg) = shl_rax_1(b)
+let x86_op_arith(b, opk, d, x, y) =
+  if opk == "add" then add_rax_rbx(b)
+  else if opk == "sub" then sub_rax_rbx(b)
+  else if opk == "mul" then imul_rax_rbx(b)
+  else if opk == "land" then and_rax_rbx(b)
+  else if opk == "lor" then or_rax_rbx(b)
+  else if opk == "xor" then xor_rax_rbx(b)
+  else if opk == "bnot" then not_rax(b)
+  else if opk == "shl" then
+    let _ = mov_rcx_rbx(b) in
+    shl_rax_cl(b)
+  else if opk == "shr" then
+    let _ = mov_rcx_rbx(b) in
+    shr_rax_cl(b)
+  else if opk == "div" then
+    let _ = cqo(b) in
+    idiv_rbx(b)
+  else if opk == "rem" then
+    let _ = cqo(b) in
+    let _ = idiv_rbx(b) in
+    mov_r64_r64(b, 0, 2)
+  else 0
+let x86_op_icmp(b, op) =
+  let _ = cmp_rax_rbx(b) in
+  let _ = setcc_r8(b, cc_of(op)) in
+  let _ = movzx_eax_al(b) in
+  shl_rax_1(b)
+let x86_op_jmp(b, patches, name) =
+  let jpos = bytes_len(b) in
+  let _ = jmp_rel32(b, 0) in
+  cons([jpos + 1, name], patches)
+let x86_op_cmpjmp(b, patches, tname, fname) =
+  let _ = test_rax_rax(b) in
+  let jcc_at = bytes_len(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jmp_at = bytes_len(b) in
+  let _ = jmp_rel32(b, 0) in
+  cons([jcc_at + 2, fname], cons([jmp_at + 1, tname], patches))
+let x86_ops(_) = [x86_op_slot_load, x86_op_slot_store, x86_op_mov_imm, x86_op_asr1, x86_op_lsl1, x86_op_arith, x86_op_icmp, x86_op_jmp, x86_op_cmpjmp]
+
+let emit_x86_i_core_rest(st, insn, is_entry, is_raw) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
@@ -572,72 +620,8 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       let _ = emit_tco_set(bytes_len(b)) in
       let labs = label_put(labels, tco_lab(0), bytes_len(b)) in
       emit_st4(st, b, cur, labs, patches)
-  else if k == "mov_imm" then
-    /* bit pattern already encoded (tagged int or nil=1) */
-    let _ = mov_r64_imm64(b, 0, nth(insn, 2)) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "mov" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if is_arith(k) then
-    let dst = nth(insn, 1) in
-    let a = nth(insn, 2) in
-    let bop = nth(insn, 3) in
-    let _ = emit_load_rax_slot(b, a) in
-    let _ = sar_rax_1(b) in
-    let _ = emit_load_rbx_slot(b, bop) in
-    let _ = sar_rbx_1(b) in
-    let c =
-      if k == "add" then add_rax_rbx(b)
-      else if k == "sub" then sub_rax_rbx(b)
-      else if k == "mul" then imul_rax_rbx(b)
-      else if k == "land" then and_rax_rbx(b)
-      else if k == "lor" then or_rax_rbx(b)
-      else if k == "xor" then xor_rax_rbx(b)
-      else if k == "bnot" then not_rax(b)
-      else if k == "shl" then
-        let _ = mov_rcx_rbx(b) in
-        shl_rax_cl(b)
-      else if k == "shr" then
-        let _ = mov_rcx_rbx(b) in
-        shr_rax_cl(b)
-      else if k == "div" then
-        let _ = cqo(b) in
-        idiv_rbx(b)
-      else if k == "rem" then
-        let _ = cqo(b) in
-        let _ = idiv_rbx(b) in
-        mov_r64_r64(b, 0, 2)
-      else 0 in
-    let _ = c in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, dst) in
-    emit_st4(st, b, cur, labels, patches)
   else if k == "cmp" then
     emit_x86_i_cmp(st, insn)
-  else if k == "icmp" then
-    let op = nth(insn, 1) in
-    let dst = nth(insn, 2) in
-    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-    let _ = sar_rax_1(b) in
-    let _ = emit_load_rbx_slot(b, nth(insn, 4)) in
-    let _ = sar_rbx_1(b) in
-    let _ = cmp_rax_rbx(b) in
-    let _ = setcc_r8(b, cc_of(op)) in
-    let _ = movzx_eax_al(b) in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, dst) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "label" then
-    let nm = nth(insn, 1) in
-    let pos = bytes_len(b) in
-    let _ =
-      if is_entry then 0
-      else if intern(nm) == tco_lab(0) then emit_tco_set(pos)
-      else 0 in
-    emit_st4(st, b, cur, label_put(labels, nm, pos), patches)
   else if k == "fcall" then
     /* SysV: 6 regs then stack (7th at callee [rbp+16]). apply already did this. */
     let dst = nth(insn, 1) in
@@ -757,23 +741,6 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
       if emit_tco_get(0) == 0 then emit_x86_tcall_other(st, insn, is_entry, is_raw, traw)
       else emit_x86_tloop(st, nth(insn, 3))
     else emit_x86_tcall_other(st, insn, is_entry, is_raw, traw)
-  else if k == "jmp" then
-    /* jmp_rel32: e9 + rel32; rel32 field at len0+1 */
-    let jpos = bytes_len(b) in
-    let _ = jmp_rel32(b, 0) in
-    emit_st4(st, b, cur, labels, cons([jpos + 1, nth(insn, 1)], patches))
-  else if k == "cmpjmp" then
-    let cond = nth(insn, 1) in
-    let tl = nth(insn, 2) in
-    let fl = nth(insn, 3) in
-    let _ = emit_load_rax_slot(b, cond) in
-    let _ = test_rax_rax(b) in
-    let jcc_at = bytes_len(b) in
-    let _ = jcc_rel32(b, 4, 0) in  /* 0f 84 + rel32 */
-    let jmp_at = bytes_len(b) in
-    let _ = jmp_rel32(b, 0) in     /* e9 + rel32 */
-    emit_st4(st, b, cur, labels,
-     cons([jcc_at + 2, fl], cons([jmp_at + 1, tl], patches)))
   else if k == "ret" then
     let _ = emit_load_rax_slot(b, nth(insn, 1)) in
     if is_entry then let _ = ret(b) in emit_st4(st, b, cur, labels, patches)
@@ -789,6 +756,10 @@ let emit_x86_i_core(st, insn, is_entry, is_raw) =
     if emit_host_win(0) then win_exit(st, patches)
     else linux_exit(st, patches)
   else st
+
+let emit_x86_i_core(st, insn, is_entry, is_raw) =
+  let r = emit_i_core_base(st, insn, is_entry, x86_ops(0)) in
+  if r != 0 then r else emit_x86_i_core_rest(st, insn, is_entry, is_raw)
 
 let emit_x86_i_sys(st, insn) =
   let b = nth(st, 0) in

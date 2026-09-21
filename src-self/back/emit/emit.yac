@@ -1392,7 +1392,6 @@ let emit_i_core_base(st, insn, is_entry, ops) =
     emit_st4(st, b, cur, labels, p2)
   else if k == "cmpjmp" then
     let _ = (slot_load)(b, 0, nth(insn, 1)) in
-    let _ = (asr1)(b, 0) in
     let p2 = (cmpjmp)(b, patches, nth(insn, 2), nth(insn, 3)) in
     emit_st4(st, b, cur, labels, p2)
   else 0
