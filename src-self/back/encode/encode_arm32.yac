@@ -1,0 +1,294 @@
+/* encode_arm32.yac — AArch32 (ARMv7-A, A32) instruction words, little-endian.
+ *
+ * r0..r15; sp = r13, lr = r14, pc = r15. Data-processing / load-store carry
+ * the condition in bits 28-31 (AL = E), so every base below is 0xE..... .
+ * A32 data-processing immediates are 8-bit rotated right by 2*rot; arbitrary
+ * 32-bit constants go through MOVW/MOVT (ARMv7).
+ *
+ * VFP (IEEE f64) is not encoded here yet; emit_arm32 stubs the float ops.
+ */
+
+package back.encode.encode_arm32
+export a32_u32, a32_u32_at, a32_word,
+  a32_mov_imm, a32_mov_imm_cc, a32_mov_imm32, a32_mov_imm32_at, a32_movw,
+  a32_movt, a32_mvn_imm,
+  a32_add_imm, a32_sub_imm, a32_rsb_imm, a32_and_imm, a32_orr_imm, a32_eor_imm,
+  a32_bic_imm, a32_cmp_imm,
+  a32_add_reg, a32_sub_reg, a32_and_reg, a32_orr_reg, a32_eor_reg, a32_mov_reg,
+  a32_mvn_reg, a32_bic_reg, a32_rsb_reg, a32_cmp_reg, a32_tst_reg,
+  a32_mul, a32_mla, a32_sdiv,
+  a32_lsl1, a32_lsl_imm, a32_lsr_imm, a32_asr_imm, a32_lsl_reg, a32_lsr_reg,
+  a32_ldr_imm, a32_ldr_imm_dn, a32_str_imm, a32_str_imm_dn, a32_ldr_at,
+  a32_str_at, a32_ldr_reg, a32_str_reg, a32_ldr_reg_lsl, a32_str_reg_lsl,
+  a32_ldrb_imm, a32_strb_imm, a32_ldrb_reg, a32_strb_reg, a32_ldr_post,
+  a32_ldr_post_dn, a32_str_post, a32_str_post_dn,
+  a32_push, a32_pop,
+  a32_b, a32_bl, a32_b_cond, a32_b_eq, a32_b_ne, a32_patch_bcond,
+  a32_bx, a32_blx_reg, a32_ret, a32_nop_at, a32_brk, a32_svc, a32_cset
+
+let a32_u32(b, w) =
+  let _ = bytes_append(b, band(w, 255)) in
+  let _ = bytes_append(b, band(bshr(w, 8), 255)) in
+  let _ = bytes_append(b, band(bshr(w, 16), 255)) in
+  let _ = bytes_append(b, band(bshr(w, 24), 255)) in
+  0
+
+let a32_u32_at(b, pos, w) =
+  let _ = bytes_put(b, pos, band(w, 255)) in
+  let _ = bytes_put(b, pos + 1, band(bshr(w, 8), 255)) in
+  let _ = bytes_put(b, pos + 2, band(bshr(w, 16), 255)) in
+  let _ = bytes_put(b, pos + 3, band(bshr(w, 24), 255)) in
+  0
+
+let a32_word(b, pos) =
+  bytes_ref(b, pos) + bshl(bytes_ref(b, pos + 1), 8) +
+  bshl(bytes_ref(b, pos + 2), 16) + bshl(bytes_ref(b, pos + 3), 24)
+
+/* ---- immediates ------------------------------------------------------- */
+
+/* rot<<8|imm8 for ROR(imm8,2*rot)==v, or -1. v masked to 32 bits. */
+let a32_imm_go(v, rot) =
+  if rot > 15 then 0 - 1
+  else if band(v, 4294967040) == 0 then bor(bshl(rot, 8), band(v, 255))
+  else
+    let v2 = bor(band(bshl(v, 2), 4294967295), band(bshr(v, 30), 3)) in
+    a32_imm_go(v2, rot + 1)
+
+let a32_imm_enc(v) = a32_imm_go(band(v, 4294967295), 0)
+
+/* 0xE3A00000 MOV Rd,#imm(rot) */
+let a32_mov_imm(b, rd, v) =
+  let e = a32_imm_enc(v) in
+  if e < 0 then 1 else a32_u32(b, 3818913792 + bshl(rd, 12) + e)
+
+/* conditional MOV Rd,#imm: cond in bits 28-31 (base 0x03A00000). */
+let a32_mov_imm_cc(b, cond, rd, v) =
+  let e = a32_imm_enc(v) in
+  if e < 0 then 1
+  else a32_u32(b, bor(bshl(band(cond, 15), 28), 60817408 + bshl(rd, 12) + e))
+
+/* 0xE3E00000 MVN Rd,#imm(rot) */
+let a32_mvn_imm(b, rd, v) =
+  let e = a32_imm_enc(v) in
+  if e < 0 then 1 else a32_u32(b, 3823108096 + bshl(rd, 12) + e)
+
+/* 0xE3000000 MOVW Rd,#imm16 */
+let a32_movw(b, rd, imm16) =
+  let i = band(imm16, 65535) in
+  a32_u32(b, 3808428032 + bshl(band(bshr(i, 12), 15), 16) + bshl(rd, 12) + band(i, 4095))
+
+/* 0xE3400000 MOVT Rd,#imm16 */
+let a32_movt(b, rd, imm16) =
+  let i = band(imm16, 65535) in
+  a32_u32(b, 3812622336 + bshl(band(bshr(i, 12), 15), 16) + bshl(rd, 12) + band(i, 4095))
+
+let a32_mov_imm32(b, rd, v) =
+  let _ = a32_movw(b, rd, band(v, 65535)) in
+  a32_movt(b, rd, band(bshr(v, 16), 65535))
+
+/* Two words at pos: MOVW then MOVT. */
+let a32_mov_imm32_at(b, pos, rd, v) =
+  let lo = band(v, 65535) in
+  let hi = band(bshr(v, 16), 65535) in
+  let w0 = 3808428032 + bshl(band(bshr(lo, 12), 15), 16) + bshl(rd, 12) + band(lo, 4095) in
+  let w1 = 3812622336 + bshl(band(bshr(hi, 12), 15), 16) + bshl(rd, 12) + band(hi, 4095) in
+  let _ = a32_u32_at(b, pos, w0) in
+  a32_u32_at(b, pos + 4, w1)
+
+/* ---- data processing (register form 0xE0/0xE1, immediate form 0xE2/0xE3) */
+
+/* AND=0xE0000000 EOR=0xE0200000 SUB=0xE0400000 RSB=0xE0600000 ADD=0xE0800000
+ * ORR=0xE1800000 MOV=0xE1A00000 BIC=0xE1C00000 MVN=0xE1E00000 CMP=0xE1500000
+ * TST=0xE1100000 MUL=0xE0000090 MLA=0xE0200090 SDIV=0xE710F010 */
+let a32_add_imm(b, rd, rn, v) =
+  let e = a32_imm_enc(v) in
+  if e < 0 then 1 else a32_u32(b, 3800039424 + bshl(rn, 16) + bshl(rd, 12) + e)
+
+let a32_sub_imm(b, rd, rn, v) =
+  let e = a32_imm_enc(v) in
+  if e < 0 then 1 else a32_u32(b, 3795845120 + bshl(rn, 16) + bshl(rd, 12) + e)
+
+/* RSB Rd,Rn,#v : Rd = v - Rn */
+let a32_rsb_imm(b, rd, rn, v) =
+  let e = a32_imm_enc(v) in
+  if e < 0 then 1 else a32_u32(b, 3797942272 + bshl(rn, 16) + bshl(rd, 12) + e)
+
+let a32_and_imm(b, rd, rn, v) =
+  let e = a32_imm_enc(v) in
+  if e < 0 then 1 else a32_u32(b, 3791650816 + bshl(rn, 16) + bshl(rd, 12) + e)
+
+let a32_orr_imm(b, rd, rn, v) =
+  let e = a32_imm_enc(v) in
+  if e < 0 then 1 else a32_u32(b, 3816816640 + bshl(rn, 16) + bshl(rd, 12) + e)
+
+let a32_eor_imm(b, rd, rn, v) =
+  let e = a32_imm_enc(v) in
+  if e < 0 then 1 else a32_u32(b, 3793747968 + bshl(rn, 16) + bshl(rd, 12) + e)
+
+let a32_bic_imm(b, rd, rn, v) =
+  let e = a32_imm_enc(v) in
+  if e < 0 then 1 else a32_u32(b, 3821010944 + bshl(rn, 16) + bshl(rd, 12) + e)
+
+let a32_cmp_imm(b, rn, v) =
+  let e = a32_imm_enc(v) in
+  if e < 0 then 1 else a32_u32(b, 3813670912 + bshl(rn, 16) + e)
+
+let a32_add_reg(b, rd, rn, rm) =
+  a32_u32(b, 3766484992 + bshl(rn, 16) + bshl(rd, 12) + rm)
+
+let a32_sub_reg(b, rd, rn, rm) =
+  a32_u32(b, 3762290688 + bshl(rn, 16) + bshl(rd, 12) + rm)
+
+let a32_rsb_reg(b, rd, rn, rm) =
+  a32_u32(b, 3764387840 + bshl(rn, 16) + bshl(rd, 12) + rm)
+
+let a32_and_reg(b, rd, rn, rm) =
+  a32_u32(b, 3758096384 + bshl(rn, 16) + bshl(rd, 12) + rm)
+
+let a32_orr_reg(b, rd, rn, rm) =
+  a32_u32(b, 3783262208 + bshl(rn, 16) + bshl(rd, 12) + rm)
+
+let a32_eor_reg(b, rd, rn, rm) =
+  a32_u32(b, 3760193536 + bshl(rn, 16) + bshl(rd, 12) + rm)
+
+let a32_bic_reg(b, rd, rn, rm) =
+  a32_u32(b, 3787456512 + bshl(rn, 16) + bshl(rd, 12) + rm)
+
+/* MOV Rd,Rm  (Rm must not be pc) */
+let a32_mov_reg(b, rd, rm) =
+  a32_u32(b, 3785359360 + bshl(rd, 12) + rm)
+
+let a32_mvn_reg(b, rd, rm) =
+  a32_u32(b, 3789553664 + bshl(rd, 12) + rm)
+
+let a32_cmp_reg(b, rn, rm) =
+  a32_u32(b, 3780116480 + bshl(rn, 16) + rm)
+
+let a32_tst_reg(b, rn, rm) =
+  a32_u32(b, 3775922176 + bshl(rn, 16) + rm)
+
+let a32_mul(b, rd, rn, rm) =
+  a32_u32(b, 3758096528 + bshl(rd, 16) + bshl(rm, 8) + rn)
+
+/* MLA Rd,Rn,Rm,Ra : Rd = Rn*Rm + Ra */
+let a32_mla(b, rd, rn, rm, ra) =
+  a32_u32(b, 3760193680 + bshl(rd, 16) + bshl(ra, 12) + bshl(rm, 8) + rn)
+
+let a32_sdiv(b, rd, rn, rm) =
+  a32_u32(b, 3876646928 + bshl(rd, 16) + bshl(rm, 8) + rn)
+
+let a32_lsl1(b, rd, rn) = a32_add_reg(b, rd, rn, rn)
+
+/* MOV Rd,Rm,LSL#n / LSR#n / ASR#n */
+let a32_lsl_imm(b, rd, rm, n) =
+  a32_u32(b, 3785359360 + bshl(rd, 12) + bshl(band(n, 31), 7) + rm)
+
+let a32_lsr_imm(b, rd, rm, n) =
+  a32_u32(b, 3785359360 + 32 + bshl(rd, 12) + bshl(band(n, 31), 7) + rm)
+
+let a32_asr_imm(b, rd, rm, n) =
+  a32_u32(b, 3785359360 + 64 + bshl(rd, 12) + bshl(band(n, 31), 7) + rm)
+
+/* MOV Rd,Rm,LSL Rs / LSR Rs */
+let a32_lsl_reg(b, rd, rm, rs) =
+  a32_u32(b, 3785359360 + 16 + bshl(rd, 12) + bshl(rs, 8) + rm)
+
+let a32_lsr_reg(b, rd, rm, rs) =
+  a32_u32(b, 3785359360 + 48 + bshl(rd, 12) + bshl(rs, 8) + rm)
+
+/* ---- load / store ----------------------------------------------------- */
+
+/* LDR/STR Rt,[Rn,#imm12] (pre, up); dn = down. */
+let a32_ldr_imm(b, rt, rn, off) =
+  a32_u32(b, 3851419648 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+
+let a32_ldr_imm_dn(b, rt, rn, off) =
+  a32_u32(b, 3843031040 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+
+let a32_str_imm(b, rt, rn, off) =
+  a32_u32(b, 3850371072 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+
+let a32_str_imm_dn(b, rt, rn, off) =
+  a32_u32(b, 3841982464 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+
+let a32_ldr_at(b, pos, rt, rn, off) =
+  a32_u32_at(b, pos, 3851419648 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+
+let a32_str_at(b, pos, rt, rn, off) =
+  a32_u32_at(b, pos, 3850371072 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+
+/* Rt,[Rn,Rm] and [Rn,Rm,LSL#s] */
+let a32_ldr_reg(b, rt, rn, rm) =
+  a32_u32(b, 3884974080 + bshl(rn, 16) + bshl(rt, 12) + rm)
+
+let a32_str_reg(b, rt, rn, rm) =
+  a32_u32(b, 3883925504 + bshl(rn, 16) + bshl(rt, 12) + rm)
+
+let a32_ldr_reg_lsl(b, rt, rn, rm, s) =
+  a32_u32(b, 3884974080 + bshl(rn, 16) + bshl(rt, 12) + bshl(band(s, 31), 7) + rm)
+
+let a32_str_reg_lsl(b, rt, rn, rm, s) =
+  a32_u32(b, 3883925504 + bshl(rn, 16) + bshl(rt, 12) + bshl(band(s, 31), 7) + rm)
+
+let a32_ldrb_imm(b, rt, rn, off) =
+  a32_u32(b, 3855613952 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+
+let a32_strb_imm(b, rt, rn, off) =
+  a32_u32(b, 3854567424 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+
+let a32_ldrb_reg(b, rt, rn, rm) =
+  a32_u32(b, 3889168384 + bshl(rn, 16) + bshl(rt, 12) + rm)
+
+let a32_strb_reg(b, rt, rn, rm) =
+  a32_u32(b, 3888123904 + bshl(rn, 16) + bshl(rt, 12) + rm)
+
+/* Post-indexed Rt,[Rn],#±off  (register unchanged semantics: writeback). */
+let a32_ldr_post(b, rt, rn, off) =
+  a32_u32(b, 3834642432 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+
+let a32_ldr_post_dn(b, rt, rn, off) =
+  a32_u32(b, 3826253824 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+
+let a32_str_post(b, rt, rn, off) =
+  a32_u32(b, 3833593856 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+
+let a32_str_post_dn(b, rt, rn, off) =
+  a32_u32(b, 3825205248 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+
+/* ---- block / stack ---------------------------------------------------- */
+
+/* PUSH {list} = STMDB sp!,{list}; POP {list} = LDMIA sp!,{list}. */
+let a32_push(b, list) = a32_u32(b, 3912040448 + band(list, 65535))
+let a32_pop(b, list) = a32_u32(b, 3904700416 + band(list, 65535))
+
+/* ---- branch ----------------------------------------------------------- */
+
+/* B/BL take a signed word offset (imm24), pc-relative (pc = addr + 8). */
+let a32_b(b, imm24) = a32_u32(b, 3925868544 + band(imm24, 16777215))
+let a32_bl(b, imm24) = a32_u32(b, 3942645760 + band(imm24, 16777215))
+
+/* B<c> 0x0A000000 | cond<<28 */
+let a32_b_cond(b, cond, imm24) =
+  a32_u32(b, bor(bshl(band(cond, 15), 28), 167772160 + band(imm24, 16777215)))
+
+let a32_b_eq(b, imm24) = a32_u32(b, 436207616 + band(imm24, 16777215))
+let a32_b_ne(b, imm24) = a32_u32(b, 704643072 + band(imm24, 16777215))
+
+/* Rewrite B<c> at pos to target (absolute byte address). */
+let a32_patch_bcond(b, pos, target) =
+  let cond = band(bshr(a32_word(b, pos), 28), 15) in
+  let off = band(bshr(target - (pos + 8), 2), 16777215) in
+  a32_u32_at(b, pos, bor(bshl(cond, 28), 167772160 + off))
+
+let a32_bx(b, rm) = a32_u32(b, 3778045088 + rm)
+let a32_blx_reg(b, rm) = a32_u32(b, 3778045120 + rm)
+let a32_ret(b) = a32_u32(b, 3778045102)
+let a32_nop_at(b, pos) = a32_u32_at(b, pos, 3785359360)
+let a32_brk(b) = a32_u32(b, 3891265776)
+let a32_svc(b, imm24) = a32_u32(b, 4009754624 + band(imm24, 16777215))
+
+/* CSET Rd,cond : MOV Rd,#1 if cond else #0. Must be two insns; emit_arm32
+ * writes MOVNE/… #1 then MOV<inv> #0 via a32_mov_imm_cc. */
+let a32_cset(b, rd, cond) =
+  let _ = a32_mov_imm_cc(b, cond, rd, 1) in
+  a32_mov_imm_cc(b, bxor(cond, 1), rd, 0)

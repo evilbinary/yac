@@ -4,7 +4,7 @@ package back.emit.emit_riscv64
 export emit_program_riscv64, rv_resolve_loop
 import back.encode.encode_riscv64
 import lib.log {log_fatal}
-import back.emit.emit {icall_args, apply_u64, asm_dump_cells, asm_dump_get, asm_dump_procs, asm_dump_set, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_rv, emit_fmt_set, emit_glob_data, emit_ids_new, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tcall_raw_of, tcall_tab_set, prof_hook_fix, tco_lab, yjit_layout_set}
+import back.emit.emit {icall_args, apply_u64, asm_dump_cells, asm_dump_get, asm_dump_procs, asm_dump_set, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_rv, emit_fmt_set, emit_glob_data, emit_ids_new, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, fun_is_raw, emit_funs_loop, no_skip, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tcall_raw_of, tcall_tab_set, prof_hook_fix, tco_lab, yjit_layout_set}
 import back.emit.emit_cabi {dlib_rv_va, emit_cabi_all}
 import back.pack.elf {elf_pic, funsym_set}
 import back.pack.target {JIT_VADDR}
@@ -1355,7 +1355,7 @@ let emit_rv_i_heap(st, insn) =
      * entry baked into [cell+16] by tag 23, value = tagged cell address.
      * Mirrors x86_64. */
     let nm = nth(insn, 2) in
-    let goff = gref_base() + bshl(gref_alloc(nm), 5) in
+    let goff = gref_base(0) + bshl(gref_alloc(nm), 5) in
     let gpos = bytes_len(b) in
     let _ = rv_li32_pair(b, 6, 0) in
     let fid = emit_map_get(nth(st, 4), nm) in
@@ -1370,7 +1370,7 @@ let emit_rv_i_heap(st, insn) =
   else if k == "gval" then
     /* Read a top-level value: [unit + 0] (name unit = 32B in the globals area,
      * value at +0, entry at +16). Mirrors x86_64's abs64 tag 22 via tag 12. */
-    let goff = gref_base() + bshl(gref_alloc(nth(insn, 2)), 5) in
+    let goff = gref_base(0) + bshl(gref_alloc(nth(insn, 2)), 5) in
     let gpos = bytes_len(b) in
     let _ = rv_li32_pair(b, 6, 0) in
     let _ = rv_ld(b, 6, 6, 0) in
@@ -1383,7 +1383,7 @@ let emit_rv_i_heap(st, insn) =
     let nm = nth(insn, 1) in
     let off = nth(insn, 2) in
     let src = nth(insn, 3) in
-    let goff = gref_base() + bshl(gref_alloc(nm), 5) + off in
+    let goff = gref_base(0) + bshl(gref_alloc(nm), 5) + off in
     if nth(src, 0) == "imm" then
       emit_st4(st, b, cur, labels, cons([24, goff, nth(src, 1)], patches))
     else
@@ -1782,7 +1782,9 @@ let emit_insn_rv_go(st, insn, is_entry) =
     emit_rv_i_cc(st, insn)
   else emit_rv_i_prim(st, insn)
 
-let emit_insn_rv(st, insn, is_entry) =
+/* 4th arg `is_raw` unused (see emit_arm64's note / docs/EMIT_BACKEND.md §1.6). */
+let emit_insn_rv(st, insn, is_entry, is_raw) =
+  let _ = is_raw in
   emit_insn_rv_go(st, insn, is_entry)
 
 
@@ -1883,34 +1885,10 @@ let emit_program_riscv64(prog, load_vaddr, text_off, fmt) =
   let _ = tcall_tab_set(funs) in
   let nfun = len(funs) in
   let entry = nth(prog, 2) in
-  let out = bytes_new() in
-  let ids = emit_ids_new(funs) in
-  let offs = list_new() in
-  let emit_fun(i, st, fo) =
-    if i >= nfun then [st, fo]
-    else
-      let f = nth(funs, i) in
-      let name = nth(f, 1) in
-      let _ = emit_self_set(name) in
-      let _ = emit_tco_set(0) in
-      let is_entry = name == entry in
-      let fstart = bytes_len(nth(st, 0)) in
-      let st0 = [nth(st, 0), 0, [], [], nth(st, 4)] in
-      let insns = nth(f, 4) in
-      if len(insns) == 0 then
-        let _ = list_push(offs, 0) in
-        emit_fun(i + 1, st, fo)
-      else
-        let _ = list_push(offs, fstart) in
-        let run(j, s) =
-          if j >= len(insns) then s
-          else run(j + 1, emit_insn_rv(s, nth(insns, j), is_entry)) in
-        let s1 = run(0, st0) in
-        let kept = rv_resolve_fun_patches(nth(s1, 0), nth(s1, 2), nth(s1, 3)) in
-        let _ = patches_extend(nth(st, 3), kept) in
-        let s2 = [nth(s1, 0), 0, [], nth(st, 3), nth(st, 4)] in
-        emit_fun(i + 1, s2, cons([name, fstart], fo)) in
-  let r1 = emit_fun(0, [out, 0, [], list_new(), ids], []) in
+  let r1 = emit_funs_loop(funs, entry, 0, emit_insn_rv, rv_resolve_fun_patches,
+                         no_skip) in
+  let out = nth(nth(r1, 0), 0) in
+  let offs = nth(r1, 2) in
   /* --dump-asm: same listing as x86_64 (shared helper; this backend had none). */
   let want_asm = asm_dump_get(0) != 0 in
   let _ = if want_asm then asm_dump_set(0) else 0 in

@@ -9,7 +9,7 @@
  */
 
 package back.emit.emit
-export asm_dump_get, asm_dump_set, asm_dump_procs, asm_dump_cells, relocs_get, relocs_set, relocs_reset, relocs_add, relocs_n, cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, icall_args, apply_i32, apply_patch, apply_u64, apply_u64_rel, cabi_should, cabi_skip, cimport_buf, cimport_id, cimport_index, cimport_reset, cimport_set, cimport_win_need, clos_bytes, emit_arch, emit_cplt_a64, emit_cplt_rv, emit_glob_data, emit_ids_new, emit_jsess, emit_jsess_set, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_patch_rel, emit_patch_strlit, emit_is_pe, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, fun_is_raw, fun_selfabi, is_yac_proc_name, tcall_tab_set, tcall_raw_of, prof_hook_fix, host_id, host_names, extsym_add, extsym_bind_add, extsym_bind_list, extsym_names, extsym_names_set, extsym_bind_set, extsym_find, extsym_n, extsym_reset, emit_jit_blob, emit_jit_blob_set, funsz_get, funsz_set, gref_alloc, gref_count, gref_names, gref_reset, gref_base, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_get, yjit_layout_set, reverse, host_unstub_procs, host_slot_bake, gref22, gref22_reset
+export asm_dump_get, asm_dump_set, asm_dump_procs, asm_dump_cells, relocs_get, relocs_set, relocs_reset, relocs_add, relocs_n, cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_funs_loop, no_skip, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, icall_args, apply_i32, apply_patch, apply_u64, apply_u64_rel, cabi_should, cabi_skip, cimport_buf, cimport_id, cimport_index, cimport_reset, cimport_set, cimport_win_need, clos_bytes, emit_arch, emit_cplt_a64, emit_cplt_rv, emit_glob_data, emit_ids_new, emit_jsess, emit_jsess_set, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_patch_rel, emit_patch_strlit, emit_is_pe, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, fun_is_raw, fun_selfabi, is_yac_proc_name, tcall_tab_set, tcall_raw_of, prof_hook_fix, host_id, host_names, extsym_add, extsym_bind_add, extsym_bind_list, extsym_names, extsym_names_set, extsym_bind_set, extsym_find, extsym_n, extsym_reset, emit_jit_blob, emit_jit_blob_set, funsz_get, funsz_set, gref_alloc, gref_count, gref_names, gref_reset, gref_base, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_get, yjit_layout_set, reverse, host_unstub_procs, host_slot_bake, gref22, gref22_reset
 import back.pack.elf {elf_note_abs64}
 import rt.runtime {yac_cimport_host_sym}
 import back.pack.pe {pe_iat_off, pe_iat_qwords}
@@ -17,7 +17,7 @@ import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
 import back.encode.encode_arm64 {a64_adr, a64_br, a64_ldr}
 import back.encode.encode_riscv64 {rv_auipc, rv_jalr, rv_ld}
 import back.encode.encode_x64 {jmp_mem_rip}
-import lib.log {log_fatal}
+import lib.log {log, log_i, log_fatal}
 
 let reverse(xs) = list_rev(xs)
 
@@ -616,10 +616,10 @@ let gref_alloc(g) =
     let _ = box_set(gref_box, [m, idx + 1, cons(g, nth(st, 2))]) in
     idx
 
-let gref_count() = nth(box_get(gref_box), 1)
-let gref_names() = reverse(nth(box_get(gref_box), 2))
+let gref_count(_) = nth(box_get(gref_box), 1)
+let gref_names(_) = reverse(nth(box_get(gref_box), 2))
 
-let gref_reset() =
+let gref_reset(_) =
   let m = fmap_new(0) in
   let _ = fmap_init_n(m, 1024) in
   box_set(gref_box, [m, 0, []])
@@ -642,7 +642,7 @@ let funsz_box =
   b
 
 let funsz_set(n) = box_set(funsz_box, n)
-let funsz_get() = box_get(funsz_box)
+let funsz_get(_) = box_get(funsz_box)
 
 /* 112 GC + 8 jit_map (G+112) + 8 prof cell (G+120) + 8 prof busy (G+128)
  * + 10x8 host-table slots (G+136..G+216) + 28x8 host cimport address table
@@ -653,14 +653,14 @@ let funsz_get() = box_get(funsz_box)
  * code, so nothing is baked)
  * + extern slots (8B each) + cross-image patch slots (32B stub closures /
  * value cells, one per referenced name). glob 3/4 must not sit on G+48/56/64. */
-let gref_base() = 456 + bshl(extsym_n(0), 3)
+let gref_base(_) = 456 + bshl(extsym_n(0), 3)
 
 /* Stub-cell table for --dump-asm: name -> cell offset -> [cell+0] value and
  * [cell+16] ENTRY, read back from the emitted image. Call it AFTER the backend
  * has filled the cells (x86_64: fill_gref; T is only echoed for context --
  * arm64/riscv64 pass 0): the entry is absolute and is what `icall` jumps to,
  * while the code patches (tag 22) are still unresolved at this point.
- * It has to sit after gref_base() because top-level bindings resolve in source
+ * It has to sit after gref_base(0) because top-level bindings resolve in source
  * order (FLAT_ABI.md 8.6; measured: "unbound variable 'gref_count'"). */
 let asm_dump_cells(b, data_start, t) =
   let u64_at(off) =
@@ -672,15 +672,15 @@ let asm_dump_cells(b, data_start, t) =
     let v5 = bor(v4, bshl(g(5), 40)) in
     let v6 = bor(v5, bshl(g(6), 48)) in
     bor(v6, bshl(g(7), 56)) in
-  let _ = print(str_cat("=== gref cells: ", str_cat(int_to_str(gref_count()),
-            str_cat("  (gref_base=", str_cat(int_to_str(gref_base()),
+  let _ = print(str_cat("=== gref cells: ", str_cat(int_to_str(gref_count(0)),
+            str_cat("  (gref_base=", str_cat(int_to_str(gref_base(0)),
             str_cat(", data_start=", str_cat(int_to_str(data_start),
             str_cat(", T=", str_cat(int_to_str(t), ")"))))))))) in
   let cells(i) =
-    if i >= gref_count() then 0
+    if i >= gref_count(0) then 0
     else
-      let c = data_start + gref_base() + bshl(i, 5) in
-      let nm = nth(gref_names(), i) in
+      let c = data_start + gref_base(0) + bshl(i, 5) in
+      let nm = nth(gref_names(0), i) in
       let m1 = str_cat("  cell ", str_cat(nm, str_cat(" off=", int_to_str(c)))) in
       let m2 = str_cat(m1, str_cat(" val=", int_to_str(u64_at(c)))) in
       let _ = print(str_cat(m2, str_cat(" entry=", int_to_str(u64_at(c + 16))))) in
@@ -688,7 +688,7 @@ let asm_dump_cells(b, data_start, t) =
   cells(0)
 
 let emit_glob_data(b) =
-  let lim = gref_base() + bshl(gref_count(), 5) in
+  let lim = gref_base(0) + bshl(gref_count(0), 5) in
   let fill(i) =
     if i >= lim then 0
     else let _ = bytes_append(b, 0) in fill(i + 1) in
@@ -1274,3 +1274,55 @@ let emit_resolve_loop(st, ps, i, n) =
   else
     let _ = emit_resolve_patch(st, nth(ps, i)) in
     emit_resolve_loop(st, ps, i + 1, n)
+
+/* ---- shared LIR->bytes loop (docs/EMIT_BACKEND.md §5.1) ----------------
+ * One place for the per-proc emission loop that x86_64 / arm64 / riscv64 used
+ * to copy. arch differences are passed in:
+ *   op_insn(s, insn, is_entry, is_raw) -> st      emit one LIR insn
+ *   op_resolve(b, labels, patches) -> kept        resolve this fun's local labels
+ *   op_skip(name, kind) -> int                    >=0: skip to that byte offset
+ *                                                 (x86 JIT session dedup); -1: emit
+ * `T` is the JIT append base x86_64 needs (0 for arm64/riscv).
+ * Returns [st, funOffsRev, offs]. */
+let no_skip(name, tag) =
+  let _ = name in
+  let _ = tag in
+  0 - 1
+
+let emit_funs_loop(funs, entry, T, op_insn, op_resolve, op_skip) =
+  let nfun = len(funs) in
+  let out = bytes_new() in
+  let ids = emit_ids_new(funs) in
+  let offs = list_new() in
+  let emit_fun(i, st, fo) =
+    if i >= nfun then [st, fo]
+    else
+      let _ =
+        if i == 0 or ((i % 20) == 0) then log_i("emit", "fun", i) else 0 in
+      let f = nth(funs, i) in
+      let name = nth(f, 1) in
+      let is_entry = name == entry in
+      let _ = emit_self_set(name) in
+      let _ = emit_tco_set(0) in
+      let skipat = (op_skip)(name, nth(f, 0)) in
+      let fstart = bytes_len(nth(st, 0)) in
+      let st0 = [nth(st, 0), fstart, [], [], nth(st, 4)] in
+      let insns = nth(f, 4) in
+      if skipat >= 0 then
+        let _ = list_push(offs, skipat - T) in
+        emit_fun(i + 1, st, fo)
+      else if len(insns) == 0 then
+        let _ = list_push(offs, 0) in
+        emit_fun(i + 1, st, fo)
+      else
+        let _ = list_push(offs, fstart) in
+        let run(j, s) =
+          if j >= len(insns) then s
+          else run(j + 1, (op_insn)(s, nth(insns, j), is_entry, fun_is_raw(f))) in
+        let s1 = run(0, st0) in
+        let kept = (op_resolve)(nth(s1, 0), nth(s1, 2), nth(s1, 3)) in
+        let _ = patches_extend(nth(st, 3), kept) in
+        let s2 = [nth(s1, 0), bytes_len(nth(s1, 0)), [], nth(st, 3), nth(st, 4)] in
+        emit_fun(i + 1, s2, cons([name, fstart], fo)) in
+  let r = emit_fun(0, [out, 0, [], list_new(), ids], []) in
+  [nth(r, 0), nth(r, 1), offs]

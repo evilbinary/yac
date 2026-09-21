@@ -3,7 +3,7 @@
  * ["target", arch, format, kind, emachine, pe_machine,
  *            macho_cputype, macho_cpusub, vaddr, text_off]
  *
- * arch:   x86_64 | arm64 | riscv64
+ * arch:   x86_64 | arm64 | riscv64 | arm32
  * format: elf | pe | macho
  * kind:   exec | dylib
  *
@@ -31,10 +31,14 @@ let target_live(t) =
   if target_format(t) == "yjit" then false
   else target_vaddr(t) == JIT_VADDR
 
+/* [ELF e_machine, PE machine, Mach-O cputype, cpusubtype]
+ *   arm32: EM_ARM(40) / IMAGE_FILE_MACHINE_ARMNT(452) / CPU_TYPE_ARM(12),
+ *          CPU_SUBTYPE_ARM_V7(9). A32 (ARMv7-A), little-endian. */
 let arch_ids(arch) =
   if arch == "x86_64" then [62, 34404, 16777223, 3]
   else if arch == "arm64" then [183, 43620, 16777228, 0]
   else if arch == "riscv64" then [243, 20580, 16777457, 0]
+  else if arch == "arm32" then [40, 452, 12, 9]
   else 0
 
 let layout_off(format, kind) =
@@ -78,6 +82,9 @@ let parse_arch_name(s) =
   else if s == "arm64" then "arm64"
   else if s == "aarch64" then "arm64"
   else if s == "riscv64" then "riscv64"
+  else if s == "arm32" then "arm32"
+  else if s == "arm" then "arm32"
+  else if s == "armv7" then "arm32"
   else ""
 
 let parse_format_name(s) =

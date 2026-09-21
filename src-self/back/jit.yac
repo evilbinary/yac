@@ -564,7 +564,7 @@ let compile_jit_go(src, t, named) =
         let _ = if jit_asm_dump(0) != 0 then dump_tag22(0) else 0 in
         /* Snapshot the blob's gref slot layout before any later emit
          * (AOT or next REPL line) reuses the emit state. */
-        let _ = box_set(gref_snap_box, [gref_base(), gref_names()]) in
+        let _ = box_set(gref_snap_box, [gref_base(0), gref_names(0)]) in
         let _ = log_set_hush(hush0) in
         let _ = emit_jsess_set(0) in
         let code = nth(r, 0) in

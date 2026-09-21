@@ -1057,7 +1057,7 @@ let yc_srcs(_) = [
   "src-self/back/pack/target.yac", "src-self/back/pack/elf.yac", "src-self/back/pack/dlib.yac", "src-self/back/pack/pe.yac",
   "src-self/back/pack/macho.yac", "src-self/back/pack/yjit.yac", "src-self/back/pack/pack.yac",
   "src-self/back/encode/encode_x64.yac", "src-self/back/encode/encode_arm64.yac",
-  "src-self/back/encode/encode_riscv64.yac",
+  "src-self/back/encode/encode_riscv64.yac", "src-self/back/encode/encode_arm32.yac",
   "src-self/back/emit/emit.yac",
   "src-self/back/emit/linux_x86_64.yac", "src-self/back/emit/win_x86_64.yac",
   "src-self/back/emit/emit_cabi.yac",

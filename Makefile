@@ -27,6 +27,7 @@ YC_SRCS = src-self/lib/log.yac src-self/lib/pass.yac src-self/lib/map.yac \
 	src-self/rt/runtime.yac \
 	src-self/back/pack/target.yac src-self/back/pack/elf.yac src-self/back/pack/dlib.yac src-self/back/pack/pe.yac src-self/back/pack/macho.yac src-self/back/pack/yjit.yac src-self/back/pack/pack.yac \
 	src-self/back/encode/encode_x64.yac src-self/back/encode/encode_arm64.yac src-self/back/encode/encode_riscv64.yac \
+	src-self/back/encode/encode_arm32.yac \
 	src-self/back/emit/emit.yac \
 	src-self/back/emit/linux_x86_64.yac src-self/back/emit/win_x86_64.yac \
 	src-self/back/emit/emit_cabi.yac src-self/back/emit/emit_x86_64.yac src-self/back/emit/emit_arm64.yac src-self/back/emit/emit_riscv64.yac \
