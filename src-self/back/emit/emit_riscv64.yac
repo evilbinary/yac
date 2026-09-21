@@ -748,7 +748,42 @@ let emit_rv_tloop(st, args) =
   let _ = if tco == 0 then 0 else rv_apply_jal(b, pos, tco, 0) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
 
-let emit_rv_i_core(st, insn, is_entry) =
+/* Arch primitives for the shared i_core skeleton (docs/EMIT_BACKEND.md §5).
+ * Logical regs: T0 = t1 (x6), T1 = t3 (x28). */
+let rv_op_slot_load(b, rg, slot) = rv_slot(b, slot, false, if rg == 1 then 28 else 6)
+let rv_op_slot_store(b, slot, rg) = rv_slot(b, slot, true, if rg == 1 then 28 else 6)
+let rv_op_mov_imm(b, rg, v) = rv_li(b, if rg == 1 then 28 else 6, v)
+let rv_op_asr1(b, rg) = rv_srai(b, if rg == 1 then 28 else 6, if rg == 1 then 28 else 6, 1)
+let rv_op_lsl1(b, rg) = rv_slli(b, if rg == 1 then 28 else 6, if rg == 1 then 28 else 6, 1)
+let rv_op_arith(b, opk, d, x, y) =
+  if opk == "add" then rv_add(b, 6, 6, 28)
+  else if opk == "sub" then rv_sub(b, 6, 6, 28)
+  else if opk == "mul" then rv_mul(b, 6, 6, 28)
+  else if opk == "land" then rv_and(b, 6, 6, 28)
+  else if opk == "lor" then rv_or(b, 6, 6, 28)
+  else if opk == "xor" then rv_xor(b, 6, 6, 28)
+  else if opk == "bnot" then rv_xori(b, 6, 6, 0 - 1)
+  else if opk == "shl" then rv_sll(b, 6, 6, 28)
+  else if opk == "shr" then rv_srl(b, 6, 6, 28)
+  else if opk == "div" then rv_div(b, 6, 6, 28)
+  else if opk == "rem" then rv_rem(b, 6, 6, 28)
+  else rv_add(b, 6, 6, 28)
+let rv_op_icmp(b, op) = rv_cmp_int(b, op)
+let rv_op_jmp(b, patches, name) =
+  let pos = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  cons(["jal", pos, name], patches)
+let rv_op_cmpjmp(b, patches, tname, fname) =
+  let pz = bytes_len(b) in
+  let _ = rv_beq(b, 6, 0, 8) in
+  let pt = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let pf = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  cons(["jal", pt, tname], cons(["jal", pf, fname], patches))
+let rv_ops(_) = [rv_op_slot_load, rv_op_slot_store, rv_op_mov_imm, rv_op_asr1, rv_op_lsl1, rv_op_arith, rv_op_icmp, rv_op_jmp, rv_op_cmpjmp]
+
+let emit_rv_i_core_rest(st, insn, is_entry) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
@@ -813,46 +848,6 @@ let emit_rv_i_core(st, insn, is_entry) =
         let _ = emit_tco_set(bytes_len(b)) in
         label_put(labels, tco_lab(0), bytes_len(b)) in
     emit_st4(st, b, cur, labs, patches3)
-  else if k == "mov_imm" then
-    let _ = rv_li(b, 6, nth(insn, 2)) in
-    let _ = rv_slot(b, nth(insn, 1), true, 6) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "mov" then
-    let _ = rv_slot(b, nth(insn, 2), false, 6) in
-    let _ = rv_slot(b, nth(insn, 1), true, 6) in
-    emit_st4(st, b, cur, labels, patches)
-  else if is_arith(k) then
-    let _ = rv_slot(b, nth(insn, 2), false, 6) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sra(b, 6, 6, 7) in
-    let _ = rv_slot(b, nth(insn, 3), false, 28) in
-    let _ = rv_sra(b, 28, 28, 7) in
-    let _ =
-      if k == "add" then rv_add(b, 6, 6, 28)
-      else if k == "sub" then rv_sub(b, 6, 6, 28)
-      else if k == "mul" then rv_mul(b, 6, 6, 28)
-      else if k == "land" then rv_and(b, 6, 6, 28)
-      else if k == "lor" then rv_or(b, 6, 6, 28)
-      else if k == "xor" then rv_xor(b, 6, 6, 28)
-      else if k == "bnot" then rv_xori(b, 6, 6, 0 - 1)
-      else if k == "shl" then rv_sll(b, 6, 6, 28)
-      else if k == "shr" then rv_srl(b, 6, 6, 28)
-      else if k == "div" then rv_div(b, 6, 6, 28)
-      else if k == "rem" then rv_rem(b, 6, 6, 28)
-      else rv_add(b, 6, 6, 28) in
-    let _ = rv_sll(b, 6, 6, 7) in
-    let _ = rv_slot(b, nth(insn, 1), true, 6) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "icmp" then
-    let op = nth(insn, 1) in
-    let _ = rv_slot(b, nth(insn, 3), false, 6) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sra(b, 6, 6, 7) in
-    let _ = rv_slot(b, nth(insn, 4), false, 28) in
-    let _ = rv_sra(b, 28, 28, 7) in
-    let _ = rv_cmp_int(b, op) in
-    let _ = rv_slot(b, nth(insn, 2), true, 6) in
-    emit_st4(st, b, cur, labels, patches)
   else if k == "cmp" then
     let op = nth(insn, 1) in
     let _ = rv_slot(b, nth(insn, 3), false, 10) in
@@ -860,31 +855,6 @@ let emit_rv_i_core(st, insn, is_entry) =
     let patches2 = rv_cmp_val(b, op, patches, nth(st, 4)) in
     let _ = rv_slot(b, nth(insn, 2), true, 6) in
     emit_st4(st, b, cur, labels, patches2)
-  else if k == "label" then
-    let nm = nth(insn, 1) in
-    let pos = bytes_len(b) in
-    let _ =
-      if is_entry then 0
-      else if intern(nm) == tco_lab(0) then emit_tco_set(pos)
-      else 0 in
-    emit_st4(st, b, cur, label_put(labels, nm, pos), patches)
-  else if k == "jmp" then
-    let pos = bytes_len(b) in
-    let _ = rv_jal(b, 0, 0) in
-    emit_st4(st, b, cur, labels, cons(["jal", pos, nth(insn, 1)], patches))
-  else if k == "cmpjmp" then
-    let _ = rv_slot(b, nth(insn, 1), false, 6) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sra(b, 6, 6, 7) in
-    let pz = bytes_len(b) in
-    let _ = rv_beq(b, 6, 0, 8) in
-    let pt = bytes_len(b) in
-    let _ = rv_jal(b, 0, 0) in
-    let pf = bytes_len(b) in
-    let _ = rv_jal(b, 0, 0) in
-    emit_st4(st, b, cur, labels,
-     cons(["jal", pt, nth(insn, 2)],
-          cons(["jal", pf, nth(insn, 3)], patches)))
   else if k == "fcall" then emit_rv_fcall(st, insn)
   else if k == "ycall" then emit_rv_ycall(st, insn)
   else if k == "ccall" then emit_rv_ccall(st, insn)
@@ -914,6 +884,10 @@ let emit_rv_i_core(st, insn, is_entry) =
       else emit_rv_tloop(st, nth(insn, 3))
     else emit_rv_tcall_other(st, insn, is_entry)
   else st
+
+let emit_rv_i_core(st, insn, is_entry) =
+  let r = emit_i_core_base(st, insn, is_entry, rv_ops(0)) in
+  if r != 0 then r else emit_rv_i_core_rest(st, insn, is_entry)
 
 let emit_rv_sysarg(b, args, j) =
   if j >= len(args) then 0
