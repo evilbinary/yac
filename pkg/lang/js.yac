@@ -140,7 +140,7 @@ let js_lex_id(src, i, n) =
 let js_op2(s) =
   s == "==" or s == "!=" or s == "<=" or s == ">=" or s == "&&" or s == "||" or s == "+=" or s == "-=" or s == "*=" or s == "/=" or s == "%=" or s == "++" or s == "--" or s == "<<" or s == ">>" or s == "&=" or s == "|=" or s == "^=" or s == "=>" or s == "**"
 
-let js_op3(s) = s == ">>>" or s == "<<=" or s == ">>=" or s == "**="
+let js_op3(s) = s == ">>>" or s == "<<=" or s == ">>=" or s == "**=" or s == "..."
 
 let js_op4(s) = s == ">>>="
 
@@ -405,14 +405,20 @@ let js_parse_expr(toks, i, min, st) =
         if js_is(toks, nth(r, 1), ")") then [nth(r, 0), nth(r, 1) + 1]
         else [js_bad(st, "expected ')'"), nth(r, 1)]
     else if tx == "[" then
-      /* Array literal: comma-separated expressions until `]`. */
+      /* Array literal: comma-separated expressions, `...x` spread allowed. */
       let go(j, acc) =
         if js_is(toks, j, "]") then [["arr", list_rev(acc)], j + 1]
         else
-          let r = js_parse_expr(toks, j, 0, st) in
-          let j2 = nth(r, 1) in
-          if js_is(toks, j2, ",") then go(j2 + 1, cons(nth(r, 0), acc))
-          else if js_is(toks, j2, "]") then [["arr", list_rev(cons(nth(r, 0), acc))], j2 + 1]
+          let el =
+            if js_is(toks, j, "...") then
+              let r = js_parse_expr(toks, j + 1, 0, st) in
+              [["spread", nth(r, 0)], nth(r, 1)]
+            else
+              let r = js_parse_expr(toks, j, 0, st) in
+              [nth(r, 0), nth(r, 1)] in
+          let j2 = nth(el, 1) in
+          if js_is(toks, j2, ",") then go(j2 + 1, cons(nth(el, 0), acc))
+          else if js_is(toks, j2, "]") then [["arr", list_rev(cons(nth(el, 0), acc))], j2 + 1]
           else [js_bad(st, "expected ',' or ']' in array"), j2] in
       go(i + 1, [])
     else if tx == "{" then
@@ -422,7 +428,9 @@ let js_parse_expr(toks, i, min, st) =
         if js_is(toks, j, "}") then [["obj", list_rev(acc)], j + 1]
         else
           let pair =
-            if js_is(toks, j, "[") then
+            if js_is(toks, j, "...") then
+              (let r = js_parse_expr(toks, j + 1, 0, st) in ["spread", nth(r, 0), nth(r, 1)])
+            else if js_is(toks, j, "[") then
               let kr = js_parse_expr(toks, j + 1, 0, st) in
               let j2 = nth(kr, 1) in
               let j3 = if js_is(toks, j2, "]") then j2 + 1 else j2 in
@@ -521,7 +529,10 @@ let js_pat_parse(toks, i, st) =
       if js_is(toks, j, "]") then [["arrpat", list_rev(acc)], j + 1]
       else if js_is(toks, j, ",") then go(j + 1, cons(0, acc))
       else
-        let r = js_pat_parse(toks, j, st) in
+        let r =
+          if js_is(toks, j, "...") then
+            (let r2 = js_pat_parse(toks, j + 1, st) in [["rest", nth(r2, 0)], nth(r2, 1)])
+          else js_pat_parse(toks, j, st) in
         let j2 = nth(r, 1) in
         if js_is(toks, j2, ",") then go(j2 + 1, cons(nth(r, 0), acc))
         else if js_is(toks, j2, "]") then [["arrpat", list_rev(cons(nth(r, 0), acc))], j2 + 1]
@@ -550,7 +561,7 @@ let js_pat_parse(toks, i, st) =
   else [js_bad(st, "expected binding pattern"), i + 1]
 
 /* Flatten a pattern against an access expression into [[name, access], …]. */
-let js_pat_flat(pat, ae) =
+let js_pat_flat(pat, ae, st) =
   if nth(pat, 0) == "id" then [[nth(pat, 1), ae]]
   else if nth(pat, 0) == "arrpat" then
     let xs = nth(pat, 1) in
@@ -560,9 +571,14 @@ let js_pat_flat(pat, ae) =
       else
         let e = nth(xs, i) in
         if e == 0 then go(i + 1, acc)
+        else if nth(e, 0) == "rest" then
+          let _ = box_set(st_lib(st), 1) in
+          let ae2 = str_cat("_js_arr_slice(", str_cat(ae, str_cat(", ", str_cat(int_to_str(i),
+                     str_cat(", len(", str_cat(ae, "))")))))) in
+          go(i + 1, append(acc, js_pat_flat(nth(e, 1), ae2, st)))
         else
           let ae2 = str_cat("nth(", str_cat(ae, str_cat(", ", str_cat(int_to_str(i), ")")))) in
-          go(i + 1, append(acc, js_pat_flat(e, ae2))) in
+          go(i + 1, append(acc, js_pat_flat(e, ae2, st))) in
     go(0, [])
   else
     let ps = nth(pat, 1) in
@@ -572,7 +588,7 @@ let js_pat_flat(pat, ae) =
       else
         let pr = nth(ps, i) in
         let ae2 = str_cat("_js_get(", str_cat(ae, str_cat(", \"", str_cat(nth(pr, 0), "\")")))) in
-        go(i + 1, append(acc, js_pat_flat(nth(pr, 1), ae2))) in
+        go(i + 1, append(acc, js_pat_flat(nth(pr, 1), ae2, st))) in
     go(0, [])
 
 /* Rewrite `super` references in a class method body: `super` -> parent name,
@@ -1196,11 +1212,25 @@ let js_emit_expr(e, ctx, st) =
     else if js_in(vars, nm) then js_cat(["box_get(", js_mangle(nm), ")"])
     else js_mangle(nm)
   else if tag == "arr" then
-    /* Array literal: a fresh listbuf plus one list_push per element. */
+    /* Array literal: a fresh listbuf plus one list_push per element; a `...x`
+     * element appends x's elements with a small loop. */
     let a = js_fresh(st, "arr") in
     let go(ys, acc) =
       if len(ys) == 0 then js_cat(["(let ", a, " = list_new() in ", acc, a, ")"])
-      else go(tail(ys), js_cat([acc, "let _ = list_push(", a, ", ", js_emit_expr(nth(ys, 0), ctx, st), ") in "])) in
+      else
+        let el = nth(ys, 0) in
+        if nth(el, 0) == "spread" then
+          let sv = js_fresh(st, "sv") in
+          let sw = js_fresh(st, "sw") in
+          let si = str_cat(sw, "i") in
+          let se = js_emit_expr(nth(el, 1), ctx, st) in
+          let code =
+            js_cat(["(let ", sv, " = ", se, " in (let ", sw, "(", si, ") = (if ", si, " < len(", sv,
+              ") then (let _ = list_push(", a, ", nth(", sv, ", ", si, ")) in ", sw, "(", si,
+              " + 1)) else 0) in ", sw, "(0)))"]) in
+          go(tail(ys), js_cat([acc, "let _ = ", code, " in "]))
+        else
+          go(tail(ys), js_cat([acc, "let _ = list_push(", a, ", ", js_emit_expr(el, ctx, st), ") in "])) in
     go(nth(e, 1), "")
   else if tag == "obj" then
     /* Object literal: a tagged object (["$o", fmap]), one fmap_put per pair. */
@@ -1211,6 +1241,19 @@ let js_emit_expr(e, ctx, st) =
       if len(ys) == 0 then js_cat(["(let ", o, " = _js_obj(0) in ", acc, o, ")"])
       else
         let pair = nth(ys, 0) in
+        if nth(pair, 0) == "spread" then
+          let so = js_fresh(st, "so") in
+          let sk = js_fresh(st, "sk") in
+          let sw = js_fresh(st, "sw") in
+          let si = str_cat(sw, "i") in
+          let se = js_emit_expr(nth(pair, 1), ctx, st) in
+          let code =
+            js_cat(["(let ", so, " = ", se, " in (let ", sk, " = _js_keys(", so, ") in (let ", sw,
+              "(", si, ") = (if ", si, " < len(", sk, ") then (let _ = fmap_put(nth(", o, ", 1), nth(", sk, ", ",
+              si, "), _js_get(", so, ", nth(", sk, ", ", si, "))) in ", sw, "(", si,
+              " + 1)) else 0) in ", sw, "(0))))"]) in
+          go(tail(ys), js_cat([acc, "let _ = ", code, " in "]))
+        else
         let kn = nth(pair, 0) in
         let ke =
           if nth(kn, 0) == "str" then js_cat(["\"", js_esc(js_lit_quote(kn)), "\""])
@@ -1656,7 +1699,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let ie = js_emit_expr(nth(s, 2), [vars2, funcs2, retf, retv, strs2, brk2], st) in
         let _ = if js_pat_has_obj(pat) then box_set(st_obj(st), 1) else 0 in
         let o = js_fresh(st, "d") in
-        let flat = js_pat_flat(pat, js_cat(["box_get(", o, ")"])) in
+        let flat = js_pat_flat(pat, js_cat(["box_get(", o, ")"]), st) in
         let extvars = append(js_pat_names(flat), vars2) in
         let cont = go(rest, extvars, funcs2, strs2, brk2, k2) in
         let n = len(flat) in
