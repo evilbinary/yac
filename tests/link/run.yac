@@ -226,8 +226,20 @@ let link_all(st, yc) =
   let st5 =
     link_err_case(st4, yc, "bad mode", ["--link", "bogus"], "bad arguments") in
   let ya = nth(yc, 0) in
-  let st6 = link_art_case(st5, ya, "artifact .host not implemented",
-                          "embed", ".host") in
+  /* --link pkg=embed is source-link today: a `.host` artifact is a future
+   * precompiled blob and is ignored, so a fake one must NOT fail the compile. */
+  let st6 =
+    let fake = str_cat(TMP, str_cat("/fs/path.yac", ".host")) in
+    let y = native(str_cat(TMP, "/link_y")) in
+    let _ = run(["rm", "-f", fake, y]) in
+    let _ = system(str_cat("mkdir -p ", str_cat(TMP, "/fs"))) in
+    let _ = write_file(fake, "fake artifact\n") in
+    let cr = run([ya, "--pkg", str_cat("src-self,", TMP),
+                  "--link", "fs.path=embed", link_guest(0), "-o", y]) in
+    let blob = str_cat(chomp(nth(cr, 1)), chomp(nth(cr, 2))) in
+    let _ = run(["rm", "-f", fake]) in
+    check(st5, "link embed ignores .host artifact", "0",
+          if nth(cr, 0) == 0 then "0" else blob) in
   let st7 = link_art_case(st6, ya, "artifact .yjit not implemented",
                           "yjit", ".yjit") in
   let st8 = link_dylib_case(st7, yc) in
