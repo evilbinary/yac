@@ -759,7 +759,43 @@ let emit_a64_tloop(st, args) =
   let _ = if tco == 0 then 0 else a64_apply_b26(b, pos, tco) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
 
-let emit_a64_i_core(st, insn, is_entry) =
+/* Arch primitives for the shared i_core skeleton (docs/EMIT_BACKEND.md §5).
+ * Logical regs 0/1 map straight to x0/x1 here. */
+let a64_op_slot_load(b, rg, slot) = a64_slot(b, slot, false, rg)
+let a64_op_slot_store(b, slot, rg) = a64_slot(b, slot, true, rg)
+let a64_op_mov_imm(b, rg, v) = a64_mov_imm64(b, rg, v)
+let a64_op_asr1(b, rg) = a64_asr1(b, rg, rg)
+let a64_op_lsl1(b, rg) = a64_lsl1(b, rg, rg)
+let a64_op_arith(b, opk, d, x, y) =
+  if opk == "add" then a64_add_reg(b, d, x, y)
+  else if opk == "sub" then a64_sub_reg(b, d, x, y)
+  else if opk == "mul" then a64_mul(b, d, x, y)
+  else if opk == "land" then a64_and_reg(b, d, x, y)
+  else if opk == "lor" then a64_orr_reg(b, d, x, y)
+  else if opk == "xor" then a64_eor_reg(b, d, x, y)
+  else if opk == "bnot" then a64_mvn(b, d, x)
+  else if opk == "shl" then a64_lslv(b, d, x, y)
+  else if opk == "shr" then a64_lsrv(b, d, x, y)
+  else if opk == "div" then a64_sdiv(b, d, x, y)
+  else if opk == "rem" then
+    let _ = a64_sdiv(b, 2, x, y) in
+    a64_msub(b, d, 2, y, x)
+  else a64_add_reg(b, d, x, y)
+let a64_op_icmp(b, op) = a64_cmp_int(b, op)
+let a64_op_jmp(b, patches, name) =
+  let pos = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  cons(["b26", pos, name], patches)
+let a64_op_cmpjmp(b, patches, tname, fname) =
+  let _ = a64_cmp_reg(b, 0, 31) in
+  let peq = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let pne = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  cons(["b26", pne, fname], cons(["beq", peq, tname], patches))
+let a64_ops(_) = [a64_op_slot_load, a64_op_slot_store, a64_op_mov_imm, a64_op_asr1, a64_op_lsl1, a64_op_arith, a64_op_icmp, a64_op_jmp, a64_op_cmpjmp]
+
+let emit_a64_i_core_rest(st, insn, is_entry) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
@@ -822,46 +858,6 @@ let emit_a64_i_core(st, insn, is_entry) =
         let _ = emit_tco_set(bytes_len(b)) in
         label_put(labels, tco_lab(0), bytes_len(b)) in
     emit_st4(st, b, cur, labs, patches3)
-  else if k == "mov_imm" then
-    let _ = a64_mov_imm64(b, 0, nth(insn, 2)) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "mov" then
-    let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, patches)
-  else if is_arith(k) then
-    let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    let _ = a64_asr1(b, 0, 0) in
-    let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    let _ = a64_asr1(b, 1, 1) in
-    let _ =
-      if k == "add" then a64_add_reg(b, 0, 0, 1)
-      else if k == "sub" then a64_sub_reg(b, 0, 0, 1)
-      else if k == "mul" then a64_mul(b, 0, 0, 1)
-      else if k == "land" then a64_and_reg(b, 0, 0, 1)
-      else if k == "lor" then a64_orr_reg(b, 0, 0, 1)
-      else if k == "xor" then a64_eor_reg(b, 0, 0, 1)
-      else if k == "bnot" then a64_mvn(b, 0, 0)
-      else if k == "shl" then a64_lslv(b, 0, 0, 1)
-      else if k == "shr" then a64_lsrv(b, 0, 0, 1)
-      else if k == "div" then a64_sdiv(b, 0, 0, 1)
-      else if k == "rem" then
-        let _ = a64_sdiv(b, 2, 0, 1) in
-        a64_msub(b, 0, 2, 1, 0)
-      else a64_add_reg(b, 0, 0, 1) in
-    let _ = a64_lsl1(b, 0, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "icmp" then
-    let op = nth(insn, 1) in
-    let _ = a64_slot(b, nth(insn, 3), false, 0) in
-    let _ = a64_asr1(b, 0, 0) in
-    let _ = a64_slot(b, nth(insn, 4), false, 1) in
-    let _ = a64_asr1(b, 1, 1) in
-    let _ = a64_cmp_int(b, op) in
-    let _ = a64_slot(b, nth(insn, 2), true, 0) in
-    emit_st4(st, b, cur, labels, patches)
   else if k == "cmp" then
     let op = nth(insn, 1) in
     let _ = a64_slot(b, nth(insn, 3), false, 0) in
@@ -869,29 +865,6 @@ let emit_a64_i_core(st, insn, is_entry) =
     let patches2 = a64_cmp_val(b, op, patches, nth(st, 4)) in
     let _ = a64_slot(b, nth(insn, 2), true, 0) in
     emit_st4(st, b, cur, labels, patches2)
-  else if k == "label" then
-    let nm = nth(insn, 1) in
-    let pos = bytes_len(b) in
-    let _ =
-      if is_entry then 0
-      else if intern(nm) == tco_lab(0) then emit_tco_set(pos)
-      else 0 in
-    emit_st4(st, b, cur, label_put(labels, nm, pos), patches)
-  else if k == "jmp" then
-    let pos = bytes_len(b) in
-    let _ = a64_b(b, 0) in
-    emit_st4(st, b, cur, labels, cons(["b26", pos, nth(insn, 1)], patches))
-  else if k == "cmpjmp" then
-    let _ = a64_slot(b, nth(insn, 1), false, 0) in
-    let _ = a64_asr1(b, 0, 0) in
-    let _ = a64_cmp_reg(b, 0, 31) in
-    let peq = bytes_len(b) in
-    let _ = a64_b_eq(b, 0) in
-    let pne = bytes_len(b) in
-    let _ = a64_b(b, 0) in
-    emit_st4(st, b, cur, labels,
-     cons(["b26", pne, nth(insn, 2)],
-          cons(["beq", peq, nth(insn, 3)], patches)))
   else if k == "fcall" then emit_a64_fcall(st, insn)
   else if k == "ycall" then emit_a64_ycall(st, insn)
   else if k == "ccall" then emit_a64_ccall(st, insn)
@@ -918,6 +891,10 @@ let emit_a64_i_core(st, insn, is_entry) =
       else emit_a64_tloop(st, nth(insn, 3))
     else emit_a64_tcall_other(st, insn, is_entry)
   else st
+
+let emit_a64_i_core(st, insn, is_entry) =
+  let r = emit_i_core_base(st, insn, is_entry, a64_ops(0)) in
+  if r != 0 then r else emit_a64_i_core_rest(st, insn, is_entry)
 
 let emit_a64_sysarg(b, args, j) =
   if j >= len(args) then 0
