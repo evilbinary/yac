@@ -292,6 +292,15 @@ let _ = check("param_obj_method", "let o={m({a}){return a;}}; console.log(o.m({a
 let _ = check("param_nested", "function f({a:{b}}){ return b; } console.log(f({a:{b:8}}));", "8")
 let _ = check("param_pat_default", "function f({a}={a:9}){return a;} console.log(f());", "9")
 
+/* ES6 destructuring assignment (not declaration) */
+let _ = check("destass_arr", "let a=0; let b=0; [a,b]=[1,2]; console.log(a+b);", "3")
+let _ = check("destass_swap", "let x=1; let y=2; [x,y]=[y,x]; console.log(x + ',' + y);", "2,1")
+let _ = check("destass_obj", "let a=0; ({a} = {a:7}); console.log(a);", "7")
+
+/* ES6 static class methods */
+let _ = check("class_static", "class A { static s(){ return 3; } } console.log(A.s());", "3")
+let _ = check("class_static_args", "class A { static add(a,b){ return a+b; } } console.log(A.add(2,3));", "5")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")
