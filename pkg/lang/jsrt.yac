@@ -12,8 +12,9 @@ package lang.jsrt
 export _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_lower, _js_repeat,
   _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each,
   _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_arr_find,
-  _js_arr_findindex, _js_arr_fill, _js_arr_includes, _js_str_replace, _js_isnan
+  _js_arr_findindex, _js_arr_fill, _js_arr_includes, _js_str_replace, _js_isnan, _js_iter
 import text.str {find}
+import data.fmap { fmap_get }
 
 /* Stringify a JS value for console.log / `+`: int -> decimal, else as-is. */
 let _js_str(x) = if is_int(x) then int_to_str(x) else x
@@ -178,3 +179,24 @@ let _js_arr_includes(a, v) =
   let n = len(a) in
   let rec(i) = if i >= n then false else if nth(a, i) == v then true else rec(i + 1) in
   rec(0)
+
+/* for...of normalisation: strings -> char list, Map -> entries, Set -> values,
+ * arrays (and anything else) unchanged. */
+let _js_str_chars(s) =
+  let n = str_len(s) in
+  let r = list_new() in
+  let rec(i) = if i >= n then r else (let _ = list_push(r, str_chr(str_ref(s, i))) in rec(i + 1)) in
+  rec(0)
+
+let _js_iter(x) =
+  let k = kind(x) in
+  if k == 3 then _js_str_chars(x)
+  else if k == 2 or k == 5 then
+    (if len(x) > 0 and nth(x, 0) == "$o" then
+       (let m = nth(x, 1) in
+        (let kd = fmap_get(m, "$kind") in
+         (if kd == "Map" or kd == "Set" then
+            (let d = fmap_get(m, "$data") in (if d == 0 then list_new() else d))
+          else x)))
+     else x)
+  else x

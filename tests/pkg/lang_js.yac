@@ -318,6 +318,11 @@ let _ = check("accessor_obj", "let o = { _v:1, get v(){ return this._v; }, set v
 let _ = check("getter_class", "class A { constructor(){ this._v = 1; } get v(){ return this._v * 10; } } console.log(new A().v);", "10")
 let _ = check("accessor_class", "class A { constructor(){ this._v = 0; } get v(){ return this._v; } set v(n){ this._v = n + 1; } } let a = new A(); a.v = 5; console.log(a.v);", "6")
 
+/* for...of over string / Map / Set */
+let _ = check("forof_string", "let s='abc'; let r=''; for (let c of s) { r = r + c; } console.log(r);", "abc")
+let _ = check("forof_map", "let m=new Map(); m.set('a',1); m.set('b',2); let t=0; for (let e of m) { t = t + e[1]; } console.log(t);", "3")
+let _ = check("forof_set", "let st=new Set(); st.add(1); st.add(2); let t=0; for (let v of st) { t = t + v; } console.log(t);", "3")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")

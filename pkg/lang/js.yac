@@ -1492,7 +1492,7 @@ let js_emit_expr(e, ctx, st) =
     let _ = box_set(st_fmap(st), 1) in
     if cname == "Map" or cname == "Set" then
       (let _ = box_set(st_jslib(st), 1) in
-       js_cat(["(let _o = _js_obj(_js_proto(\"", js_esc(cname), "\")) in (let _ = fmap_put(nth(_o, 1), \"$data\", list_new()) in (let _ = fmap_put(nth(_o, 1), \"size\", 0) in _o)))"]))
+       js_cat(["(let _o = _js_obj(_js_proto(\"", js_esc(cname), "\")) in (let _ = fmap_put(nth(_o, 1), \"$data\", list_new()) in (let _ = fmap_put(nth(_o, 1), \"size\", 0) in (let _ = fmap_put(nth(_o, 1), \"$kind\", \"", js_esc(cname), "\") in _o))))"]))
     else
     js_cat(["(let _o = _js_obj(_js_proto(\"", js_esc(cname), "\")) in (let _s = box_get(_js_this) in (let _ = box_set(_js_this, _o) in (let _ = (", js_emit_expr(c, ctx, st), ")(", emit_args(args), ") in (let _ = box_set(_js_this, _s) in _o)))))"])
   else if tag == "postfix" then
@@ -1843,7 +1843,8 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let p = js_fresh(st, "i") in
       let w = js_fresh(st, "w") in
       let av = js_fresh(st, "a") in
-      let arr = js_emit_expr(obj, ctx2, st) in
+      let _ = box_set(st_lib(st), 1) in
+      let arr = js_cat(["_js_iter(", js_emit_expr(obj, ctx2, st), ")"]) in
       let c3 = [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), nth(ctx2, 4), sc] in
       let bodyE = js_emit_stmts(body, c3, "0", st) in
       js_cat(["(let ", av, " = ", arr, " in (let ", m, " = box_new() in (let ", sc, " = box_new() in (let ", w, "(", p, ") = (if ", p, " < len(", av, ") then (let _ = box_set(", m, ", nth(", av, ", ", p, ")) in (let _ = box_set(", sc, ", 0) in (let _ = ", bodyE, " in (if box_get(_js_exc) != 0 then 0 else (if box_get(", sc, ") == 1 then 0 else ", w, "(", p, " + 1)))))) else 0) in ", w, "(0)))))"])
@@ -2022,7 +2023,7 @@ let js_to_yac(src) =
     let h10 = if box_get(ujslib) == 1 then "import lang.jslib { js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_native, js_str_pad, js_str_trim_start, js_str_trim_end, js_install }\n" else "" in
     let hjsrt =
       if box_get(ustr) == 1 or box_get(ubool) == 1 or box_get(utype) == 1 or box_get(ulib) == 1 or box_get(utruth) == 1 then
-        "import lang.jsrt { _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_lower, _js_repeat, _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each, _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_arr_find, _js_arr_findindex, _js_arr_fill, _js_arr_includes, _js_str_replace, _js_isnan }\n"
+        "import lang.jsrt { _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_lower, _js_repeat, _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each, _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_arr_find, _js_arr_findindex, _js_arr_fill, _js_arr_includes, _js_str_replace, _js_isnan, _js_iter }\n"
       else "" in
     let hinst = if box_get(uobj) == 1 and box_get(ujslib) == 1 then "let _ = js_install(_js_this, _js_proto) in " else "" in
     js_cat([h0, h1, h2, h6, h10, hjsrt, h8, hinst, body, "\n"])
