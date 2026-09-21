@@ -8,8 +8,8 @@
 package back.jit
 export compile, load, compile_jit, compile_uncps, jit_load_yjit, jit_dump_live, jit_reloc_apply, jit_asm_dump_set, jit_lir_dump_set
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
-import back.emit.emit {apply_u64, asm_dump_set, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref22, gref22_reset, gref_base, host_names, yjit_layout_get, relocs_get, relocs_reset, relocs_set}
-import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_list, sigma_of_rt, tco_prog, toplevel_seed, lir_tlv_set}
+import back.emit.emit {apply_u64, asm_dump_set, cimport_got, cimport_jit_bind, cimport_jit_bind_got, cimport_names, emit_abi_win, emit_jsess_set, gref22, gref22_reset, gref_base, gref_names, host_names, yjit_layout_get, relocs_get, relocs_reset, relocs_set}
+import front.lir {env_new, env_slot, imap_load_merge, import_alias, import_locals, in_list, insn_extend, insn_push, is_prim_name, lir_all, pkg_prefix_set, sigma_host_seed, sigma_list, sigma_of_rt, tco_prog, toplevel_seed, lir_tlv_set}
 import back.backend {ast_imports, entry_off, link_from_ast, link_is_dylib, link_need_box, pass_anf, pass_lex, pass_parse, pkg_init_calls, pkg_init_list, pkg_src, report_unbound, rewrite_imports, rt_for_link}
 import back.lower {emit_apply_unres, lower_expr}
 import back.pack.target {JIT_VADDR, target_arch}
@@ -17,7 +17,7 @@ import back.pack.yjit {bytes_copy_range, pack_yjit_ex, yjit_arch_name, yjit_arch
 import front.cps {cps_all, cps_maybe_opt}
 import front.parser {prog_has_err, report_syntax}
 import front.uncps {uncps_all, uncps_is_err}
-import lib.log {log_get_hush, log_set_hush}
+import lib.log {log, log_get_hush, log_set_hush}
 import rt.os {host_arch}
 import rt.runtime {yac_gfn_list, yac_gval_list}
 
@@ -338,14 +338,16 @@ let start_proc_eval(nslots, result_slot, body, name, quiet, is_fun) =
    start_eval_ins(nslots, result_slot, body, name, quiet, is_fun), "_eval"]
 
 let pass_lir_eval(anf_list, bind_name, quiet) =
-  let rt0 = rt_for_link(0) in
+  let rt = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
   /* Host bindings (@name) must be seeded exactly as the AOT path does it
    * (backend.yac lir_all call): without the seed a REPL line's host call falls
    * through to the cross-image `xcall` branch, whose entry comes from the
    * host's gfn registry instead of the G+136 host slot the design prescribes
    * (lir.yac sigma_host_seed comment). */
-  let fs0 = sigma_host_seed(toplevel_seed(anf_list, 0, sigma_of_rt(rt0))) in
+  let fs0 = sigma_host_seed(
+              toplevel_seed(anf_list, 0,
+                            sigma_of_rt(nth(rt, 0), nth(rt, 1)), 0)) in
   let _ = lir_tlv_set(1) in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, fs0, 0, list_new(), 0],
@@ -416,8 +418,8 @@ let repl_check_pkgs(xs, i) =
     repl_check_pkgs(xs, i + 1)
 
 let link_from_ast_repl(ast) =
-  let filled = rewrite_imports(ast, 0, []) in
-  let more = ast_imports(ast, 0, []) in
+  let filled = rewrite_imports(ast, 0, [], "") in
+  let more = ast_imports(ast, 0, [], "") in
   let _ = box_set(link_need_box, pkgs_append(box_get(link_need_box), more, 0)) in
   let _ = repl_check_pkgs(more, 0) in
   let _ = imap_load_merge(filled, 0) in

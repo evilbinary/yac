@@ -292,12 +292,25 @@ let link_is_dylib(pkg) =
     else 1
   else 0
 
+/* True when pkg's effective chain is `embed`: source-link the package and
+ * resolve its `@name` imports from the target package's SOURCE instead of the
+ * host table. This is the "embed the whole thing" view (BOOTSTRAP_LINK.md
+ * §4.1 / §12.11 遗留 4): `import yc.compiler` then pulls back.backend,
+ * back.jit, ... into the guest, so a standalone AOT binary carries the
+ * compiler instead of calling the G+136 host slots (which are stubs). Default
+ * chains stay ["stub"], so the host/REPL fast path is untouched. */
+let link_embed_p(pkg) =
+  if pkg == "" then false
+  else if link_operative(link_chain_of(pkg), 0) == "embed" then true
+  else false
+
 /* 0 = proceed (source-link, or artifact mode that can't apply yet).
  * 1 = fail compile with a message (pkg_fail). Only fires when the chain
  * names a non-stub mode for this pkg. Found artifact -> "not implemented"
  * (loaders land in 12.4+); nothing found and no stub tail -> error. */
 let link_check_pkg(pkg) =
   if link_is_dylib(pkg) == 1 then 0
+  else if link_embed_p(pkg) then 0
   else
     let chain = link_chain_of(pkg) in
     if link_has_nstub(chain, 0) == false then 0
@@ -461,20 +474,28 @@ let import_id_pairs(xs, i, acc) =
     let n = nth(xs, i) in
     import_id_pairs(xs, i + 1, cons([n, n], acc))
 
-let import_sel(sel, all, i, acc) =
+let import_sel(sel, all, i, acc, embed) =
   if i >= len(sel) then acc
   else
     let spec = nth(sel, i) in
     if len(spec) > 2 then
-      /* host binding (@name): not checked against the package exports,
-       * kept as [name, name, 1] so imap_load binds the bare host name. */
-      import_sel(sel, all, i + 1, cons(spec, acc))
+      if embed then
+        /* redirect: `@name` is an ordinary import from the target package. */
+        let orig = intern(nth(spec, 1)) in
+        let loc = intern(nth(spec, 0)) in
+        if in_list(orig, all) then
+          import_sel(sel, all, i + 1, cons([loc, orig], acc), embed)
+        else import_sel(sel, all, i + 1, acc, embed)
+      else
+        /* host binding (@name): not checked against the package exports,
+         * kept as [name, name, 1] so imap_load binds the bare host name. */
+        import_sel(sel, all, i + 1, cons(spec, acc), embed)
     else
       let orig = intern(nth(spec, 1)) in
       let loc = intern(nth(spec, 0)) in
       if in_list(orig, all) then
-        import_sel(sel, all, i + 1, cons([loc, orig], acc))
-      else import_sel(sel, all, i + 1, acc)
+        import_sel(sel, all, i + 1, cons([loc, orig], acc), embed)
+      else import_sel(sel, all, i + 1, acc, embed)
 
 /* Exports of packages declared in the same source. Saves reading+parsing
  * the imported file for every `import` inside the concatenated compiler
@@ -511,7 +532,7 @@ let import_all_host(sel, i) =
     if len(spec) <= 2 then false
     else import_all_host(sel, i + 1)
 
-let fill_import(e, local) =
+let fill_import(e, local, embed) =
   let sel =
     if len(e) < 3 then 0
     else if nth(e, 2) == 0 then 0
@@ -519,22 +540,24 @@ let fill_import(e, local) =
   let alias = if len(e) > 3 then nth(e, 3) else 0 in
   let all0 = if local == 0 then 0 else fmap_get(local, nth(e, 1)) in
   let pairs =
-    if sel != 0 and import_all_host(sel, 0) then
+    if sel != 0 and import_all_host(sel, 0) and not embed then
       /* every spec is @name: bind bare host names, never read the package. */
       sel
     else
       let all = if all0 == 0 then pkg_export_names(nth(e, 1)) else all0 in
       if len(e) < 3 then import_id_pairs(all, 0, [])
       else if nth(e, 2) == 0 then import_id_pairs(all, 0, [])
-      else import_sel(sel, all, 0, []) in
+      else import_sel(sel, all, 0, [], embed) in
   ["import", nth(e, 1), pairs, alias]
 
-let rewrite_imports_go(ast, i, acc, local) =
+let rewrite_imports_go(ast, i, acc, local, owner) =
   if i >= len(ast) then reverse(acc)
   else
     let e = nth(ast, i) in
-    let e2 = if nth(e, 0) == "import" then fill_import(e, local) else e in
-    rewrite_imports_go(ast, i + 1, cons(e2, acc), local)
+    let e2 =
+      if nth(e, 0) == "import" then fill_import(e, local, link_embed_p(owner))
+      else e in
+    rewrite_imports_go(ast, i + 1, cons(e2, acc), local, owner)
 
 /* Top-level `import` forms are DECLARATIONS: hoist them in front of every other
  * item, stably (imports keep their relative order, everything else keeps its).
@@ -554,8 +577,8 @@ let hoist_imports(ast, i, imps, rest) =
     if nth(e, 0) == "import" then hoist_imports(ast, i + 1, cons(e, imps), rest)
     else hoist_imports(ast, i + 1, imps, cons(e, rest))
 
-let rewrite_imports(ast, i, acc) =
-  rewrite_imports_go(hoist_imports(ast, 0, [], []), i, acc, local_exports(ast))
+let rewrite_imports(ast, i, acc, owner) =
+  rewrite_imports_go(hoist_imports(ast, 0, [], []), i, acc, local_exports(ast), owner)
 
 /* Compile one rt/*.yac against already-lowered procs so later stdlib
  * files can call earlier ones. Guest always gets rt.num; other packages
@@ -615,11 +638,11 @@ let kernel_let_names(_) =
  * name. Only the kernel (rt.runtime) and imported names widen guest scope. */
 let host_fun_names(_) = host_names(0)
 
-let report_unbound_ex(src, ast, extra) =
+let report_unbound_ex(src, ast, extra, owner) =
   let sc0 = pair_locals(box_get(imap_box), 0,
                         append(kernel_fun_names(0), kernel_let_names(0))) in
   let sc1 = pair_locals(box_get(malias_box), 0, sc0) in
-  let nm = ub_prog(rewrite_imports(ast, 0, []), 0, append(extra, sc1)) in
+  let nm = ub_prog(rewrite_imports(ast, 0, [], owner), 0, append(extra, sc1)) in
   if nm == "" then 0
   else
     let toks = tokenize(src) in
@@ -633,7 +656,7 @@ let report_unbound_ex(src, ast, extra) =
     let _ = print(msg) in
     1
 
-let report_unbound(src, ast) = report_unbound_ex(src, ast, [])
+let report_unbound(src, ast) = report_unbound_ex(src, ast, [], "")
 
 /* synth = 1 when src is a synthesized dylib wrapper package (not the package
  * source), so the "dylib-bound => do not compile real source" guard is
@@ -676,10 +699,11 @@ let lir_extend_go(pkg, src, acc, synth) =
         let saved_i = box_get(imap_box) in
         let saved_m = box_get(malias_box) in
         let saved_p = pkg_prefix_get(0) in
-        let filled = rewrite_imports(ast, 0, []) in
+        let owner = ast_pkg_name(ast, 0) in
+        let filled = rewrite_imports(ast, 0, [], owner) in
         let _ = imap_load(filled, 0) in
-        let _ = pkg_prefix_set(ast_pkg_name(ast, 0)) in
-        if report_unbound(src, ast) != 0 then
+        let _ = pkg_prefix_set(owner) in
+        if report_unbound_ex(src, ast, [], owner) != 0 then
           let _ = pkg_fail_set(1) in
           let _ = box_set(imap_box, saved_i) in
           let _ = box_set(malias_box, saved_m) in
@@ -695,7 +719,9 @@ let lir_extend_go(pkg, src, acc, synth) =
            * and a by-name call (ycall, which leaves the object register unset)
            * read [r13+32] with r13 == 0: the composed drivers died with
            * SIGSEGV at startup. */
-          let fs = sigma_host_seed(toplevel_seed(anf, 0, sigma_of_rt(acc))) in
+          let fs = sigma_host_seed(
+            toplevel_seed(anf, 0, sigma_of_rt(nth(acc, 0), nth(acc, 1)),
+                          nth(acc, 1))) in
           let st = lir_all(0, anf,
             [env_new(0), 1, fs, 0, list_new(), 0],
             len(anf)) in
@@ -717,13 +743,16 @@ let lir_extend_go(pkg, src, acc, synth) =
           let _ = box_set(imap_box, saved_i) in
           let _ = box_set(malias_box, saved_m) in
           let _ = pkg_prefix_set(saved_p) in
-          out2
+          /* acc = [procs, exports]; toplevel_seed already merged THIS package's
+           * pkg/name -> kind into nth(acc,1) (FLAT_ABI.md §2.5). */
+          [out2, nth(acc, 1)]
 
+/* acc = [procs, exports]. Returns [procs', exports']. */
 let lir_extend(pkg, src, acc) = lir_extend_go(pkg, src, acc, 0)
 
 let lir_extend_dylib(pkg, src, acc) = lir_extend_go(pkg, src, acc, 1)
 
-let ast_imports(ast, i, acc) =
+let ast_imports(ast, i, acc, owner) =
   if i >= len(ast) then acc
   else
     let e = nth(ast, i) in
@@ -733,16 +762,17 @@ let ast_imports(ast, i, acc) =
         if len(e) < 3 then 0
         else if nth(e, 2) == 0 then 0
         else nth(e, 2) in
-      if sel != 0 and import_all_host(sel, 0) then ast_imports(ast, i + 1, acc)
-      else if in_list(p, acc) then ast_imports(ast, i + 1, acc)
-      else ast_imports(ast, i + 1, cons(p, acc))
-    else ast_imports(ast, i + 1, acc)
+      if sel != 0 and import_all_host(sel, 0) and not (link_embed_p(owner)) then
+        ast_imports(ast, i + 1, acc, owner)
+      else if in_list(p, acc) then ast_imports(ast, i + 1, acc, owner)
+      else ast_imports(ast, i + 1, cons(p, acc), owner)
+    else ast_imports(ast, i + 1, acc, owner)
 
 /* Imports written inside a package source (so http can use net). */
 let pkg_file_imports(pkg) =
   let src = pkg_src(pkg) in
   if src == 0 then []
-  else ast_imports(pass_parse(pass_lex(src)), 0, [])
+  else ast_imports(pass_parse(pass_lex(src)), 0, [], pkg)
 
 /* DFS imports. op 0 = one pkg p; op 1 = xs[i..]. 6 args (emit max). */
 let visit_go(op, p, xs, i, seen, order) =
@@ -791,8 +821,8 @@ let skip_local_imp(ast, local, i, acc) =
 let link_from_ast(ast) =
   let pkgs = ast_packages(ast, 0, []) in
   let ast1 = skip_local_imp(ast, pkgs, 0, []) in
-  let filled = rewrite_imports(ast1, 0, []) in
-  let _ = box_set(link_need_box, ast_imports(ast1, 0, [])) in
+  let filled = rewrite_imports(ast1, 0, [], "") in
+  let _ = box_set(link_need_box, ast_imports(ast1, 0, [], "")) in
   let _ = box_set(link_local_box, pkgs) in
   let _ = imap_load(filled, 0) in
   0
@@ -805,26 +835,34 @@ let rt_cache_num =
 let rt_base(_) =
   let c = box_get(rt_cache_num) in
   if c == 0 then
-    let v = lir_extend("rt.num", pkg_src("rt.num"), runtime_funs(0)) in
+    let v = nth(lir_extend("rt.num", pkg_src("rt.num"),
+                           [runtime_funs(0), fmap_new(0)]), 0) in
     let _ = box_set(rt_cache_num, v) in
     v
   else c
 
+/* Returns [procs, exports]: procs for the image; exports = the accumulated
+ * package-level `pkg/name -> [kind]` table (FLAT_ABI.md §2.5), fed into Σ's
+ * field 4 by sigma_of_rt so cross-package top-level values get `gval`. */
 let rt_for_link(_) =
   let _ = pkg_init_reset(0) in
   let st = visit_go(1, 0, box_get(link_need_box), 0,
                     cons("rt.num", box_get(link_local_box)), []) in
   let pkgs = reverse(nth(st, 1)) in
-  let rec(i, acc) =
-    if i >= len(pkgs) then acc
+  let rec(i, acc, ex) =
+    if i >= len(pkgs) then [acc, ex]
     else
       let p = nth(pkgs, i) in
-      if p == "rt.num" then rec(i + 1, acc)
+      if p == "rt.num" then rec(i + 1, acc, ex)
       else if link_is_dylib(p) == 1 then
         let src = pkg_dylib_synth(p) in
-        rec(i + 1, lir_extend_dylib(p, src, acc))
-      else rec(i + 1, lir_extend(p, pkg_src(p), acc)) in
-  runtime_add(rec(0, rt_base(0)))
+        let r = lir_extend_dylib(p, src, [acc, ex]) in
+        rec(i + 1, nth(r, 0), nth(r, 1))
+      else
+        let r = lir_extend(p, pkg_src(p), [acc, ex]) in
+        rec(i + 1, nth(r, 0), nth(r, 1)) in
+  let r = rec(0, rt_base(0), fmap_new(0)) in
+  [runtime_add(nth(r, 0)), nth(r, 1)]
 
 /* Flat ABI (12.14): seed Σ with this unit's top-level names so lir compiles
  * them environment-free and resolves references to them without captures.
@@ -840,13 +878,15 @@ let pkg_init_calls(xs, i, base, acc) =
     pkg_init_calls(xs, i + 1, base, acc2)
 
 let pass_lir(anf_list) =
-  let rt0 = rt_for_link(0) in
+  let rt = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
   /* sigma_host_seed too: a guest with host bindings (@name) must resolve them
    * to the G+136 host slot (fcall), exactly like the package loop above and
    * jit.yac's pass_lir_eval. Without it the call has no static entry and no
    * registry, and lir now reports it instead of emitting xcall. */
-  let fs0 = sigma_host_seed(toplevel_seed(anf_list, 0, sigma_of_rt(rt0))) in
+  let fs0 = sigma_host_seed(
+              toplevel_seed(anf_list, 0,
+                            sigma_of_rt(nth(rt, 0), nth(rt, 1)), 0)) in
   let _ = lir_tlv_set(1) in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, fs0, 0, list_new(), 0],
@@ -860,13 +900,15 @@ let pass_lir(anf_list) =
 
 /* In-process image: _eval + print, not OS _start. */
 let pass_lir_yjit(anf_list) =
-  let rt0 = rt_for_link(0) in
+  let rt = rt_for_link(0) in
   let _ = pkg_prefix_set("") in
   /* sigma_host_seed too: a guest with host bindings (@name) must resolve them
    * to the G+136 host slot (fcall), exactly like the package loop above and
    * jit.yac's pass_lir_eval. Without it the call has no static entry and no
    * registry, and lir now reports it instead of emitting xcall. */
-  let fs0 = sigma_host_seed(toplevel_seed(anf_list, 0, sigma_of_rt(rt0))) in
+  let fs0 = sigma_host_seed(
+              toplevel_seed(anf_list, 0,
+                            sigma_of_rt(nth(rt, 0), nth(rt, 1)), 0)) in
   let _ = lir_tlv_set(1) in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, fs0, 0, list_new(), 0],
@@ -989,9 +1031,9 @@ let dump_lir(src) =
      * opcode census into "0 occurrences of everything" (FLAT_ABI.md 8.2 #10). */
     let _ = link_from_ast(ast) in
     let anf = pass_anf(ast) in
-    let rt0 = rt_for_link(0) in
+    let rt = rt_for_link(0) in
     let _ = pkg_prefix_set("") in
-    let fs0 = toplevel_seed(anf, 0, sigma_of_rt(rt0)) in
+    let fs0 = toplevel_seed(anf, 0, sigma_of_rt(nth(rt, 0), nth(rt, 1)), 0) in
     let _ = lir_dump_items(anf, 0, len(anf),
       [env_new(0), 1, fs0, 0, list_new(), 0]) in
     /* Then the procs of THIS unit. Item-level LIR cannot express captures,
@@ -1000,7 +1042,7 @@ let dump_lir(src) =
      * and starts with the runtime procs (sigma_of_rt), so cutting at
      * len(ps) - len(rt0) drops those. */
     let ps = nth(pass_lir(anf), 1) in
-    let st0 = len(rt0) + 1 in
+    let st0 = len(nth(rt, 0)) + 1 in
     let dump_ps(i) =
       if i >= len(ps) then 0
       else if i > 0 and i < st0 then dump_ps(i + 1)

@@ -290,23 +290,44 @@ let fv_acc_add_h(a, k, h) =
 
 let fv_acc_add(a, k) = fv_acc_add_h(a, k, hash_str(k))
 
+/* Σ = [procs, pmap, nrt, tlv, exports, globals]  (FLAT_ABI.md §2.5)
+ *   field 3 tlv     : THIS unit's top-level bare name -> kind (1 letfun / 2 let)
+ *   field 4 exports : pkg/name -> export-ent, ACCUMULATED across units
+ *   field 5 globals : bare (no '/') kernel/rt.* proc names
+ * A per-package source-link compiles each package as its own unit, so field 3
+ * only knows THIS package; field 4 carries the rest. Fields 4/5 replace the
+ * old process-global pkg_tlv_box / bare_names_box (FLAT_ABI.md §2.5). */
 let sigma_new(nrt) =
   let m = fmap_new(0) in
   let _ = fmap_init_n(m, 2048) in
   let tm = fmap_new(0) in
   let _ = fmap_init_n(tm, 4096) in
-  [[], m, nrt, tm]
+  [[], m, nrt, tm, fmap_new(0), fmap_new(0)]
 
 let sigma_list(fs) = nth(fs, 0)
 let sigma_map(fs) = nth(fs, 1)
 let fun_src(f) = if len(f) > 5 then nth(f, 5) else nth(f, 1)
 
-/* Field 3 is this compile unit's TOP-LEVEL name -> kind map. It lives inside
- * Σ -- which is already threaded as a parameter -- instead of a global box,
- * so no pass has to remember to `reset` it (a forgotten reset used to
- * silently pollute the set; see toplevel_seed / FLAT_ABI.md 1).
- * Kinds: 1 = top-level letfun, 2 = top-level `let` value. */
 let sigma_tl(fs) = nth(fs, 3)
+let sigma_exports(fs) = nth(fs, 4)
+let sigma_globals(fs) = nth(fs, 5)
+
+/* export-ent is extensible: [kind] now; [kind,ncap]; [kind,ncap,mode,slot]
+ * later (FLAT_ABI.md §2.5). Only field 0 is read today. */
+let sigma_export_get(fs, qn) =
+  let e = fmap_get(sigma_exports(fs), intern(qn)) in
+  if e == 0 then 0 else e
+
+let sigma_export_kind(fs, qn) =
+  let e = sigma_export_get(fs, qn) in
+  if e == 0 then 0 else nth(e, 0)
+
+let sigma_global_p(fs, nm) = fmap_get(sigma_globals(fs), intern(nm)) != 0
+
+/* Σ with field 4 replaced; everything else untouched. */
+let sigma_set_exports(fs, ex) =
+  [sigma_list(fs), sigma_map(fs), nth(fs, 2), sigma_tl(fs),
+   (if ex == 0 then fmap_new(0) else ex), sigma_globals(fs)]
 
 let sigma_kind_h(fs, name, h) =
   if len(fs) < 4 then 0
@@ -324,15 +345,30 @@ let sigma_cons(fs, f) =
   let ent = [nth(f, 1), nth(f, 3), idx, nth(f, 0)] in
   let _ = fmap_put(m, g, ent) in
   let _ = if src == g then 0 else fmap_put(m, src, ent) in
-  [cons(f, sigma_list(fs)), m, nth(fs, 2), nth(fs, 3)]
+  [cons(f, sigma_list(fs)), m, nth(fs, 2), nth(fs, 3), nth(fs, 4), nth(fs, 5)]
+
+/* A name containing '/' is already package-qualified. */
+let name_has_slash(s, i) =
+  if i >= str_len(s) then false
+  else if str_ref(s, i) == 47 then true
+  else name_has_slash(s, i + 1)
 
 /* Load linked stdlib procs into Σ (kernel+num, plus os/ffi if imported).
- * Unexported lets (os_has) are not in ub_prog scope. */
-let sigma_of_rt(rt) =
+ * `exports` = accumulated package-level top-level-name -> export-ent map
+ * (0 for the very first unit). Bare (no '/') proc names become `globals` so
+ * resolve_call leaves kernel/rt.* names unqualified. */
+let sigma_of_rt(rt, exports) =
+  let globals = fmap_new(0) in
+  let fs0 = sigma_set_exports(sigma_new(len(rt)), exports) in
   let rec(i, fs) =
     if i >= len(rt) then fs
-    else rec(i + 1, sigma_cons(fs, nth(rt, i))) in
-  rec(0, sigma_new(len(rt)))
+    else
+      let f = nth(rt, i) in
+      let nm = nth(f, 1) in
+      let _ = if name_has_slash(nm, 0) then 0 else fmap_put(globals, intern(nm), 1) in
+      rec(i + 1, sigma_cons(fs, f)) in
+  let fs = rec(0, fs0) in
+  [sigma_list(fs), sigma_map(fs), nth(fs, 2), nth(fs, 3), nth(fs, 4), globals]
 
 let sigma_ent_h(fs, name, h) =
   if len(fs) < 2 then 0
@@ -364,11 +400,17 @@ let sigma_host_seed(fs) =
   let xs = box_get(imap_box) in
   let m0 = sigma_map(fs) in
   let put(i, m) =
-    if i >= len(xs) then [sigma_list(fs), m, nth(fs, 2), nth(fs, 3)]
+    if i >= len(xs) then
+      [sigma_list(fs), m, nth(fs, 2), nth(fs, 3), nth(fs, 4), nth(fs, 5)]
     else
       let v = nth(nth(xs, i), 1) in
       let m2 =
-        if is_host_name(v) then
+        /* Only seed a name that has no local proc entry. `--link pkg=embed`
+         * source-links packages whose exports can collide with host slot
+         * names (rt.os's host_arch/host_format are the live case): if the
+         * proc is already in Sigma, it must stay a local ycall, not be
+         * overwritten into a G+136 host fcall. */
+        if is_host_name(v) and fmap_get(m, v) == 0 then
           let _ = fmap_put(m, v, [v, 0, 0 - 1]) in
           m
         else m in
@@ -407,18 +449,16 @@ let anf_tmp_p(nm) =
   else if str_ref(nm, 0) != 116 then false
   else anf_tmp_digits(nm, 1, n)
 
-let toplevel_seed(items, i, fs) =
-  /* Σ field 3 是本单元的顶层 kind 表：只登记**每个 item 自己的定义**。
-   *
-   * item = (binds, tail)，一个顶层 form 一个 item，它的定义是**最后一个
-   * bind**：`let x = e` 的下降把 [let x] 追加在 e 的局部量之后；函数则是
-   * 唯一的 [letfun]。binds 里其余全是该 form 的局部量——包括被提升进来的
-   * 嵌套 lambda（`let f = let g(x) = .. in g` 把 [letfun g] 放在最前）。
-   * 遍历全部 binds 会让局部量冒充顶层名：Σ 的表被局部名污染，而 lir_let
-   * 的 is_tv 正是读它——该名字在函数内的首次局部绑定会被编译成全局 gset
-   * 而非槽位。语句 item 的末 bind 是 ANF 临时名（t<N>）或 `_`，都不是定义。
-   *
-   * 重复定义检查不在这里：只有 AST 才看得到 package 边界，见 top_dup_scan。 */
+/* One walk over the unit's top-level bindings fills BOTH:
+ *   - Σ field 3 (tlv): THIS unit's bare name -> kind (for lir_let /is_tv/);
+ *   - `m` (if non-0): pkg/name -> [kind], the package-level export-ent table
+ *     the link accumulator merges into Σ's field 4 `exports` (FLAT_ABI.md §2.5).
+ * So the kind is classified once from the ANF structure; only the key differs.
+ *
+ * item = (binds, tail): 一个顶层 form 一个 item，它的定义是**最后一个 bind**；
+ * binds 其余是局部量（含提升进来的嵌套 lambda）。只登记 letfun / let，跳过
+ * ANF 临时名与 `_`。重复定义检查见 top_dup_scan。 */
+let toplevel_seed(items, i, fs, m) =
   let walk(i) =
     if i >= len(items) then fs
     else
@@ -432,11 +472,13 @@ let toplevel_seed(items, i, fs) =
         if anf_tmp_p(nm) then walk(i + 1)
         else if nm == "_" then walk(i + 1)
         else
-          let tm = sigma_tl(fs) in
+          let kd = if k == "letfun" then 1 else if k == "let" then 2 else 0 in
           let _ =
-            if k == "letfun" then fmap_put(tm, nm, 1)
-            else if k == "let" then fmap_put(tm, nm, 2)
-            else 0 in
+            if kd == 0 then 0
+            else
+              let _ = fmap_put(sigma_tl(fs), nm, kd) in
+              if m == 0 then 0
+              else fmap_put(m, intern(pkg_qn(pkg_prefix_get(0), nm)), [kd]) in
           walk(i + 1) in
   walk(0)
 
@@ -614,17 +656,15 @@ let is_prim_name(w) =
   else if w == "ccall" then true
   else false
 
-let name_has_slash(s, i) =
-  if i >= str_len(s) then false
-  else if str_ref(s, i) == 47 then true
-  else name_has_slash(s, i + 1)
-
-let resolve_call(nm) =
+let resolve_call(fs, nm) =
   if is_prim_name(nm) then nm
   else
     let m = imap_find(box_get(imap_box), nm, 0) in
     if m != 0 then m
     else if name_has_slash(nm, 0) then nm
+    /* kernel / rt.* procs are registered bare in Sigma (Σ field 5 `globals`):
+     * keep the bare name so a per-package source-link does not qualify it. */
+    else if sigma_global_p(fs, nm) then nm
     else
       let p = box_get(pkg_prefix_box) in
       if p == "" then nm
@@ -764,18 +804,24 @@ let free_vars(fnbody, params, funs, env) =
         let nm = nth(atom, 1) in
         let h = hash_str(nm) in
         let ch = fmap_get_h(nth(sh, 0), nm, h) in
-        let g = resolve_call(nm) in
+        let g = resolve_call(funs, nm) in
         if ch == 0 then
-          if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hash_str(g)) != 0 then
-            /* The name also names a top-level binding -- but if it is visible in
-             * the enclosing Γ it is a TRUE LOCAL of an enclosing lambda and must
-             * be captured (FLAT_ABI.md 1: ncap counts true locals only, top-level
-             * names are reached statically). Top-level values no longer enter Γ
-             * (see lir_let), so a Γ hit here is always a real capture. */
+          /* Known package-level symbol: this unit's top-level (Σ field 3 tlv),
+           * a linked proc (pmap), or a cross-package top-level value/function
+           * (Σ field 4 exports). If it is ALSO visible in the enclosing Γ it is
+           * a true local of an outer lambda and must be captured (FLAT_ABI.md 1:
+           * ncap counts true locals only). */
+          if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hash_str(g)) != 0
+             or sigma_export_kind(funs, g) != 0 then
             if env_rec_h(env, nm, h) != 0 then fv_acc_add_h(a, nm, h) else a
           else
             let se = sigma_ent_h(funs, g, hash_str(g)) in
-            if se == 0 then fv_acc_add_h(a, nm, h)
+            if se == 0 then
+              /* bare kernel/rt.* name (Σ field 5 globals): a global, not a
+               * local -> never capture. Anything else absent from Σ is a real
+               * free variable. */
+              if sigma_global_p(funs, nm) then a
+              else fv_acc_add_h(a, nm, h)
             else if nth(se, 1) == 0 then a
             else fv_acc_add_h(a, nm, h)
         else if sh_has_chain(ch, nth(sh, 1)) then a
@@ -960,10 +1006,14 @@ let lir_var(atom, st) =
     [nth(st, 0), op,
      nth(st, 1), nth(st, 2), nth(st, 3), nth(st, 4)]
   else
-    let g = resolve_call(nm) in
+    let g = resolve_call(nth(st, 3), nm) in
     let se = sigma_ent_h(nth(st, 3), g, hash_str(g)) in
     let k1 = sigma_kind_h(nth(st, 3), nm, h) in
-    let kind = if k1 != 0 then k1 else sigma_kind_h(nth(st, 3), g, hash_str(g)) in
+    let kind =
+      if k1 != 0 then k1
+      else
+        let k2 = sigma_kind_h(nth(st, 3), g, hash_str(g)) in
+        if k2 != 0 then k2 else sigma_export_kind(nth(st, 3), g) in
     if kind == 2 then
       /* Top-level value: load [cell + 0]. The cell is filled by the `gset`
        * that lir_let emits for this name (baked at link time when the value
@@ -1194,7 +1244,7 @@ let lir_rt(g, dst, ss) =
 let calli(g0, dst, ss, env, funs, self, tail, inl) =
   let h0 = hash_str(g0) in
   let e = env_rec_h(env, g0, h0) in
-  let g = resolve_call(g0) in
+  let g = resolve_call(funs, g0) in
   let h = hash_str(g) in
   if e != 0 then
     let slf = nth(e, 0) == 0 - 1000000 in
@@ -1338,7 +1388,7 @@ let lir_let(b, s) =
        * resolve_call(nm) `lir_var` resolves a `gval` with. In a package file
        * that is the package-qualified name: emitting the bare ANF name here
        * would fill one cell while every read looked at another (still zero). */
-      let rn = resolve_call(nm) in
+      let rn = resolve_call(nth(s, 3), nm) in
       let li = lit_imm(nth(b, 2)) in
       if li >= 0 then insn_push(i0, ["gset", rn, 0, ["imm", li]])
       else insn_push(i0, ["gset", rn, 0, nth(r, 1)])

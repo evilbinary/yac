@@ -299,6 +299,12 @@ yc --link compiler=embed main.yac               # 单个包覆盖，其余默认
 > 包符号表 = guest 里一张「包导出名 → 绝对地址」的表（与 G+136 host 表同构，
 > 放 glob 区一段连续槽）。`hostcall` 指令复用，`id` 改为"包名+函数名"的哈希
 > 或包内序号。
+>
+> 注意这张表只是 **invoke（运行期地址）** 那半。跨包还要 **visit（编译期接口：
+> 名字 → kind/ncap）**，否则 `lir_var` 判不出跨包顶层值是函数还是值（`gvar` vs
+> `gval`）、`free_vars` 会把它当捕获。编译期那半的设计见
+> `FLAT_ABI.md` §2.5（Σ 的 `exports` / `export-ent`，`mode`/`slot` 字段就是给
+> 本节的包符号表预留的）。
 
 ### 5.4 import → 加载时序（四种模式）
 
