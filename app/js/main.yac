@@ -9,17 +9,25 @@
  *   ./yc --repl app/js/main.yac            # 进入 JS REPL
  *   printf ':run examples/hello.js\n:quit\n' | ./yc --repl app/js/main.yac
  *
- * 交互输入里以 `:` 开头的是命令，其余按 JS 处理：
+ * REPL 里以 `:` 开头的是命令，其余按 JS 处理：
  *
  *   :help                 帮助
  *   :run FILE             翻译并就地运行 JS 文件
  *   :compile FILE [OUT]   翻译并编成本机可执行文件
  *   :dump FILE            只打印翻译出的 yac 源码
  *   :eval JS              执行一段内联 JS
+ *   :version              版本
  *   :quit / :q            退出
  *
- * 若 argv 里带了参数（嵌入 host 的构建），也支持同样的命令：
- *   compile FILE [OUT] | run FILE | dump FILE | eval JS | repl | help
+ * 命令行（argv，参考 src-self/yc.yac 的解析方式）用 `--flag`：
+ *
+ *   --repl                     进入 REPL（无参数时默认）
+ *   --run FILE                 翻译并就地运行
+ *   --compile FILE [--out OUT] 翻译并编成本机可执行文件
+ *   --dump FILE                只打印翻译出的 yac 源码
+ *   --eval JS                  执行一段内联 JS
+ *   --help / -h               帮助
+ *   --version / -V            版本
  *
  * 注意：lang.js 的变量在翻译后是局部 let，因此 REPL 每行相互独立，
  * 上一行声明的变量不会带到下一行（文件内多行是正常的）。
@@ -166,6 +174,10 @@ let js_help(_) =
   let _ = print("直接输入 JS 会立即求值（每行独立）。") in
   0
 
+let js_version(_) =
+  let _ = print("js (app/js) — lang.js + yc.compiler") in
+  0
+
 let js_banner(_) =
   let _ = print("js — JavaScript compiler / REPL  (:help for commands)") in
   0
@@ -181,6 +193,7 @@ let js_cmd(line) =
     let c = nth(ws, 0) in
     if c == ":q" or c == ":quit" or c == ":exit" then 1
     else if c == ":help" then js_help(0)
+    else if c == ":version" then js_version(0)
     else if c == ":run" or c == ":load" then
       let _ =
         if n < 2 then print("usage: :run FILE")
@@ -249,10 +262,6 @@ let js_scan(i, mode, file, out, ev) =
     else if a == "--out" or a == "-o" then
       js_scan(i + 2, mode, file, argv(i + 1), ev)
     else js_scan(i + 1, mode, file, out, ev)
-
-let js_version(_) =
-  let _ = print("js (app/js) — lang.js + yc.compiler") in
-  0
 
 let js_cli(_) =
   let p = js_scan(1, "", 0, 0, "") in
