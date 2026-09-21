@@ -497,6 +497,14 @@ let js_parse_expr(toks, i, min, st) =
               [nth(kr, 0), nth(r, 0), nth(r, 1)]
             else
               let kt = js_at(toks, j) in
+              let is_acc = (js_t(kt) == "get" or js_t(kt) == "set") and js_k(js_at(toks, j + 1)) == "id" and js_is(toks, j + 2, "(") in
+              if is_acc then
+                let aname = js_t(js_at(toks, j + 1)) in
+                let pr = pdef(j + 3, []) in
+                let bd = js_parse_stmts_v(toks, nth(pr, 1) + 1, ["list", "}"], st) in
+                let fe = ["funexpr", "", nth(pr, 0), nth(bd, 0)] in
+                [["str", aname], (if js_t(kt) == "get" then ["acc", fe, 0] else ["acc", 0, fe]), nth(bd, 1)]
+              else
               let key =
                 if js_k(kt) == "id" then ["str", js_t(kt)]
                 else if js_k(kt) == "str" then kt
@@ -741,12 +749,17 @@ let js_parse_stmts(toks, i, mode, st) =
         if js_is(toks, k, "}") then [list_rev(acc), k + 1]
         else if js_is(toks, k, ";") then mgo(k + 1, acc)
         else
-          let is_static = js_is(toks, k, "static") in
-          let k1 = if is_static then k + 1 else k in
+          let is_acc = (js_is(toks, k, "get") or js_is(toks, k, "set")) and js_k(js_at(toks, k + 1)) == "id" and js_is(toks, k + 2, "(") in
+          let is_static = (not is_acc) and js_is(toks, k, "static") in
+          let k1 = if is_acc then k + 1 else if is_static then k + 1 else k in
           let mname = js_t(js_at(toks, k1)) in
           let pr = cdef(k1 + 2, []) in
           let bd = js_parse_stmts(toks, nth(pr, 1) + 1, ["list", "}"], st) in
-          let kind = if is_static then "static" else if mname == "constructor" then "ctor" else "method" in
+          let kind =
+            if is_acc then (if js_is(toks, k, "get") then "getter" else "setter")
+            else if is_static then "static"
+            else if mname == "constructor" then "ctor"
+            else "method" in
           mgo(nth(bd, 1), cons([kind, mname, nth(pr, 0), nth(bd, 0)], acc)) in
       let mem = mgo(j1 + 1, []) in
       [["class", nm, nth(mem, 0), superName], nth(mem, 1)]
@@ -1174,7 +1187,8 @@ let js_emit_expr(e, ctx, st) =
     if t == "id" then js_cat(["box_get(", js_mangle(nth(tgt, 1)), ")"])
     else if t == "mem" then
       let _ = box_set(st_fmap(st), 1) in
-      js_cat(["fmap_get(nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", 1), \"", js_esc(nth(tgt, 2)), "\")"])
+      let _ = box_set(st_obj(st), 1) in
+      js_cat(["_js_get(", js_emit_expr(nth(tgt, 1), ctx, st), ", \"", js_esc(nth(tgt, 2)), "\")"])
     else if t == "idx" then js_cat(["nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", ", js_emit_expr(nth(tgt, 2), ctx, st), ")"])
     else "0"
   in
@@ -1183,7 +1197,8 @@ let js_emit_expr(e, ctx, st) =
     if t == "id" then js_cat(["(let _ = box_set(", js_mangle(nth(tgt, 1)), ", ", vs, ") in ", vs, ")"])
     else if t == "mem" then
       let _ = box_set(st_fmap(st), 1) in
-      js_cat(["(let _ = fmap_put(nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", 1), \"", js_esc(nth(tgt, 2)), "\", ", vs, ") in ", vs, ")"])
+      let _ = box_set(st_obj(st), 1) in
+      js_cat(["_js_set(", js_emit_expr(nth(tgt, 1), ctx, st), ", \"", js_esc(nth(tgt, 2)), "\", ", vs, ")"])
     else if t == "idx" then
       js_cat(["(let _ = list_set(", js_emit_expr(nth(tgt, 1), ctx, st), ", ", js_emit_expr(nth(tgt, 2), ctx, st), ", ", vs, ") in ", vs, ")"])
     else vs
@@ -1412,8 +1427,14 @@ let js_emit_expr(e, ctx, st) =
         let ke =
           if nth(kn, 0) == "str" then js_cat(["\"", js_esc(js_lit_quote(kn)), "\""])
           else js_emit_expr(kn, ctx, st) in
-        let vs = js_emit_expr(nth(pair, 1), ctx, st) in
-        go(tail(ys), js_cat([acc, "let _ = fmap_put(nth(", o, ", 1), ", ke, ", ", vs, ") in "])) in
+        let val = nth(pair, 1) in
+        if nth(val, 0) == "acc" then
+          let isget = if nth(val, 1) == 0 then "0" else "1" in
+          let fe = if nth(val, 1) == 0 then js_emit_expr(nth(val, 2), ctx, st) else js_emit_expr(nth(val, 1), ctx, st) in
+          go(tail(ys), js_cat([acc, "let _ = _js_acc_put(nth(", o, ", 1), ", ke, ", ", isget, ", ", fe, ") in "]))
+        else
+          let vs = js_emit_expr(val, ctx, st) in
+          go(tail(ys), js_cat([acc, "let _ = fmap_put(nth(", o, ", 1), ", ke, ", ", vs, ") in "])) in
     go(nth(e, 1), "")
   else if tag == "tmpl" then
     /* Template literal: str_cat of literal segments and stringified exprs. */
@@ -1595,7 +1616,8 @@ let js_emit_expr(e, ctx, st) =
       if t == "id" then js_cat(["box_get(", js_mangle(nth(tgt, 1)), ")"])
       else if t == "mem" then
         let _ = box_set(st_fmap(st), 1) in
-        js_cat(["fmap_get(nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", 1), \"", js_esc(nth(tgt, 2)), "\")"])
+        let _ = box_set(st_obj(st), 1) in
+        js_cat(["_js_get(", js_emit_expr(nth(tgt, 1), ctx, st), ", \"", js_esc(nth(tgt, 2)), "\")"])
       else if t == "idx" then js_cat(["nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", ", js_emit_expr(nth(tgt, 2), ctx, st), ")"])
       else "0" in
     let rhs =
@@ -1625,7 +1647,8 @@ let js_emit_expr(e, ctx, st) =
       js_cat(["(let _v = ", rhs, " in (let _ = box_set(", js_mangle(nth(tgt, 1)), ", _v) in _v))"])
     else if t == "mem" then
       let _ = box_set(st_fmap(st), 1) in
-      js_cat(["(let _v = ", rhs, " in (let _ = fmap_put(nth(", js_emit_expr(nth(tgt, 1), ctx, st), ", 1), \"", js_esc(nth(tgt, 2)), "\", _v) in _v))"])
+      let _ = box_set(st_obj(st), 1) in
+      js_cat(["(let _v = ", rhs, " in (let _ = _js_set(", js_emit_expr(nth(tgt, 1), ctx, st), ", \"", js_esc(nth(tgt, 2)), "\", _v) in _v))"])
     else if t == "idx" then
       js_cat(["(let _v = ", rhs, " in (let _ = list_set(", js_emit_expr(nth(tgt, 1), ctx, st), ", ", js_emit_expr(nth(tgt, 2), ctx, st), ", _v) in _v))"])
     else js_cat(["(let _v = ", rhs, " in _v)"])
@@ -1909,6 +1932,13 @@ let js_emit_stmts(stmts, ctx, k, st) =
                  let fe = js_emit_expr(fexpr, ctxC, st) in
                  let e = js_cat(["_js_static_set(\"", js_esc(nm), "\", \"", js_esc(nth(md, 1)), "\", ", fe, ")"]) in
                  js_cat(["(let _ = ", e, " in ", go2(i + 1), ")"]))
+              else if nth(md, 0) == "getter" or nth(md, 0) == "setter" then
+                (let _ = box_set(st_obj(st), 1) in
+                 let fexpr = ["funexpr", "", nth(md, 2), rw(nth(md, 3))] in
+                 let fe = js_emit_expr(fexpr, ctxC, st) in
+                 let isget = if nth(md, 0) == "getter" then "1" else "0" in
+                 let e = js_cat(["_js_acc_put(nth(_js_proto(\"", js_esc(nm), "\"), 1), \"", js_esc(nth(md, 1)), "\", ", isget, ", ", fe, ")"]) in
+                 js_cat(["(let _ = ", e, " in ", go2(i + 1), ")"]))
               else
                 let target =
                   if nth(md, 0) == "static" then ["mem", ["id", nm], nth(md, 1)]
@@ -1987,7 +2017,7 @@ let js_to_yac(src) =
     let h6 = if box_get(ustrpkg) == 1 then "import text.str { split, starts_with, ends_with, join, trim, find, contains }\n" else "" in
     let h8 =
       if box_get(uobj) == 1 then
-        "let _js_this = box_new()\nlet _js_protos = box_new()\nlet _js_obj(proto) =\n  let m = fmap_new(0) in\n  let _ = fmap_put(m, \"__proto__\", proto) in\n  [\"$o\", m]\nlet _js_get(o, k) =\n  if o == 0 then 0\n  else\n    let m = nth(o, 1) in\n    let v = fmap_get(m, k) in\n    if v != 0 then v\n    else\n      let p = fmap_get(m, \"__proto__\") in\n      if p == 0 then 0 else _js_get(p, k)\nlet _js_keys(o) =\n  if is_int(o) then list_new()\n  else\n    let m = nth(o, 1) in\n    let vec = nth(m, 0) in\n    let cap = nth(m, 2) in\n    let r = list_new() in\n    let rec(i) =\n      if i >= cap then r\n      else\n        let e = nth(vec, i) in\n        let _ =\n          if e == 0 then 0\n          else\n            let kk = nth(e, 0) in\n            if kk == \"__proto__\" then 0 else list_push(r, kk) in\n        rec(i + 1) in\n    rec(0)\nlet _js_proto(nm) =\n  let m = box_get(_js_protos) in\n  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_protos, x) in x)) else m in\n  let p = fmap_get(m2, nm) in\n  if p == 0 then (let x = _js_obj(0) in (let _ = fmap_put(m2, nm, x) in x)) else p\nlet _js_statics = box_new()\nlet _js_statics_m(_) =\n  let m = box_get(_js_statics) in\n  if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_statics, x) in x)) else m\nlet _js_static_set(nm, k, v) =\n  let m = _js_statics_m(0) in\n  let _ = fmap_put(m, str_cat(nm, str_cat(\":\", k)), v) in v\nlet _js_static_get(nm, k) =\n  let m = box_get(_js_statics) in\n  if m == 0 then 0 else fmap_get(m, str_cat(nm, str_cat(\":\", k)))\n"
+        "let _js_this = box_new()\nlet _js_protos = box_new()\nlet _js_obj(proto) =\n  let m = fmap_new(0) in\n  let _ = fmap_put(m, \"__proto__\", proto) in\n  [\"$o\", m]\nlet _js_acc(v) =\n  if is_int(v) then false\n  else if kind(v) == 2 then (if len(v) > 0 then nth(v, 0) == \"$acc\" else false)\n  else false\nlet _js_acc_get(v, o) =\n  let g = nth(v, 1) in\n  if g == 0 then 0\n  else (let _s = box_get(_js_this) in (let _ = box_set(_js_this, o) in (let r = g(0) in (let _ = box_set(_js_this, _s) in r))))\nlet _js_acc_set(v, o, x) =\n  let s = nth(v, 2) in\n  if s == 0 then x\n  else (let _s = box_get(_js_this) in (let _ = box_set(_js_this, o) in (let _ = s(x) in (let _ = box_set(_js_this, _s) in x))))\nlet _js_getp(o, self, k) =\n  if o == 0 then 0\n  else\n    let m = nth(o, 1) in\n    let v = fmap_get(m, k) in\n    if v != 0 then (if _js_acc(v) then _js_acc_get(v, self) else v)\n    else\n      let p = fmap_get(m, \"__proto__\") in\n      if p == 0 then 0 else _js_getp(p, self, k)\nlet _js_get(o, k) = _js_getp(o, o, k)\nlet _js_setp(o, self, k, x) =\n  if o == 0 then x\n  else\n    let m = nth(o, 1) in\n    let cur = fmap_get(m, k) in\n    if _js_acc(cur) then _js_acc_set(cur, self, x)\n    else\n      let p = fmap_get(m, \"__proto__\") in\n      if p == 0 then (let _ = fmap_put(nth(self, 1), k, x) in x)\n      else _js_setp(p, self, k, x)\nlet _js_set(o, k, x) = _js_setp(o, o, k, x)\nlet _js_acc_put(m, k, isget, f) =\n  let cur = fmap_get(m, k) in\n  let g = if isget then f else (if _js_acc(cur) then nth(cur, 1) else 0) in\n  let s = if isget then (if _js_acc(cur) then nth(cur, 2) else 0) else f in\n  let _ = fmap_put(m, k, [\"$acc\", g, s]) in 0\nlet _js_keys(o) =\n  if is_int(o) then list_new()\n  else\n    let m = nth(o, 1) in\n    let vec = nth(m, 0) in\n    let cap = nth(m, 2) in\n    let r = list_new() in\n    let rec(i) =\n      if i >= cap then r\n      else\n        let e = nth(vec, i) in\n        let _ =\n          if e == 0 then 0\n          else\n            let kk = nth(e, 0) in\n            if kk == \"__proto__\" then 0 else list_push(r, kk) in\n        rec(i + 1) in\n    rec(0)\nlet _js_proto(nm) =\n  let m = box_get(_js_protos) in\n  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_protos, x) in x)) else m in\n  let p = fmap_get(m2, nm) in\n  if p == 0 then (let x = _js_obj(0) in (let _ = fmap_put(m2, nm, x) in x)) else p\nlet _js_statics = box_new()\nlet _js_statics_m(_) =\n  let m = box_get(_js_statics) in\n  if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_statics, x) in x)) else m\nlet _js_static_set(nm, k, v) =\n  let m = _js_statics_m(0) in\n  let _ = fmap_put(m, str_cat(nm, str_cat(\":\", k)), v) in v\nlet _js_static_get(nm, k) =\n  let m = box_get(_js_statics) in\n  if m == 0 then 0 else fmap_get(m, str_cat(nm, str_cat(\":\", k)))\n"
       else "" in
     let h10 = if box_get(ujslib) == 1 then "import lang.jslib { js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_native, js_str_pad, js_str_trim_start, js_str_trim_end, js_install }\n" else "" in
     let hjsrt =

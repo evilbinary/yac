@@ -312,6 +312,12 @@ let _ = check("set_size", "let s=new Set(); s.add(1); s.add(2); s.add(1); consol
 let _ = check("set_has", "let s=new Set(); s.add(1); console.log(s.has(1));", "true")
 let _ = check("set_delete", "let s=new Set(); s.add(1); s.add(2); s.delete(1); console.log(s.size);", "1")
 
+/* ES6 getter / setter */
+let _ = check("getter_obj", "let o = { get x(){ return 5; } }; console.log(o.x);", "5")
+let _ = check("accessor_obj", "let o = { _v:1, get v(){ return this._v; }, set v(n){ this._v = n*2; } }; o.v = 3; console.log(o.v);", "6")
+let _ = check("getter_class", "class A { constructor(){ this._v = 1; } get v(){ return this._v * 10; } } console.log(new A().v);", "10")
+let _ = check("accessor_class", "class A { constructor(){ this._v = 0; } get v(){ return this._v; } set v(n){ this._v = n + 1; } } let a = new A(); a.v = 5; console.log(a.v);", "6")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")
