@@ -154,6 +154,114 @@ cell 表是**共享**的，不是拷贝：
 - **因为 flat 函数没有前导 caps，`compile("1+2")` 的 `rdi` 就是字符串** →
   原始问题解决。
 
+### 2.5 Σ 的跨包接口（模式预留）
+
+§1 的"顶层名集合"、§2 的 cell 都是**每个编译单元**的视图。按包 source-link
+（`import pkg` 的默认路径、`--link pkg=stub` / `--link pkg=embed`）时，一个包编成
+一个单元，引用方在它自己的 Σ 里看不到被引用包的顶层名分类，于是：
+
+- `lir_var` 判不出跨包顶层值是"函数"还是"值" → 值被发成 `gvar` →
+  `EMIT: patch to unknown proc 'pkg/name'`；
+- `free_vars` 把跨包顶层值当自由变量捕获 → 顶层函数 `ncap>0` → 被绑进 Γ →
+  同包后续函数又捕获它 → 雪崩；
+- `resolve_call` 给 kernel 裸名（`runtime_add`）加上当前包前缀 → Σ 查不到。
+
+根因：Σ（`front/lir.yac:293`）是"从 procs 列表重建"的，**只有能进 procs 列表的
+东西才跨包**；顶层值不是 proc，它的 kind 跨不过去。对照 Chez Scheme 的
+**visit（编译期接口）/ invoke（运行期接口）** 双接口，yac 只做了 invoke 那半
+（运行期名字 → 地址：包符号表 / cell 名字 patch），缺 visit 那半（名字 →
+kind / ncap）。
+
+#### Σ 的格式（现状 → 目标）
+
+现状（`lir.yac:293`）：
+
+```yac
+Σ = [ procs, pmap, nrt, tlv ]
+```
+
+目标（跨包）：
+
+```yac
+Σ = [ procs, pmap, nrt, tlv, exports, globals ]
+```
+
+| # | 字段 | 键 | 内容 | 跨包 |
+| --- | --- | --- | --- | --- |
+| 0 | `procs` | — | 已登记过程列表（runtime + 已链接包） | 是（靠链接累积） |
+| 1 | `pmap` | name-id | `[codeName, ncap, idx, kind]` | 是（从 procs 重建） |
+| 2 | `nrt` | — | runtime/kernel proc 数 | 是 |
+| 3 | `tlv` | 裸名 | 本单元顶层名 → 1/2 | 否（`lir_let` 的 `is_tv`） |
+| 4 | `exports` | `pkg/name` | `export-ent` | **是（新增，链接累积）** |
+| 5 | `globals` | 裸名 | kernel / `rt.*` | 是（`sigma_of_rt` 扫 procs 现填） |
+
+#### `export-ent`：按未来模式预留
+
+`exports` 的值不是一个裸 kind，而是**可扩展定长条目**，把"编译期接口（visit）"
+与"运行期地址（invoke）"分开；现在只填 visit，将来做真 embed / yjit 时补 invoke，
+**Σ 结构不再变**：
+
+```yac
+export-ent = [ kind ]                    ; 现在：1 = letfun, 2 = let 值
+           = [ kind, ncap ]              ; + 函数的捕获数（flat 与否）
+           = [ kind, ncap, mode, slot ]  ; + mode ∈ embed|dylib|yjit|stub
+                                         ;   slot = 包符号表下标 / blob 内 fnOff
+```
+
+读取端按 `len(ent)` 取用已存在的字段（`nth` 越界得 `[]`，须按长度判断）。
+各模式现在/将来填什么：
+
+| 模式 | `exports` 条目 | visit 来源 | invoke 来源 |
+| --- | --- | --- | --- |
+| `stub`（默认，源码链接） | `[kind]` | `lir_extend_go` 扫本包 ANF | procs（同镜像直接 `ycall`/`gvar`/`gval`） |
+| `embed`（当前实现 = source-link + `@` redirect） | `[kind]` | 同上 | 同上 |
+| `embed`（真实现，预编译 blob） | `[kind, ncap, "embed", slot]` | blob 接口表 | blob 内 fnOff + 重定位 |
+| `dylib`（`pkg_dylib_synth` 合成包） | `[1, 0, "dylib", slot]` | synth 包全为 letfun | `dlopen`/`dlsym` 填 slot |
+| `yjit`（暂缓） | `[kind, ncap, "yjit", slot]` | 影像 export 表 | `jit_load` 填 slot |
+
+> 这正是 Chez 的 visit / invoke 二分：`kind`/`ncap` 是 visit（编译期），
+> `mode`/`slot` 是 invoke（运行期）。yac 的包符号表
+> （`BOOTSTRAP_LINK.md:299`）只覆盖 invoke，本节补的是 visit。
+
+#### 累积契约
+
+`exports` 是**唯一**跨单元累积的编译期接口；它由 `lir_extend_go` 产出、
+`rt_for_link` 累积、`sigma_of_rt` 装入：
+
+```yac
+rt_base(0)         : → [runtime_funs, {}]
+lir_extend_go(...) : → [out_procs, 本包 exports]      ; 新增第二项
+rt_for_link(0)     : → [runtime_add(procs), exports]  ; 累积所有包
+sigma_of_rt(procs, exports) → Σ
+```
+
+`globals` 不进累积：`sigma_of_rt` 扫 `procs`，把**不含 `/`** 的名字填进去即可
+（kernel / `rt.*` 保裸名）。
+
+#### 访问器与不变式
+
+```yac
+sigma_new(nrt, exports)
+sigma_exports(fs) / sigma_export_get(fs, qn) / sigma_export_kind(fs, qn)
+sigma_global_p(fs, nm)
+sigma_of_rt(procs, exports)
+```
+
+- `exports` 键统一是 `pkg_qn(pkg_prefix, name)`；bundle（`pkg_prefix=""`）退化成
+  裸名，与 `tlv` 同键。
+- `globals` / `pmap` 只由 `procs` 推导，不进累积结构。
+- `exports` 是**编译期**接口；运行期地址（cell / slot）不在 Σ 里（见 §2.4 与
+  `BOOTSTRAP_LINK.md` 的包符号表）。
+
+#### 落地状态（2026-09）
+
+- **现状**：为让 `--link yc.compiler=embed` 跑通，先用两个旁路
+  （`pkg_tlv_box`：`pkg/name→kind`；`bare_names_box`：kernel 裸名）+
+  `free_vars` 查 `imap` 兜底。它们**等价于本节的 `exports`/`globals`**，但是
+  **进程级全局**，违背 Σ 的纯函数式传递。
+- **目标**：按本节把 `exports`/`globals` 收进 Σ，删除旁路；`export-ent` 直接按
+  未来模式格式落地（从 `[kind]` 起步）。
+
 ---
 
 ## 3. 闭包表示阶梯
