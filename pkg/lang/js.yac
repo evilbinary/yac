@@ -963,6 +963,12 @@ let js_str_lit(e) = nth(e, 0) == "str"
  * comparison / equality / `&&` / `||`, or `!`. yac prints such a value as
  * 1/0, so console.log and string concatenation route it through _js_bool to
  * get JS's "true"/"false". */
+/* Math methods that map straight onto a num.math export. */
+let js_math_known(nm) =
+  nm == "abs" or nm == "min" or nm == "max" or nm == "pow" or nm == "sqrt"
+    or nm == "sin" or nm == "cos" or nm == "exp" or nm == "log" or nm == "log2"
+    or nm == "powf" or nm == "hypot" or nm == "sign"
+
 let js_is_boolish(e) =
   let t = nth(e, 0) in
   if t == "bool" then true
@@ -981,7 +987,7 @@ let js_is_boolish(e) =
     if nth(c, 0) == "mem" then
       let m = nth(c, 2) in
       m == "startsWith" or m == "endsWith" or m == "includes" or m == "isArray"
-        or m == "isInteger" or m == "isNaN" or m == "isFinite"
+        or m == "isInteger" or m == "isNaN" or m == "isFinite" or m == "is"
     else if nth(c, 0) == "id" then
       let f = nth(c, 1) in
       f == "isNaN" or f == "isFinite"
@@ -1172,6 +1178,7 @@ let js_emit_expr(e, ctx, st) =
     if is_str then
       if m == "charAt" then (let _ = box_set(st_lib(st), 1) in js_cat(["_js_char_at(", o, ", ", a0, ")"]))
       else if m == "charCodeAt" then js_cat(["str_ref(", o, ", ", a0, ")"])
+      else if m == "codePointAt" then js_cat(["str_ref(", o, ", ", a0, ")"])
       else if m == "slice" or m == "substring" then
         (if len(args) == 0 then o
          else if len(args) == 1 then js_cat(["str_slice(", o, ", ", a0, ", str_len(", o, ") - ", a0, ")"])
@@ -1247,6 +1254,14 @@ let js_emit_expr(e, ctx, st) =
         (let _ = box_set(st_lib(st), 1) in
          if len(args) == 0 then js_cat(["_js_arr_sort(", o, ", fun(_a, _b) -> _a - _b)"])
          else js_cat(["_js_arr_sort(", o, ", ", a0, ")"]))
+      else if m == "find" then (let _ = box_set(st_lib(st), 1) in js_cat(["_js_arr_find(", o, ", ", a0, ")"]))
+      else if m == "findIndex" then (let _ = box_set(st_lib(st), 1) in js_cat(["_js_arr_findindex(", o, ", ", a0, ")"]))
+      else if m == "includes" then (let _ = box_set(st_lib(st), 1) in js_cat(["_js_arr_includes(", o, ", ", a0, ")"]))
+      else if m == "fill" then
+        (let _ = box_set(st_lib(st), 1) in
+         let s0 = if len(args) >= 2 then a1 else "0" in
+         let e0 = if len(args) >= 3 then js_emit_expr(nth(args, 2), ctx, st) else js_cat(["len(", o, ")"]) in
+         js_cat(["_js_arr_fill(", o, ", ", a0, ", ", s0, ", ", e0, ")"]))
       else if m == "push" then js_cat(["list_push(", o, ", ", a0, ")"])
       else dyn_call(0)
   in
@@ -1434,7 +1449,10 @@ let js_emit_expr(e, ctx, st) =
      * lookups. */
     let obj = nth(e, 1) in
     let nm = nth(e, 2) in
-    if nm == "length" then
+    if nth(obj, 0) == "id" and nth(obj, 1) == "Math" and (nm == "PI" or nm == "E" or nm == "LN2") then
+      (let _ = box_set(st_math(st), 1) in
+       if nm == "PI" then "pi(0)" else if nm == "E" then "e(0)" else "ln2(0)")
+    else if nm == "length" then
       let isstr =
         if js_str_lit(obj) then true
         else if nth(obj, 0) == "id" then js_in(nth(ctx, 4), nth(obj, 1))
@@ -1530,17 +1548,20 @@ let js_emit_expr(e, ctx, st) =
           else js_cat(["str_cat(", str_of(nth(args, i)), ", str_cat(\" \", ", go(i + 1), "))"]) in
         js_cat(["print(", go(0), ")"])
     else if is_math then
-      let _ = box_set(st_math(st), 1) in
       if cnm == "floor" or cnm == "ceil" or cnm == "round" or cnm == "trunc" then
         if len(args) == 0 then "0" else js_emit_expr(nth(args, 0), ctx, st)
       else if cnm == "random" then "0"
+      else if js_math_known(cnm) then
+        (let _ = box_set(st_math(st), 1) in
+         let go(i) =
+           if i >= len(args) then ""
+           else if i == len(args) - 1 then js_emit_expr(nth(args, i), ctx, st)
+           else js_cat([js_emit_expr(nth(args, i), ctx, st), ", ", go(i + 1)]) in
+         let as = if len(args) == 0 then "0" else go(0) in
+         js_cat([cnm, "(", as, ")"]))
       else
-        let go(i) =
-          if i >= len(args) then ""
-          else if i == len(args) - 1 then js_emit_expr(nth(args, i), ctx, st)
-          else js_cat([js_emit_expr(nth(args, i), ctx, st), ", ", go(i + 1)]) in
-        let as = if len(args) == 0 then "0" else go(0) in
-        js_cat([cnm, "(", as, ")"])
+        (let _ = box_set(st_jslib(st), 1) in
+         js_cat(["js_native(\"Math\", \"", js_esc(cnm), "\", ", args_arr(args), ")"]))
     else if ctag == "mem" then mcall(callee, args)
     else if ctag == "id" and nth(callee, 1) == "String" then
       if len(args) == 0 then "\"\"" else str_of(nth(args, 0))
@@ -1880,6 +1901,6 @@ let js_to_yac(src) =
     let h10 = if box_get(ujslib) == 1 then "import lang.jslib { js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_native, js_str_pad, js_str_trim_start, js_str_trim_end }\n" else "" in
     let hjsrt =
       if box_get(ustr) == 1 or box_get(ubool) == 1 or box_get(utype) == 1 or box_get(ulib) == 1 or box_get(utruth) == 1 then
-        "import lang.jsrt { _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_lower, _js_repeat, _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each, _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_str_replace, _js_isnan }\n"
+        "import lang.jsrt { _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_lower, _js_repeat, _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each, _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_arr_find, _js_arr_findindex, _js_arr_fill, _js_arr_includes, _js_str_replace, _js_isnan }\n"
       else "" in
     js_cat([h0, h1, h2, h6, h10, hjsrt, h8, body, "\n"])

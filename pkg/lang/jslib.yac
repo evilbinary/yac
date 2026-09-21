@@ -8,7 +8,7 @@ package lang.jslib
 export js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_date_now, js_from_char_code,
   js_native, js_json_stringify, js_json_parse, js_str_pad, js_str_trim_start, js_str_trim_end
 import data.fmap { fmap_new, fmap_get, fmap_put }
-import num.math { ftoi }
+import num.math { ftoi, log, exp, powf }
 
 /* Decimal integer parse: optional leading '-', then digits (stops at the first
  * non-digit, like parseInt without a radix). */
@@ -338,6 +338,19 @@ let js_native(obj, m, args) =
      else if m == "values" then js_obj_values(nth(args, 0))
      else if m == "entries" then js_obj_entries(nth(args, 0))
      else if m == "keys" then js_keys_of(nth(args, 0))
+     else if m == "getOwnPropertyNames" then js_keys_of(nth(args, 0))
+     else if m == "is" then nth(args, 0) == nth(args, 1)
+     else if m == "setPrototypeOf" then
+       (let o = nth(args, 0) in (let _ = fmap_put(nth(o, 1), "__proto__", nth(args, 1)) in o))
+     else 0)
+  else if obj == "Math" then
+    (if m == "cbrt" then powf(nth(args, 0), 1.0 / 3.0)
+     else if m == "log10" then log(nth(args, 0)) / log(10.0)
+     else if m == "log1p" then log(1.0 + nth(args, 0))
+     else if m == "expm1" then exp(nth(args, 0)) - 1.0
+     else if m == "imul" then nth(args, 0) * nth(args, 1)
+     else if m == "clz32" then 0
+     else if m == "fround" then nth(args, 0)
      else 0)
   else if obj == "Number" then
     (if m == "isNaN" then js_num_is_nan(nth(args, 0))
