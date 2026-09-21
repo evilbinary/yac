@@ -273,6 +273,18 @@ let _ = check("trim_start", "console.log('  x'.trimStart());", "x")
 let _ = check("trim_end", "console.log('x  '.trimEnd());", "x")
 let _ = check("num_isint", "console.log(Number.isInteger(5));", "true")
 
+/* more ES6 built-ins */
+let _ = check("arr_find", "console.log([1,2,3].find(x => x > 1));", "2")
+let _ = check("arr_findindex", "console.log([1,2,3].findIndex(x => x > 1));", "1")
+let _ = check("arr_includes", "console.log([1,2,3].includes(2));", "true")
+let _ = check("arr_fill", "let a=[1,2,3]; a.fill(9,1); console.log(a.join(','));", "1,9,9")
+let _ = check("obj_is", "console.log(Object.is(1,1));", "true")
+let _ = check("obj_getnames", "let o={a:1,b:2}; console.log(Object.getOwnPropertyNames(o).length);", "2")
+let _ = check("codepointat", "console.log('A'.codePointAt(0));", "65")
+let _ = check("math_cbrt", "console.log(Math.cbrt(27));", "3")
+let _ = check("math_log10", "console.log(Math.log10(1000));", "3")
+let _ = check("math_pi", "console.log(Math.PI > 3.14);", "true")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")

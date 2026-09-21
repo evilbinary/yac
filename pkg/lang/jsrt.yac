@@ -11,7 +11,8 @@
 package lang.jsrt
 export _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_lower, _js_repeat,
   _js_arr_slice, _js_arr_index, _js_arr_map, _js_arr_filter, _js_arr_each,
-  _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_str_replace, _js_isnan
+  _js_arr_reduce, _js_arr_join, _js_arr_concat, _js_arr_sort, _js_arr_find,
+  _js_arr_findindex, _js_arr_fill, _js_arr_includes, _js_str_replace, _js_isnan
 import text.str {find}
 
 /* Stringify a JS value for console.log / `+`: int -> decimal, else as-is. */
@@ -151,3 +152,29 @@ let _js_str_replace(s, a, b) =
   else str_cat(str_slice(s, 0, i), str_cat(b, str_slice(s, i + str_len(a), str_len(s) - i - str_len(a))))
 
 let _js_isnan(x) = x != x
+
+let _js_arr_find(a, f) =
+  let n = len(a) in
+  let rec(i) =
+    if i >= n then 0
+    else
+      let v = nth(a, i) in
+      if _js_truth(f(v)) then v else rec(i + 1) in
+  rec(0)
+
+let _js_arr_findindex(a, f) =
+  let n = len(a) in
+  let rec(i) =
+    if i >= n then 0 - 1
+    else if _js_truth(f(nth(a, i))) then i
+    else rec(i + 1) in
+  rec(0)
+
+let _js_arr_fill(a, v, s, e) =
+  let rec(i) = if i >= e then a else (let _ = list_set(a, i, v) in rec(i + 1)) in
+  rec(s)
+
+let _js_arr_includes(a, v) =
+  let n = len(a) in
+  let rec(i) = if i >= n then false else if nth(a, i) == v then true else rec(i + 1) in
+  rec(0)
