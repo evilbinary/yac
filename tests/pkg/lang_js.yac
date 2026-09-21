@@ -341,6 +341,12 @@ let _ = check("forof_closure", "let fns=[]; for (let x of [1,2,3]) { fns.push(fu
 let _ = check("forin_closure", "let o={a:1,b:2}; let fns=[]; for (let k in o) { fns.push(function(){ return k; }); } console.log(fns.length);", "2")
 let _ = check("shadow_block", "let x=1; { let x=2; } console.log(x);", "1")
 let _ = check("shadow_if", "let x=1; if (true) { let x=2; console.log(x); } console.log(x);", "2\n1")
+let _ = check("arrayfrom_str", "console.log(Array.from('abc').join(','));", "a,b,c")
+let _ = check("arrayfrom_map", "let m=new Map(); m.set('a',1); m.set('b',2); console.log(Array.from(m).length);", "2")
+let _ = check("arrayfrom_mapfn", "console.log(Array.from([1,2,3], function(x){return x*2;}).join(','));", "2,4,6")
+let _ = check("console_warn", "console.warn('w'); console.error('e');", "w\ne")
+let _ = check("boolean_ctor", "console.log(Boolean(0)); console.log(Boolean(1)); console.log(Boolean(''));", "false\ntrue\nfalse")
+let _ = check("symbol_key", "let k=Symbol('k'); let o={}; o[k]=1; console.log(o[k]);", "1")
 
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")

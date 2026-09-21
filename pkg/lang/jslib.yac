@@ -10,6 +10,7 @@ export js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_date_now, js_fr
   js_install
 import data.fmap { fmap_new, fmap_get, fmap_put }
 import num.math { ftoi, log, exp, powf, abs, pow, sqrt, sin, cos, log2, sign }
+import lang.jsrt { _js_iter }
 
 /* Decimal integer parse: optional leading '-', then digits (stops at the first
  * non-digit, like parseInt without a radix). */
@@ -294,6 +295,19 @@ let js_arr_copy(xs) =
   let rec(i) = if i >= n then r else (let _ = list_push(r, nth(xs, i)) in rec(i + 1)) in
   rec(0)
 
+/* Array.from(x, mapFn): x may be an iterable (array/string/Map/Set). */
+let js_array_from(x, f) =
+  let it = _js_iter(x) in
+  let n = len(it) in
+  let r = list_new() in
+  let rec(i) =
+    if i >= n then r
+    else
+      let v = nth(it, i) in
+      let _ = list_push(r, (if f == 0 then v else f(v))) in
+      rec(i + 1) in
+  rec(0)
+
 let js_num_is_nan(x) = x != x
 let js_num_is_finite(x) = x == x
 let js_num_is_integer(x) = is_int(x) or (kind(x) == 7 and ftoi(x) == x)
@@ -391,7 +405,7 @@ let js_native(obj, m, args) =
        (let x = nth(args, 0) in
         let k = kind(x) in
         if (k == 2 or k == 5) and not js_json_is_obj(x) then true else false)
-     else if m == "from" then js_arr_copy(nth(args, 0))
+     else if m == "from" then js_array_from(nth(args, 0), (if len(args) > 1 then nth(args, 1) else 0))
      else if m == "of" then js_arr_copy(args)
      else 0)
   else if obj == "Object" then
