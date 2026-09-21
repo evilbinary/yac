@@ -254,6 +254,11 @@ let _ = check("forof_str", "let s=''; for (let c of ['a','b']) { s = s + c; } co
 let _ = check("forof_continue", "let s=0; for (let x of [1,2,3]) { if (x === 2) { continue; } s = s + x; } console.log(s);", "4")
 let _ = check("forof_break", "let n=0; for (let x of [1,2,3]) { n = n + 1; if (n === 2) { break; } } console.log(n);", "2")
 
+/* ES6 spread / rest (arrays + objects) */
+let _ = check("spread_arr", "let a=[1,2]; let b=[0,...a,3]; console.log(b.join(','));", "0,1,2,3")
+let _ = check("spread_obj", "let o={a:1}; let p={...o, b:2}; console.log(p.a+p.b);", "3")
+let _ = check("rest_destr", "let [a,...r] = [1,2,3]; console.log(a + '/' + r.join(','));", "1/2,3")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")
