@@ -248,6 +248,12 @@ let _ = check("class_default_ctor", "class A { m(){ return 3; } } let a = new A(
 let _ = check("class_extends", "class B { constructor(x){ this.x = x; } val(){ return this.x; } } class C extends B { constructor(x){ super(x); this.y = 2; } sum(){ return this.x + this.y; } } let c = new C(5); console.log(c.sum());", "7")
 let _ = check("class_super_method", "class B { hi(){ return 1; } } class C extends B { hi(){ return super.hi() + 1; } } console.log(new C().hi());", "2")
 
+/* ES6 for...of (arrays) */
+let _ = check("forof_sum", "let s=0; for (let x of [1,2,3]) { s = s + x; } console.log(s);", "6")
+let _ = check("forof_str", "let s=''; for (let c of ['a','b']) { s = s + c; } console.log(s);", "ab")
+let _ = check("forof_continue", "let s=0; for (let x of [1,2,3]) { if (x === 2) { continue; } s = s + x; } console.log(s);", "4")
+let _ = check("forof_break", "let n=0; for (let x of [1,2,3]) { n = n + 1; if (n === 2) { break; } } console.log(n);", "2")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")

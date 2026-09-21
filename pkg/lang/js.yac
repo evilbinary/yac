@@ -688,12 +688,13 @@ let js_parse_stmts(toks, i, mode, st) =
       /* for ( [let|var|const] k in obj ) body */
       let forin_target = js_k(js_at(toks, j0)) == "id" and (js_t(js_at(toks, j0)) == "let" or js_t(js_at(toks, j0)) == "var" or js_t(js_at(toks, j0)) == "const") in
       let jn0 = if forin_target then j0 + 1 else j0 in
-      if (forin_target or js_k(js_at(toks, j0)) == "id") and js_is(toks, jn0 + 1, "in") then
+      if (forin_target or js_k(js_at(toks, j0)) == "id") and (js_is(toks, jn0 + 1, "in") or js_is(toks, jn0 + 1, "of")) then
         let nm = js_t(js_at(toks, jn0)) in
         let it = js_parse_expr(toks, jn0 + 2, 0, st) in
         let j2 = if js_is(toks, nth(it, 1), ")") then nth(it, 1) + 1 else nth(it, 1) in
         let b = js_parse_stmts(toks, j2, ["one"], st) in
-        [["forin", nm, nth(it, 0), [nth(b, 0)]], nth(b, 1)]
+        let tg = if js_is(toks, jn0 + 1, "of") then "forof" else "forin" in
+        [[tg, nm, nth(it, 0), [nth(b, 0)]], nth(b, 1)]
       else
       let init =
         if js_is(toks, j0, ";") then [["null"], j0 + 1]
@@ -1608,6 +1609,20 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let c3 = [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), cons(nm, nth(ctx2, 4)), sc] in
       let bodyE = js_emit_stmts(body, c3, "0", st) in
       js_cat(["(let ", ks, " = _js_keys(", js_emit_expr(obj, ctx2, st), ") in (let ", m, " = box_new() in (let ", sc, " = box_new() in (let ", w, "(", p, ") = (if ", p, " < len(", ks, ") then (let _ = box_set(", m, ", nth(", ks, ", ", p, ")) in (let _ = box_set(", sc, ", 0) in (let _ = ", bodyE, " in (if box_get(_js_exc) != 0 then 0 else (if box_get(", sc, ") == 1 then 0 else ", w, "(", p, " + 1)))))) else 0) in ", w, "(0)))))"])
+    else if tag == "forof" then
+      /* for (x of arr) — index the array (arrays are cons/listbufs). */
+      let nm = nth(s, 1) in
+      let obj = nth(s, 2) in
+      let body = nth(s, 3) in
+      let m = js_mangle(nm) in
+      let sc = js_fresh(st, "sc") in
+      let p = js_fresh(st, "i") in
+      let w = js_fresh(st, "w") in
+      let av = js_fresh(st, "a") in
+      let arr = js_emit_expr(obj, ctx2, st) in
+      let c3 = [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), nth(ctx2, 4), sc] in
+      let bodyE = js_emit_stmts(body, c3, "0", st) in
+      js_cat(["(let ", av, " = ", arr, " in (let ", m, " = box_new() in (let ", sc, " = box_new() in (let ", w, "(", p, ") = (if ", p, " < len(", av, ") then (let _ = box_set(", m, ", nth(", av, ", ", p, ")) in (let _ = box_set(", sc, ", 0) in (let _ = ", bodyE, " in (if box_get(_js_exc) != 0 then 0 else (if box_get(", sc, ") == 1 then 0 else ", w, "(", p, " + 1)))))) else 0) in ", w, "(0)))))"])
     else if tag == "ret" then
       /* Set the flag + value boxes; the guard after each statement unwinds. */
       let v = js_emit_expr(nth(s, 1), ctx2, st) in
