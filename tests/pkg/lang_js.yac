@@ -285,6 +285,13 @@ let _ = check("math_cbrt", "console.log(Math.cbrt(27));", "3")
 let _ = check("math_log10", "console.log(Math.log10(1000));", "3")
 let _ = check("math_pi", "console.log(Math.PI > 3.14);", "true")
 
+/* ES6 parameter destructuring */
+let _ = check("param_obj", "function f({a,b}){ return a+b; } console.log(f({a:1,b:2}));", "3")
+let _ = check("param_arr", "function f([x,y]){ return x+y; } console.log(f([3,4]));", "7")
+let _ = check("param_obj_method", "let o={m({a}){return a;}}; console.log(o.m({a:5}));", "5")
+let _ = check("param_nested", "function f({a:{b}}){ return b; } console.log(f({a:{b:8}}));", "8")
+let _ = check("param_pat_default", "function f({a}={a:9}){return a;} console.log(f());", "9")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")
