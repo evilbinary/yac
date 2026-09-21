@@ -1851,7 +1851,9 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let p = js_fresh(st, "i") in
       let c3 = [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), cons(nm, nth(ctx2, 4)), sc] in
       let bodyE = js_emit_stmts(body, c3, "0", st) in
-      js_cat(["(let ", ks, " = _js_keys(", js_emit_expr(obj, ctx2, st), ") in (let ", m, " = box_new() in (let ", sc, " = box_new() in (let ", w, "(", p, ") = (if ", p, " < len(", ks, ") then (let _ = box_set(", m, ", nth(", ks, ", ", p, ")) in (let _ = box_set(", sc, ", 0) in (let _ = ", bodyE, " in (if box_get(_js_exc) != 0 then 0 else (if box_get(", sc, ") == 1 then 0 else ", w, "(", p, " + 1)))))) else 0) in ", w, "(0)))))"])
+      let thenP = js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", nth(", ks, ", ", p, ")) in (let _ = box_set(", sc, ", 0) in (let _ = ", bodyE, " in (if box_get(_js_exc) != 0 then 0 else (if box_get(", sc, ") == 1 then 0 else ", w, "(", p, " + 1)))))))"]) in
+      let lb = js_cat(["(if ", p, " < len(", ks, ") then ", thenP, " else 0)"]) in
+      js_cat(["(let ", ks, " = _js_keys(", js_emit_expr(obj, ctx2, st), ") in (let ", sc, " = box_new() in (let ", w, "(", p, ") = ", lb, " in ", w, "(0))))"])
     else if tag == "forof" then
       /* for (x of arr) — index the array (arrays are cons/listbufs). */
       let nm = nth(s, 1) in
@@ -1866,7 +1868,9 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let arr = js_cat(["_js_iter(", js_emit_expr(obj, ctx2, st), ")"]) in
       let c3 = [cons(nm, nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), nth(ctx2, 4), sc] in
       let bodyE = js_emit_stmts(body, c3, "0", st) in
-      js_cat(["(let ", av, " = ", arr, " in (let ", m, " = box_new() in (let ", sc, " = box_new() in (let ", w, "(", p, ") = (if ", p, " < len(", av, ") then (let _ = box_set(", m, ", nth(", av, ", ", p, ")) in (let _ = box_set(", sc, ", 0) in (let _ = ", bodyE, " in (if box_get(_js_exc) != 0 then 0 else (if box_get(", sc, ") == 1 then 0 else ", w, "(", p, " + 1)))))) else 0) in ", w, "(0)))))"])
+      let thenP = js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", nth(", av, ", ", p, ")) in (let _ = box_set(", sc, ", 0) in (let _ = ", bodyE, " in (if box_get(_js_exc) != 0 then 0 else (if box_get(", sc, ") == 1 then 0 else ", w, "(", p, " + 1)))))))"]) in
+      let lb = js_cat(["(if ", p, " < len(", av, ") then ", thenP, " else 0)"]) in
+      js_cat(["(let ", av, " = ", arr, " in (let ", sc, " = box_new() in (let ", w, "(", p, ") = ", lb, " in ", w, "(0))))"])
     else if tag == "ret" then
       /* Set the flag + value boxes; the guard after each statement unwinds. */
       let v = js_emit_expr(nth(s, 1), ctx2, st) in

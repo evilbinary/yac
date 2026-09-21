@@ -337,6 +337,8 @@ let _ = check("arr_copywithin", "let a=[1,2,3,4]; a.copyWithin(0,2); console.log
 let _ = check("obj_defprop_get", "let o={}; Object.defineProperty(o,'x',{get:function(){return 7;}}); console.log(o.x);", "7")
 let _ = check("obj_defprop_value", "let o={}; Object.defineProperty(o,'v',{value:5}); console.log(o.v);", "5")
 let _ = check("obj_getproto", "let o={}; console.log(Object.getPrototypeOf(o) == 0);", "true")
+let _ = check("forof_closure", "let fns=[]; for (let x of [1,2,3]) { fns.push(function(){ return x; }); } console.log(fns[0]() + ',' + fns[1]() + ',' + fns[2]());", "1,2,3")
+let _ = check("forin_closure", "let o={a:1,b:2}; let fns=[]; for (let k in o) { fns.push(function(){ return k; }); } console.log(fns.length);", "2")
 
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
