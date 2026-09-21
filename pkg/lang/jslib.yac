@@ -6,9 +6,10 @@
  * jsrt.yac (stateless value/array/string helpers). */
 package lang.jslib
 export js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_date_now, js_from_char_code,
-  js_native, js_json_stringify, js_json_parse, js_str_pad, js_str_trim_start, js_str_trim_end
+  js_native, js_json_stringify, js_json_parse, js_str_pad, js_str_trim_start, js_str_trim_end,
+  js_install
 import data.fmap { fmap_new, fmap_get, fmap_put }
-import num.math { ftoi, log, exp, powf }
+import num.math { ftoi, log, exp, powf, abs, pow, sqrt, sin, cos, log2, sign }
 
 /* Decimal integer parse: optional leading '-', then digits (stops at the first
  * non-digit, like parseInt without a radix). */
@@ -316,6 +317,52 @@ let js_str_trim_end(s) =
  * UpperCamelCase object method here, so adding an object or method is a change
  * to this one function; a new object needs no translator registration beyond
  * being UpperCamelCase. Math / Object keep their inline fast paths. */
+/* Math.max/min/hypot over an argument list. */
+let js_maxg(args) =
+  let n = len(args) in
+  let rec(i, acc) = if i >= n then acc else rec(i + 1, if nth(args, i) > acc then nth(args, i) else acc) in
+  if n == 0 then 0 else rec(1, nth(args, 0))
+
+let js_ming(args) =
+  let n = len(args) in
+  let rec(i, acc) = if i >= n then acc else rec(i + 1, if nth(args, i) < acc then nth(args, i) else acc) in
+  if n == 0 then 0 else rec(1, nth(args, 0))
+
+let js_hypotg(args) =
+  let n = len(args) in
+  let ss = box_new() in
+  let _ = box_set(ss, 0) in
+  let rec(i) =
+    if i >= n then 0
+    else (let x = nth(args, i) in (let _ = box_set(ss, box_get(ss) + x * x) in rec(i + 1))) in
+  let _ = rec(0) in
+  sqrt(box_get(ss))
+
+let js_math(m, args) =
+  if m == "floor" or m == "ceil" or m == "round" or m == "trunc" then
+    (if len(args) == 0 then 0 else nth(args, 0))
+  else if m == "random" then 0
+  else if m == "abs" then abs(nth(args, 0))
+  else if m == "sqrt" then sqrt(nth(args, 0))
+  else if m == "sin" then sin(nth(args, 0))
+  else if m == "cos" then cos(nth(args, 0))
+  else if m == "exp" then exp(nth(args, 0))
+  else if m == "log" then log(nth(args, 0))
+  else if m == "log2" then log2(nth(args, 0))
+  else if m == "sign" then sign(nth(args, 0))
+  else if m == "pow" then pow(nth(args, 0), nth(args, 1))
+  else if m == "cbrt" then powf(nth(args, 0), 1.0 / 3.0)
+  else if m == "log10" then log(nth(args, 0)) / log(10.0)
+  else if m == "log1p" then log(1.0 + nth(args, 0))
+  else if m == "expm1" then exp(nth(args, 0)) - 1.0
+  else if m == "imul" then nth(args, 0) * nth(args, 1)
+  else if m == "clz32" then 0
+  else if m == "fround" then nth(args, 0)
+  else if m == "max" then js_maxg(args)
+  else if m == "min" then js_ming(args)
+  else if m == "hypot" then js_hypotg(args)
+  else 0
+
 let js_native(obj, m, args) =
   if obj == "Date" then
     (if m == "now" then js_date_now(0) else 0)
@@ -339,19 +386,13 @@ let js_native(obj, m, args) =
      else if m == "entries" then js_obj_entries(nth(args, 0))
      else if m == "keys" then js_keys_of(nth(args, 0))
      else if m == "getOwnPropertyNames" then js_keys_of(nth(args, 0))
+     else if m == "create" then
+       (let o = ["$o", fmap_new(0)] in (let _ = fmap_put(nth(o, 1), "__proto__", nth(args, 0)) in o))
      else if m == "is" then nth(args, 0) == nth(args, 1)
      else if m == "setPrototypeOf" then
        (let o = nth(args, 0) in (let _ = fmap_put(nth(o, 1), "__proto__", nth(args, 1)) in o))
      else 0)
-  else if obj == "Math" then
-    (if m == "cbrt" then powf(nth(args, 0), 1.0 / 3.0)
-     else if m == "log10" then log(nth(args, 0)) / log(10.0)
-     else if m == "log1p" then log(1.0 + nth(args, 0))
-     else if m == "expm1" then exp(nth(args, 0)) - 1.0
-     else if m == "imul" then nth(args, 0) * nth(args, 1)
-     else if m == "clz32" then 0
-     else if m == "fround" then nth(args, 0)
-     else 0)
+  else if obj == "Math" then js_math(m, args)
   else if obj == "Number" then
     (if m == "isNaN" then js_num_is_nan(nth(args, 0))
      else if m == "isFinite" then js_num_is_finite(nth(args, 0))
@@ -360,3 +401,80 @@ let js_native(obj, m, args) =
      else if m == "parseFloat" then js_parse_float(nth(args, 0))
      else 0)
   else 0
+
+/* ---- Map / Set (object model: instance is ["$o", fmap], data in "$data") -- */
+
+let js_map_data(self) =
+  let d = fmap_get(nth(self, 1), "$data") in
+  if d == 0 then (let nd = list_new() in (let _ = fmap_put(nth(self, 1), "$data", nd) in nd)) else d
+
+let js_map(self, op, args) =
+  let d = js_map_data(self) in
+  if op == "set" then
+    (let k = nth(args, 0) in (let v = nth(args, 1) in
+     (let n = len(d) in
+      (let rec(i) = (if i >= n then (let _ = list_push(d, [k, v]) in 0) else (if nth(nth(d, i), 0) == k then (let _ = list_set(d, i, [k, v]) in 0) else rec(i + 1))) in
+       (let _ = rec(0) in (let _ = fmap_put(nth(self, 1), "size", len(d)) in self))))))
+  else if op == "get" then
+    (let k = nth(args, 0) in
+     (let n = len(d) in
+      (let rec(i) = (if i >= n then 0 else (if nth(nth(d, i), 0) == k then nth(nth(d, i), 1) else rec(i + 1))) in rec(0))))
+  else if op == "has" then
+    (let k = nth(args, 0) in
+     (let n = len(d) in
+      (let rec(i) = (if i >= n then false else (if nth(nth(d, i), 0) == k then true else rec(i + 1))) in rec(0))))
+  else if op == "delete" then
+    (let k = nth(args, 0) in
+     (let n = len(d) in (let nd = list_new() in
+      (let rec(i) = (if i >= n then 0 else (let _ = if nth(nth(d, i), 0) == k then 0 else list_push(nd, nth(d, i)) in rec(i + 1))) in
+       (let _ = rec(0) in (let _ = fmap_put(nth(self, 1), "$data", nd) in (let _ = fmap_put(nth(self, 1), "size", len(nd)) in (len(nd) != n))))))))
+  else if op == "keys" or op == "values" or op == "entries" then
+    (let r = list_new() in (let n = len(d) in
+     (let rec(i) = (if i >= n then 0 else (let e = nth(d, i) in (let _ = list_push(r, (if op == "keys" then nth(e, 0) else if op == "values" then nth(e, 1) else e)) in rec(i + 1)))) in
+      (let _ = rec(0) in r))))
+  else if op == "forEach" then
+    (let f = nth(args, 0) in (let n = len(d) in
+     (let rec(i) = (if i >= n then 0 else (let e = nth(d, i) in (let _ = f(nth(e, 1), nth(e, 0)) in rec(i + 1)))) in
+      (let _ = rec(0) in 0))))
+  else 0
+
+let js_set(self, op, args) =
+  let d = js_map_data(self) in
+  if op == "add" then
+    (let v = nth(args, 0) in
+     (let n = len(d) in
+      (let rec(i) = (if i >= n then (let _ = list_push(d, v) in 0) else (if nth(d, i) == v then 0 else rec(i + 1))) in
+       (let _ = rec(0) in (let _ = fmap_put(nth(self, 1), "size", len(d)) in self)))))
+  else if op == "has" then
+    (let v = nth(args, 0) in
+     (let n = len(d) in
+      (let rec(i) = (if i >= n then false else (if nth(d, i) == v then true else rec(i + 1))) in rec(0))))
+  else if op == "delete" then
+    (let v = nth(args, 0) in
+     (let n = len(d) in (let nd = list_new() in
+      (let rec(i) = (if i >= n then 0 else (let _ = if nth(d, i) == v then 0 else list_push(nd, nth(d, i)) in rec(i + 1))) in
+       (let _ = rec(0) in (let _ = fmap_put(nth(self, 1), "$data", nd) in (let _ = fmap_put(nth(self, 1), "size", len(nd)) in (len(nd) != n))))))))
+  else if op == "forEach" then
+    (let f = nth(args, 0) in (let n = len(d) in
+     (let rec(i) = (if i >= n then 0 else (let _ = f(nth(d, i)) in rec(i + 1))) in
+      (let _ = rec(0) in 0))))
+  else 0
+
+/* Register Map/Set prototype methods. `this` is the generated program`s
+ * _js_this box and `proto` its _js_proto function (closure captures both). */
+let js_install(this, proto) =
+  let mp = proto("Map") in
+  let sp = proto("Set") in
+  let _ = fmap_put(nth(mp, 1), "set", fun(a, b) -> js_map(box_get(this), "set", [a, b])) in
+  let _ = fmap_put(nth(mp, 1), "get", fun(a) -> js_map(box_get(this), "get", [a])) in
+  let _ = fmap_put(nth(mp, 1), "has", fun(a) -> js_map(box_get(this), "has", [a])) in
+  let _ = fmap_put(nth(mp, 1), "delete", fun(a) -> js_map(box_get(this), "delete", [a])) in
+  let _ = fmap_put(nth(mp, 1), "keys", fun(_) -> js_map(box_get(this), "keys", [])) in
+  let _ = fmap_put(nth(mp, 1), "values", fun(_) -> js_map(box_get(this), "values", [])) in
+  let _ = fmap_put(nth(mp, 1), "entries", fun(_) -> js_map(box_get(this), "entries", [])) in
+  let _ = fmap_put(nth(mp, 1), "forEach", fun(f) -> js_map(box_get(this), "forEach", [f])) in
+  let _ = fmap_put(nth(sp, 1), "add", fun(a) -> js_set(box_get(this), "add", [a])) in
+  let _ = fmap_put(nth(sp, 1), "has", fun(a) -> js_set(box_get(this), "has", [a])) in
+  let _ = fmap_put(nth(sp, 1), "delete", fun(a) -> js_set(box_get(this), "delete", [a])) in
+  let _ = fmap_put(nth(sp, 1), "forEach", fun(f) -> js_set(box_get(this), "forEach", [f])) in
+  0

@@ -4,10 +4,6 @@
  * yc.compiler 负责把 yac 源码编成本机可执行文件或就地运行。
  * 不直接依赖 src-self 下的实现。
  *
- * 用法（在仓库根目录，必须走 host 模式，否则 yc.compiler 是 stub）：
- *
- *   ./yc --repl app/js/main.yac            # 进入 JS REPL
- *   printf ':run examples/hello.js\n:quit\n' | ./yc --repl app/js/main.yac
  *
  * REPL 里以 `:` 开头的是命令，其余按 JS 处理：
  *

@@ -301,6 +301,17 @@ let _ = check("destass_obj", "let a=0; ({a} = {a:7}); console.log(a);", "7")
 let _ = check("class_static", "class A { static s(){ return 3; } } console.log(A.s());", "3")
 let _ = check("class_static_args", "class A { static add(a,b){ return a+b; } } console.log(A.add(2,3));", "5")
 
+/* ES6 Map / Set */
+let _ = check("map_get", "let m=new Map(); m.set('a',1); m.set('b',2); console.log(m.get('a') + m.get('b'));", "3")
+let _ = check("map_size", "let m=new Map(); m.set('a',1); m.set('b',2); console.log(m.size);", "2")
+let _ = check("map_has", "let m=new Map(); m.set('a',1); console.log(m.has('a'));", "true")
+let _ = check("map_delete", "let m=new Map(); m.set('a',1); m.set('b',2); m.delete('a'); console.log(m.size);", "1")
+let _ = check("map_keys", "let m=new Map(); m.set('a',1); m.set('b',2); console.log(m.keys().length);", "2")
+let _ = check("map_overwrite", "let m=new Map(); m.set('a',1); m.set('a',9); console.log(m.get('a') + '/' + m.size);", "9/1")
+let _ = check("set_size", "let s=new Set(); s.add(1); s.add(2); s.add(1); console.log(s.size);", "2")
+let _ = check("set_has", "let s=new Set(); s.add(1); console.log(s.has(1));", "true")
+let _ = check("set_delete", "let s=new Set(); s.add(1); s.add(2); s.delete(1); console.log(s.size);", "1")
+
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
 let _ = check("charCodeAt", "console.log('abc'.charCodeAt(0));", "97")
