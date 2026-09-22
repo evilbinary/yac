@@ -1113,178 +1113,6 @@ let emit_x86_i_raw_rest(st, insn) =
   let k = nth(insn, 0) in
   if k == "$f64binop" or k == "$f64fromstr" or k == "$f64print" or k == "$f64rel" then
     emit_x86_i_f64(st, insn)
-  else if k == "$and" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let imm = nth(insn, 3) in
-    let _ =
-      if imm == (0 - 2) then and_rax_1(b)
-      else if imm >= (0 - 128) and imm <= 127 then and_rax_imm8(b, imm)
-      else and_eax_imm32(b, imm) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$addi" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = add_rax_imm32(b, nth(insn, 3)) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$add" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = emit_load_rbx_slot(b, nth(insn, 3)) in
-    let _ = add_rax_rbx(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$sub" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = emit_load_rbx_slot(b, nth(insn, 3)) in
-    let _ = sub_rax_rbx(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$bts" then
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = mov_rdx_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = mov_rcx_rax(b) in
-    let _ = bts_mem_rdx_rcx(b) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$bt" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = mov_rdx_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-    let _ = mov_rcx_rax(b) in
-    let _ = bt_mem_rdx_rcx(b) in
-    let _ = setcc_r8(b, 2) in
-    let _ = movzx_eax_al(b) in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$or" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = or_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$clamp0" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = test_rax_rax(b) in
-    let _ = jcc_rel32(b, 9, 0) in
-    let pns = bytes_len(b) - 4 in
-    let _ = xor_rax_rax(b) in
-    let _ = apply_patch(b, pns, bytes_len(b)) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$st64" then
-    /* NOTE -- known asymmetry, kept ON PURPOSE: $st64 / $ld64 untag the base,
-     * while $st8 / $ld8 do not. As a result $st64 / $ld64 are byte-identical
-     * to mset / mref. Removing the untag was tried and REVERTED: it cannot be
-     * verified while the 2nd-generation bootstrap (yc_l1b) is broken for
-     * unrelated reasons. See docs/LIR.md §4.7 / §9.6. */
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = and_rax_1(b) in
-    let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
-    let _ = mov_rax_disp32_rdi(b, nth(insn, 2)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$st8" then
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = mov_rax_disp32_imm8(b, nth(insn, 2), nth(insn, 3)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$ld64" then
-    /* Untags the base -- see the asymmetry note on $st64 above. */
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rax_rax_disp32(b, nth(insn, 3)) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$ld8" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = movzx_eax_rax_disp32(b, nth(insn, 3)) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$sp" then
-    let _ = mov_rax_rsp(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$fp" then
-    let _ = mov_rax_rbp(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$smap" then
-    let _ = mov_rax_imm64(b, 0) in
-    let spat = bytes_len(b) - 8 in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, cons([14, spat], patches))
-  else if k == "$gbase" then
-    let _ = mov_rax_imm64(b, 0) in
-    let gpat = bytes_len(b) - 8 in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, cons([3, gpat], patches))
-  else if k == "$glob" then
-    let which = nth(insn, 2) in
-    let _ = mov_rax_imm64(b, 0) in
-    let gpat = bytes_len(b) - 8 in
-    let _ = mov_rax_mem_rax(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    let gkind =
-      if which == 1 then 4
-      else if which == 2 then 5
-      else if which == 3 then 7
-      else 8 in
-    emit_st4(st, b, cur, labels, cons([gkind, gpat], patches))
-  else if k == "$icmp" then
-    let op = nth(insn, 1) in
-    let cc = if op == ">=u" then 3 else if op == "==" then 4 else if op == "<" then 12 else 5 in
-    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-    let _ = emit_load_rbx_slot(b, nth(insn, 4)) in
-    let _ = cmp_rax_rbx(b) in
-    let _ = setcc_r8(b, cc) in
-    let _ = movzx_eax_al(b) in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 2)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$jcc" then
-    let op = nth(insn, 1) in
-    let cc = if op == ">=u" then 3 else if op == "==" then 4 else if op == "<" then 12 else 5 in
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = emit_load_rbx_slot(b, nth(insn, 3)) in
-    let _ = cmp_rax_rbx(b) in
-    let jcc_at = bytes_len(b) in
-    let _ = jcc_rel32(b, cc, 0) in
-    let jmp_at = bytes_len(b) in
-    let _ = jmp_rel32(b, 0) in
-    emit_st4(st, b, cur, labels,
-     cons([jcc_at + 2, nth(insn, 4)], cons([jmp_at + 1, nth(insn, 5)], patches)))
-  else if k == "$memcpy" then
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = mov_rdi_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = mov_rsi_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-    let _ = mov_rcx_rax(b) in
-    let _ = cld(b) in
-    let _ = rep_movsb(b) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$memset" then
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = mov_rdi_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = mov_rcx_rax(b) in
-    let _ = xor_rax_rax(b) in
-    let _ = cld(b) in
-    let _ = rep_stosb(b) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$shr" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = shr_rax_imm8(b, nth(insn, 3)) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$carg" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = mov_rax_to_argreg(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "$icall" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = mov_rbx_rax(b) in
-    let _ = call_rbx_user(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
   else if emit_host_win(0) then win_syscall(st, insn)
   else linux_syscall(st, insn)
 
@@ -1766,7 +1594,226 @@ let x86_cop_bytes_len(st, insn) =
   let _ = emit_store_rax_slot(b, dst) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), patches)
 
+let x86_cop_prim_and(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let imm = nth(insn, 3) in
+  let _ =
+    if imm == (0 - 2) then and_rax_1(b)
+    else if imm >= (0 - 128) and imm <= 127 then and_rax_imm8(b, imm)
+    else and_eax_imm32(b, imm) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_addi(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = add_rax_imm32(b, nth(insn, 3)) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_add(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = emit_load_rbx_slot(b, nth(insn, 3)) in
+  let _ = add_rax_rbx(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_sub(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = emit_load_rbx_slot(b, nth(insn, 3)) in
+  let _ = sub_rax_rbx(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_bts(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = mov_rdx_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = mov_rcx_rax(b) in
+  let _ = bts_mem_rdx_rcx(b) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_bt(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = mov_rdx_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+  let _ = mov_rcx_rax(b) in
+  let _ = bt_mem_rdx_rcx(b) in
+  let _ = setcc_r8(b, 2) in
+  let _ = movzx_eax_al(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_or(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = or_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_clamp0(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = test_rax_rax(b) in
+  let _ = jcc_rel32(b, 9, 0) in
+  let pns = bytes_len(b) - 4 in
+  let _ = xor_rax_rax(b) in
+  let _ = apply_patch(b, pns, bytes_len(b)) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_st64(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = and_rax_1(b) in
+  let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
+  let _ = mov_rax_disp32_rdi(b, nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_st8(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = mov_rax_disp32_imm8(b, nth(insn, 2), nth(insn, 3)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_ld64(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_rax_disp32(b, nth(insn, 3)) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_ld8(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = movzx_eax_rax_disp32(b, nth(insn, 3)) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_sp(st, insn) =
+  let b = nth(st, 0) in
+  let _ = mov_rax_rsp(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_fp(st, insn) =
+  let b = nth(st, 0) in
+  let _ = mov_rax_rbp(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_smap(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let _ = mov_rax_imm64(b, 0) in
+  let spat = bytes_len(b) - 8 in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), cons([14, spat], patches))
+let x86_cop_prim_gbase(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let _ = mov_rax_imm64(b, 0) in
+  let gpat = bytes_len(b) - 8 in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), cons([3, gpat], patches))
+let x86_cop_prim_glob(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let which = nth(insn, 2) in
+  let _ = mov_rax_imm64(b, 0) in
+  let gpat = bytes_len(b) - 8 in
+  let _ = mov_rax_mem_rax(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  let gkind =
+    if which == 1 then 4
+    else if which == 2 then 5
+    else if which == 3 then 7
+    else 8 in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), cons([gkind, gpat], patches))
+let x86_cop_prim_icmp(st, insn) =
+  let b = nth(st, 0) in
+  let op = nth(insn, 1) in
+  let cc = if op == ">=u" then 3 else if op == "==" then 4 else if op == "<" then 12 else 5 in
+  let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+  let _ = emit_load_rbx_slot(b, nth(insn, 4)) in
+  let _ = cmp_rax_rbx(b) in
+  let _ = setcc_r8(b, cc) in
+  let _ = movzx_eax_al(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_jcc(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let op = nth(insn, 1) in
+  let cc = if op == ">=u" then 3 else if op == "==" then 4 else if op == "<" then 12 else 5 in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = emit_load_rbx_slot(b, nth(insn, 3)) in
+  let _ = cmp_rax_rbx(b) in
+  let jcc_at = bytes_len(b) in
+  let _ = jcc_rel32(b, cc, 0) in
+  let jmp_at = bytes_len(b) in
+  let _ = jmp_rel32(b, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2),
+   cons([jcc_at + 2, nth(insn, 4)], cons([jmp_at + 1, nth(insn, 5)], patches)))
+let x86_cop_prim_memcpy(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = mov_rdi_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = mov_rsi_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+  let _ = mov_rcx_rax(b) in
+  let _ = cld(b) in
+  let _ = rep_movsb(b) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_memset(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = mov_rdi_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = mov_rcx_rax(b) in
+  let _ = xor_rax_rax(b) in
+  let _ = cld(b) in
+  let _ = rep_stosb(b) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_shr(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = shr_rax_imm8(b, nth(insn, 3)) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_carg(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = mov_rax_to_argreg(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_prim_icall(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = mov_rbx_rax(b) in
+  let _ = call_rbx_user(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
 let x86_reg_ops =
+  let _ = emit_reg("x86_64", "$and", x86_cop_prim_and) in
+  let _ = emit_reg("x86_64", "$addi", x86_cop_prim_addi) in
+  let _ = emit_reg("x86_64", "$add", x86_cop_prim_add) in
+  let _ = emit_reg("x86_64", "$sub", x86_cop_prim_sub) in
+  let _ = emit_reg("x86_64", "$bts", x86_cop_prim_bts) in
+  let _ = emit_reg("x86_64", "$bt", x86_cop_prim_bt) in
+  let _ = emit_reg("x86_64", "$or", x86_cop_prim_or) in
+  let _ = emit_reg("x86_64", "$clamp0", x86_cop_prim_clamp0) in
+  let _ = emit_reg("x86_64", "$st64", x86_cop_prim_st64) in
+  let _ = emit_reg("x86_64", "$st8", x86_cop_prim_st8) in
+  let _ = emit_reg("x86_64", "$ld64", x86_cop_prim_ld64) in
+  let _ = emit_reg("x86_64", "$ld8", x86_cop_prim_ld8) in
+  let _ = emit_reg("x86_64", "$sp", x86_cop_prim_sp) in
+  let _ = emit_reg("x86_64", "$fp", x86_cop_prim_fp) in
+  let _ = emit_reg("x86_64", "$smap", x86_cop_prim_smap) in
+  let _ = emit_reg("x86_64", "$gbase", x86_cop_prim_gbase) in
+  let _ = emit_reg("x86_64", "$glob", x86_cop_prim_glob) in
+  let _ = emit_reg("x86_64", "$icmp", x86_cop_prim_icmp) in
+  let _ = emit_reg("x86_64", "$jcc", x86_cop_prim_jcc) in
+  let _ = emit_reg("x86_64", "$memcpy", x86_cop_prim_memcpy) in
+  let _ = emit_reg("x86_64", "$memset", x86_cop_prim_memset) in
+  let _ = emit_reg("x86_64", "$shr", x86_cop_prim_shr) in
+  let _ = emit_reg("x86_64", "$carg", x86_cop_prim_carg) in
+  let _ = emit_reg("x86_64", "$icall", x86_cop_prim_icall) in
   let _ = emit_reg("x86_64", "strlit", x86_cop_strlit) in
   let _ = emit_reg("x86_64", "str_len", x86_cop_str_len) in
   let _ = emit_reg("x86_64", "str_ref", x86_cop_str_ref) in
