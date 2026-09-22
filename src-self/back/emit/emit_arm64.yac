@@ -1308,11 +1308,69 @@ let a64_op_mset8(st, insn) =
   let _ = a64_strb(b, 1, 0) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
 /* Register each op into the shared table (emit.yac) at package load. */
+let a64_cop_alloc(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = a64_mov_imm64(b, 0, nth(insn, 2)) in
+  let pos = bytes_len(b) in
+  let _ = a64_bl(b, 0) in
+  let _ = a64_tag(b, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_alloc"))
+let a64_cop_alloc_s(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_asr1(b, 0, 0) in
+  let pos = bytes_len(b) in
+  let _ = a64_bl(b, 0) in
+  let _ = a64_tag(b, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_alloc"))
+let a64_cop_argc(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_argc", nth(st, 4)))
+let a64_cop_time_ms(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "time_ms", nth(st, 4)))
+let a64_cop_time_str(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "time_str", nth(st, 4)))
+let a64_cop_argv(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let pos = bytes_len(b) in
+  let _ = a64_bl(b, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_argv"))
+
 let a64_reg_ops =
   let _ = emit_reg("arm64", "mref", a64_op_mref) in
   let _ = emit_reg("arm64", "mset", a64_op_mset) in
   let _ = emit_reg("arm64", "tag", a64_op_tag) in
   let _ = emit_reg("arm64", "is_int", a64_op_is_int) in
+  let _ = emit_reg("arm64", "alloc", a64_cop_alloc) in
+  let _ = emit_reg("arm64", "alloc_s", a64_cop_alloc_s) in
+  let _ = emit_reg("arm64", "argc", a64_cop_argc) in
+  let _ = emit_reg("arm64", "time_ms", a64_cop_time_ms) in
+  let _ = emit_reg("arm64", "time_str", a64_cop_time_str) in
+  let _ = emit_reg("arm64", "argv", a64_cop_argv) in
   let _ = emit_reg("arm64", "obj_sti", a64_op_obj_sti) in
   let _ = emit_reg("arm64", "obj_st_int", a64_op_obj_st_int) in
   let _ = emit_reg("arm64", "mref8", a64_op_mref8) in
@@ -1533,33 +1591,6 @@ let emit_a64_i_heap_rest(st, insn) =
     let _ = a64_stur(b, 1, 0, 0) in
     let gkind = if which == 3 then 7 else 8 in
     emit_st4(st, b, cur, labels, cons([gkind, gpos], patches))
-  else if k == "alloc" then
-    let _ = a64_mov_imm64(b, 0, nth(insn, 2)) in
-    let pos = bytes_len(b) in
-    let _ = a64_bl(b, 0) in
-    let _ = a64_tag(b, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_alloc"))
-  else if k == "alloc_s" then
-    let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    let _ = a64_asr1(b, 0, 0) in
-    let pos = bytes_len(b) in
-    let _ = a64_bl(b, 0) in
-    let _ = a64_tag(b, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_alloc"))
-  else if k == "argc" then
-    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "yac_argc", nth(st, 4)))
-  else if k == "time_ms" then
-    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "time_ms", nth(st, 4)))
-  else if k == "time_str" then
-    emit_st4(st, b, cur, labels, a64_bl_rt(b, patches, nth(insn, 1), "time_str", nth(st, 4)))
-  else if k == "argv" then
-    let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    let pos = bytes_len(b) in
-    let _ = a64_bl(b, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_argv"))
   else st
 
 let emit_a64_i_heap(st, insn) =

@@ -1289,11 +1289,70 @@ let rv_op_mset8(st, insn) =
   let _ = rv_add(b, 10, 10, 11) in
   let _ = rv_sb(b, 12, 10, 0) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_alloc(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = rv_li(b, 10, nth(insn, 2)) in
+  let pos = bytes_len(b) in
+  let _ = rv_jal(b, 1, 0) in
+  let _ = rv_tag(b, 10) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_alloc"))
+let rv_cop_alloc_s(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_addi(b, 7, 0, 1) in
+  let _ = rv_sra(b, 10, 10, 7) in
+  let pos = bytes_len(b) in
+  let _ = rv_jal(b, 1, 0) in
+  let _ = rv_tag(b, 10) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_alloc"))
+let rv_cop_argc(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  emit_st4(st, b, cur, labels, rv_jal_rt(b, patches, nth(insn, 1), "yac_argc", nth(st, 4)))
+let rv_cop_time_ms(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  emit_st4(st, b, cur, labels, rv_jal_rt(b, patches, nth(insn, 1), "time_ms", nth(st, 4)))
+let rv_cop_time_str(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  emit_st4(st, b, cur, labels, rv_jal_rt(b, patches, nth(insn, 1), "time_str", nth(st, 4)))
+let rv_cop_argv(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let pos = bytes_len(b) in
+  let _ = rv_jal(b, 1, 0) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_argv"))
+
 let rv_reg_ops =
   let _ = emit_reg("riscv64", "mref", rv_op_mref) in
   let _ = emit_reg("riscv64", "mset", rv_op_mset) in
   let _ = emit_reg("riscv64", "tag", rv_op_tag) in
   let _ = emit_reg("riscv64", "is_int", rv_op_is_int) in
+  let _ = emit_reg("riscv64", "alloc", rv_cop_alloc) in
+  let _ = emit_reg("riscv64", "alloc_s", rv_cop_alloc_s) in
+  let _ = emit_reg("riscv64", "argc", rv_cop_argc) in
+  let _ = emit_reg("riscv64", "time_ms", rv_cop_time_ms) in
+  let _ = emit_reg("riscv64", "time_str", rv_cop_time_str) in
+  let _ = emit_reg("riscv64", "argv", rv_cop_argv) in
   let _ = emit_reg("riscv64", "obj_sti", rv_op_obj_sti) in
   let _ = emit_reg("riscv64", "obj_st_int", rv_op_obj_st_int) in
   let _ = emit_reg("riscv64", "mref8", rv_op_mref8) in
@@ -1515,34 +1574,6 @@ let emit_rv_i_heap_rest(st, insn) =
     let _ = rv_sd(b, 7, 6, 0) in
     let gkind = if which == 3 then 7 else 8 in
     emit_st4(st, b, cur, labels, cons([gkind, gpos], patches))
-  else if k == "alloc" then
-    let _ = rv_li(b, 10, nth(insn, 2)) in
-    let pos = bytes_len(b) in
-    let _ = rv_jal(b, 1, 0) in
-    let _ = rv_tag(b, 10) in
-    let _ = rv_slot(b, nth(insn, 1), true, 10) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_alloc"))
-  else if k == "alloc_s" then
-    let _ = rv_slot(b, nth(insn, 2), false, 10) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sra(b, 10, 10, 7) in
-    let pos = bytes_len(b) in
-    let _ = rv_jal(b, 1, 0) in
-    let _ = rv_tag(b, 10) in
-    let _ = rv_slot(b, nth(insn, 1), true, 10) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_alloc"))
-  else if k == "argc" then
-    emit_st4(st, b, cur, labels, rv_jal_rt(b, patches, nth(insn, 1), "yac_argc", nth(st, 4)))
-  else if k == "time_ms" then
-    emit_st4(st, b, cur, labels, rv_jal_rt(b, patches, nth(insn, 1), "time_ms", nth(st, 4)))
-  else if k == "time_str" then
-    emit_st4(st, b, cur, labels, rv_jal_rt(b, patches, nth(insn, 1), "time_str", nth(st, 4)))
-  else if k == "argv" then
-    let _ = rv_slot(b, nth(insn, 2), false, 10) in
-    let pos = bytes_len(b) in
-    let _ = rv_jal(b, 1, 0) in
-    let _ = rv_slot(b, nth(insn, 1), true, 10) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_argv"))
   else st
 
 let emit_rv_i_heap(st, insn) =

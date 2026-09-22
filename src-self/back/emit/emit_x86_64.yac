@@ -1464,11 +1464,38 @@ let x86_op_mset8(st, insn) =
   let _ = mov_rax_rbx(b) in
   let _ = mov_rax_rdx_dil(b) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_cop_alloc(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = mov_rdi_imm(b, nth(insn, 2)) in
+  let acall = bytes_len(b) in
+  let _ = call_user(b) in
+  let _ = or_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_alloc"))
+let x86_cop_alloc_s(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = sar_rax_1(b) in
+  let _ = mov_rdi_rax(b) in
+  let acall = bytes_len(b) in
+  let _ = call_user(b) in
+  let _ = or_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_alloc"))
+
 let x86_reg_ops =
   let _ = emit_reg("x86_64", "mref", x86_op_mref) in
   let _ = emit_reg("x86_64", "mset", x86_op_mset) in
   let _ = emit_reg("x86_64", "tag", x86_op_tag) in
   let _ = emit_reg("x86_64", "is_int", x86_op_is_int) in
+  let _ = emit_reg("x86_64", "alloc", x86_cop_alloc) in
+  let _ = emit_reg("x86_64", "alloc_s", x86_cop_alloc_s) in
   let _ = emit_reg("x86_64", "obj_sti", x86_op_obj_sti) in
   let _ = emit_reg("x86_64", "obj_st_int", x86_op_obj_st_int) in
   let _ = emit_reg("x86_64", "mref8", x86_op_mref8) in
@@ -1559,22 +1586,6 @@ let emit_x86_i_heap_rest(st, insn) =
     let _ = apply_patch(b, j_done, l_done) in
     let _ = apply_patch(b, j_done2, l_done) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "alloc" then
-    let _ = mov_rdi_imm(b, nth(insn, 2)) in
-    let acall = bytes_len(b) in
-    let _ = call_user(b) in
-    let _ = or_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_alloc"))
-  else if k == "alloc_s" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = sar_rax_1(b) in
-    let _ = mov_rdi_rax(b) in
-    let acall = bytes_len(b) in
-    let _ = call_user(b) in
-    let _ = or_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_alloc"))
   else if k == "ld64" then
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let _ = and_rax_1(b) in
