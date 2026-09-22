@@ -6,7 +6,7 @@ package back.emit.emit_arm64
 export emit_program_arm64, a64_resolve_loop
 import back.encode.encode_arm64
 import lib.log {log_fatal}
-import back.emit.emit {icall_args, apply_u64, asm_dump_cells, asm_dump_get, asm_dump_procs, asm_dump_set, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, fun_is_raw, emit_funs_loop, no_skip, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tcall_raw_of, tcall_tab_set, prof_hook_fix, tco_lab, yjit_layout_set, emit_reg, emit_insn_disp}
+import back.emit.emit {icall_args, apply_u64, asm_dump_cells, asm_dump_get, asm_dump_procs, asm_dump_set, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, fun_is_raw, emit_funs_loop, no_skip, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tcall_raw_of, tcall_tab_set, prof_hook_fix, tco_lab, yjit_layout_set, emit_reg, emit_insn_disp, emit_ctx_get}
 import back.emit.emit_cabi {dlib_a64_va, emit_cabi_all}
 import back.pack.elf {elf_pic, funsym_set}
 import back.pack.target {JIT_VADDR}
@@ -838,7 +838,7 @@ let a64_cop_label(st, insn) =
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
-  let is_entry = nth(nth(st, 5), 0) in
+  let is_entry = nth(emit_ctx_get(0), 0) in
   let nm = nth(insn, 1) in
   let pos = bytes_len(b) in
   let _ =
@@ -846,6 +846,53 @@ let a64_cop_label(st, insn) =
     else if intern(nm) == tco_lab(0) then emit_tco_set(pos)
     else 0 in
   emit_st4(st, b, cur, label_put(labels, nm, pos), patches)
+
+let a64_cop_cmp(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let op = nth(insn, 1) in
+  let _ = a64_slot(b, nth(insn, 3), false, 0) in
+  let _ = a64_slot(b, nth(insn, 4), false, 1) in
+  let patches2 = a64_cmp_val(b, op, patches, nth(st, 4)) in
+  let _ = a64_slot(b, nth(insn, 2), true, 0) in
+  emit_st4(st, b, cur, labels, patches2)
+let a64_cop_fcall(st, insn) = emit_a64_fcall(st, insn)
+let a64_cop_ycall(st, insn) = emit_a64_ycall(st, insn)
+let a64_cop_ccall(st, insn) = emit_a64_ccall(st, insn)
+let a64_cop_iccall(st, insn) = emit_a64_iccall(st, insn)
+let a64_cop_ret(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let is_entry = nth(emit_ctx_get(0), 0) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  if is_entry then
+    let _ = a64_ret(b) in emit_st4(st, b, cur, labels, patches)
+  else
+    let _ = if is_entry then 0 else a64_slot(b, 0, false, 28) in
+    let _ = a64_mov_sp(b, 31, 29) in
+    let _ = a64_ldp_fp_lr(b) in
+    let _ = a64_ret(b) in
+    emit_st4(st, b, cur, labels, patches)
+let a64_cop_exit(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  let _ = a64_asr1(b, 0, 0) in
+  let _ = a64_movz(b, 8, 93, 0) in
+  let _ = a64_svc(b) in
+  emit_st4(st, b, cur, labels, patches)
+let a64_cop_tcall(st, insn) =
+  let is_entry = nth(emit_ctx_get(0), 0) in
+  if nth(insn, 2) == emit_self(0) then
+    if emit_tco_get(0) == 0 then emit_a64_tcall_other(st, insn, is_entry)
+    else emit_a64_tloop(st, nth(insn, 3))
+  else emit_a64_tcall_other(st, insn, is_entry)
 
 let emit_a64_i_core_rest(st, insn, is_entry) =
   let b = nth(st, 0) in
@@ -910,38 +957,6 @@ let emit_a64_i_core_rest(st, insn, is_entry) =
         let _ = emit_tco_set(bytes_len(b)) in
         label_put(labels, tco_lab(0), bytes_len(b)) in
     emit_st4(st, b, cur, labs, patches3)
-  else if k == "cmp" then
-    let op = nth(insn, 1) in
-    let _ = a64_slot(b, nth(insn, 3), false, 0) in
-    let _ = a64_slot(b, nth(insn, 4), false, 1) in
-    let patches2 = a64_cmp_val(b, op, patches, nth(st, 4)) in
-    let _ = a64_slot(b, nth(insn, 2), true, 0) in
-    emit_st4(st, b, cur, labels, patches2)
-  else if k == "fcall" then emit_a64_fcall(st, insn)
-  else if k == "ycall" then emit_a64_ycall(st, insn)
-  else if k == "ccall" then emit_a64_ccall(st, insn)
-  else if k == "iccall" then emit_a64_iccall(st, insn)
-  else if k == "ret" then
-    let _ = a64_slot(b, nth(insn, 1), false, 0) in
-    if is_entry then
-      let _ = a64_ret(b) in emit_st4(st, b, cur, labels, patches)
-    else
-      let _ = if is_entry then 0 else a64_slot(b, 0, false, 28) in
-      let _ = a64_mov_sp(b, 31, 29) in
-      let _ = a64_ldp_fp_lr(b) in
-      let _ = a64_ret(b) in
-      emit_st4(st, b, cur, labels, patches)
-  else if k == "exit" then
-    let _ = a64_slot(b, nth(insn, 1), false, 0) in
-    let _ = a64_asr1(b, 0, 0) in
-    let _ = a64_movz(b, 8, 93, 0) in
-    let _ = a64_svc(b) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "tcall" then
-    if nth(insn, 2) == emit_self(0) then
-      if emit_tco_get(0) == 0 then emit_a64_tcall_other(st, insn, is_entry)
-      else emit_a64_tloop(st, nth(insn, 3))
-    else emit_a64_tcall_other(st, insn, is_entry)
   else st
 
 let emit_a64_i_core(st, insn, is_entry) =
@@ -1323,6 +1338,14 @@ let a64_reg_ops =
   let _ = emit_reg("arm64", "jmp", a64_cop_jmp) in
   let _ = emit_reg("arm64", "cmpjmp", a64_cop_cmpjmp) in
   let _ = emit_reg("arm64", "label", a64_cop_label) in
+  let _ = emit_reg("arm64", "cmp", a64_cop_cmp) in
+  let _ = emit_reg("arm64", "fcall", a64_cop_fcall) in
+  let _ = emit_reg("arm64", "ycall", a64_cop_ycall) in
+  let _ = emit_reg("arm64", "ccall", a64_cop_ccall) in
+  let _ = emit_reg("arm64", "iccall", a64_cop_iccall) in
+  let _ = emit_reg("arm64", "ret", a64_cop_ret) in
+  let _ = emit_reg("arm64", "exit", a64_cop_exit) in
+  let _ = emit_reg("arm64", "tcall", a64_cop_tcall) in
   0
 
 let emit_a64_i_heap_rest(st, insn) =
