@@ -1542,7 +1542,64 @@ let x86_cop_gst(st, insn) =
   let gkind = if which == 3 then 7 else 8 in
   emit_st4(st, b, cur, labels, cons([gkind, gpat], patches))
 
+let x86_cop_kind(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let dst = nth(insn, 1) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = test_rax_1(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let j_int = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let j_nil = bytes_len(b) - 4 in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_rax_disp32(b, 16) in
+  let _ = cmp_rax_imm8(b, 2) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jk2 = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 3) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jk3 = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 4) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jk4 = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 5) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jk5 = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 7) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jk7 = bytes_len(b) - 4 in
+  let _ = mov_r64_imm(b, 0, 6) in
+  let l_k = bytes_len(b) in
+  let _ = apply_patch(b, jk2, l_k) in
+  let _ = apply_patch(b, jk3, l_k) in
+  let _ = apply_patch(b, jk4, l_k) in
+  let _ = apply_patch(b, jk5, l_k) in
+  let _ = apply_patch(b, jk7, l_k) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, dst) in
+  let _ = jmp_rel32(b, 0) in
+  let j_done = bytes_len(b) - 4 in
+  let l_int = bytes_len(b) in
+  let _ = apply_patch(b, j_int, l_int) in
+  let _ = xor_rax_rax(b) in
+  let _ = emit_store_rax_slot(b, dst) in
+  let _ = jmp_rel32(b, 0) in
+  let j_done2 = bytes_len(b) - 4 in
+  let l_nil = bytes_len(b) in
+  let _ = apply_patch(b, j_nil, l_nil) in
+  let _ = mov_r64_imm(b, 0, 2) in
+  let _ = emit_store_rax_slot(b, dst) in
+  let l_done = bytes_len(b) in
+  let _ = apply_patch(b, j_done, l_done) in
+  let _ = apply_patch(b, j_done2, l_done) in
+  emit_st4(st, b, cur, labels, patches)
+
 let x86_reg_ops =
+  let _ = emit_reg("x86_64", "kind", x86_cop_kind) in
   let _ = emit_reg("x86_64", "mref", x86_op_mref) in
   let _ = emit_reg("x86_64", "mset", x86_op_mset) in
   let _ = emit_reg("x86_64", "tag", x86_op_tag) in
@@ -1591,68 +1648,7 @@ let x86_reg_ops =
   let _ = emit_reg("x86_64", "exit", x86_cop_exit) in
   0
 
-let emit_x86_i_heap_rest(st, insn) =
-  let b = nth(st, 0) in
-  let cur = nth(st, 1) in
-  let labels = nth(st, 2) in
-  let patches = nth(st, 3) in
-  let k = nth(insn, 0) in
-  if k == "kind" then
-    let dst = nth(insn, 1) in
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = test_rax_1(b) in
-    let _ = jcc_rel32(b, 4, 0) in
-    let j_int = bytes_len(b) - 4 in
-    let _ = cmp_rax_imm8(b, 1) in
-    let _ = jcc_rel32(b, 4, 0) in
-    let j_nil = bytes_len(b) - 4 in
-    let _ = and_rax_1(b) in
-    let _ = mov_rax_rax_disp32(b, 16) in
-    let _ = cmp_rax_imm8(b, 2) in
-    let _ = jcc_rel32(b, 4, 0) in
-    let jk2 = bytes_len(b) - 4 in
-    let _ = cmp_rax_imm8(b, 3) in
-    let _ = jcc_rel32(b, 4, 0) in
-    let jk3 = bytes_len(b) - 4 in
-    let _ = cmp_rax_imm8(b, 4) in
-    let _ = jcc_rel32(b, 4, 0) in
-    let jk4 = bytes_len(b) - 4 in
-    let _ = cmp_rax_imm8(b, 5) in
-    let _ = jcc_rel32(b, 4, 0) in
-    let jk5 = bytes_len(b) - 4 in
-    let _ = cmp_rax_imm8(b, 7) in
-    let _ = jcc_rel32(b, 4, 0) in
-    let jk7 = bytes_len(b) - 4 in
-    let _ = mov_r64_imm(b, 0, 6) in
-    let l_k = bytes_len(b) in
-    let _ = apply_patch(b, jk2, l_k) in
-    let _ = apply_patch(b, jk3, l_k) in
-    let _ = apply_patch(b, jk4, l_k) in
-    let _ = apply_patch(b, jk5, l_k) in
-    let _ = apply_patch(b, jk7, l_k) in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, dst) in
-    let _ = jmp_rel32(b, 0) in
-    let j_done = bytes_len(b) - 4 in
-    let l_int = bytes_len(b) in
-    let _ = apply_patch(b, j_int, l_int) in
-    let _ = xor_rax_rax(b) in
-    let _ = emit_store_rax_slot(b, dst) in
-    let _ = jmp_rel32(b, 0) in
-    let j_done2 = bytes_len(b) - 4 in
-    let l_nil = bytes_len(b) in
-    let _ = apply_patch(b, j_nil, l_nil) in
-    let _ = mov_r64_imm(b, 0, 2) in
-    let _ = emit_store_rax_slot(b, dst) in
-    let l_done = bytes_len(b) in
-    let _ = apply_patch(b, j_done, l_done) in
-    let _ = apply_patch(b, j_done2, l_done) in
-    emit_st4(st, b, cur, labels, patches)
-  else st
-
-let emit_x86_i_heap(st, insn) =
-  let r = emit_insn_disp(st, insn) in
-  if r != 0 then r else emit_x86_i_heap_rest(st, insn)
+let emit_x86_i_heap(st, insn) = emit_insn_disp(st, insn)
 
 /* capRef closure call (LIR.md 4.4.4): object -> rdi, params -> rsi.. (5
  * register slots), stack args pushed highest-first. Replaces i_clos's
