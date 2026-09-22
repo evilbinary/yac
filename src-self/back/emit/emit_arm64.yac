@@ -796,6 +796,46 @@ let a64_op_cmpjmp(b, patches, tname, fname) =
   cons(["b26", pne, fname], cons(["beq", peq, tname], patches))
 let a64_ops(_) = [a64_op_slot_load, a64_op_slot_store, a64_op_mov_imm, a64_op_asr1, a64_op_lsl1, a64_op_arith, a64_op_icmp, a64_op_jmp, a64_op_cmpjmp]
 
+/* i_core ops (per-LIR-op form), registered into the shared table. */
+let a64_cop_mov_imm(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_mov_imm64(b, 0, nth(insn, 2)) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_mov(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_arith(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_asr1(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 3), false, 1) in
+  let _ = a64_asr1(b, 1, 1) in
+  let _ = a64_op_arith(b, nth(insn, 0), 0, 0, 1) in
+  let _ = a64_lsl1(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_icmp(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 3), false, 0) in
+  let _ = a64_asr1(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 4), false, 1) in
+  let _ = a64_asr1(b, 1, 1) in
+  let _ = a64_cmp_int(b, nth(insn, 1)) in
+  let _ = a64_slot(b, nth(insn, 2), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_jmp(st, insn) =
+  let b = nth(st, 0) in
+  let p2 = a64_op_jmp(b, nth(st, 3), nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), p2)
+let a64_cop_cmpjmp(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  let p2 = a64_op_cmpjmp(b, nth(st, 3), nth(insn, 2), nth(insn, 3)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), p2)
+
 let emit_a64_i_core_rest(st, insn, is_entry) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
@@ -894,8 +934,9 @@ let emit_a64_i_core_rest(st, insn, is_entry) =
   else st
 
 let emit_a64_i_core(st, insn, is_entry) =
-  let r = emit_i_core_base(st, insn, is_entry, a64_ops(0)) in
-  if r != 0 then r else emit_a64_i_core_rest(st, insn, is_entry)
+  let r = emit_insn_disp(st, insn) in
+  let r2 = if r != 0 then r else emit_i_core_base(st, insn, is_entry, a64_ops(0)) in
+  if r2 != 0 then r2 else emit_a64_i_core_rest(st, insn, is_entry)
 
 let emit_a64_sysarg(b, args, j) =
   if j >= len(args) then 0
@@ -1255,6 +1296,22 @@ let a64_reg_ops =
   let _ = emit_reg("arm64", "obj_st_int", a64_op_obj_st_int) in
   let _ = emit_reg("arm64", "mref8", a64_op_mref8) in
   let _ = emit_reg("arm64", "mset8", a64_op_mset8) in
+  let _ = emit_reg("arm64", "mov_imm", a64_cop_mov_imm) in
+  let _ = emit_reg("arm64", "mov", a64_cop_mov) in
+  let _ = emit_reg("arm64", "add", a64_cop_arith) in
+  let _ = emit_reg("arm64", "sub", a64_cop_arith) in
+  let _ = emit_reg("arm64", "mul", a64_cop_arith) in
+  let _ = emit_reg("arm64", "div", a64_cop_arith) in
+  let _ = emit_reg("arm64", "rem", a64_cop_arith) in
+  let _ = emit_reg("arm64", "land", a64_cop_arith) in
+  let _ = emit_reg("arm64", "lor", a64_cop_arith) in
+  let _ = emit_reg("arm64", "xor", a64_cop_arith) in
+  let _ = emit_reg("arm64", "bnot", a64_cop_arith) in
+  let _ = emit_reg("arm64", "shl", a64_cop_arith) in
+  let _ = emit_reg("arm64", "shr", a64_cop_arith) in
+  let _ = emit_reg("arm64", "icmp", a64_cop_icmp) in
+  let _ = emit_reg("arm64", "jmp", a64_cop_jmp) in
+  let _ = emit_reg("arm64", "cmpjmp", a64_cop_cmpjmp) in
   0
 
 let emit_a64_i_heap_rest(st, insn) =
