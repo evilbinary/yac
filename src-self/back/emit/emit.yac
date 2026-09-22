@@ -1156,7 +1156,7 @@ let smap_emit_table(b, extra) =
   start
 
 let emit_st4(st, b, cur, labels, ps) =
-  [b, cur, labels, ps, nth(st, 4)]
+  [b, cur, labels, ps, nth(st, 4), nth(st, 5)]
 
 /* Resolved tag-22 records ([globbase, goff, cell] per patch), oldest first.
  * Tag 22 is the "movabs cell address" patch (gvar stub cells, gval/gset cells);
