@@ -1813,7 +1813,7 @@ let emit_call_guard(b, st, patches, dst) =
   let _ = apply_patch(b, jover, over) in
   [ps, jend]
 
-let emit_x86_i_apply(st, insn, is_entry) =
+let x86_cop_apply(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
@@ -1852,6 +1852,12 @@ let emit_x86_i_apply(st, insn, is_entry) =
   let _ = emit_store_rax_slot(b, dst) in
   let _ = apply_patch(b, jend, bytes_len(b)) in
   emit_st4(st, b, cur, labels, patches)
+
+let emit_x86_i_apply(st, insn, is_entry) = emit_insn_disp(st, insn)
+
+/* Registered here (not in x86_reg_ops) because x86_cop_apply depends on
+ * emit_call_guard, which is defined after x86_reg_ops. */
+let x86_reg_icall = emit_reg("x86_64", "icall", x86_cop_apply)
 
 let emit_x86_i_clos(st, insn, is_entry) = emit_insn_disp(st, insn)
 
