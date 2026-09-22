@@ -885,13 +885,12 @@ let rv_cop_tcall(st, insn) =
     else emit_rv_tloop(st, nth(insn, 3))
   else emit_rv_tcall_other(st, insn, is_entry)
 
-let emit_rv_i_core_rest(st, insn, is_entry) =
+let rv_cop_local(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
-  let k = nth(insn, 0) in
-  if k == "local" or k == "$local" then
+  let is_entry = nth(emit_ctx_get(0), 0) in
     let nlocals = nth(insn, 1) in
     let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
     let nbytes = rv_frame_bytes(nlocals) in
@@ -950,11 +949,8 @@ let emit_rv_i_core_rest(st, insn, is_entry) =
         let _ = emit_tco_set(bytes_len(b)) in
         label_put(labels, tco_lab(0), bytes_len(b)) in
     emit_st4(st, b, cur, labs, patches3)
-  else st
 
-let emit_rv_i_core(st, insn, is_entry) =
-  let r = emit_insn_disp(st, insn) in
-  if r != 0 then r else emit_rv_i_core_rest(st, insn, is_entry)
+let emit_rv_i_core(st, insn, is_entry) = emit_insn_disp(st, insn)
 
 let emit_rv_sysarg(b, args, j) =
   if j >= len(args) then 0
@@ -1319,6 +1315,8 @@ let rv_reg_ops =
   let _ = emit_reg("riscv64", "jmp", rv_cop_jmp) in
   let _ = emit_reg("riscv64", "cmpjmp", rv_cop_cmpjmp) in
   let _ = emit_reg("riscv64", "label", rv_cop_label) in
+  let _ = emit_reg("riscv64", "local", rv_cop_local) in
+  let _ = emit_reg("riscv64", "$local", rv_cop_local) in
   let _ = emit_reg("riscv64", "cmp", rv_cop_cmp) in
   let _ = emit_reg("riscv64", "fcall", rv_cop_fcall) in
   let _ = emit_reg("riscv64", "ycall", rv_cop_ycall) in

@@ -894,13 +894,12 @@ let a64_cop_tcall(st, insn) =
     else emit_a64_tloop(st, nth(insn, 3))
   else emit_a64_tcall_other(st, insn, is_entry)
 
-let emit_a64_i_core_rest(st, insn, is_entry) =
+let a64_cop_local(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
-  let k = nth(insn, 0) in
-  if k == "local" or k == "$local" then
+  let is_entry = nth(emit_ctx_get(0), 0) in
     let nlocals = nth(insn, 1) in
     let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
     let nbytes = a64_frame_bytes(nlocals) in
@@ -957,11 +956,8 @@ let emit_a64_i_core_rest(st, insn, is_entry) =
         let _ = emit_tco_set(bytes_len(b)) in
         label_put(labels, tco_lab(0), bytes_len(b)) in
     emit_st4(st, b, cur, labs, patches3)
-  else st
 
-let emit_a64_i_core(st, insn, is_entry) =
-  let r = emit_insn_disp(st, insn) in
-  if r != 0 then r else emit_a64_i_core_rest(st, insn, is_entry)
+let emit_a64_i_core(st, insn, is_entry) = emit_insn_disp(st, insn)
 
 let emit_a64_sysarg(b, args, j) =
   if j >= len(args) then 0
@@ -1338,6 +1334,8 @@ let a64_reg_ops =
   let _ = emit_reg("arm64", "jmp", a64_cop_jmp) in
   let _ = emit_reg("arm64", "cmpjmp", a64_cop_cmpjmp) in
   let _ = emit_reg("arm64", "label", a64_cop_label) in
+  let _ = emit_reg("arm64", "local", a64_cop_local) in
+  let _ = emit_reg("arm64", "$local", a64_cop_local) in
   let _ = emit_reg("arm64", "cmp", a64_cop_cmp) in
   let _ = emit_reg("arm64", "fcall", a64_cop_fcall) in
   let _ = emit_reg("arm64", "ycall", a64_cop_ycall) in

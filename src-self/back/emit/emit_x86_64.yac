@@ -729,14 +729,15 @@ let x86_cop_exit(st, insn) =
   if emit_host_win(0) then win_exit(st, patches)
   else linux_exit(st, patches)
 
-let emit_x86_i_core_rest(st, insn, is_entry, is_raw) =
+let x86_cop_local(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
   let patches = nth(st, 3) in
+  let is_entry = nth(emit_ctx_get(0), 0) in
+  let is_raw = nth(emit_ctx_get(0), 1) in
   let k = nth(insn, 0) in
-  if k == "local" or k == "$local" then
-    let nlocals = nth(insn, 1) in
+  let nlocals = nth(insn, 1) in
     let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
     let noscan =
       if is_raw then true
@@ -802,12 +803,9 @@ let emit_x86_i_core_rest(st, insn, is_entry, is_raw) =
       let _ = if selfabi then mov_r13_rdi(b) else 0 in
       let _ = emit_tco_set(bytes_len(b)) in
       let labs = label_put(labels, tco_lab(0), bytes_len(b)) in
-      emit_st4(st, b, cur, labs, patches)
-  else st
+        emit_st4(st, b, cur, labs, patches)
 
-let emit_x86_i_core(st, insn, is_entry, is_raw) =
-  let r = emit_insn_disp(st, insn) in
-  if r != 0 then r else emit_x86_i_core_rest(st, insn, is_entry, is_raw)
+let emit_x86_i_core(st, insn, is_entry, is_raw) = emit_insn_disp(st, insn)
 
 let emit_x86_i_sys(st, insn) =
   let b = nth(st, 0) in
@@ -1492,6 +1490,8 @@ let x86_reg_ops =
   let _ = emit_reg("x86_64", "jmp", x86_cop_jmp) in
   let _ = emit_reg("x86_64", "cmpjmp", x86_cop_cmpjmp) in
   let _ = emit_reg("x86_64", "label", x86_cop_label) in
+  let _ = emit_reg("x86_64", "local", x86_cop_local) in
+  let _ = emit_reg("x86_64", "$local", x86_cop_local) in
   let _ = emit_reg("x86_64", "cmp", x86_cop_cmp) in
   let _ = emit_reg("x86_64", "fcall", x86_cop_fcall) in
   let _ = emit_reg("x86_64", "ycall", x86_cop_ycall) in
