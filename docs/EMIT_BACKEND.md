@@ -127,9 +127,13 @@ op 函数体 = 原 arch 的该 `case` 体：`let b = nth(st, 0) in` … 末尾
 
 | 组 | op | 后端 |
 | --- | --- | --- |
-| core 数据/控制 | `mov_imm mov` + arith(`add sub mul div rem land lor xor bnot shl shr`) + `icmp jmp cmpjmp` | ✅ x86/arm64/riscv（注册式） |
-| core label | `label` | ✅ x86/arm64/riscv（`is_entry` 取自 `st` 的 ctx） |
+| core 数据/控制 | `mov_imm mov` + arith + `icmp jmp cmpjmp label local $local cmp` | ✅ x86/arm64/riscv（注册式） |
+| core 调用/终止 | `fcall ycall ccall iccall tcall ret exit` | ✅ x86/arm64/riscv（注册式） |
 | heap 访存 | `mref mset tag is_int obj_sti obj_st_int mref8 mset8` | ✅ x86/arm64/riscv（注册式） |
+
+> **ctx 不放 `st`**：`st` 的第 6 项是 `goff`（`apply_u64_rel` 的 tag 14 用），第 7 项是
+> `gsess`。`is_entry/is_raw` 因此走**全局 box**（`emit_ctx_set/get`，由 `emit_funs_loop`
+> 每函数设置一次）。`emit_*_i_core` 现在就是 `emit_insn_disp`（`*_core_rest` 已删）。
 
 **待迁移**（仍在各 arch 的 `*_rest`）：
 
@@ -156,11 +160,11 @@ arch 的 `*_ops` 映射（x86 T0=rax/T1=rbx，arm64 T0=x0/T1=x1，riscv T0=t1/T1
 ## 5. 抽取顺序（按语义固定度 / 风险）
 
 1. ✅ **`emit_funs_loop`**（prog 函数循环）— 三后端（2026-09）。
-2. ✅ **core op 注册式**（`mov_imm mov` + arith + `icmp jmp cmpjmp label`）— 三后端。
-   `st` 已加 `ctx = [is_entry,is_raw]`，`emit_i_core_base` 已删除，入口为
-   `emit_insn = emit_insn_disp → *_core_rest`。
+2. ✅ **core op 全量注册式**（数据/控制 + `fcall ycall ccall iccall tcall ret exit` +
+   `label local $local cmp`）— 三后端；`emit_*_i_core = emit_insn_disp`，`*_core_rest` 已删。
+   ctx（`is_entry/is_raw`）走**全局 box**（`emit_ctx_set/get`），不占 `st`（`st[5]` = goff）。
 3. ✅ **注册表 + heap 访存 op 注册式**（`mref mset tag is_int obj_sti obj_st_int mref8 mset8`）— 三后端。
-4. ⏳ **清空 `*_core_rest` 余项**：`local cmp fcall ycall ccall iccall tcall ret exit`。
+4. ⏳ **D 余**：`kind alloc alloc_s ld64 st64 write1 clock glob gst gvar gval gset time_ms time_str argc argv`。
 5. ⏳ **D 余**（`kind/alloc/alloc_s/ld64/st64/glob/gst/gvar/gval/gset/write1/clock/…`）——
    tag 协议封进 op，骨架不碰。
 6. ⏳ **F memcpy / G cc / E closure·apply**。
