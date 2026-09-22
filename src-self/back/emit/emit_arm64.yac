@@ -966,26 +966,7 @@ let emit_a64_sysarg(b, args, j) =
     let _ = a64_slot(b, nth(args, j), false, j) in
     emit_a64_sysarg(b, args, j + 1)
 
-let emit_a64_i_sys(st, insn) =
-  let b = nth(st, 0) in
-  let cur = nth(st, 1) in
-  let labels = nth(st, 2) in
-  let patches = nth(st, 3) in
-  if nth(insn, 0) == "untag" then
-    let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    let _ = a64_asr1(b, 0, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, patches)
-  else
-    let nr = nth(insn, 2) in
-    let _ = emit_a64_sysarg(b, nth(insn, 3), 0) in
-    let _ =
-      if nr == 60 then a64_movz(b, 8, 93, 0)
-      else a64_movz(b, 8, nr, 0) in
-    let _ = a64_svc(b) in
-    let _ = a64_lsl1(b, 0, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, patches)
+let emit_a64_i_sys(st, insn) = emit_insn_disp(st, insn)
 
 let emit_a64_i_raw(st, insn) =
   let b = nth(st, 0) in
@@ -1703,6 +1684,30 @@ let a64_cop_icall(st, insn) =
   let _ = a64_slot(b, dst, true, 0) in
   emit_st4(st, b, cur, labels, patches)
 
+let a64_cop_untag(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_asr1(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, cur, labels, patches)
+let a64_cop_syscall(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let nr = nth(insn, 2) in
+  let _ = emit_a64_sysarg(b, nth(insn, 3), 0) in
+  let _ =
+    if nr == 60 then a64_movz(b, 8, 93, 0)
+    else a64_movz(b, 8, nr, 0) in
+  let _ = a64_svc(b) in
+  let _ = a64_lsl1(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, cur, labels, patches)
+
 let a64_reg_ops =
   let _ = emit_reg("arm64", "kind", a64_cop_kind) in
   let _ = emit_reg("arm64", "memcpy", a64_cop_memcpy) in
@@ -1710,6 +1715,8 @@ let a64_reg_ops =
   let _ = emit_reg("arm64", "throwk", a64_cop_throwk) in
   let _ = emit_reg("arm64", "cc_recv", a64_cop_cc_recv) in
   let _ = emit_reg("arm64", "closure", a64_cop_closure) in
+  let _ = emit_reg("arm64", "untag", a64_cop_untag) in
+  let _ = emit_reg("arm64", "syscall", a64_cop_syscall) in
   let _ = emit_reg("arm64", "icall", a64_cop_icall) in
   let _ = emit_reg("arm64", "mref", a64_op_mref) in
   let _ = emit_reg("arm64", "mset", a64_op_mset) in

@@ -807,18 +807,7 @@ let x86_cop_local(st, insn) =
 
 let emit_x86_i_core(st, insn, is_entry, is_raw) = emit_insn_disp(st, insn)
 
-let emit_x86_i_sys(st, insn) =
-  let b = nth(st, 0) in
-  let cur = nth(st, 1) in
-  let labels = nth(st, 2) in
-  let patches = nth(st, 3) in
-  if nth(insn, 0) == "untag" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = sar_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if emit_host_win(0) then win_num_syscall(st, insn)
-  else linux_num_syscall(st, insn)
+let emit_x86_i_sys(st, insn) = emit_insn_disp(st, insn)
 
 let emit_x86_f64_ccall(b, patches, name) =
   let win = emit_host_win(0) in
@@ -1702,8 +1691,23 @@ let x86_cop_cc_recv(st, insn) =
   let _ = emit_store_rax_slot(b, nth(insn, 1)) in
   emit_st4(st, b, cur, labels, patches)
 
+let x86_cop_untag(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = sar_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, cur, labels, patches)
+let x86_cop_syscall(st, insn) =
+  if emit_host_win(0) then win_num_syscall(st, insn)
+  else linux_num_syscall(st, insn)
+
 let x86_reg_ops =
   let _ = emit_reg("x86_64", "kind", x86_cop_kind) in
+  let _ = emit_reg("x86_64", "untag", x86_cop_untag) in
+  let _ = emit_reg("x86_64", "syscall", x86_cop_syscall) in
   let _ = emit_reg("x86_64", "memcpy", x86_cop_memcpy) in
   let _ = emit_reg("x86_64", "closure", x86_cop_closure) in
   let _ = emit_reg("x86_64", "mkcont", x86_cop_mkcont) in

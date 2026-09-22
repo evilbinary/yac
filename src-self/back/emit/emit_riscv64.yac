@@ -959,27 +959,7 @@ let emit_rv_sysarg(b, args, j) =
     let _ = rv_slot(b, nth(args, j), false, 10 + j) in
     emit_rv_sysarg(b, args, j + 1)
 
-let emit_rv_i_sys(st, insn) =
-  let b = nth(st, 0) in
-  let cur = nth(st, 1) in
-  let labels = nth(st, 2) in
-  let patches = nth(st, 3) in
-  if nth(insn, 0) == "untag" then
-    let _ = rv_slot(b, nth(insn, 2), false, 10) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sra(b, 10, 10, 7) in
-    let _ = rv_slot(b, nth(insn, 1), true, 10) in
-    emit_st4(st, b, cur, labels, patches)
-  else
-    let nr = nth(insn, 2) in
-    let _ = emit_rv_sysarg(b, nth(insn, 3), 0) in
-    let _ =
-      if nr == 60 then rv_addi(b, 17, 0, 93)
-      else rv_addi(b, 17, 0, nr) in
-    let _ = rv_ecall(b) in
-    let _ = rv_slli(b, 10, 10, 1) in
-    let _ = rv_slot(b, nth(insn, 1), true, 10) in
-    emit_st4(st, b, cur, labels, patches)
+let emit_rv_i_sys(st, insn) = emit_insn_disp(st, insn)
 
 let emit_rv_i_raw(st, insn) =
   let b = nth(st, 0) in
@@ -1689,10 +1669,37 @@ let rv_cop_cc_recv(st, insn) =
   let _ = rv_slot(b, nth(insn, 1), true, 10) in
   emit_st4(st, b, cur, labels, patches)
 
+let rv_cop_untag(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_addi(b, 7, 0, 1) in
+  let _ = rv_sra(b, 10, 10, 7) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, cur, labels, patches)
+let rv_cop_syscall(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let nr = nth(insn, 2) in
+  let _ = emit_rv_sysarg(b, nth(insn, 3), 0) in
+  let _ =
+    if nr == 60 then rv_addi(b, 17, 0, 93)
+    else rv_addi(b, 17, 0, nr) in
+  let _ = rv_ecall(b) in
+  let _ = rv_slli(b, 10, 10, 1) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, cur, labels, patches)
+
 let rv_reg_ops =
   let _ = emit_reg("riscv64", "kind", rv_cop_kind) in
   let _ = emit_reg("riscv64", "memcpy", rv_cop_memcpy) in
   let _ = emit_reg("riscv64", "closure", rv_cop_closure) in
+  let _ = emit_reg("riscv64", "untag", rv_cop_untag) in
+  let _ = emit_reg("riscv64", "syscall", rv_cop_syscall) in
   let _ = emit_reg("riscv64", "icall", rv_cop_icall) in
   let _ = emit_reg("riscv64", "mkcont", rv_cop_mkcont) in
   let _ = emit_reg("riscv64", "throwk", rv_cop_throwk) in
