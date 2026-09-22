@@ -80,36 +80,39 @@ ABI、帧/立即数规则**。
 
 ---
 
-## 3. 框架：共享 dispatch + arch opmap（已落地模式）
+## 3. 框架：emit.yac 持有 op 注册表并负责运转（已落地模式）
 
-实测（2026-09）确定：**`opmap`（name → op 函数）+ 共享 dispatch** 比"高阶参数传分类
-函数"更省、更稳，且**不需要统一各 arch 的 patch 表示**（patch 格式封在 op 内部，
-骨架不碰）。已落地：
+实测（2026-09）确定：**由 `emit.yac` 持有注册表、arch 反过来调 `emit_reg` 注册**，
+比"arch 造表传参"更好：`emit.yac` 是框架的**运转者**，arch 只提供 op 实现。且
+**不需要统一各 arch 的 patch 表示**（patch 格式封在 op 内部，骨架不碰）。
 
 ```
-back/emit/emit.yac（共享）
-  ├─ emit_op_dispatch(st, insn, opmap) -> st | 0
-  │      = (fmap_get(opmap, nth(insn,0)))(st, insn)    # 整条 `if k==...` 链只此一处
-  ├─ emit_i_core_base(st, insn, is_entry, ops)         # core 子集（三后端共用）
+back/emit/emit.yac（框架）
+  ├─ emit_opmaps_box / emit_opmap_of(arch)        # arch -> (name -> fn)
+  ├─ emit_reg(arch, name, fn)                     # arch 调用它注册
+  ├─ emit_op_get(arch, name)
+  ├─ emit_insn_disp(st, insn)                     # 框架分派：查 emit_arch 的槽
+  ├─ emit_i_core_base(st, insn, is_entry, ops)    # core 子集（三后端共用）
   ├─ emit_funs_loop(funs, entry, T, op_insn, op_resolve, op_skip)
   └─ 其余 helpers（apply/reloc/ids/patch/gref/strlit/…）
 
 back/emit/emit_{x86_64,arm64,riscv64,arm32}.yac（arch）
-  ├─ <arch>_op_<name>(st, insn) -> st      # 每条 LIR op 一个函数
-  ├─ <arch>_opmap                          # 顶层 fmap：name -> op fn（构建一次）
-  └─ emit_program_<arch> / emit_insn_<arch># 逐步瘦身为 emit_op_dispatch(...)
+  ├─ <arch>_op_<name>(st, insn) -> st            # 每条 LIR op 一个函数
+  ├─ <arch>_reg_ops = emit_reg("<arch>", …) …    # 包加载时注册（顶层副作用）
+  └─ emit_program_<arch> / emit_<arch>_i_*       # 逐步瘦身：先 emit_insn_disp，未命中落 rest
 ```
 
-- **op 粒度 = 每条 LIR op**（`op_mov_imm`/`op_mref`/…），签名统一 `(st, insn)`。
-- **分派唯一**：`emit_op_dispatch` 是唯一的 `if k==...`；arch 不再重复分派链。
-- **arch 特判**：x86 独有的 `$bt/$smap/$sp…` 也**注册进 opmap**（实现放 arch）——
-  共享骨架只是没有它们的默认实现，分派仍然统一。
-- **未注册 → 0**：迁移期 arch 用 `<arch>_opmap` 命中即返回，未命中落到自己的
-  `*_rest`；逐条搬走后 rest 清空，最终 `emit_insn = emit_op_dispatch`。
-- **ctx**：需要 `is_entry/is_raw` 的 op（`local/ret/tcall/exit`）从 `st` 取——`st`
-  扩展为 `[b, cur, labels, patches, ids, ctx]`，`ctx = [is_entry, is_raw]`。
-- `emit.yac` **不 import** arch（循环 import 会崩，§1.1）；`opmap` 由 arch 顶层构建，
-  作为参数传入。
+- **注册式**：arch 顶层写 `let <arch>_reg_ops = emit_reg("<arch>", "<name>", fn) …`；
+  `emit.yac` **不 import** arch（循环 import 会崩，§1.1），只被 arch import。
+- **按 arch 分槽**：表键 = arch 字符串（`emit_arch`），一个进程里多个 arch 包共存不
+  互相覆盖。`emit_arch` 由 `lower.yac` 在选目标时 `emit_arch_set(a)`。
+- **分派**：`emit_insn_disp(st, insn)` 用当前 arch 查表，命中即 `(f)(st, insn)`；
+  未命中返回 0，arch 的 `*_rest` 兜底；逐条搬走后 rest 清空，最终
+  `emit_insn = emit_insn_disp`。
+- **op 粒度 = 每条 LIR op**，签名 `(st, insn)`；`st = [b, cur, labels, patches, ids, ctx]`，
+  需要 `is_entry/is_raw` 的 op（`local/ret/tcall/exit`）从 `ctx = [is_entry, is_raw]` 取。
+- arch 特有 op（x86 `$bt/$smap/$sp…`）同样**注册**（实现放 arch）——框架只是没有它们
+  的共享默认实现。
 
 ---
 
