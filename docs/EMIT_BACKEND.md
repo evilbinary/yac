@@ -157,23 +157,27 @@ arch 的 `*_ops` 映射（x86 T0=rax/T1=rbx，arm64 T0=x0/T1=x1，riscv T0=t1/T1
 
 ---
 
-## 5. 抽取顺序（按语义固定度 / 风险）
+## 5. 迁移状态：**全部完成**（2026-09）
 
-1. ✅ **`emit_funs_loop`**（prog 函数循环）— 三后端（2026-09）。
-2. ✅ **core op 全量注册式**（数据/控制 + `fcall ycall ccall iccall tcall ret exit` +
-   `label local $local cmp`）— 三后端；`emit_*_i_core = emit_insn_disp`，`*_core_rest` 已删。
-   ctx（`is_entry/is_raw`）走**全局 box**（`emit_ctx_set/get`），不占 `st`（`st[5]` = goff）。
-3. ✅ **注册表 + heap 访存 op 注册式**（`mref mset tag is_int obj_sti obj_st_int mref8 mset8`）— 三后端。
-4. ⏳ **D 余**：`kind alloc alloc_s ld64 st64 write1 clock glob gst gvar gval gset time_ms time_str argc argv`。
-5. ⏳ **D 余**（`kind/alloc/alloc_s/ld64/st64/glob/gst/gvar/gval/gset/write1/clock/…`）——
-   tag 协议封进 op，骨架不碰。
-6. ⏳ **F memcpy / G cc / E closure·apply**。
-7. ⏳ **A 帧 `local`**（需 ctx）。
-8. ⏳ **B' 调用**（`fcall/ycall/ccall/iccall/tcall`）。
-9. ⏳ **B'' ret/exit、C raw 逐 op**；清空各 arch 的 `*_rest`。
+三后端的**每一条 LIR op** 都已按 §3 的注册式迁完：arch 只写 op 实现（
+`<arch>_cop_*` / `<arch>_op_*`）并在包加载时 `emit_reg`，`emit.yac` 持有注册表并分派。
 
-每步验收：`make yc`（两趟自举）+ `make test-compiler` + `make test-iso` 全绿后 commit。
-发射字节变化以**测试**为准（§1.4）。
+| 组 | 内容 | 状态 |
+| --- | --- | --- |
+| prog 循环 | `emit_funs_loop` | ✅ 三后端 |
+| core | 数据/控制 + 调用/终止 + `label local $local cmp` | ✅ 三后端（`i_core = emit_insn_disp`） |
+| heap | `kind mref mset tag is_int alloc alloc_s ld64 st64 write1 clock glob gst gvar gval gset obj_sti obj_st_int mref8 mset8 argc argv time_ms time_str` | ✅ 三后端（`i_heap = emit_insn_disp`） |
+| prim | `nil cons strlit str_len str_ref bytes_* len nth tail append list_* str_cat str_slice int_to_str drop foldl map read_file write_file` | ✅ 三后端；arm64/riscv 走共享 `emit_rt_call` + 表驱动注册，x86 手写注册 |
+| raw | `$and $addi $add $sub $bts $bt $or $clamp0 $st64 $st8 $ld64 $ld8 $sp $fp $smap $gbase $glob $icmp $jcc $memcpy $memset $shr $carg $icall` | ✅ 三后端（`i_raw = disp → syscall rest`） |
+| f64 | `$f64fromstr $f64binop $f64rel $f64print` | ✅ 三后端 |
+| memcpy / cc / clos / apply / sys | `memcpy mkcont throwk cc_recv closure icall untag syscall` | ✅ 三后端 |
+
+- 入口：`emit_insn = emit_insn_disp`，未注册返回 0 由各 arch 的 `*_rest`（仅剩 syscall
+  兜底）处理。
+- 复用点：`emit_rt_call(st, insn, name, argn, op_slot, op_rt)` + `emit_rt_ops` 表——
+  arm64/riscv **零重复**（各一个 `*_op_rt` + `*_rt_slot`，注册遍历共享表）；arm32 将来
+  同样只写这两样。
+- 验收：每步 `make yc`（两趟自举）+ `make test-compiler` 201/0 + `make test-iso` 321/0。
 
 ---
 
