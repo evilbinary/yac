@@ -347,6 +347,8 @@ let _ = check("arrayfrom_mapfn", "console.log(Array.from([1,2,3], function(x){re
 let _ = check("console_warn", "console.warn('w'); console.error('e');", "w\ne")
 let _ = check("boolean_ctor", "console.log(Boolean(0)); console.log(Boolean(1)); console.log(Boolean(''));", "false\ntrue\nfalse")
 let _ = check("symbol_key", "let k=Symbol('k'); let o={}; o[k]=1; console.log(o[k]);", "1")
+let _ = check("for_let_closure", "let fns=[]; for (let i=0;i<3;i++){ fns.push(function(){ return i; }); } console.log(fns[0]() + ',' + fns[1]() + ',' + fns[2]());", "0,1,2")
+let _ = check("for_let_sum", "let s=0; for (let i=0;i<5;i++){ s = s + i; } console.log(s);", "10")
 
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")

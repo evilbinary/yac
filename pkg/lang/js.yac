@@ -1830,25 +1830,33 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let body = nth(s, 4) in
       let w = js_fresh(st, "w") in
       let sc = js_fresh(st, "sc") in
-      let im = if nth(init, 0) == "let" then js_fresh(st, js_mangle(nth(init, 2))) else "" in
-      let cvar =
-        if nth(init, 0) == "let" then
-          let nm = nth(init, 2) in
-          let strs3 = if js_is_str_expr(nth(init, 3), nth(ctx2, 4)) then cons(nm, nth(ctx2, 4)) else nth(ctx2, 4) in
-          [cons([nm, im], nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), strs3, nth(ctx2, 5)]
-        else ctx2 in
+      let iv = js_fresh(st, "iv") in
+      let is_let = nth(init, 0) == "let" in
+      let ib = if is_let then js_fresh(st, js_mangle(nth(init, 2))) else "" in
+      let bb = if is_let then js_fresh(st, js_mangle(nth(init, 2))) else "" in
+      let mkvar(bx) =
+        let nm = nth(init, 2) in
+        let strs3 = if js_is_str_expr(nth(init, 3), nth(ctx2, 4)) then cons(nm, nth(ctx2, 4)) else nth(ctx2, 4) in
+        [cons([nm, bx], nth(ctx2, 0)), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), strs3, nth(ctx2, 5)] in
+      let cvar = if is_let then mkvar(bb) else ctx2 in
+      let cvarU = if is_let then mkvar(ib) else ctx2 in
       let c3 = with_brk(cvar, sc) in
+      let c3u = with_brk(cvarU, sc) in
       let nxt =
-        if nth(upd, 0) == "null" then js_cat([w, "(0)"])
-        else js_cat(["(let _ = ", js_emit_expr(upd, c3, st), " in ", w, "(0))"]) in
+        if nth(upd, 0) == "null" then
+          (if is_let then js_cat([w, "(box_get(", ib, "))"]) else js_cat([w, "(0)"]))
+        else
+          (if is_let then js_cat(["(let _ = ", js_emit_expr(upd, c3u, st), " in ", w, "(box_get(", ib, ")))"])
+           else js_cat(["(let _ = ", js_emit_expr(upd, c3, st), " in ", w, "(0))"])) in
       let body_e = js_emit_stmts(body, c3, "0", st) in
       let testc = js_emit_expr(test, c3, st) in
       let loopbody = js_cat(["(if ", js_truth(testc, st), " then (let _ = box_set(", sc, ", 0) in (let _ = ", body_e, " in ", after_loop(sc, nxt), ")) else 0)"]) in
+      if is_let then
+        let wbody = js_cat(["(let ", ib, " = box_new() in (let _ = box_set(", ib, ", ", iv, ") in (let ", bb, " = box_new() in (let _ = box_set(", bb, ", box_get(", ib, ")) in ", loopbody, "))))"]) in
+        js_cat(["(let ", sc, " = box_new() in (let ", w, "(", iv, ") = ", wbody, " in ", w, "(", js_emit_expr(nth(init, 3), ctx2, st), ")))"])
+      else
       let loop = js_cat(["(let ", sc, " = box_new() in (let ", w, "(_) = ", loopbody, " in ", w, "(0)))"]) in
-      if nth(init, 0) == "let" then
-        let m = im in
-        js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", js_emit_expr(nth(init, 3), ctx2, st), ") in ", loop, "))"])
-      else if nth(init, 0) == "expr" then js_emit_stmts([init], ctx2, loop, st)
+      if nth(init, 0) == "expr" then js_emit_stmts([init], ctx2, loop, st)
       else loop
     else if tag == "break" then
       if brk == 0 then (let _ = js_fail(st, "'break' outside loop or switch") in "0")
