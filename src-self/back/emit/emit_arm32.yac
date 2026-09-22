@@ -1,0 +1,281 @@
+package back.emit.emit_arm32
+
+export emit_program_arm32, a32_resolve_loop
+
+import back.encode.encode_arm32
+import lib.log {log_fatal}
+import back.emit.emit {icall_args, apply_u64, asm_dump_cells, asm_dump_get, asm_dump_procs, asm_dump_set, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_fmt_set, emit_glob_data, emit_ids_new, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, fun_is_raw, emit_funs_loop, no_skip, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tcall_raw_of, tcall_tab_set, prof_hook_fix, tco_lab, yjit_layout_set, emit_reg, emit_insn_disp, emit_ctx_get, emit_rt_ops, emit_rt_argn, emit_rt_call}
+import back.pack.elf {elf_pic, funsym_set}
+import back.pack.target {JIT_VADDR}
+import lib.map {intern, fmap_new64, fmap_put}
+import rt.os {host_os}
+
+/* ---- frame / value helpers ------------------------------------------ */
+
+let a32_frame_bytes(nlocals) =
+  let nbytes = bshl(nlocals + 1, 2) in
+  bshl(bshr(nbytes + 7, 3), 3)
+
+let a32_tag(b, rd) =
+  let _ = a32_mov_imm(b, 9, 1) in
+  a32_orr_reg(b, rd, rd, 9)
+
+let a32_untag_ptr(b, rd) =
+  let _ = a32_mov_imm(b, 12, 0 - 2) in
+  a32_and_reg(b, rd, rd, 12)
+
+/* b/bl immediate is (target - (pos+8)) >> 2, 24-bit signed. */
+let a32_patch_b24(b, pos, targ) =
+  let rel = bshr(targ - (pos + 8), 2) in
+  let w = 592445440 + band(rel, 16777215) in
+  let _ = bytes_put(b, pos, band(w, 255)) in
+  let _ = bytes_put(b, pos + 1, band(bshr(w, 8), 255)) in
+  let _ = bytes_put(b, pos + 2, band(bshr(w, 16), 255)) in
+  bytes_put(b, pos + 3, band(bshr(w, 24), 255))
+
+/* Write a 32-bit absolute little-endian value (arm32 relocations). */
+let a32_apply_u32(b, pos, v) =
+  let _ = bytes_put(b, pos, band(v, 255)) in
+  let _ = bytes_put(b, pos + 1, band(bshr(v, 8), 255)) in
+  let _ = bytes_put(b, pos + 2, band(bshr(v, 16), 255)) in
+  bytes_put(b, pos + 3, band(bshr(v, 24), 255))
+
+/* Slot access (LIR.md 4.4.2). 32-bit slots: slot k at [fp - 4*(k+1)]. */
+let a32_slot(b, slot, store, rt) =
+  if store then
+    let off = bshl(slot + 1, 2) in
+    let _ = a32_sub_imm(b, 9, 11, off) in
+    a32_str_imm(b, rt, 9, 0)
+  else
+    let k0 = nth(slot, 0) in
+    if k0 == "cap" then a32_ldr_imm(b, rt, 10, 32 + bshl(nth(slot, 1), 2))
+    else if k0 == "self" then a32_mov_reg(b, rt, 10)
+    else if k0 == "imm" then a32_mov_imm32(b, rt, nth(slot, 1))
+    else
+      let off = bshl(slot + 1, 2) in
+      let _ = a32_sub_imm(b, 9, 11, off) in
+      a32_ldr_imm(b, rt, 9, 0)
+
+/* ---- op registry ----------------------------------------------------- */
+
+/* runtime-prim: load args into r0..rN then call yac_<name> (AAPCS32). */
+let a32_rt_slot(b, slot, i) = a32_slot(b, slot, false, i)
+let a32_bl_rt(b, patches, dst, name, ids) =
+  let pos = bytes_len(b) in
+  let _ = a32_bl(b, 0) in
+  let _ = a32_slot(b, dst, true, 0) in
+  emit_patch_rel(ids, patches, pos, name)
+let a32_op_rt(st, insn) =
+  let nm = nth(insn, 0) in
+  emit_rt_call(st, insn, nm, emit_rt_argn(nm), a32_rt_slot, a32_bl_rt)
+
+let a32_cop_mov_imm(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_mov_imm32(b, 0, nth(insn, 2)) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_mov(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_label(st, insn) =
+  let b = nth(st, 0) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let is_entry = nth(emit_ctx_get(0), 0) in
+  let nm = nth(insn, 1) in
+  let pos = bytes_len(b) in
+  let _ =
+    if is_entry then 0
+    else if intern(nm) == tco_lab(0) then emit_tco_set(pos)
+    else 0 in
+  emit_st4(st, b, nth(st, 1), label_put(labels, nm, pos), patches)
+let a32_cop_jmp(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let pos = bytes_len(b) in
+  let _ = a32_b(b, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), cons(["b24", pos, nth(insn, 1)], patches))
+let a32_cop_ret(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let is_entry = nth(emit_ctx_get(0), 0) in
+  let _ = a32_slot(b, nth(insn, 1), false, 0) in
+  if is_entry then let _ = a32_ret(b) in emit_st4(st, b, cur, labels, patches)
+  else
+    let _ = a32_mov_reg(b, 13, 11) in
+    let _ = a32_ldr_imm(b, 11, 13, 0) in
+    let _ = a32_ldr_imm(b, 14, 13, 4) in
+    let _ = a32_ret(b) in
+    emit_st4(st, b, cur, labels, patches)
+let a32_cop_exit(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = a32_slot(b, nth(insn, 1), false, 0) in
+  let _ = a32_lsr_imm(b, 0, 0, 1) in
+  let _ = a32_mov_imm(b, 7, 1) in
+  let _ = a32_mov_imm(b, 0, 1) in
+  let _ = a32_svc(b, 0) in
+  emit_st4(st, b, cur, labels, patches)
+let a32_cop_nil(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_mov_imm(b, 0, 1) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
+/* f64: TODO (VFP). Placeholders keep the table complete. */
+let a32_cop_f64binop(st, insn) = 0
+let a32_cop_f64fromstr(st, insn) = 0
+let a32_cop_f64rel(st, insn) = 0
+let a32_cop_f64print(st, insn) = 0
+
+let a32_reg_ops =
+  let _ = emit_reg("arm32", "mov_imm", a32_cop_mov_imm) in
+  let _ = emit_reg("arm32", "mov", a32_cop_mov) in
+  let _ = emit_reg("arm32", "label", a32_cop_label) in
+  let _ = emit_reg("arm32", "jmp", a32_cop_jmp) in
+  let _ = emit_reg("arm32", "ret", a32_cop_ret) in
+  let _ = emit_reg("arm32", "exit", a32_cop_exit) in
+  let _ = emit_reg("arm32", "nil", a32_cop_nil) in
+  let _ = emit_reg("arm32", "f64binop", a32_cop_f64binop) in
+  let _ = emit_reg("arm32", "f64fromstr", a32_cop_f64fromstr) in
+  let _ = emit_reg("arm32", "f64rel", a32_cop_f64rel) in
+  let _ = emit_reg("arm32", "f64print", a32_cop_f64print) in
+  0
+
+/* Register the whole runtime-prim table to the single generic handler. */
+let a32_reg_rt =
+  let reg(i) =
+    if i >= len(emit_rt_ops) then 0
+    else
+      let _ = emit_reg("arm32", nth(nth(emit_rt_ops, i), 0), a32_op_rt) in
+      reg(i + 1) in
+  reg(0)
+
+/* ---- resolve + program ---------------------------------------------- */
+
+let a32_lookup_at(labels, name, i) =
+  if i < 0 then 0
+  else if nth(nth(labels, i), 0) == name then nth(nth(labels, i), 1)
+  else a32_lookup_at(labels, name, i - 1)
+
+let a32_lookup(labels, name) = a32_lookup_at(labels, name, len(labels) - 1)
+
+let a32_resolve_fun_patches(b, labels, patches) =
+  let resolve(ps, kept) =
+    if len(ps) == 0 then kept
+    else
+      let p = nth(ps, 0) in
+      let tag = nth(p, 0) in
+      if tag == "b24" then
+        let targ = a32_lookup(labels, nth(p, 2)) in
+        let _ = if targ == 0 then 0 else a32_patch_b24(b, nth(p, 1), targ) in
+        resolve(nth(ps, 1), kept)
+      else if tag == "beq" then
+        let targ = a32_lookup(labels, nth(p, 2)) in
+        let _ = if targ == 0 then 0 else a32_patch_bcond(b, nth(p, 1), targ) in
+        resolve(nth(ps, 1), kept)
+      else resolve(nth(ps, 1), cons(p, kept)) in
+  resolve(patches, [])
+
+let a32_resolve_patch(st, p) =
+  let b = nth(st, 0) in
+  let offs = nth(st, 1) in
+  let codebase = nth(st, 2) in
+  let globbase = nth(st, 3) in
+  let labels = nth(st, 4) in
+  let tag = nth(p, 0) in
+  if tag == 1 then
+    a32_patch_b24(b, nth(p, 1), nth(offs, nth(p, 2)))
+  else if tag == 2 then
+    a32_apply_u32(b, nth(p, 1), codebase + nth(offs, nth(p, 2)))
+  else if tag == 3 then
+    a32_apply_u32(b, nth(p, 1), globbase)
+  else if tag == 4 then
+    a32_apply_u32(b, nth(p, 1), globbase + 8)
+  else if tag == 5 then
+    a32_apply_u32(b, nth(p, 1), globbase + 16)
+  else if tag == 12 then
+    a32_apply_u32(b, nth(p, 1), globbase + nth(p, 2))
+  else if tag == 21 then
+    a32_apply_u32(b, nth(p, 1), globbase + 136 + bshl(nth(p, 2), 2))
+  else
+    let pos = nth(p, 1) in
+    let lab = nth(p, 2) in
+    let targ = a32_lookup(labels, lab) in
+    if tag == "beq" then a32_patch_bcond(b, pos, targ)
+    else a32_patch_b24(b, pos, targ)
+
+let a32_resolve_loop(st, ps, i) =
+  if i >= len(ps) then 0
+  else
+    let _ = a32_resolve_patch(st, nth(ps, i)) in
+    a32_resolve_loop(st, ps, i + 1)
+
+let a32_i_rest(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = nth(insn, 0) in
+  let _ = a32_brk(b) in
+  emit_st4(st, b, cur, labels, patches)
+
+let emit_insn_a32(st, insn, is_entry, is_raw) =
+  let _ = is_raw in
+  let _ = is_entry in
+  let r = emit_insn_disp(st, insn) in
+  if r != 0 then r else a32_i_rest(st, insn)
+
+let emit_program_arm32(prog, load_vaddr, text_off, fmt) =
+  let _ = emit_fmt_set(fmt) in
+  let _ =
+    emit_abi_win_set(
+      if fmt == "pe" then true
+      else if load_vaddr == JIT_VADDR then host_os(0) == "windows"
+      else false) in
+  let _ = strlit_pool_reset(0) in
+  let _ = cimport_reset(0) in
+  let ckeep = cimport_buf(0) in
+  let funs = prof_hook_fix(append(nth(prog, 1), host_unstub_procs(0))) in
+  let _ = tcall_tab_set(funs) in
+  let nfun = len(funs) in
+  let entry = nth(prog, 2) in
+  let r1 = emit_funs_loop(funs, entry, 0, emit_insn_a32, a32_resolve_fun_patches,
+                          no_skip) in
+  let out = nth(nth(r1, 0), 0) in
+  let offs = nth(r1, 2) in
+  let want_asm = asm_dump_get(0) != 0 in
+  let _ = if want_asm then asm_dump_set(0) else 0 in
+  let _ = if want_asm then asm_dump_procs(out, funs, offs, nfun) else 0 in
+  let st = nth(r1, 0) in
+  let fo0 = nth(r1, 1) in
+  let b = nth(st, 0) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let pad8(_) =
+    if band(bytes_len(b), 7) == 0 then 0
+    else let _ = bytes_append(b, 0) in pad8(0) in
+  let _ = pad8(0) in
+  let pool_start = bytes_len(b) in
+  let _ = bytes_extend(b, strlit_bytes(0)) in
+  let _ = pad8(0) in
+  let data_start = bytes_len(b) in
+  let _ = emit_glob_data(b) in
+  let _ = ckeep in
+  let GLOBALS_BASE = load_vaddr + text_off + data_start in
+  let _ = host_slot_bake(b, fo0, load_vaddr, text_off, data_start) in
+  let extra = list_new() in
+  let _ = patches_extend(extra, patches) in
+  let rst = [b, offs, load_vaddr + text_off, GLOBALS_BASE, labels,
+             load_vaddr + text_off + pool_start, GLOBALS_BASE] in
+  let _ = if want_asm then asm_dump_cells(b, data_start, 0) else 0 in
+  let _ = emit_unres_set([rst, extra, "arm32"]) in
+  let _ = funsym_set(fo0) in
+  let _ = yjit_layout_set(pool_start, pool_start, data_start, bytes_len(b)) in
+  [b, fo0]

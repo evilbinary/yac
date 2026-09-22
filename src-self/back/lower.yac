@@ -17,6 +17,7 @@ import back.emit.emit {emit_arch_set, emit_resolve_loop, emit_unres, emit_unres_
 import back.emit.emit_x86_64 {emit_program_x86_64}
 import back.emit.emit_arm64 {a64_resolve_loop, emit_program_arm64}
 import back.emit.emit_riscv64 {emit_program_riscv64, rv_resolve_loop}
+import back.emit.emit_arm32 {emit_program_arm32, a32_resolve_loop}
 import lib.log {log}
 
 let alloc_home(s) = s
@@ -165,6 +166,7 @@ let emit_apply_unres(off) =
     let _ =
       if arch == "arm64" then a64_resolve_loop(st, extra, 0)
       else if arch == "riscv64" then rv_resolve_loop(st, extra, 0)
+      else if arch == "arm32" then a32_resolve_loop(st, extra, 0)
       else emit_resolve_loop(st, extra, 0, len(extra)) in
     emit_unres_set(0)
 
@@ -180,6 +182,9 @@ let emit_by_target(ast, t) =
                          target_format(t))
     else if a == "arm64" then
       emit_program_arm64(ast, target_vaddr(t), target_text_off(t),
+                         target_format(t))
+    else if a == "arm32" then
+      emit_program_arm32(ast, target_vaddr(t), target_text_off(t),
                          target_format(t))
     else
       emit_program_riscv64(ast, target_vaddr(t), target_text_off(t),
