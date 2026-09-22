@@ -968,7 +968,7 @@ let emit_a64_sysarg(b, args, j) =
 
 let emit_a64_i_sys(st, insn) = emit_insn_disp(st, insn)
 
-let emit_a64_i_raw(st, insn) =
+let emit_a64_i_raw_rest(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
@@ -1213,6 +1213,10 @@ let emit_a64_i_raw(st, insn) =
     let _ = a64_svc(b) in
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     emit_st4(st, b, cur, labels, patches)
+
+let emit_a64_i_raw(st, insn) =
+  let r = emit_insn_disp(st, insn) in
+  if r != 0 then r else emit_a64_i_raw_rest(st, insn)
 
 /* i_heap ops whose semantics are arch-independent, registered in
  * a64_iheap_opmap and dispatched from emit.yac (docs/EMIT_BACKEND.md §5). */
@@ -1798,7 +1802,255 @@ let a64_reg_rt =
       reg(i + 1) in
   reg(0)
 
+let a64_cop_prim_and(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let imm = nth(insn, 3) in
+  let _ =
+    if imm == (0 - 2) then a64_untag_ptr(b, 0)
+    else
+      let _ = a64_mov_imm64(b, 1, imm) in
+      a64_and_reg(b, 0, 0, 1) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_addi(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_add_imm(b, 0, 0, nth(insn, 3)) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_add(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_slot(b, nth(insn, 3), false, 1) in
+  let _ = a64_add_reg(b, 0, 0, 1) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_sub(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_slot(b, nth(insn, 3), false, 1) in
+  let _ = a64_sub_reg(b, 0, 0, 1) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_bts(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 1) in
+  let _ = a64_ldrb(b, 3, 0) in
+  let _ = a64_movz(b, 2, 1, 0) in
+  let _ = a64_lslv(b, 2, 2, 1) in
+  let _ = a64_orr_reg(b, 3, 3, 2) in
+  let _ = a64_strb(b, 3, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_bt(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_slot(b, nth(insn, 3), false, 1) in
+  let _ = a64_ldrb(b, 0, 0) in
+  let _ = a64_lsrv(b, 0, 0, 1) in
+  let _ = a64_movz(b, 1, 1, 0) in
+  let _ = a64_and_reg(b, 0, 0, 1) in
+  let _ = a64_lsl1(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_or(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_tag(b, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_clamp0(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_clamp0(b) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_st64(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  let _ = a64_untag_ptr(b, 0) in
+  let _ = a64_slot(b, nth(insn, 3), false, 1) in
+  let big = nth(insn, 2) > 255 or nth(insn, 2) < 0 - 256 in
+  let _ =
+    if big then
+      (if nth(insn, 2) < 0 then a64_sub_imm(b, 0, 0, 0 - nth(insn, 2))
+       else a64_add_imm(b, 0, 0, nth(insn, 2)))
+    else 0 in
+  let _ = a64_stur(b, 1, 0, if big then 0 else nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_st8(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  let _ = a64_strb(b, 31, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_ld64(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_untag_ptr(b, 0) in
+  let big = nth(insn, 3) > 255 or nth(insn, 3) < 0 - 256 in
+  let _ =
+    if big then
+      (if nth(insn, 3) < 0 then a64_sub_imm(b, 0, 0, 0 - nth(insn, 3))
+       else a64_add_imm(b, 0, 0, nth(insn, 3)))
+    else 0 in
+  let _ = a64_ldur(b, 0, 0, if big then 0 else nth(insn, 3)) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_ld8(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ =
+    if nth(insn, 3) == 0 then 0 else a64_add_imm(b, 0, 0, nth(insn, 3)) in
+  let _ = a64_ldrb(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_sp(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_mov_sp(b, 0, 31) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_fp(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_mov_sp(b, 0, 29) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_smap(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_movz(b, 0, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_gbase(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let gpos = bytes_len(b) in
+  let _ = a64_mov_imm64(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), cons([3, gpos], patches))
+let a64_cop_prim_glob(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let which = nth(insn, 2) in
+  let gpos = bytes_len(b) in
+  let _ = a64_mov_imm64(b, 0, 0) in
+  let _ = a64_ldur(b, 0, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  let gkind =
+    if which == 1 then 4
+    else if which == 2 then 5
+    else if which == 3 then 7
+    else 8 in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), cons([gkind, gpos], patches))
+let a64_cop_prim_icmp(st, insn) =
+  let b = nth(st, 0) in
+  let op = nth(insn, 1) in
+  let cc = if op == ">=u" then 3 else if op == "==" then 1 else if op == "<" then 10 else 0 in
+  let _ = a64_slot(b, nth(insn, 3), false, 0) in
+  let _ = a64_slot(b, nth(insn, 4), false, 1) in
+  let _ = a64_cmp_reg(b, 0, 1) in
+  let _ = a64_movz(b, 0, 0, 0) in
+  let _ = a64_movz(b, 2, 1, 0) in
+  let _ = a64_b_cond(b, cc, 2) in
+  let _ = a64_mov_reg(b, 0, 2) in
+  let _ = a64_lsl1(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 2), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_jcc(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let op = nth(insn, 1) in
+  let inv = if op == ">=u" then 3 else if op == "==" then 1 else if op == "<" then 10 else 0 in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_slot(b, nth(insn, 3), false, 1) in
+  let _ = a64_cmp_reg(b, 0, 1) in
+  let _ = a64_b_cond(b, inv, 2) in
+  let pt = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let pf = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2),
+   cons(["b26", pt, nth(insn, 4)],
+        cons(["b26", pf, nth(insn, 5)], patches)))
+let a64_cop_prim_memcpy(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 1) in
+  let _ = a64_slot(b, nth(insn, 3), false, 2) in
+  let loop = bytes_len(b) in
+  let _ = a64_cmp_imm(b, 2, 0) in
+  let jeq = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_ldrb(b, 3, 1) in
+  let _ = a64_strb(b, 3, 0) in
+  let _ = a64_add_imm(b, 0, 0, 1) in
+  let _ = a64_add_imm(b, 1, 1, 1) in
+  let _ = a64_sub_imm(b, 2, 2, 1) in
+  let jb = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let done = bytes_len(b) in
+  let _ = a64_patch_bcond(b, jeq, done) in
+  let _ = a64_apply_b26(b, jb, loop) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_memset(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 1) in
+  let loop = bytes_len(b) in
+  let _ = a64_cmp_imm(b, 1, 0) in
+  let jeq = bytes_len(b) in
+  let _ = a64_b_eq(b, 0) in
+  let _ = a64_strb(b, 31, 0) in
+  let _ = a64_add_imm(b, 0, 0, 1) in
+  let _ = a64_sub_imm(b, 1, 1, 1) in
+  let jb = bytes_len(b) in
+  let _ = a64_b(b, 0) in
+  let done = bytes_len(b) in
+  let _ = a64_patch_bcond(b, jeq, done) in
+  let _ = a64_apply_b26(b, jb, loop) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_shr(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_movz(b, 1, nth(insn, 3), 0) in
+  let _ = a64_lsrv(b, 0, 0, 1) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_carg(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_cop_prim_icall(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 16) in
+  let _ = a64_blr(b, 16) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
 let a64_reg_ops =
+  let _ = emit_reg("arm64", "$and", a64_cop_prim_and) in
+  let _ = emit_reg("arm64", "$addi", a64_cop_prim_addi) in
+  let _ = emit_reg("arm64", "$add", a64_cop_prim_add) in
+  let _ = emit_reg("arm64", "$sub", a64_cop_prim_sub) in
+  let _ = emit_reg("arm64", "$bts", a64_cop_prim_bts) in
+  let _ = emit_reg("arm64", "$bt", a64_cop_prim_bt) in
+  let _ = emit_reg("arm64", "$or", a64_cop_prim_or) in
+  let _ = emit_reg("arm64", "$clamp0", a64_cop_prim_clamp0) in
+  let _ = emit_reg("arm64", "$st64", a64_cop_prim_st64) in
+  let _ = emit_reg("arm64", "$st8", a64_cop_prim_st8) in
+  let _ = emit_reg("arm64", "$ld64", a64_cop_prim_ld64) in
+  let _ = emit_reg("arm64", "$ld8", a64_cop_prim_ld8) in
+  let _ = emit_reg("arm64", "$sp", a64_cop_prim_sp) in
+  let _ = emit_reg("arm64", "$fp", a64_cop_prim_fp) in
+  let _ = emit_reg("arm64", "$smap", a64_cop_prim_smap) in
+  let _ = emit_reg("arm64", "$gbase", a64_cop_prim_gbase) in
+  let _ = emit_reg("arm64", "$glob", a64_cop_prim_glob) in
+  let _ = emit_reg("arm64", "$icmp", a64_cop_prim_icmp) in
+  let _ = emit_reg("arm64", "$jcc", a64_cop_prim_jcc) in
+  let _ = emit_reg("arm64", "$memcpy", a64_cop_prim_memcpy) in
+  let _ = emit_reg("arm64", "$memset", a64_cop_prim_memset) in
+  let _ = emit_reg("arm64", "$shr", a64_cop_prim_shr) in
+  let _ = emit_reg("arm64", "$carg", a64_cop_prim_carg) in
+  let _ = emit_reg("arm64", "$icall", a64_cop_prim_icall) in
   let _ = emit_reg("arm64", "nil", a64_cop_nil) in
   let _ = emit_reg("arm64", "cons", a64_cop_cons) in
   let _ = emit_reg("arm64", "strlit", a64_cop_strlit) in
