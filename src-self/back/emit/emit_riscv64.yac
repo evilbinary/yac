@@ -961,7 +961,7 @@ let emit_rv_sysarg(b, args, j) =
 
 let emit_rv_i_sys(st, insn) = emit_insn_disp(st, insn)
 
-let emit_rv_i_raw(st, insn) =
+let emit_rv_i_raw_rest(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
@@ -1192,6 +1192,10 @@ let emit_rv_i_raw(st, insn) =
     let _ = rv_ecall(b) in
     let _ = rv_slot(b, nth(insn, 1), true, 10) in
     emit_st4(st, b, cur, labels, patches)
+
+let emit_rv_i_raw(st, insn) =
+  let r = emit_insn_disp(st, insn) in
+  if r != 0 then r else emit_rv_i_raw_rest(st, insn)
 
 /* i_heap ops registered in rv_iheap_opmap and dispatched from emit.yac. */
 let rv_op_mref(st, insn) =
@@ -1784,7 +1788,248 @@ let rv_reg_rt =
       reg(i + 1) in
   reg(0)
 
+let rv_cop_prim_and(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let imm = nth(insn, 3) in
+  let _ =
+    if imm == (0 - 2) then rv_untag_ptr(b, 10)
+    else
+      let _ = rv_addi(b, 6, 0, imm) in
+      rv_and(b, 10, 10, 6) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_addi(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_addi(b, 10, 10, nth(insn, 3)) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_add(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_slot(b, nth(insn, 3), false, 11) in
+  let _ = rv_add(b, 10, 10, 11) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_sub(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_slot(b, nth(insn, 3), false, 11) in
+  let _ = rv_sub(b, 10, 10, 11) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_bts(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 1), false, 10) in
+  let _ = rv_slot(b, nth(insn, 2), false, 11) in
+  let _ = rv_lbu(b, 12, 10, 0) in
+  let _ = rv_addi(b, 13, 0, 1) in
+  let _ = rv_sll(b, 13, 13, 11) in
+  let _ = rv_or(b, 12, 12, 13) in
+  let _ = rv_sb(b, 12, 10, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_bt(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_slot(b, nth(insn, 3), false, 11) in
+  let _ = rv_lbu(b, 10, 10, 0) in
+  let _ = rv_srl(b, 10, 10, 11) in
+  let _ = rv_addi(b, 11, 0, 1) in
+  let _ = rv_and(b, 10, 10, 11) in
+  let _ = rv_slli(b, 10, 10, 1) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_or(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_tag(b, 10) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_clamp0(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_clamp0(b) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_st64(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 1), false, 10) in
+  let _ = rv_untag_ptr(b, 10) in
+  let _ = rv_slot(b, nth(insn, 3), false, 11) in
+  let _ = rv_sd(b, 11, 10, nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_st8(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 1), false, 10) in
+  let _ = rv_sb(b, 0, 10, nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_ld64(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_untag_ptr(b, 10) in
+  let _ = rv_ld(b, 10, 10, nth(insn, 3)) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_ld8(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_lbu(b, 10, 10, nth(insn, 3)) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_sp(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_addi(b, 10, 2, 0) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_fp(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_addi(b, 10, 8, 0) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_smap(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_addi(b, 10, 0, 0) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_gbase(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let gpos = bytes_len(b) in
+  let _ = rv_li32_pair(b, 6, 0) in
+  let _ = rv_slot(b, nth(insn, 1), true, 6) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), cons([3, gpos], patches))
+let rv_cop_prim_glob(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let which = nth(insn, 2) in
+  let gpos = bytes_len(b) in
+  let _ = rv_li32_pair(b, 6, 0) in
+  let _ = rv_ld(b, 6, 6, 0) in
+  let _ = rv_slot(b, nth(insn, 1), true, 6) in
+  let gkind =
+    if which == 1 then 4
+    else if which == 2 then 5
+    else if which == 3 then 7
+    else 8 in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), cons([gkind, gpos], patches))
+let rv_cop_prim_icmp(st, insn) =
+  let b = nth(st, 0) in
+  let op = nth(insn, 1) in
+  let _ = rv_slot(b, nth(insn, 3), false, 10) in
+  let _ = rv_slot(b, nth(insn, 4), false, 11) in
+  let _ =
+    if op == "==" then
+      let _ = rv_xor(b, 10, 10, 11) in
+      rv_sltiu(b, 10, 10, 1)
+    else if op == ">=u" then
+      let _ = rv_sltu(b, 10, 10, 11) in
+      let _ = rv_xori(b, 10, 10, 1) in
+      0
+    else if op == "<" then
+      rv_slt(b, 10, 10, 11)
+    else
+      let _ = rv_xor(b, 10, 10, 11) in
+      let _ = rv_sltiu(b, 10, 10, 1) in
+      rv_xori(b, 10, 10, 1) in
+  let _ = rv_addi(b, 7, 0, 1) in
+  let _ = rv_sll(b, 10, 10, 7) in
+  let _ = rv_slot(b, nth(insn, 2), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_jcc(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let op = nth(insn, 1) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_slot(b, nth(insn, 3), false, 11) in
+  let _ =
+    if op == "==" then rv_bne(b, 10, 11, 8)
+    else if op == ">=u" then rv_bltu(b, 10, 11, 8)
+    else rv_bge(b, 10, 11, 8) in
+  let pt = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let pf = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2),
+   cons(["jal", pt, nth(insn, 4)],
+        cons(["jal", pf, nth(insn, 5)], patches)))
+let rv_cop_prim_memcpy(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 1), false, 10) in
+  let _ = rv_slot(b, nth(insn, 2), false, 11) in
+  let _ = rv_slot(b, nth(insn, 3), false, 12) in
+  let loop = bytes_len(b) in
+  let jeq = bytes_len(b) in
+  let _ = rv_beq(b, 12, 0, 0) in
+  let _ = rv_lbu(b, 13, 11, 0) in
+  let _ = rv_sb(b, 13, 10, 0) in
+  let _ = rv_addi(b, 10, 10, 1) in
+  let _ = rv_addi(b, 11, 11, 1) in
+  let _ = rv_addi(b, 12, 12, 0 - 1) in
+  let jb = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let done = bytes_len(b) in
+  let _ = rv_patch_b(b, jeq, done) in
+  let _ = rv_apply_jal(b, jb, loop, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_memset(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 1), false, 10) in
+  let _ = rv_slot(b, nth(insn, 2), false, 11) in
+  let loop = bytes_len(b) in
+  let jeq = bytes_len(b) in
+  let _ = rv_beq(b, 11, 0, 0) in
+  let _ = rv_sb(b, 0, 10, 0) in
+  let _ = rv_addi(b, 10, 10, 1) in
+  let _ = rv_addi(b, 11, 11, 0 - 1) in
+  let jb = bytes_len(b) in
+  let _ = rv_jal(b, 0, 0) in
+  let done = bytes_len(b) in
+  let _ = rv_patch_b(b, jeq, done) in
+  let _ = rv_apply_jal(b, jb, loop, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_shr(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_srli(b, 10, 10, nth(insn, 3)) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_carg(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10 + nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let rv_cop_prim_icall(st, insn) =
+  let b = nth(st, 0) in
+  let _ = rv_slot(b, nth(insn, 2), false, 6) in
+  let _ = rv_jalr(b, 1, 6, 0) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
 let rv_reg_ops =
+  let _ = emit_reg("riscv64", "$and", rv_cop_prim_and) in
+  let _ = emit_reg("riscv64", "$addi", rv_cop_prim_addi) in
+  let _ = emit_reg("riscv64", "$add", rv_cop_prim_add) in
+  let _ = emit_reg("riscv64", "$sub", rv_cop_prim_sub) in
+  let _ = emit_reg("riscv64", "$bts", rv_cop_prim_bts) in
+  let _ = emit_reg("riscv64", "$bt", rv_cop_prim_bt) in
+  let _ = emit_reg("riscv64", "$or", rv_cop_prim_or) in
+  let _ = emit_reg("riscv64", "$clamp0", rv_cop_prim_clamp0) in
+  let _ = emit_reg("riscv64", "$st64", rv_cop_prim_st64) in
+  let _ = emit_reg("riscv64", "$st8", rv_cop_prim_st8) in
+  let _ = emit_reg("riscv64", "$ld64", rv_cop_prim_ld64) in
+  let _ = emit_reg("riscv64", "$ld8", rv_cop_prim_ld8) in
+  let _ = emit_reg("riscv64", "$sp", rv_cop_prim_sp) in
+  let _ = emit_reg("riscv64", "$fp", rv_cop_prim_fp) in
+  let _ = emit_reg("riscv64", "$smap", rv_cop_prim_smap) in
+  let _ = emit_reg("riscv64", "$gbase", rv_cop_prim_gbase) in
+  let _ = emit_reg("riscv64", "$glob", rv_cop_prim_glob) in
+  let _ = emit_reg("riscv64", "$icmp", rv_cop_prim_icmp) in
+  let _ = emit_reg("riscv64", "$jcc", rv_cop_prim_jcc) in
+  let _ = emit_reg("riscv64", "$memcpy", rv_cop_prim_memcpy) in
+  let _ = emit_reg("riscv64", "$memset", rv_cop_prim_memset) in
+  let _ = emit_reg("riscv64", "$shr", rv_cop_prim_shr) in
+  let _ = emit_reg("riscv64", "$carg", rv_cop_prim_carg) in
+  let _ = emit_reg("riscv64", "$icall", rv_cop_prim_icall) in
   let _ = emit_reg("riscv64", "nil", rv_cop_nil) in
   let _ = emit_reg("riscv64", "cons", rv_cop_cons) in
   let _ = emit_reg("riscv64", "strlit", rv_cop_strlit) in
