@@ -10,7 +10,7 @@ import back.emit.emit {icall_args, apply_u64, asm_dump_cells, asm_dump_get, asm_
 import back.emit.emit_cabi {dlib_a64_va, emit_cabi_all}
 import back.pack.elf {elf_pic, funsym_set}
 import back.pack.target {JIT_VADDR}
-import lib.map {intern}
+import lib.map {intern, fmap_new64, fmap_put}
 import rt.os {host_os}
 
 let a64_frame_bytes(nlocals) =
@@ -1171,7 +1171,93 @@ let emit_a64_i_raw(st, insn) =
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     emit_st4(st, b, cur, labels, patches)
 
-let emit_a64_i_heap(st, insn) =
+/* i_heap ops whose semantics are arch-independent, registered in
+ * a64_iheap_opmap and dispatched from emit.yac (docs/EMIT_BACKEND.md §5). */
+let a64_op_mref(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_mov_imm64(b, 1, 0 - 2) in
+  let _ = a64_and_reg(b, 0, 0, 1) in
+  let _ = a64_ldur(b, 0, 0, nth(insn, 3)) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_op_mset(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 3), false, 1) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  let _ = a64_mov_imm64(b, 2, 0 - 2) in
+  let _ = a64_and_reg(b, 0, 0, 2) in
+  let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_op_tag(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_lsl1(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_op_is_int(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_movz(b, 9, 1, 0) in
+  let _ = a64_and_reg(b, 10, 0, 9) in
+  let _ = a64_eor_reg(b, 10, 10, 9) in
+  let _ = a64_lsl1(b, 0, 10) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_op_obj_sti(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  let _ = a64_mov_imm64(b, 1, 0 - 2) in
+  let _ = a64_and_reg(b, 0, 0, 1) in
+  let _ = a64_mov_imm64(b, 1, nth(insn, 3)) in
+  let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_op_obj_st_int(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 3), false, 1) in
+  let _ = a64_asr1(b, 1, 1) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  let _ = a64_mov_imm64(b, 2, 0 - 2) in
+  let _ = a64_and_reg(b, 0, 0, 2) in
+  let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_op_mref8(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 0) in
+  let _ = a64_mov_imm64(b, 1, 0 - 2) in
+  let _ = a64_and_reg(b, 0, 0, 1) in
+  let _ = a64_slot(b, nth(insn, 3), false, 1) in
+  let _ = a64_asr1(b, 1, 1) in
+  let _ = a64_add_reg(b, 0, 0, 1) in
+  let _ = a64_ldrb(b, 0, 0) in
+  let _ = a64_lsl1(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_op_mset8(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a64_slot(b, nth(insn, 3), false, 1) in
+  let _ = a64_asr1(b, 1, 1) in
+  let _ = a64_slot(b, nth(insn, 1), false, 0) in
+  let _ = a64_mov_imm64(b, 2, 0 - 2) in
+  let _ = a64_and_reg(b, 0, 0, 2) in
+  let _ = a64_slot(b, nth(insn, 2), false, 2) in
+  let _ = a64_asr1(b, 2, 2) in
+  let _ = a64_add_reg(b, 0, 0, 2) in
+  let _ = a64_strb(b, 1, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a64_iheap_opmap =
+  let m = fmap_new64(0) in
+  let _ = fmap_put(m, "mref", a64_op_mref) in
+  let _ = fmap_put(m, "mset", a64_op_mset) in
+  let _ = fmap_put(m, "tag", a64_op_tag) in
+  let _ = fmap_put(m, "is_int", a64_op_is_int) in
+  let _ = fmap_put(m, "obj_sti", a64_op_obj_sti) in
+  let _ = fmap_put(m, "obj_st_int", a64_op_obj_st_int) in
+  let _ = fmap_put(m, "mref8", a64_op_mref8) in
+  let _ = fmap_put(m, "mset8", a64_op_mset8) in
+  m
+
+let emit_a64_i_heap_rest(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
@@ -1228,70 +1314,6 @@ let emit_a64_i_heap(st, insn) =
     let l_done = bytes_len(b) in
     let _ = a64_apply_b26(b, j_done, l_done) in
     let _ = a64_apply_b26(b, j_done2, l_done) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "mref" then
-    let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    let _ = a64_mov_imm64(b, 1, 0 - 2) in
-    let _ = a64_and_reg(b, 0, 0, 1) in
-    let _ = a64_ldur(b, 0, 0, nth(insn, 3)) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "mset" then
-    let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    let _ = a64_slot(b, nth(insn, 1), false, 0) in
-    let _ = a64_mov_imm64(b, 2, 0 - 2) in
-    let _ = a64_and_reg(b, 0, 0, 2) in
-    let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "tag" then
-    let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    let _ = a64_lsl1(b, 0, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "is_int" then
-    let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    let _ = a64_movz(b, 9, 1, 0) in
-    let _ = a64_and_reg(b, 10, 0, 9) in
-    let _ = a64_eor_reg(b, 10, 10, 9) in
-    let _ = a64_lsl1(b, 0, 10) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "obj_sti" then
-    let _ = a64_slot(b, nth(insn, 1), false, 0) in
-    let _ = a64_mov_imm64(b, 1, 0 - 2) in
-    let _ = a64_and_reg(b, 0, 0, 1) in
-    let _ = a64_mov_imm64(b, 1, nth(insn, 3)) in
-    let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "obj_st_int" then
-    let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    let _ = a64_asr1(b, 1, 1) in
-    let _ = a64_slot(b, nth(insn, 1), false, 0) in
-    let _ = a64_mov_imm64(b, 2, 0 - 2) in
-    let _ = a64_and_reg(b, 0, 0, 2) in
-    let _ = a64_stur(b, 1, 0, nth(insn, 2)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "mref8" then
-    let _ = a64_slot(b, nth(insn, 2), false, 0) in
-    let _ = a64_mov_imm64(b, 1, 0 - 2) in
-    let _ = a64_and_reg(b, 0, 0, 1) in
-    let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    let _ = a64_asr1(b, 1, 1) in
-    let _ = a64_add_reg(b, 0, 0, 1) in
-    let _ = a64_ldrb(b, 0, 0) in
-    let _ = a64_lsl1(b, 0, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "mset8" then
-    let _ = a64_slot(b, nth(insn, 3), false, 1) in
-    let _ = a64_asr1(b, 1, 1) in
-    let _ = a64_slot(b, nth(insn, 1), false, 0) in
-    let _ = a64_mov_imm64(b, 2, 0 - 2) in
-    let _ = a64_and_reg(b, 0, 0, 2) in
-    let _ = a64_slot(b, nth(insn, 2), false, 2) in
-    let _ = a64_asr1(b, 2, 2) in
-    let _ = a64_add_reg(b, 0, 0, 2) in
-    let _ = a64_strb(b, 1, 0) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "ld64" then
     let _ = a64_slot(b, nth(insn, 2), false, 0) in
@@ -1450,6 +1472,10 @@ let emit_a64_i_heap(st, insn) =
     let _ = a64_slot(b, nth(insn, 1), true, 0) in
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_argv"))
   else st
+
+let emit_a64_i_heap(st, insn) =
+  let r = emit_op_dispatch(st, insn, a64_iheap_opmap) in
+  if r != 0 then r else emit_a64_i_heap_rest(st, insn)
 
 let emit_a64_i_clos(st, insn, is_entry) =
   let b = nth(st, 0) in

@@ -11,7 +11,7 @@ import back.pack.elf {elf_dynexp_set, elf_int, elf_pic, funsym_set}
 import back.pack.pe {pe_iat_off}
 import back.pack.target {JIT_VADDR}
 import lib.log {log, log_i}
-import lib.map {intern}
+import lib.map {intern, fmap_new64, fmap_put}
 
 /* emit_x86_64.yac — x86-64 emit of LIR.
  *
@@ -1345,7 +1345,92 @@ let emit_x86_i_raw(st, insn) =
   else if emit_host_win(0) then win_syscall(st, insn)
   else linux_syscall(st, insn)
 
-let emit_x86_i_heap(st, insn) =
+/* i_heap ops registered in x86_iheap_opmap and dispatched from emit.yac. */
+let x86_op_mref(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_rax_disp32(b, nth(insn, 3)) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_op_mset(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_disp32_rdi(b, nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_op_tag(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_op_is_int(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = test_rax_1(b) in
+  let _ = setcc_r8(b, cc_of("==")) in
+  let _ = movzx_eax_al(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_op_obj_sti(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_disp32_imm32(b, nth(insn, 2), nth(insn, 3)) in
+  let _ = mov_rax_disp32_imm32(b, nth(insn, 2) + 4, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_op_obj_st_int(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+  let _ = sar_rax_1(b) in
+  let _ = mov_rdi_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_disp32_rdi(b, nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_op_mref8(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rbx_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+  let _ = mov_rdx_rax(b) in
+  let _ = sar_rdx_1(b) in
+  let _ = mov_rax_rbx(b) in
+  let _ = movzx_eax_rax_rdx(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_op_mset8(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rbx_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = mov_rdx_rax(b) in
+  let _ = sar_rdx_1(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+  let _ = mov_rdi_rax(b) in
+  let _ = sar_rdi_1(b) in
+  let _ = mov_rax_rbx(b) in
+  let _ = mov_rax_rdx_dil(b) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let x86_iheap_opmap =
+  let m = fmap_new64(0) in
+  let _ = fmap_put(m, "mref", x86_op_mref) in
+  let _ = fmap_put(m, "mset", x86_op_mset) in
+  let _ = fmap_put(m, "tag", x86_op_tag) in
+  let _ = fmap_put(m, "is_int", x86_op_is_int) in
+  let _ = fmap_put(m, "obj_sti", x86_op_obj_sti) in
+  let _ = fmap_put(m, "obj_st_int", x86_op_obj_st_int) in
+  let _ = fmap_put(m, "mref8", x86_op_mref8) in
+  let _ = fmap_put(m, "mset8", x86_op_mset8) in
+  m
+
+let emit_x86_i_heap_rest(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
@@ -1402,32 +1487,6 @@ let emit_x86_i_heap(st, insn) =
     let _ = apply_patch(b, j_done, l_done) in
     let _ = apply_patch(b, j_done2, l_done) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "mref" then
-    let dst = nth(insn, 1) in
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rax_rax_disp32(b, nth(insn, 3)) in
-    let _ = emit_store_rax_slot(b, dst) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "mset" then
-    let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rax_disp32_rdi(b, nth(insn, 2)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "tag" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "is_int" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = test_rax_1(b) in
-    let _ = setcc_r8(b, cc_of("==")) in
-    let _ = movzx_eax_al(b) in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
   else if k == "alloc" then
     let _ = mov_rdi_imm(b, nth(insn, 2)) in
     let acall = bytes_len(b) in
@@ -1435,20 +1494,6 @@ let emit_x86_i_heap(st, insn) =
     let _ = or_rax_1(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_alloc"))
-  else if k == "obj_sti" then
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rax_disp32_imm32(b, nth(insn, 2), nth(insn, 3)) in
-    let _ = mov_rax_disp32_imm32(b, nth(insn, 2) + 4, 0) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "obj_st_int" then
-    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-    let _ = sar_rax_1(b) in
-    let _ = mov_rdi_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rax_disp32_rdi(b, nth(insn, 2)) in
-    emit_st4(st, b, cur, labels, patches)
   else if k == "alloc_s" then
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let _ = sar_rax_1(b) in
@@ -1458,31 +1503,6 @@ let emit_x86_i_heap(st, insn) =
     let _ = or_rax_1(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_alloc"))
-  else if k == "mref8" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rbx_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-    let _ = mov_rdx_rax(b) in
-    let _ = sar_rdx_1(b) in
-    let _ = mov_rax_rbx(b) in
-    let _ = movzx_eax_rax_rdx(b) in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "mset8" then
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rbx_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = mov_rdx_rax(b) in
-    let _ = sar_rdx_1(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-    let _ = mov_rdi_rax(b) in
-    let _ = sar_rdi_1(b) in
-    let _ = mov_rax_rbx(b) in
-    let _ = mov_rax_rdx_dil(b) in
-    emit_st4(st, b, cur, labels, patches)
   else if k == "ld64" then
     let _ = emit_load_rax_slot(b, nth(insn, 2)) in
     let _ = and_rax_1(b) in
@@ -1532,6 +1552,10 @@ let emit_x86_i_heap(st, insn) =
     let gkind = if which == 3 then 7 else 8 in
     emit_st4(st, b, cur, labels, cons([gkind, gpat], patches))
   else st
+
+let emit_x86_i_heap(st, insn) =
+  let r = emit_op_dispatch(st, insn, x86_iheap_opmap) in
+  if r != 0 then r else emit_x86_i_heap_rest(st, insn)
 
 /* capRef closure call (LIR.md 4.4.4): object -> rdi, params -> rsi.. (5
  * register slots), stack args pushed highest-first. Replaces i_clos's
