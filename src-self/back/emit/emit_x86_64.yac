@@ -544,8 +544,6 @@ let x86_op_cmpjmp(b, patches, tname, fname) =
   let jmp_at = bytes_len(b) in
   let _ = jmp_rel32(b, 0) in
   cons([jcc_at + 2, fname], cons([jmp_at + 1, tname], patches))
-let x86_ops(_) = [x86_op_slot_load, x86_op_slot_store, x86_op_mov_imm, x86_op_asr1, x86_op_lsl1, x86_op_arith, x86_op_icmp, x86_op_jmp, x86_op_cmpjmp]
-
 /* i_core ops (per-LIR-op form), registered into the shared table. */
 let x86_cop_mov_imm(st, insn) =
   let b = nth(st, 0) in
@@ -585,6 +583,19 @@ let x86_cop_cmpjmp(st, insn) =
   let _ = x86_op_slot_load(b, 0, nth(insn, 1)) in
   let p2 = x86_op_cmpjmp(b, nth(st, 3), nth(insn, 2), nth(insn, 3)) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), p2)
+let x86_cop_label(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let is_entry = nth(nth(st, 5), 0) in
+  let nm = nth(insn, 1) in
+  let pos = bytes_len(b) in
+  let _ =
+    if is_entry then 0
+    else if intern(nm) == tco_lab(0) then emit_tco_set(pos)
+    else 0 in
+  emit_st4(st, b, cur, label_put(labels, nm, pos), patches)
 
 let emit_x86_i_core_rest(st, insn, is_entry, is_raw) =
   let b = nth(st, 0) in
@@ -799,8 +810,7 @@ let emit_x86_i_core_rest(st, insn, is_entry, is_raw) =
 
 let emit_x86_i_core(st, insn, is_entry, is_raw) =
   let r = emit_insn_disp(st, insn) in
-  let r2 = if r != 0 then r else emit_i_core_base(st, insn, is_entry, x86_ops(0)) in
-  if r2 != 0 then r2 else emit_x86_i_core_rest(st, insn, is_entry, is_raw)
+  if r != 0 then r else emit_x86_i_core_rest(st, insn, is_entry, is_raw)
 
 let emit_x86_i_sys(st, insn) =
   let b = nth(st, 0) in
@@ -1484,6 +1494,7 @@ let x86_reg_ops =
   let _ = emit_reg("x86_64", "icmp", x86_cop_icmp) in
   let _ = emit_reg("x86_64", "jmp", x86_cop_jmp) in
   let _ = emit_reg("x86_64", "cmpjmp", x86_cop_cmpjmp) in
+  let _ = emit_reg("x86_64", "label", x86_cop_label) in
   0
 
 let emit_x86_i_heap_rest(st, insn) =
