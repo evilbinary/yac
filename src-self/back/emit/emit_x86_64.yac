@@ -2,7 +2,7 @@ package back.emit.emit_x86_64
 export emit_program, emit_program_x86_64
 import rt.os {host_os}
 import lib.log {log_fatal}
-import back.emit.emit {relocs_add, icall_args, apply_patch, apply_u64, cimport_buf, cimport_got, cimport_index, cimport_names, cimport_reset, cimport_win_need, clos_bytes, asm_dump_get, asm_dump_set, asm_dump_cells, asm_dump_procs, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jit_blob, emit_jit_blob_set, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_is_pe, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, funsz_get, funsz_set, gref_base, cabi_skip, fun_is_raw, tcall_raw_of, tcall_tab_set, prof_hook_fix, gref_alloc, gref_reset, gref_count, gref_names, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, emit_funs_loop, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set}
+import back.emit.emit {relocs_add, icall_args, apply_patch, apply_u64, cimport_buf, cimport_got, cimport_index, cimport_names, cimport_reset, cimport_win_need, clos_bytes, asm_dump_get, asm_dump_set, asm_dump_cells, asm_dump_procs, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, emit_glob_data, emit_host_win, emit_ids_new, emit_jit_blob, emit_jit_blob_set, emit_jsess, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_rel, emit_patch_strlit, emit_is_pe, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, funsz_get, funsz_set, gref_base, cabi_skip, fun_is_raw, tcall_raw_of, tcall_tab_set, prof_hook_fix, gref_alloc, gref_reset, gref_count, gref_names, host_id, host_names, extsym_find, extsym_n, is_arith, is_frame_op, is_raw_op, emit_funs_loop, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_set, emit_reg, emit_insn_disp}
 import back.emit.emit_cabi {emit_cabi_all}
 import back.emit.linux_x86_64 {call_rbx_user, call_user, cc_of, emit_load_rax_slot, emit_load_rbx_slot, emit_load_rdi_slot, emit_obj_load_argreg, emit_obj_load_rax, emit_obj_store_rdi, emit_store_param, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_unalign, emit_x86_c_untag, linux_begin, linux_cc_marshal, linux_ccall_patch, linux_clock, linux_entry, linux_exit, linux_finish, linux_num_syscall, linux_syscall, linux_write1}
 import back.emit.win_x86_64 {win_begin, win_cc_marshal, win_ccall_patch, win_clock, win_entry, win_exit, win_finish, win_num_syscall, win_syscall, win_write1}
@@ -1418,17 +1418,16 @@ let x86_op_mset8(st, insn) =
   let _ = mov_rax_rbx(b) in
   let _ = mov_rax_rdx_dil(b) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
-let x86_iheap_opmap =
-  let m = fmap_new64(0) in
-  let _ = fmap_put(m, "mref", x86_op_mref) in
-  let _ = fmap_put(m, "mset", x86_op_mset) in
-  let _ = fmap_put(m, "tag", x86_op_tag) in
-  let _ = fmap_put(m, "is_int", x86_op_is_int) in
-  let _ = fmap_put(m, "obj_sti", x86_op_obj_sti) in
-  let _ = fmap_put(m, "obj_st_int", x86_op_obj_st_int) in
-  let _ = fmap_put(m, "mref8", x86_op_mref8) in
-  let _ = fmap_put(m, "mset8", x86_op_mset8) in
-  m
+let x86_reg_ops =
+  let _ = emit_reg("x86_64", "mref", x86_op_mref) in
+  let _ = emit_reg("x86_64", "mset", x86_op_mset) in
+  let _ = emit_reg("x86_64", "tag", x86_op_tag) in
+  let _ = emit_reg("x86_64", "is_int", x86_op_is_int) in
+  let _ = emit_reg("x86_64", "obj_sti", x86_op_obj_sti) in
+  let _ = emit_reg("x86_64", "obj_st_int", x86_op_obj_st_int) in
+  let _ = emit_reg("x86_64", "mref8", x86_op_mref8) in
+  let _ = emit_reg("x86_64", "mset8", x86_op_mset8) in
+  0
 
 let emit_x86_i_heap_rest(st, insn) =
   let b = nth(st, 0) in
@@ -1554,7 +1553,7 @@ let emit_x86_i_heap_rest(st, insn) =
   else st
 
 let emit_x86_i_heap(st, insn) =
-  let r = emit_op_dispatch(st, insn, x86_iheap_opmap) in
+  let r = emit_insn_disp(st, insn) in
   if r != 0 then r else emit_x86_i_heap_rest(st, insn)
 
 /* capRef closure call (LIR.md 4.4.4): object -> rdi, params -> rsi.. (5

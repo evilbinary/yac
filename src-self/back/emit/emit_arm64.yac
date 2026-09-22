@@ -6,7 +6,7 @@ package back.emit.emit_arm64
 export emit_program_arm64, a64_resolve_loop
 import back.encode.encode_arm64
 import lib.log {log_fatal}
-import back.emit.emit {icall_args, apply_u64, asm_dump_cells, asm_dump_get, asm_dump_procs, asm_dump_set, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, fun_is_raw, emit_funs_loop, no_skip, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tcall_raw_of, tcall_tab_set, prof_hook_fix, tco_lab, yjit_layout_set}
+import back.emit.emit {icall_args, apply_u64, asm_dump_cells, asm_dump_get, asm_dump_procs, asm_dump_set, cimport_buf, cimport_reset, clos_bytes, emit_abi_win_set, emit_cplt_a64, emit_fmt_set, emit_glob_data, emit_ids_new, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_rel, emit_patch_strlit, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, emit_unres_set, gref_alloc, gref_base, host_id, host_slot_bake, host_unstub_procs, is_arith, is_frame_op, is_raw_op, fun_is_raw, emit_funs_loop, no_skip, label_put, patches_extend, strlit_bytes, strlit_off, strlit_pool_reset, tcall_raw_of, tcall_tab_set, prof_hook_fix, tco_lab, yjit_layout_set, emit_reg, emit_insn_disp}
 import back.emit.emit_cabi {dlib_a64_va, emit_cabi_all}
 import back.pack.elf {elf_pic, funsym_set}
 import back.pack.target {JIT_VADDR}
@@ -1245,17 +1245,17 @@ let a64_op_mset8(st, insn) =
   let _ = a64_add_reg(b, 0, 0, 2) in
   let _ = a64_strb(b, 1, 0) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
-let a64_iheap_opmap =
-  let m = fmap_new64(0) in
-  let _ = fmap_put(m, "mref", a64_op_mref) in
-  let _ = fmap_put(m, "mset", a64_op_mset) in
-  let _ = fmap_put(m, "tag", a64_op_tag) in
-  let _ = fmap_put(m, "is_int", a64_op_is_int) in
-  let _ = fmap_put(m, "obj_sti", a64_op_obj_sti) in
-  let _ = fmap_put(m, "obj_st_int", a64_op_obj_st_int) in
-  let _ = fmap_put(m, "mref8", a64_op_mref8) in
-  let _ = fmap_put(m, "mset8", a64_op_mset8) in
-  m
+/* Register each op into the shared table (emit.yac) at package load. */
+let a64_reg_ops =
+  let _ = emit_reg("arm64", "mref", a64_op_mref) in
+  let _ = emit_reg("arm64", "mset", a64_op_mset) in
+  let _ = emit_reg("arm64", "tag", a64_op_tag) in
+  let _ = emit_reg("arm64", "is_int", a64_op_is_int) in
+  let _ = emit_reg("arm64", "obj_sti", a64_op_obj_sti) in
+  let _ = emit_reg("arm64", "obj_st_int", a64_op_obj_st_int) in
+  let _ = emit_reg("arm64", "mref8", a64_op_mref8) in
+  let _ = emit_reg("arm64", "mset8", a64_op_mset8) in
+  0
 
 let emit_a64_i_heap_rest(st, insn) =
   let b = nth(st, 0) in
@@ -1474,7 +1474,7 @@ let emit_a64_i_heap_rest(st, insn) =
   else st
 
 let emit_a64_i_heap(st, insn) =
-  let r = emit_op_dispatch(st, insn, a64_iheap_opmap) in
+  let r = emit_insn_disp(st, insn) in
   if r != 0 then r else emit_a64_i_heap_rest(st, insn)
 
 let emit_a64_i_clos(st, insn, is_entry) =

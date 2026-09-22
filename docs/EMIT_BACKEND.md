@@ -80,80 +80,90 @@ ABI、帧/立即数规则**。
 
 ---
 
-## 3. 分层与分派
+## 3. 框架：共享 dispatch + arch opmap（已落地模式）
+
+实测（2026-09）确定：**`opmap`（name → op 函数）+ 共享 dispatch** 比"高阶参数传分类
+函数"更省、更稳，且**不需要统一各 arch 的 patch 表示**（patch 格式封在 op 内部，
+骨架不碰）。已落地：
 
 ```
-back/emit/emit.yac                       公共骨架（新）
-  ├─ emit_insn_go(t, st, insn, is_entry, is_raw)     分类 dispatch（表 §2）
-  ├─ emit_i_core / emit_i_heap / emit_i_memcpy /
-  │  emit_i_cc / emit_i_clos / emit_i_apply /
-  │  emit_i_call / emit_i_sys / emit_i_raw / emit_i_prim
-  └─ emit_program_common(t, prog, load_vaddr, text_off, fmt,
-                         op_begin, op_insn, op_resolve)
-                                      ↑ 函数参数（高阶）
-back/emit/op_x86_64.yac                  原语实现
-back/emit/op_arm64.yac
-back/emit/op_arm32.yac
+back/emit/emit.yac（共享）
+  ├─ emit_op_dispatch(st, insn, opmap) -> st | 0
+  │      = (fmap_get(opmap, nth(insn,0)))(st, insn)    # 整条 `if k==...` 链只此一处
+  ├─ emit_i_core_base(st, insn, is_entry, ops)         # core 子集（三后端共用）
+  ├─ emit_funs_loop(funs, entry, T, op_insn, op_resolve, op_skip)
+  └─ 其余 helpers（apply/reloc/ids/patch/gref/strlit/…）
+
+back/emit/emit_{x86_64,arm64,riscv64,arm32}.yac（arch）
+  ├─ <arch>_op_<name>(st, insn) -> st      # 每条 LIR op 一个函数
+  ├─ <arch>_opmap                          # 顶层 fmap：name -> op fn（构建一次）
+  └─ emit_program_<arch> / emit_insn_<arch># 逐步瘦身为 emit_op_dispatch(...)
 ```
 
-- **分派**：arch 自己的 `emit_program_xxx` 只做"设置 + 调 common"，把
-  `op_begin`（`win_begin`/`linux_begin`）、`op_insn`（`emit_*_i_*` 的 arch 半边）、
-  `op_resolve`（`resolve_local_labels`/`a64_resolve_fun_patches`）作为**参数**传给
-  `emit_program_common`。**不用全局 box 回调**（历史不稳定）。
-- `emit.yac` **不 import** arch，避免循环 import。
+- **op 粒度 = 每条 LIR op**（`op_mov_imm`/`op_mref`/…），签名统一 `(st, insn)`。
+- **分派唯一**：`emit_op_dispatch` 是唯一的 `if k==...`；arch 不再重复分派链。
+- **arch 特判**：x86 独有的 `$bt/$smap/$sp…` 也**注册进 opmap**（实现放 arch）——
+  共享骨架只是没有它们的默认实现，分派仍然统一。
+- **未注册 → 0**：迁移期 arch 用 `<arch>_opmap` 命中即返回，未命中落到自己的
+  `*_rest`；逐条搬走后 rest 清空，最终 `emit_insn = emit_op_dispatch`。
+- **ctx**：需要 `is_entry/is_raw` 的 op（`local/ret/tcall/exit`）从 `st` 取——`st`
+  扩展为 `[b, cur, labels, patches, ids, ctx]`，`ctx = [is_entry, is_raw]`。
+- `emit.yac` **不 import** arch（循环 import 会崩，§1.1）；`opmap` 由 arch 顶层构建，
+  作为参数传入。
 
 ---
 
-## 4. `op_*` 接口（约 40 个）
+## 4. op 表（`name → 实现`）
 
-```
-A 帧     : op_local(op, nslots, nparams, selfabi)
-B 数据   : op_mov_imm(op, rd, v)      op_mov(op, rd, rs)
-           op_arith(op, k, d, a, b)   # k = add/sub/mul/div/rem/land/lor/xor/shl/shr
-           op_bnot(op, rd, rs)  op_cmp(op, ra, rb)  op_icmp(op, cond, d, a, b)
-           op_label(op, id)  op_jmp(op, id)  op_jcc(op, cond, id)
-           op_cmpjmp(op, cond, ra, rb, id)
-B' 调用  : op_arg(op, i, opnd)  op_self_set(op, opnd)
-           op_call_direct(op, name, patch)  op_call_reg(op, reg)
-           op_ret(op)  op_exit(op, reg)
-C raw    : op_st8 op_ld8 op_st64 op_ld64 op_shr op_or op_and op_addi op_clamp0
-           op_glob op_gbase op_smap op_sp op_fp op_jcc_raw op_memset op_carg
-D 对象   : op_kind(op, d, rs)  op_load_word(op, d, base, off)
-           op_store_word(op, base, off, rs)  op_load_u8/op_store_u8
-           op_tag(op, rd)  op_untag_ptr(op, rd)
-           op_alloc(op, d, nbytes)  op_alloc_s(op, d, nbytes)
-           op_obj_sti(op, base, off, slot)  op_glob(op, d, off)
-           op_time/op_clock/op_argc/op_argv
-E 闭包   : op_closure(op, d, code, caps…)     # 复用 op_alloc/op_store
-F        : op_memcpy(op, dst, src, len)
-G        : op_mkcont/op_throwk/op_cc_recv
-H        : op_untag(op, rd)  op_syscall(op, nr, args)
-I prim   : op_prim(op, name, args)            # 可选
-```
+每条 LIR op 一个 arch 函数 `(st, insn) -> st`；`st = [b, cur, labels, patches, ids, ctx]`。
+op 函数体 = 原 arch 的该 `case` 体：`let b = nth(st, 0) in` … 末尾
+`emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))`。arch 顶层把 `name → fn` 注册进
+`<arch>_opmap`（`fmap`，构建一次）。
 
-寄存器抽象：逻辑名 `T0/T1/…`、`ARG0..`、`SELF`、`SP/FP/LR/PC`，arch 提供映射。
-**3-操作数语义**（`op_add(d,a,b)`），x86 在 `op_*` 内部补 `mov`（必要时 spill 到槽）。
+**已迁移**（注册进 opmap）：
+
+| 组 | op | 后端 |
+| --- | --- | --- |
+| core 数据/控制 | `mov_imm mov` + arith(`add sub mul div rem land lor xor bnot shl shr`) + `icmp label jmp cmpjmp` | x86/arm64/riscv（`emit_i_core_base`） |
+| heap 访存 | `mref mset tag is_int obj_sti obj_st_int mref8 mset8` | arm64/x86（riscv 待） |
+
+**待迁移**（仍在各 arch 的 `*_rest`）：
+
+| 类 | op | 说明 |
+| --- | --- | --- |
+| A 帧 | `local $local` | 需 ctx（is_entry/is_raw）+ 帧/ABI |
+| B core 余 | `cmp` | 通用值比较（含字符串，arch 差异大） |
+| B' 调用 | `fcall ycall ccall iccall tcall` | 形态共享，寄存器/ABI 各异 |
+| B'' | `ret exit` | 需 ctx |
+| C raw | `$and $add $addi … $icall $f64*` | 逐 op；arch 特有（`$bt/$smap/$sp/$fp`）也进 opmap |
+| D 余 | `kind alloc alloc_s ld64 st64 write1 clock glob gst time_ms time_str argc argv` | `kind` 有分支；`glob/gst/gvar/gval/gset` 的 tag 协议封在 op 内 |
+| E | `closure icall` | 复用 alloc/store |
+| F | `memcpy` | |
+| G | `mkcont throwk cc_recv` | |
+| H | `untag syscall` | |
+| I | prim 兜底 | |
+
+寄存器抽象：op **内部自行用 arch 物理寄存器**（arm64 x0/x1/x2、x86 rax/rbx/rdi…）；
+共享骨架不引入逻辑寄存器。唯一例外是 `emit_i_core_base`——它用逻辑 `T0/T1`，由各
+arch 的 `*_ops` 映射（x86 T0=rax/T1=rbx，arm64 T0=x0/T1=x1，riscv T0=t1/T1=t3）。
 
 ---
 
 ## 5. 抽取顺序（按语义固定度 / 风险）
 
-1. ✅ **共享 `emit_funs_loop`（`emit_fun` 循环）已落地**（2026-09）：
-   `emit.yac` 的 `emit_funs_loop(funs, entry, T, op_insn, op_resolve, op_skip)` 接
-   函数参数——x86_64 传 `emit_insn/resolve_local_labels/x86_skipat`，arm64/riscv 传
-   `emit_insn_a64|rv / a64|rv_resolve_fun_patches / no_skip`（T=0）。三后端的
-   `emit_program_*` 已改调它。验收：`make yc` 两趟自举 + `test-compiler` 201/0 +
-   `test-iso` 321/0。**这同时证明了高阶参数在自举下可用**（§8.1）。
-   （`emit_program` 的其余段——begin / globals / host bake / resolve loop / cabi——
-   仍在各 arch，是下一步。）
-2. **D 对象/堆**（`kind/mref/mset/tag/is_int`）——语义最固定、指令最简单。
-3. **F memcpy / G cc / E closure·apply**。
-4. **A 帧** `op_local`。
-5. **B 数据/控制**（x86 2-操作数吸收最麻烦，留后）。
-6. **B' 调用**（寄存器/ABI 最复杂）。
-7. **C raw**（逐 op；arch 特有可只在对应 arch 实现，其它 arch stub）。
+1. ✅ **`emit_funs_loop`**（prog 函数循环）— 三后端（2026-09）。
+2. ✅ **`emit_i_core_base`**（core 数据/控制）— 三后端。
+3. ✅ **`emit_op_dispatch` + heap 访存 op** — arm64/x86。
+4. ⏳ **riscv heap 访存 op**（照 arm64/x86 补 `rv_op_*` + `rv_iheap_opmap`）。
+5. ⏳ **D 余**（`kind/alloc/alloc_s/ld64/st64/glob/gst/gvar/gval/gset/write1/clock/…`）——
+   tag 协议封进 op，骨架不碰。
+6. ⏳ **F memcpy / G cc / E closure·apply**。
+7. ⏳ **A 帧 `local`**（需 ctx）。
+8. ⏳ **B' 调用**（`fcall/ycall/ccall/iccall/tcall`）。
+9. ⏳ **B'' ret/exit、C raw 逐 op**；清空各 arch 的 `*_rest`。
 
-每步验收：`make test`（compiler/interp/pkg/boot/iso）全绿 + 自举通过。
+每步验收：`make yc`（两趟自举）+ `make test-compiler` + `make test-iso` 全绿后 commit。
+发射字节变化以**测试**为准（§1.4）。
 
 ---
 
