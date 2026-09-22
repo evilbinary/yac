@@ -1342,6 +1342,73 @@ let rv_cop_argv(st, insn) =
   let _ = rv_slot(b, nth(insn, 1), true, 10) in
   emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, "yac_argv"))
 
+let rv_cop_ld64(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = rv_slot(b, nth(insn, 2), false, 10) in
+  let _ = rv_addi(b, 6, 0, 0 - 2) in
+  let _ = rv_and(b, 10, 10, 6) in
+  let _ = rv_slot(b, nth(insn, 3), false, 11) in
+  let _ = rv_addi(b, 7, 0, 1) in
+  let _ = rv_sra(b, 11, 11, 7) in
+  let _ = rv_add(b, 10, 10, 11) in
+  let _ = rv_ld(b, 10, 10, 0) in
+  let _ = rv_slot(b, nth(insn, 1), true, 10) in
+  emit_st4(st, b, cur, labels, patches)
+let rv_cop_st64(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = rv_slot(b, nth(insn, 3), false, 12) in
+  let _ = rv_slot(b, nth(insn, 1), false, 10) in
+  let _ = rv_addi(b, 6, 0, 0 - 2) in
+  let _ = rv_and(b, 10, 10, 6) in
+  let _ = rv_slot(b, nth(insn, 2), false, 11) in
+  let _ = rv_addi(b, 7, 0, 1) in
+  let _ = rv_sra(b, 11, 11, 7) in
+  let _ = rv_add(b, 10, 10, 11) in
+  let _ = rv_sd(b, 12, 10, 0) in
+  emit_st4(st, b, cur, labels, patches)
+let rv_cop_write1(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = rv_slot(b, nth(insn, 1), false, 6) in
+  let _ = rv_addi(b, 7, 0, 1) in
+  let _ = rv_sra(b, 6, 6, 7) in
+  let _ = rv_addi(b, 2, 2, 0 - 16) in
+  let _ = rv_sb(b, 6, 2, 0) in
+  let _ = rv_addi(b, 10, 0, 1) in
+  let _ = rv_addi(b, 11, 2, 0) in
+  let _ = rv_addi(b, 12, 0, 1) in
+  let _ = rv_addi(b, 17, 0, 64) in
+  let _ = rv_ecall(b) in
+  let _ = rv_addi(b, 2, 2, 16) in
+  emit_st4(st, b, cur, labels, patches)
+let rv_cop_clock(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = rv_addi(b, 2, 2, 0 - 16) in
+  let _ = rv_addi(b, 10, 0, nth(insn, 3)) in
+  let _ = rv_addi(b, 11, 2, 0) in
+  let _ = rv_addi(b, 17, 0, 113) in
+  let _ = rv_ecall(b) in
+  let _ = rv_ld(b, 6, 2, 0) in
+  let _ = rv_addi(b, 7, 0, 1) in
+  let _ = rv_sll(b, 6, 6, 7) in
+  let _ = rv_slot(b, nth(insn, 1), true, 6) in
+  let _ = rv_ld(b, 6, 2, 8) in
+  let _ = rv_sll(b, 6, 6, 7) in
+  let _ = rv_slot(b, nth(insn, 2), true, 6) in
+  let _ = rv_addi(b, 2, 2, 16) in
+  emit_st4(st, b, cur, labels, patches)
+
 let rv_reg_ops =
   let _ = emit_reg("riscv64", "mref", rv_op_mref) in
   let _ = emit_reg("riscv64", "mset", rv_op_mset) in
@@ -1353,6 +1420,10 @@ let rv_reg_ops =
   let _ = emit_reg("riscv64", "time_ms", rv_cop_time_ms) in
   let _ = emit_reg("riscv64", "time_str", rv_cop_time_str) in
   let _ = emit_reg("riscv64", "argv", rv_cop_argv) in
+  let _ = emit_reg("riscv64", "ld64", rv_cop_ld64) in
+  let _ = emit_reg("riscv64", "st64", rv_cop_st64) in
+  let _ = emit_reg("riscv64", "write1", rv_cop_write1) in
+  let _ = emit_reg("riscv64", "clock", rv_cop_clock) in
   let _ = emit_reg("riscv64", "obj_sti", rv_op_obj_sti) in
   let _ = emit_reg("riscv64", "obj_st_int", rv_op_obj_st_int) in
   let _ = emit_reg("riscv64", "mref8", rv_op_mref8) in
@@ -1442,56 +1513,6 @@ let emit_rv_i_heap_rest(st, insn) =
     let l_done = bytes_len(b) in
     let _ = rv_patch_b(b, j_done, l_done) in
     let _ = rv_patch_b(b, j_done2, l_done) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "ld64" then
-    let _ = rv_slot(b, nth(insn, 2), false, 10) in
-    let _ = rv_addi(b, 6, 0, 0 - 2) in
-    let _ = rv_and(b, 10, 10, 6) in
-    let _ = rv_slot(b, nth(insn, 3), false, 11) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sra(b, 11, 11, 7) in
-    let _ = rv_add(b, 10, 10, 11) in
-    let _ = rv_ld(b, 10, 10, 0) in
-    let _ = rv_slot(b, nth(insn, 1), true, 10) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "st64" then
-    let _ = rv_slot(b, nth(insn, 3), false, 12) in
-    let _ = rv_slot(b, nth(insn, 1), false, 10) in
-    let _ = rv_addi(b, 6, 0, 0 - 2) in
-    let _ = rv_and(b, 10, 10, 6) in
-    let _ = rv_slot(b, nth(insn, 2), false, 11) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sra(b, 11, 11, 7) in
-    let _ = rv_add(b, 10, 10, 11) in
-    let _ = rv_sd(b, 12, 10, 0) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "write1" then
-    let _ = rv_slot(b, nth(insn, 1), false, 6) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sra(b, 6, 6, 7) in
-    let _ = rv_addi(b, 2, 2, 0 - 16) in
-    let _ = rv_sb(b, 6, 2, 0) in
-    let _ = rv_addi(b, 10, 0, 1) in
-    let _ = rv_addi(b, 11, 2, 0) in
-    let _ = rv_addi(b, 12, 0, 1) in
-    let _ = rv_addi(b, 17, 0, 64) in
-    let _ = rv_ecall(b) in
-    let _ = rv_addi(b, 2, 2, 16) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "clock" then
-    let _ = rv_addi(b, 2, 2, 0 - 16) in
-    let _ = rv_addi(b, 10, 0, nth(insn, 3)) in
-    let _ = rv_addi(b, 11, 2, 0) in
-    let _ = rv_addi(b, 17, 0, 113) in
-    let _ = rv_ecall(b) in
-    let _ = rv_ld(b, 6, 2, 0) in
-    let _ = rv_addi(b, 7, 0, 1) in
-    let _ = rv_sll(b, 6, 6, 7) in
-    let _ = rv_slot(b, nth(insn, 1), true, 6) in
-    let _ = rv_ld(b, 6, 2, 8) in
-    let _ = rv_sll(b, 6, 6, 7) in
-    let _ = rv_slot(b, nth(insn, 2), true, 6) in
-    let _ = rv_addi(b, 2, 2, 16) in
     emit_st4(st, b, cur, labels, patches)
   else if k == "gvar" then
     /* Flat function value: stub closure [0, 0, entry, 0] in the globals area;

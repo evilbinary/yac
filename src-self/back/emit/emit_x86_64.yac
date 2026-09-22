@@ -1489,6 +1489,42 @@ let x86_cop_alloc_s(st, insn) =
   let _ = emit_store_rax_slot(b, nth(insn, 1)) in
   emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall + 1, "yac_alloc"))
 
+let x86_cop_ld64(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rbx_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+  let _ = mov_rdx_rax(b) in
+  let _ = sar_rdx_1(b) in
+  let _ = mov_rax_rbx(b) in
+  let _ = mov_rax_mem_rax_rdx(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, cur, labels, patches)
+let x86_cop_st64(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rbx_rax(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = mov_rdx_rax(b) in
+  let _ = sar_rdx_1(b) in
+  let _ = emit_load_rax_slot(b, nth(insn, 3)) in
+  let _ = mov_mem_rbx_rdx_rax(b) in
+  emit_st4(st, b, cur, labels, patches)
+let x86_cop_write1(st, insn) =
+  if emit_host_win(0) then win_write1(st, insn)
+  else linux_write1(st, insn)
+let x86_cop_clock(st, insn) =
+  if emit_host_win(0) then win_clock(st, insn)
+  else linux_clock(st, insn)
+
 let x86_reg_ops =
   let _ = emit_reg("x86_64", "mref", x86_op_mref) in
   let _ = emit_reg("x86_64", "mset", x86_op_mset) in
@@ -1496,6 +1532,10 @@ let x86_reg_ops =
   let _ = emit_reg("x86_64", "is_int", x86_op_is_int) in
   let _ = emit_reg("x86_64", "alloc", x86_cop_alloc) in
   let _ = emit_reg("x86_64", "alloc_s", x86_cop_alloc_s) in
+  let _ = emit_reg("x86_64", "ld64", x86_cop_ld64) in
+  let _ = emit_reg("x86_64", "st64", x86_cop_st64) in
+  let _ = emit_reg("x86_64", "write1", x86_cop_write1) in
+  let _ = emit_reg("x86_64", "clock", x86_cop_clock) in
   let _ = emit_reg("x86_64", "obj_sti", x86_op_obj_sti) in
   let _ = emit_reg("x86_64", "obj_st_int", x86_op_obj_st_int) in
   let _ = emit_reg("x86_64", "mref8", x86_op_mref8) in
@@ -1586,33 +1626,6 @@ let emit_x86_i_heap_rest(st, insn) =
     let _ = apply_patch(b, j_done, l_done) in
     let _ = apply_patch(b, j_done2, l_done) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "ld64" then
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rbx_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-    let _ = mov_rdx_rax(b) in
-    let _ = sar_rdx_1(b) in
-    let _ = mov_rax_rbx(b) in
-    let _ = mov_rax_mem_rax_rdx(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "st64" then
-    let _ = emit_load_rax_slot(b, nth(insn, 1)) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rbx_rax(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = mov_rdx_rax(b) in
-    let _ = sar_rdx_1(b) in
-    let _ = emit_load_rax_slot(b, nth(insn, 3)) in
-    let _ = mov_mem_rbx_rdx_rax(b) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "write1" then
-    if emit_host_win(0) then win_write1(st, insn)
-    else linux_write1(st, insn)
-  else if k == "clock" then
-    if emit_host_win(0) then win_clock(st, insn)
-    else linux_clock(st, insn)
   else if k == "glob" then
     let which = nth(insn, 2) in
     let _ = mov_rax_imm64(b, 0) in
