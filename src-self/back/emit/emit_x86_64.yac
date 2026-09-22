@@ -1116,7 +1116,7 @@ let emit_x86_i_f64(st, insn) =
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, ps3)
 
-let emit_x86_i_raw(st, insn) =
+let emit_x86_i_raw_rest(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
   let labels = nth(st, 2) in
@@ -1296,100 +1296,12 @@ let emit_x86_i_raw(st, insn) =
     let _ = call_rbx_user(b) in
     let _ = emit_store_rax_slot(b, nth(insn, 1)) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "gvar" then
-
-    /* Flat function value (12.14): a static stub closure [0, 0, entry, 0]
-     * in the image's globals area, one per referenced name (32 bytes).
-     * AOT bakes entry via abs64; blob's jit layer fills it from the host's
-     * name-keyed table. Value = the stub's address (tagged), so icall's
-     * standard nenv=0 expansion calls entry with the plain args.
-     * Order matters: movabs placeholder FIRST, then tag it, then the or1 +
-     * store run after the resolver has filled the immediate. */
-    let goff = gref_base(0) + bshl(gref_alloc(nth(insn, 2)), 5) in
-    let _ = mov_rax_imm64(b, 0) in
-    let gpat = bytes_len(b) - 8 in
-    if emit_jit_blob(0) then
-      let ps1 = cons([22, gpat, goff], patches) in
-      let _ = or_rax_1(b) in
-      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-      emit_st4(st, b, cur, labels, ps1)
-    else
-      let nm = nth(insn, 2) in
-      let fid = emit_map_get(nth(st, 4), nm) in
-      /* A miss used to bake offs[0] -- the image's FIRST procedure -- with no
-       * error at all, so a call through this stub jumped into unrelated code.
-       * Fail loudly instead (LIR.md 9.1: no silent fallbacks). */
-      let _ =
-        if fid == 0 then
-          log_fatal(str_cat("emit: gvar: no such procedure '", str_cat(nm, "'")))
-        else 0 in
-      /* Two patches: tag22 fills the movabs imm with the stub cell address
-       * (globbase+goff); tag23 bakes the stub's ENTRY field [cell+16] =
-       * codebase+offs[fid] directly into the globals data. */
-      let ps1 = cons([22, gpat, goff], patches) in
-      let ps2 = cons([23, fid, goff], ps1) in
-      let _ = or_rax_1(b) in
-      let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-      emit_st4(st, b, cur, labels, ps2)
-  else if k == "gval" then
-    /* Read a top-level value: load [cell + 0], where cell is the name's
-     * 32-byte unit in the globals area (value at +0, function stub entry at
-     * +16). `gset` filled it -- baked at link time for a literal, written in
-     * source order otherwise. A blob's slots for foreign values are patched
-     * to the host's same cell (FLAT_ABI.md 2.4). */
-    let goff = gref_base(0) + bshl(gref_alloc(nth(insn, 2)), 5) in
-    let _ = mov_rax_imm64(b, 0) in
-    let gpat = bytes_len(b) - 8 in
-    let ps1 = cons([22, gpat, goff], patches) in
-    let _ = mov_rax_mem_rax(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, ps1)
-  else if k == "gset" then
-    /* Target name-unit write: ["gset", name, off, src] (LIR.md 4.5).
-     * off = 0 is the value, off = 16 the function entry.
-     *
-     * An IMMEDIATE source is BAKED into the cell's data at link time: zero
-     * runtime action, and that is the common case for a top-level `let`
-     * (FLAT_ABI.md 2.2 row 1). A blob cannot bake into the host's cell
-     * (that cell is the host's, reached through a patch slot), so it stores
-     * at run time instead.
-     *
-     * A non-immediate source is stored at run time and published via
-     * yac_gval_pub so the cell counts as a GC root (FLAT_ABI.md 2.3). */
-    let nm = nth(insn, 1) in
-    let off = nth(insn, 2) in
-    let src = nth(insn, 3) in
-    let goff = gref_base(0) + bshl(gref_alloc(nm), 5) + off in
-    if nth(src, 0) == "imm" and not emit_jit_blob(0) then
-      emit_st4(st, b, cur, labels, cons([24, goff, nth(src, 1)], patches))
-    else
-      let _ = mov_r64_imm64(b, 3, 0) in
-      let gpat = bytes_len(b) - 8 in
-      let ps1 = cons([22, gpat, goff], patches) in
-      let _ =
-        if nth(src, 0) == "imm" then mov_rax_imm64(b, nth(src, 1))
-        else emit_load_rax_slot(b, src) in
-      let _ = mov_mem_rbx_disp32_rax(b, 0) in
-      let st1 = emit_st4(st, b, cur, labels, ps1) in
-      if emit_jit_blob(0) then st1
-      else
-        let b1 = nth(st1, 0) in
-        let _ = mov_rax_imm64(b1, 0) in
-        let spos = bytes_len(b1) - 8 in
-        let _ = mov_rdi_rax(b1) in
-        let _ =
-          if nth(src, 0) == "imm" then
-            let _ = mov_rax_imm64(b1, nth(src, 1)) in mov_rsi_rax(b1)
-          else
-            let _ = emit_load_rax_slot(b1, src) in mov_rsi_rax(b1) in
-        let acall = bytes_len(b1) in
-        let _ = call_user(b1) in
-        emit_st4(st1, b1, nth(st1, 1), nth(st1, 2),
-          emit_patch_rel(nth(st1, 4),
-            emit_patch_strlit(nth(st1, 3), spos, strlit_off(nm)),
-            acall + 1, "yac_gval_pub"))
   else if emit_host_win(0) then win_syscall(st, insn)
   else linux_syscall(st, insn)
+
+let emit_x86_i_raw(st, insn) =
+  let r = emit_insn_disp(st, insn) in
+  if r != 0 then r else emit_x86_i_raw_rest(st, insn)
 
 /* i_heap ops registered in x86_iheap_opmap and dispatched from emit.yac. */
 let x86_op_mref(st, insn) =
@@ -1525,6 +1437,111 @@ let x86_cop_clock(st, insn) =
   if emit_host_win(0) then win_clock(st, insn)
   else linux_clock(st, insn)
 
+let x86_cop_gvar(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let goff = gref_base(0) + bshl(gref_alloc(nth(insn, 2)), 5) in
+  let _ = mov_rax_imm64(b, 0) in
+  let gpat = bytes_len(b) - 8 in
+  if emit_jit_blob(0) then
+    let ps1 = cons([22, gpat, goff], patches) in
+    let _ = or_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, ps1)
+  else
+    let nm = nth(insn, 2) in
+    let fid = emit_map_get(nth(st, 4), nm) in
+    let _ =
+      if fid == 0 then
+        log_fatal(str_cat("emit: gvar: no such procedure '", str_cat(nm, "'")))
+      else 0 in
+    let ps1 = cons([22, gpat, goff], patches) in
+    let ps2 = cons([23, fid, goff], ps1) in
+    let _ = or_rax_1(b) in
+    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+    emit_st4(st, b, cur, labels, ps2)
+let x86_cop_gval(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let goff = gref_base(0) + bshl(gref_alloc(nth(insn, 2)), 5) in
+  let _ = mov_rax_imm64(b, 0) in
+  let gpat = bytes_len(b) - 8 in
+  let ps1 = cons([22, gpat, goff], patches) in
+  let _ = mov_rax_mem_rax(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, cur, labels, ps1)
+let x86_cop_gset(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let nm = nth(insn, 1) in
+  let off = nth(insn, 2) in
+  let src = nth(insn, 3) in
+  let goff = gref_base(0) + bshl(gref_alloc(nm), 5) + off in
+  if nth(src, 0) == "imm" and not emit_jit_blob(0) then
+    emit_st4(st, b, cur, labels, cons([24, goff, nth(src, 1)], patches))
+  else
+    let _ = mov_r64_imm64(b, 3, 0) in
+    let gpat = bytes_len(b) - 8 in
+    let ps1 = cons([22, gpat, goff], patches) in
+    let _ =
+      if nth(src, 0) == "imm" then mov_rax_imm64(b, nth(src, 1))
+      else emit_load_rax_slot(b, src) in
+    let _ = mov_mem_rbx_disp32_rax(b, 0) in
+    let st1 = emit_st4(st, b, cur, labels, ps1) in
+    if emit_jit_blob(0) then st1
+    else
+      let b1 = nth(st1, 0) in
+      let _ = mov_rax_imm64(b1, 0) in
+      let spos = bytes_len(b1) - 8 in
+      let _ = mov_rdi_rax(b1) in
+      let _ =
+        if nth(src, 0) == "imm" then
+          let _ = mov_rax_imm64(b1, nth(src, 1)) in mov_rsi_rax(b1)
+        else
+          let _ = emit_load_rax_slot(b1, src) in mov_rsi_rax(b1) in
+      let acall = bytes_len(b1) in
+      let _ = call_user(b1) in
+      emit_st4(st1, b1, nth(st1, 1), nth(st1, 2),
+        emit_patch_rel(nth(st1, 4),
+          emit_patch_strlit(nth(st1, 3), spos, strlit_off(nm)),
+          acall + 1, "yac_gval_pub"))
+
+let x86_cop_glob(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let which = nth(insn, 2) in
+  let _ = mov_rax_imm64(b, 0) in
+  let gpat = bytes_len(b) - 8 in
+  let _ = mov_rax_mem_rax(b) in
+  let _ = if which == 3 then 0 else if which == 4 then 0 else shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  let gkind =
+    if which == 1 then 4
+    else if which == 2 then 5
+    else if which == 3 then 7
+    else 8 in
+  emit_st4(st, b, cur, labels, cons([gkind, gpat], patches))
+let x86_cop_gst(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let which = nth(insn, 1) in
+  let _ = mov_rax_imm64(b, 0) in
+  let gpat = bytes_len(b) - 8 in
+  let _ = emit_load_rdi_slot(b, nth(insn, 2)) in
+  let _ = mov_mem_rax_rdi(b) in
+  let gkind = if which == 3 then 7 else 8 in
+  emit_st4(st, b, cur, labels, cons([gkind, gpat], patches))
+
 let x86_reg_ops =
   let _ = emit_reg("x86_64", "mref", x86_op_mref) in
   let _ = emit_reg("x86_64", "mset", x86_op_mset) in
@@ -1536,6 +1553,11 @@ let x86_reg_ops =
   let _ = emit_reg("x86_64", "st64", x86_cop_st64) in
   let _ = emit_reg("x86_64", "write1", x86_cop_write1) in
   let _ = emit_reg("x86_64", "clock", x86_cop_clock) in
+  let _ = emit_reg("x86_64", "gvar", x86_cop_gvar) in
+  let _ = emit_reg("x86_64", "gval", x86_cop_gval) in
+  let _ = emit_reg("x86_64", "gset", x86_cop_gset) in
+  let _ = emit_reg("x86_64", "glob", x86_cop_glob) in
+  let _ = emit_reg("x86_64", "gst", x86_cop_gst) in
   let _ = emit_reg("x86_64", "obj_sti", x86_op_obj_sti) in
   let _ = emit_reg("x86_64", "obj_st_int", x86_op_obj_st_int) in
   let _ = emit_reg("x86_64", "mref8", x86_op_mref8) in
@@ -1626,27 +1648,6 @@ let emit_x86_i_heap_rest(st, insn) =
     let _ = apply_patch(b, j_done, l_done) in
     let _ = apply_patch(b, j_done2, l_done) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "glob" then
-    let which = nth(insn, 2) in
-    let _ = mov_rax_imm64(b, 0) in
-    let gpat = bytes_len(b) - 8 in
-    let _ = mov_rax_mem_rax(b) in
-    let _ = if which == 3 then 0 else if which == 4 then 0 else shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    let gkind =
-      if which == 1 then 4
-      else if which == 2 then 5
-      else if which == 3 then 7
-      else 8 in
-    emit_st4(st, b, cur, labels, cons([gkind, gpat], patches))
-  else if k == "gst" then
-    let which = nth(insn, 1) in
-    let _ = mov_rax_imm64(b, 0) in
-    let gpat = bytes_len(b) - 8 in
-    let _ = emit_load_rdi_slot(b, nth(insn, 2)) in
-    let _ = mov_mem_rax_rdi(b) in
-    let gkind = if which == 3 then 7 else 8 in
-    emit_st4(st, b, cur, labels, cons([gkind, gpat], patches))
   else st
 
 let emit_x86_i_heap(st, insn) =

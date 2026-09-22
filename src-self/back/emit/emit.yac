@@ -13,7 +13,7 @@ export asm_dump_get, asm_dump_set, asm_dump_procs, asm_dump_cells, relocs_get, r
 import back.pack.elf {elf_note_abs64}
 import rt.runtime {yac_cimport_host_sym}
 import back.pack.pe {pe_iat_off, pe_iat_qwords}
-import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
+import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern, fmap_new64}
 import back.encode.encode_arm64 {a64_adr, a64_br, a64_ldr}
 import back.encode.encode_riscv64 {rv_auipc, rv_jalr, rv_ld}
 import back.encode.encode_x64 {jmp_mem_rip}

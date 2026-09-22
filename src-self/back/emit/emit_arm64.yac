@@ -1423,6 +1423,90 @@ let a64_cop_clock(st, insn) =
   let _ = a64_add_imm(b, 31, 31, 16) in
   emit_st4(st, b, cur, labels, patches)
 
+let a64_cop_gvar(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let nm = nth(insn, 2) in
+  let goff = gref_base(0) + bshl(gref_alloc(nm), 5) in
+  let gpos = bytes_len(b) in
+  let _ = a64_mov_imm64(b, 0, 0) in
+  let fid = emit_map_get(nth(st, 4), nm) in
+  let _ =
+    if fid == 0 then
+      log_fatal(str_cat("emit: gvar: no such procedure '", str_cat(nm, "'")))
+    else 0 in
+  let _ = a64_tag(b, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, cur, labels,
+    cons([23, fid, goff], cons([12, gpos, goff], patches)))
+let a64_cop_gval(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let goff = gref_base(0) + bshl(gref_alloc(nth(insn, 2)), 5) in
+  let gpos = bytes_len(b) in
+  let _ = a64_mov_imm64(b, 0, 0) in
+  let _ = a64_ldur(b, 0, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, cur, labels, cons([12, gpos, goff], patches))
+let a64_cop_gset(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let nm = nth(insn, 1) in
+  let off = nth(insn, 2) in
+  let src = nth(insn, 3) in
+  let goff = gref_base(0) + bshl(gref_alloc(nm), 5) + off in
+  if nth(src, 0) == "imm" then
+    emit_st4(st, b, cur, labels, cons([24, goff, nth(src, 1)], patches))
+  else
+    let gpos = bytes_len(b) in
+    let _ = a64_mov_imm64(b, 0, 0) in
+    let _ = a64_slot(b, src, false, 1) in
+    let _ = a64_stur(b, 1, 0, 0) in
+    let npos = bytes_len(b) in
+    let _ = a64_mov_imm64(b, 0, 0) in
+    let _ = a64_slot(b, src, false, 1) in
+    let acall = bytes_len(b) in
+    let _ = a64_bl(b, 0) in
+    emit_st4(st, b, cur, labels,
+      emit_patch_rel(nth(st, 4),
+        emit_patch_strlit(cons([12, gpos, goff], patches), npos, strlit_off(nm)),
+        acall, "yac_gval_pub"))
+let a64_cop_glob(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let which = nth(insn, 2) in
+  let gpos = bytes_len(b) in
+  let _ = a64_mov_imm64(b, 0, 0) in
+  let _ = a64_ldur(b, 0, 0, 0) in
+  let _ = if which == 3 then 0 else if which == 4 then 0 else a64_lsl1(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 1), true, 0) in
+  let gkind =
+    if which == 1 then 4
+    else if which == 2 then 5
+    else if which == 3 then 7
+    else 8 in
+  emit_st4(st, b, cur, labels, cons([gkind, gpos], patches))
+let a64_cop_gst(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let which = nth(insn, 1) in
+  let gpos = bytes_len(b) in
+  let _ = a64_mov_imm64(b, 0, 0) in
+  let _ = a64_slot(b, nth(insn, 2), false, 1) in
+  let _ = a64_stur(b, 1, 0, 0) in
+  let gkind = if which == 3 then 7 else 8 in
+  emit_st4(st, b, cur, labels, cons([gkind, gpos], patches))
+
 let a64_reg_ops =
   let _ = emit_reg("arm64", "mref", a64_op_mref) in
   let _ = emit_reg("arm64", "mset", a64_op_mset) in
@@ -1438,6 +1522,11 @@ let a64_reg_ops =
   let _ = emit_reg("arm64", "st64", a64_cop_st64) in
   let _ = emit_reg("arm64", "write1", a64_cop_write1) in
   let _ = emit_reg("arm64", "clock", a64_cop_clock) in
+  let _ = emit_reg("arm64", "gvar", a64_cop_gvar) in
+  let _ = emit_reg("arm64", "gval", a64_cop_gval) in
+  let _ = emit_reg("arm64", "gset", a64_cop_gset) in
+  let _ = emit_reg("arm64", "glob", a64_cop_glob) in
+  let _ = emit_reg("arm64", "gst", a64_cop_gst) in
   let _ = emit_reg("arm64", "obj_sti", a64_op_obj_sti) in
   let _ = emit_reg("arm64", "obj_st_int", a64_op_obj_st_int) in
   let _ = emit_reg("arm64", "mref8", a64_op_mref8) in
@@ -1529,89 +1618,6 @@ let emit_a64_i_heap_rest(st, insn) =
     let _ = a64_apply_b26(b, j_done, l_done) in
     let _ = a64_apply_b26(b, j_done2, l_done) in
     emit_st4(st, b, cur, labels, patches)
-  else if k == "gvar" then
-    /* Flat function value (12.14): a static stub closure [0, 0, entry, 0] in
-     * the globals area, one per referenced name (32B). AOT bakes the entry
-     * into [cell+16] (tag 23) and yields the TAGGED cell address, so icall's
-     * nenv=0 expansion calls entry with the plain args. Mirrors x86_64: the
-     * placeholder goes down FIRST, the tag/or1 runs after the resolver has
-     * filled the immediate. */
-    let nm = nth(insn, 2) in
-    let goff = gref_base(0) + bshl(gref_alloc(nm), 5) in
-    let gpos = bytes_len(b) in
-    let _ = a64_mov_imm64(b, 0, 0) in
-    let fid = emit_map_get(nth(st, 4), nm) in
-    let _ =
-      if fid == 0 then
-        log_fatal(str_cat("emit: gvar: no such procedure '", str_cat(nm, "'")))
-      else 0 in
-    let _ = a64_tag(b, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels,
-      cons([23, fid, goff], cons([12, gpos, goff], patches)))
-  else if k == "gval" then
-    /* Read a top-level value: [unit + 0]. The unit is the name's 32-byte cell
-     * in the globals area (value at +0, function entry at +16), filled by
-     * gset. x86_64 does exactly this with its abs64 tag 22; here the same
-     * shape goes through tag 12 (globbase + displacement). */
-    let goff = gref_base(0) + bshl(gref_alloc(nth(insn, 2)), 5) in
-    let gpos = bytes_len(b) in
-    let _ = a64_mov_imm64(b, 0, 0) in
-    let _ = a64_ldur(b, 0, 0, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    emit_st4(st, b, cur, labels, cons([12, gpos, goff], patches))
-  else if k == "gset" then
-    /* ["gset", name, off, src]: off 0 = value, 16 = function entry.
-     * An immediate source is BAKED into the cell at link time (x86_64 tag 24,
-     * zero runtime action); anything else is stored at run time and then
-     * PUBLISHED as a GC root (yac_gval_pub), exactly like x86_64 does
-     * (FLAT_ABI.md 2.3). */
-    let nm = nth(insn, 1) in
-    let off = nth(insn, 2) in
-    let src = nth(insn, 3) in
-    let goff = gref_base(0) + bshl(gref_alloc(nm), 5) + off in
-    if nth(src, 0) == "imm" then
-      emit_st4(st, b, cur, labels, cons([24, goff, nth(src, 1)], patches))
-    else
-      let gpos = bytes_len(b) in
-      let _ = a64_mov_imm64(b, 0, 0) in
-      let _ = a64_slot(b, src, false, 1) in
-      let _ = a64_stur(b, 1, 0, 0) in
-      /* GC-root publish (FLAT_ABI.md 2.3 / 8.2 #13): a top-level value
-       * assigned at run time must land in the G+440 list, or the collector
-       * never marks the cell's value. yac_gval_pub is an unmarked $proc
-       * (plain ABI), so the name goes to x0 and the value to x1; both the
-       * strlit and the call are patched like any other fcall. */
-      let npos = bytes_len(b) in
-      let _ = a64_mov_imm64(b, 0, 0) in
-      let _ = a64_slot(b, src, false, 1) in
-      let acall = bytes_len(b) in
-      let _ = a64_bl(b, 0) in
-      emit_st4(st, b, cur, labels,
-        emit_patch_rel(nth(st, 4),
-          emit_patch_strlit(cons([12, gpos, goff], patches), npos, strlit_off(nm)),
-          acall, "yac_gval_pub"))
-  else if k == "glob" then
-    let which = nth(insn, 2) in
-    let gpos = bytes_len(b) in
-    let _ = a64_mov_imm64(b, 0, 0) in
-    let _ = a64_ldur(b, 0, 0, 0) in
-    let _ = if which == 3 then 0 else if which == 4 then 0 else a64_lsl1(b, 0, 0) in
-    let _ = a64_slot(b, nth(insn, 1), true, 0) in
-    let gkind =
-      if which == 1 then 4
-      else if which == 2 then 5
-      else if which == 3 then 7
-      else 8 in
-    emit_st4(st, b, cur, labels, cons([gkind, gpos], patches))
-  else if k == "gst" then
-    let which = nth(insn, 1) in
-    let gpos = bytes_len(b) in
-    let _ = a64_mov_imm64(b, 0, 0) in
-    let _ = a64_slot(b, nth(insn, 2), false, 1) in
-    let _ = a64_stur(b, 1, 0, 0) in
-    let gkind = if which == 3 then 7 else 8 in
-    emit_st4(st, b, cur, labels, cons([gkind, gpos], patches))
   else st
 
 let emit_a64_i_heap(st, insn) =
