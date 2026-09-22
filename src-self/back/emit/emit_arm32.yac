@@ -134,7 +134,142 @@ let a32_cop_f64fromstr(st, insn) = 0
 let a32_cop_f64rel(st, insn) = 0
 let a32_cop_f64print(st, insn) = 0
 
+let a32_op_arith(b, opk, d, x, y) =
+  if opk == "add" then a32_add_reg(b, d, x, y)
+  else if opk == "sub" then a32_sub_reg(b, d, x, y)
+  else if opk == "mul" then a32_mul(b, d, x, y)
+  else if opk == "land" then a32_and_reg(b, d, x, y)
+  else if opk == "lor" then a32_orr_reg(b, d, x, y)
+  else if opk == "xor" then a32_eor_reg(b, d, x, y)
+  else if opk == "bnot" then a32_mvn_reg(b, d, x)
+  else if opk == "shl" then a32_lsl_reg(b, d, x, y)
+  else if opk == "shr" then a32_lsr_reg(b, d, x, y)
+  else if opk == "div" then a32_sdiv(b, d, x, y)
+  else if opk == "rem" then
+    let _ = a32_sdiv(b, 2, x, y) in
+    let _ = a32_mul(b, 2, 2, y) in
+    a32_sub_reg(b, d, x, 2)
+  else a32_add_reg(b, d, x, y)
+
+let a32_cc_of(op) =
+  if op == "==" then 0
+  else if op == "!=" then 1
+  else if op == "<" then 11
+  else if op == ">=" then 10
+  else if op == ">" then 12
+  else if op == "<=" then 13
+  else 0
+
+let a32_cop_arith(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_asr_imm(b, 0, 0, 1) in
+  let _ = a32_slot(b, nth(insn, 3), false, 1) in
+  let _ = a32_asr_imm(b, 1, 1, 1) in
+  let _ = a32_op_arith(b, nth(insn, 0), 0, 0, 1) in
+  let _ = a32_lsl1(b, 0, 0) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_icmp(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 3), false, 0) in
+  let _ = a32_asr_imm(b, 0, 0, 1) in
+  let _ = a32_slot(b, nth(insn, 4), false, 1) in
+  let _ = a32_asr_imm(b, 1, 1, 1) in
+  let _ = a32_cmp_reg(b, 0, 1) in
+  let _ = a32_cset(b, 0, a32_cc_of(nth(insn, 1))) in
+  let _ = a32_lsl1(b, 0, 0) in
+  let _ = a32_slot(b, nth(insn, 2), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_cmpjmp(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let _ = a32_slot(b, nth(insn, 1), false, 0) in
+  let _ = a32_asr_imm(b, 0, 0, 1) in
+  let _ = a32_cmp_imm(b, 0, 0) in
+  let peq = bytes_len(b) in
+  let _ = a32_b_eq(b, 0) in
+  let pne = bytes_len(b) in
+  let _ = a32_b(b, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2),
+   cons(["b24", pne, nth(insn, 2)],
+        cons(["beq", peq, nth(insn, 3)], patches)))
+
+let a32_cop_local(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let is_entry = nth(emit_ctx_get(0), 0) in
+  let nlocals = nth(insn, 1) in
+  let nparams = if len(insn) > 2 then nth(insn, 2) else 0 in
+  let nbytes = a32_frame_bytes(nlocals) in
+  let _ =
+    if is_entry then 0
+    else
+      let _ = a32_push(b, 18432) in
+      a32_mov_reg(b, 11, 13) in
+  let _ = a32_sub_imm(b, 13, 13, nbytes) in
+  let storep(j) =
+    if j >= nparams then 0
+    else if j < 4 then
+      let _ = a32_slot(b, j + 1, true, j) in
+      storep(j + 1)
+    else
+      let _ = a32_ldr_imm(b, 0, 11, 8 + bshl(j - 4, 2)) in
+      let _ = a32_slot(b, j + 1, true, 0) in
+      storep(j + 1) in
+  let _ = storep(0) in
+  emit_st4(st, b, cur, labels, patches)
+
+let a32_cop_fcall(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let dst = nth(insn, 1) in
+  let fn = nth(insn, 2) in
+  let args = nth(insn, 3) in
+  let nargs = len(args) in
+  let nstack = if nargs > 4 then nargs - 4 else 0 in
+  let pushargs(j) =
+    if j < 4 then 0
+    else
+      let _ = a32_slot(b, nth(args, j), false, 0) in
+      let _ = a32_push(b, 1) in
+      pushargs(j - 1) in
+  let _ = pushargs(nargs - 1) in
+  let ldarg(j) =
+    if j >= nargs or j >= 4 then 0
+    else
+      let _ = a32_slot(b, nth(args, j), false, j) in
+      ldarg(j + 1) in
+  let _ = ldarg(0) in
+  let pos = bytes_len(b) in
+  let _ = a32_bl(b, 0) in
+  let _ = if nstack == 0 then 0 else a32_add_imm(b, 13, 13, bshl(nstack, 2)) in
+  let _ = a32_slot(b, dst, true, 0) in
+  emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, pos, fn))
+let a32_cop_ycall(st, insn) = a32_cop_fcall(st, insn)
+
 let a32_reg_ops =
+  let _ = emit_reg("arm32", "local", a32_cop_local) in
+  let _ = emit_reg("arm32", "$local", a32_cop_local) in
+  let _ = emit_reg("arm32", "fcall", a32_cop_fcall) in
+  let _ = emit_reg("arm32", "ycall", a32_cop_ycall) in
+  let _ = emit_reg("arm32", "add", a32_cop_arith) in
+  let _ = emit_reg("arm32", "sub", a32_cop_arith) in
+  let _ = emit_reg("arm32", "mul", a32_cop_arith) in
+  let _ = emit_reg("arm32", "div", a32_cop_arith) in
+  let _ = emit_reg("arm32", "rem", a32_cop_arith) in
+  let _ = emit_reg("arm32", "land", a32_cop_arith) in
+  let _ = emit_reg("arm32", "lor", a32_cop_arith) in
+  let _ = emit_reg("arm32", "xor", a32_cop_arith) in
+  let _ = emit_reg("arm32", "bnot", a32_cop_arith) in
+  let _ = emit_reg("arm32", "shl", a32_cop_arith) in
+  let _ = emit_reg("arm32", "shr", a32_cop_arith) in
+  let _ = emit_reg("arm32", "icmp", a32_cop_icmp) in
+  let _ = emit_reg("arm32", "cmpjmp", a32_cop_cmpjmp) in
   let _ = emit_reg("arm32", "mov_imm", a32_cop_mov_imm) in
   let _ = emit_reg("arm32", "mov", a32_cop_mov) in
   let _ = emit_reg("arm32", "label", a32_cop_label) in
