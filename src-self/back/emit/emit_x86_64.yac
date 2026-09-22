@@ -1704,7 +1704,73 @@ let x86_cop_syscall(st, insn) =
   if emit_host_win(0) then win_num_syscall(st, insn)
   else linux_num_syscall(st, insn)
 
+let x86_cop_strlit(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let dst = nth(insn, 1) in
+  let off = strlit_off(nth(insn, 2)) in
+  let _ = mov_rax_imm64(b, 0) in
+  let ipos = bytes_len(b) - 8 in
+  let _ = emit_store_rax_slot(b, dst) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), emit_patch_strlit(patches, ipos, off))
+let x86_cop_str_len(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let dst = nth(insn, 1) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = test_rax_rax(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jz0 = bytes_len(b) - 4 in
+  let _ = cmp_rax_imm8(b, 1) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jnil = bytes_len(b) - 4 in
+  let _ = test_rax_1(b) in
+  let _ = jcc_rel32(b, 4, 0) in
+  let jfix = bytes_len(b) - 4 in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_rax_disp32(b, 24) in
+  let _ = shl_rax_1(b) in
+  let _ = jmp_rel32(b, 0) in
+  let jdone = bytes_len(b) - 4 in
+  let zlen = bytes_len(b) in
+  let _ = apply_patch(b, jz0, zlen) in
+  let _ = apply_patch(b, jnil, zlen) in
+  let _ = apply_patch(b, jfix, zlen) in
+  let _ = xor_rax_rax(b) in
+  let done = bytes_len(b) in
+  let _ = apply_patch(b, jdone, done) in
+  let _ = emit_store_rax_slot(b, dst) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), patches)
+let x86_cop_str_ref(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let dst = nth(insn, 1) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = and_rax_1(b) in
+  let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
+  let _ = mov_r64_r64(b, 2, 7) in
+  let _ = e8(b, 72) in let _ = e8(b, 209) in let _ = e8(b, 250) in
+  let _ = add_rax_imm32(b, 32) in
+  let _ = movzx_eax_rax_rdx(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, dst) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), patches)
+let x86_cop_bytes_len(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let dst = nth(insn, 1) in
+  let _ = emit_load_rax_slot(b, nth(insn, 2)) in
+  let _ = and_rax_1(b) in
+  let _ = mov_rax_rax_disp32(b, 24) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, dst) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), patches)
+
 let x86_reg_ops =
+  let _ = emit_reg("x86_64", "strlit", x86_cop_strlit) in
+  let _ = emit_reg("x86_64", "str_len", x86_cop_str_len) in
+  let _ = emit_reg("x86_64", "str_ref", x86_cop_str_ref) in
+  let _ = emit_reg("x86_64", "bytes_len", x86_cop_bytes_len) in
   let _ = emit_reg("x86_64", "kind", x86_cop_kind) in
   let _ = emit_reg("x86_64", "untag", x86_cop_untag) in
   let _ = emit_reg("x86_64", "syscall", x86_cop_syscall) in
@@ -1865,67 +1931,7 @@ let x86_reg_icall = emit_reg("x86_64", "icall", x86_cop_apply)
 
 let emit_x86_i_clos(st, insn, is_entry) = emit_insn_disp(st, insn)
 
-let emit_x86_i_prim(st, insn) =
-  let b = nth(st, 0) in
-  let cur = nth(st, 1) in
-  let labels = nth(st, 2) in
-  let patches = nth(st, 3) in
-  let k = nth(insn, 0) in
-  if k == "strlit" then
-    /* Pooled STR in the image: one object per unique content. */
-    let dst = nth(insn, 1) in
-    let off = strlit_off(nth(insn, 2)) in
-    let _ = mov_rax_imm64(b, 0) in
-    let ipos = bytes_len(b) - 8 in
-    let _ = emit_store_rax_slot(b, dst) in
-    emit_st4(st, b, cur, labels, emit_patch_strlit(patches, ipos, off))
-  else if k == "str_len" then
-    let dst = nth(insn, 1) in
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = test_rax_rax(b) in
-    let _ = jcc_rel32(b, 4, 0) in
-    let jz0 = bytes_len(b) - 4 in
-    let _ = cmp_rax_imm8(b, 1) in
-    let _ = jcc_rel32(b, 4, 0) in
-    let jnil = bytes_len(b) - 4 in
-    let _ = test_rax_1(b) in
-    let _ = jcc_rel32(b, 4, 0) in
-    let jfix = bytes_len(b) - 4 in
-    let _ = and_rax_1(b) in
-    let _ = mov_rax_rax_disp32(b, 24) in
-    let _ = shl_rax_1(b) in
-    let _ = jmp_rel32(b, 0) in
-    let jdone = bytes_len(b) - 4 in
-    let zlen = bytes_len(b) in
-    let _ = apply_patch(b, jz0, zlen) in
-    let _ = apply_patch(b, jnil, zlen) in
-    let _ = apply_patch(b, jfix, zlen) in
-    let _ = xor_rax_rax(b) in
-    let done = bytes_len(b) in
-    let _ = apply_patch(b, jdone, done) in
-    let _ = emit_store_rax_slot(b, dst) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "str_ref" then
-    let dst = nth(insn, 1) in
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = and_rax_1(b) in
-    let _ = emit_load_rdi_slot(b, nth(insn, 3)) in
-    let _ = mov_r64_r64(b, 2, 7) in
-    let _ = e8(b, 72) in let _ = e8(b, 209) in let _ = e8(b, 250) in
-    let _ = add_rax_imm32(b, 32) in
-    let _ = movzx_eax_rax_rdx(b) in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, dst) in
-    emit_st4(st, b, cur, labels, patches)
-  else if k == "bytes_len" then
-    let dst = nth(insn, 1) in
-    let _ = emit_load_rax_slot(b, nth(insn, 2)) in
-    let _ = and_rax_1(b) in
-    let _ = mov_rax_rax_disp32(b, 24) in
-    let _ = shl_rax_1(b) in
-    let _ = emit_store_rax_slot(b, dst) in
-    emit_st4(st, b, cur, labels, patches)
-  else st
+let emit_x86_i_prim(st, insn) = emit_insn_disp(st, insn)
 
 /* memcpy dst doff src soff n: copy n bytes (tagged ints) between objects. */
 let emit_x86_i_memcpy(st, insn) = emit_insn_disp(st, insn)
