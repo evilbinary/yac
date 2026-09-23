@@ -156,12 +156,12 @@ let elf_phdr32_load(b, off, ptype, flags, poff, vaddr) =
   let _ = le32(b, poff, off + 4) in
   let _ = le32(b, vaddr, off + 8) in
   let _ = le32(b, vaddr, off + 12) in
-  let _ = le32(b, flags, off + 16) in
+  let _ = le32(b, flags, off + 24) in
   0
 
 let elf_phdr32_sizes(b, off, filesz, memsz, align) =
-  let _ = le32(b, filesz, off + 20) in
-  let _ = le32(b, memsz, off + 24) in
+  let _ = le32(b, filesz, off + 16) in
+  let _ = le32(b, memsz, off + 20) in
   let _ = le32(b, align, off + 28) in
   0
 
