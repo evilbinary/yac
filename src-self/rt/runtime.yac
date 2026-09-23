@@ -21,7 +21,7 @@
 
 
 package rt.runtime
-export runtime_funs, runtime_add, yac_cimport_host_sym, yac_gval_pub, yac_gval_list, yac_gfn_pub, yac_gfn_list
+export runtime_funs, runtime_add, yac_cimport_host_sym, yac_gval_pub, yac_gval_list, yac_gfn_pub, yac_gfn_list, rt_w_set
 /* `intern` is used by the profiling/entry-table helpers below. This file is
  * compiled BOTH concatenated into the bundle and standalone as package
  * rt.runtime (drivers like driver_emit compose it), and only an explicit
@@ -30,13 +30,24 @@ export runtime_funs, runtime_add, yac_cimport_host_sym, yac_gval_pub, yac_gval_l
 import lib.map {intern}
 import rt.os {host_os}
 
+/* Word size of the TARGET (4 for arm32, 8 otherwise). runtime_funs() runs at
+ * compile time, so the object layout it emits can follow the target. Set by
+ * lower.yac (rt_w_set) before emit; defaults to 8. */
+let rt_w_box =
+  let b = box_new() in
+  let _ = box_set(b, 8) in
+  b
+let rt_w_set(w) = box_set(rt_w_box, w)
+let rt_w(_) = box_get(rt_w_box)
+let rt_field(k) = k * rt_w(0)
+
 let rt_cons_ins(_) =
   [["local", 6, 2],
-   ["alloc", 3, 40],
-   ["obj_sti", 3, 8, 0],
-   ["obj_sti", 3, 16, 2],
-   ["mset", 3, 24, 1],
-   ["mset", 3, 32, 2],
+   ["alloc", 3, rt_field(5)],
+   ["obj_sti", 3, rt_field(1), 0],
+   ["obj_sti", 3, rt_field(2), 2],
+   ["mset", 3, rt_field(3), 1],
+   ["mset", 3, rt_field(4), 2],
    ["ret", 3]]
 
 let rt_tail_ins(_) =
