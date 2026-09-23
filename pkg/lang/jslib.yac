@@ -10,7 +10,7 @@ export js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_date_now, js_fr
   js_install
 import data.fmap { fmap_new, fmap_get, fmap_put }
 import num.math { ftoi, log, exp, powf, abs, pow, sqrt, sin, cos, log2, sign }
-import lang.jsrt { _js_iter }
+import lang.jsrt { _js_iter, _js_str }
 
 /* Decimal integer parse: optional leading '-', then digits (stops at the first
  * non-digit, like parseInt without a radix). */
@@ -88,7 +88,7 @@ let js_json_stringify(x) =
   let k = kind(x) in
   if k == 3 then js_json_quote(x)
   else if k == 0 then int_to_str(x)
-  else if k == 7 then int_to_str(ftoi(x))
+  else if k == 7 then _js_str(x)
   else if js_json_is_obj(x) then
     str_cat("{", str_cat(obj_go(nth(x, 1), 0, nth(nth(x, 1), 2), 1), "}"))
   else if k == 2 or k == 5 then str_cat("[", str_cat(arr_go(x, 0, len(x)), "]"))

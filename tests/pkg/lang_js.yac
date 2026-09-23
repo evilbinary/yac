@@ -352,6 +352,7 @@ let _ = check("for_let_sum", "let s=0; for (let i=0;i<5;i++){ s = s + i; } conso
 let _ = check("float_concat", "console.log(1234+0.44+'22');", "1234.4422")
 let _ = check("float_add2", "console.log(1.5 + 2.25);", "3.75")
 let _ = check("float_join", "console.log([1.5, 2.25].join(','));", "1.5,2.25")
+let _ = check("json_float", "console.log(JSON.stringify(1.5));", "1.5")
 
 /* string / array standard library */
 let _ = check("charAt", "console.log('abc'.charAt(1));", "b")
