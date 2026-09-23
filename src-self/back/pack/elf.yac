@@ -118,6 +118,64 @@ let elf_header(b, entry, machine, etype, phnum, flags) =
   let _ = le16(b, 0, 62) in
   0
 
+/* ELF32 header (class=1). arm32 uses this; the rest of this file is ELF64. */
+let elf_header32(b, entry, machine, etype, phnum, flags) =
+  let _ = bytes_put(b, 0, 127) in
+  let _ = bytes_put(b, 1, 69) in
+  let _ = bytes_put(b, 2, 76) in
+  let _ = bytes_put(b, 3, 70) in
+  let _ = bytes_put(b, 4, 1) in
+  let _ = bytes_put(b, 5, 1) in
+  let _ = bytes_put(b, 6, 1) in
+  let _ = bytes_put(b, 7, 0) in
+  let _ = bytes_put(b, 8, 0) in
+  let _ = bytes_put(b, 9, 0) in
+  let _ = bytes_put(b, 10, 0) in
+  let _ = bytes_put(b, 11, 0) in
+  let _ = bytes_put(b, 12, 0) in
+  let _ = bytes_put(b, 13, 0) in
+  let _ = bytes_put(b, 14, 0) in
+  let _ = bytes_put(b, 15, 0) in
+  let _ = le16(b, etype, 16) in
+  let _ = le16(b, machine, 18) in
+  let _ = le32(b, 1, 20) in
+  let _ = le32(b, entry, 24) in
+  let _ = le32(b, 52, 28) in
+  let _ = le32(b, 0, 32) in
+  let _ = le32(b, flags, 36) in
+  let _ = le16(b, 52, 40) in
+  let _ = le16(b, 32, 42) in
+  let _ = le16(b, phnum, 44) in
+  let _ = le16(b, 0, 46) in
+  let _ = le16(b, 0, 48) in
+  let _ = le16(b, 0, 50) in
+  0
+
+let elf_phdr32_load(b, off, ptype, flags, poff, vaddr) =
+  let _ = le32(b, ptype, off) in
+  let _ = le32(b, poff, off + 4) in
+  let _ = le32(b, vaddr, off + 8) in
+  let _ = le32(b, vaddr, off + 12) in
+  let _ = le32(b, flags, off + 16) in
+  0
+
+let elf_phdr32_sizes(b, off, filesz, memsz, align) =
+  let _ = le32(b, filesz, off + 20) in
+  let _ = le32(b, memsz, off + 24) in
+  let _ = le32(b, align, off + 28) in
+  0
+
+let pack_elf_exec32(code, machine, vaddr, text_off) =
+  let entry = vaddr + text_off in
+  let file_size = text_off + bytes_len(code) in
+  let out = bytes_new() in
+  let _ = bytes_put(out, text_off - 1, 0) in
+  let _ = elf_header32(out, entry, machine, 2, 1, 0) in
+  let _ = elf_phdr32_load(out, 52, PH_TYPE_LOAD, PH_FLAGS_RWX, 0, vaddr) in
+  let _ = elf_phdr32_sizes(out, 52, file_size, file_size, PAGE) in
+  let _ = bytes_extend(out, code) in
+  out
+
 /* Native emit only passes 6 args in registers; keep helpers at ≤6 params. */
 let elf_phdr_load(b, off, ptype, flags, poff, vaddr) =
   let _ = le32(b, ptype, off) in
@@ -134,16 +192,18 @@ let elf_phdr_sizes(b, off, filesz, memsz, align) =
   0
 
 let pack_elf_exec(code, machine, vaddr, text_off) =
-  let entry = vaddr + text_off in
-  let file_size = text_off + bytes_len(code) in
-  let out = bytes_new() in
-  let _ = bytes_put(out, text_off - 1, 0) in
-  let _ = elf_header(out, entry, machine, 2, 1, 0) in
-  let _ = if machine == 243 then le32(out, 4, 48) else 0 in
-  let _ = elf_phdr_load(out, 64, PH_TYPE_LOAD, PH_FLAGS_RWX, 0, vaddr) in
-  let _ = elf_phdr_sizes(out, 64, file_size, file_size, PAGE) in
-  let _ = bytes_extend(out, code) in
-  out
+  if machine == 40 then pack_elf_exec32(code, machine, vaddr, text_off)
+  else
+    let entry = vaddr + text_off in
+    let file_size = text_off + bytes_len(code) in
+    let out = bytes_new() in
+    let _ = bytes_put(out, text_off - 1, 0) in
+    let _ = elf_header(out, entry, machine, 2, 1, 0) in
+    let _ = if machine == 243 then le32(out, 4, 48) else 0 in
+    let _ = elf_phdr_load(out, 64, PH_TYPE_LOAD, PH_FLAGS_RWX, 0, vaddr) in
+    let _ = elf_phdr_sizes(out, 64, file_size, file_size, PAGE) in
+    let _ = bytes_extend(out, code) in
+    out
 
 let pack_elf_dyn(code, machine, vaddr, text_off) =
   let dyn_off = 176 in

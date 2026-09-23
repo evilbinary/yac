@@ -41,9 +41,11 @@ let arch_ids(arch) =
   else if arch == "arm32" then [40, 452, 12, 9]
   else 0
 
-let layout_off(format, kind) =
+let layout_off(arch, format, kind) =
   if format == "elf" then
-    if kind == "dylib" then 192 else 120
+    if arch == "arm32" then
+      if kind == "dylib" then 116 else 84
+    else if kind == "dylib" then 192 else 120
   else if format == "pe" then 512
   else if format == "yjit" then 0
   else 4096
@@ -53,13 +55,13 @@ let mk_target(arch, format, kind) =
   if ids == 0 then 0
   else if format == "elf" then
     ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
-     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(format, kind)]
+     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(arch, format, kind)]
   else if format == "pe" then
     ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
-     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(format, kind)]
+     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(arch, format, kind)]
   else if format == "macho" then
     ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
-     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(format, kind)]
+     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(arch, format, kind)]
   else if format == "yjit" then
     ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
      nth(ids, 2), nth(ids, 3), JIT_VADDR, 0]
