@@ -16,9 +16,30 @@ export _js_str, _js_bool, _js_typeof, _js_truth, _js_char_at, _js_upper, _js_low
   _js_arr_lastindex, _js_arr_copywithin, _js_sym
 import text.str {find}
 import data.fmap { fmap_get }
+import num.math { ftoi }
 
-/* Stringify a JS value for console.log / `+`: int -> decimal, else as-is. */
-let _js_str(x) = if is_int(x) then int_to_str(x) else x
+/* Float -> decimal string (up to 6 fractional digits, trailing zeros trimmed).
+ * Fractional digits are produced one at a time to keep integers small
+ * (`ftoi` is unreliable for large values). */
+let _js_f64_str(x) =
+  let neg = x < 0.0 in
+  let a = if neg then 0.0 - x else x in
+  let ip = ftoi(a) in
+  let fr = a - ip in
+  let digs(v, n, acc) =
+    if n >= 6 then acc
+    else if v < 0.0000005 then acc
+    else
+      let v2 = v * 10.0 in
+      let d = ftoi(v2) in
+      digs(v2 - d, n + 1, str_cat(acc, int_to_str(d))) in
+  let fs = digs(fr, 0, "") in
+  let s = if fs == "" then int_to_str(ip) else str_cat(int_to_str(ip), str_cat(".", fs)) in
+  if neg then str_cat("-", s) else s
+
+/* Stringify a JS value for console.log / `+`: int -> decimal, float -> decimal,
+ * else as-is. */
+let _js_str(x) = if is_int(x) then int_to_str(x) else if kind(x) == 7 then _js_f64_str(x) else x
 
 /* Boolean -> "true"/"false" (yac's own bool prints as 1/0). */
 let _js_bool(x) = if x then "true" else "false"
@@ -114,7 +135,7 @@ let _js_arr_join(a, sep) =
     if i >= n then acc
     else
       let v = nth(a, i) in
-      let s = if is_int(v) then int_to_str(v) else v in
+      let s = _js_str(v) in
       let acc2 = if i == 0 then s else str_cat(acc, str_cat(sep, s)) in
       rec(i + 1, acc2) in
   rec(0, "")
