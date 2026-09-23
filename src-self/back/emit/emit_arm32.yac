@@ -574,9 +574,243 @@ let a32_cop_syscall(st, insn) =
   let _ = a32_slot(b, nth(insn, 1), true, 0) in
   emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
 
+let a32_cop_prim_and(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let imm = nth(insn, 3) in
+  let _ =
+    if imm == (0 - 2) then a32_untag_ptr(b, 0)
+    else
+      let _ = a32_mov_imm32(b, 1, imm) in
+      a32_and_reg(b, 0, 0, 1) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_addi(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_add_imm(b, 0, 0, nth(insn, 3)) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_add(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_slot(b, nth(insn, 3), false, 1) in
+  let _ = a32_add_reg(b, 0, 0, 1) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_sub(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_slot(b, nth(insn, 3), false, 1) in
+  let _ = a32_sub_reg(b, 0, 0, 1) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_or(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_tag(b, 0) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_shr(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_lsr_imm(b, 0, 0, nth(insn, 3)) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_clamp0(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_cmp_imm(b, 0, 0) in
+  let p = bytes_len(b) in
+  let _ = a32_b_cond(b, 10, 0) in
+  let _ = a32_mov_imm(b, 0, 0) in
+  let _ = a32_patch_bcond(b, p, bytes_len(b)) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_st64(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 1), false, 0) in
+  let _ = a32_untag_ptr(b, 0) in
+  let _ = a32_slot(b, nth(insn, 3), false, 1) in
+  let _ = a32_str_imm(b, 1, 0, nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_st8(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 1), false, 0) in
+  let _ = a32_strb_imm(b, nth(insn, 3), 0, nth(insn, 2)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_ld64(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_untag_ptr(b, 0) in
+  let _ = a32_ldr_imm(b, 0, 0, nth(insn, 3)) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_ld8(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_ldrb_imm(b, 0, 0, nth(insn, 3)) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_sp(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_mov_reg(b, 0, 13) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_fp(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_mov_reg(b, 0, 11) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_smap(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let _ = a32_mov_imm32(b, 0, 0) in
+  let spat = bytes_len(b) - 4 in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), cons([14, spat], patches))
+let a32_cop_prim_gbase(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let gpos = bytes_len(b) in
+  let _ = a32_mov_imm32(b, 0, 0) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), cons([3, gpos], patches))
+let a32_cop_prim_glob(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let which = nth(insn, 2) in
+  let gpos = bytes_len(b) in
+  let _ = a32_mov_imm32(b, 0, 0) in
+  let _ = a32_ldr_imm(b, 0, 0, 0) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  let gkind =
+    if which == 1 then 4
+    else if which == 2 then 5
+    else if which == 3 then 7
+    else 8 in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), cons([gkind, gpos], patches))
+let a32_cop_prim_icmp(st, insn) =
+  let b = nth(st, 0) in
+  let op = nth(insn, 1) in
+  let _ = a32_slot(b, nth(insn, 3), false, 0) in
+  let _ = a32_slot(b, nth(insn, 4), false, 1) in
+  let _ = a32_cmp_reg(b, 0, 1) in
+  let _ = a32_cset(b, 0, a32_cc_of(op)) in
+  let _ = a32_lsl1(b, 0, 0) in
+  let _ = a32_slot(b, nth(insn, 2), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_jcc(st, insn) =
+  let b = nth(st, 0) in
+  let patches = nth(st, 3) in
+  let op = nth(insn, 1) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_slot(b, nth(insn, 3), false, 1) in
+  let _ = a32_cmp_reg(b, 0, 1) in
+  let pt = bytes_len(b) in
+  let _ = a32_b_cond(b, a32_cc_of(op), 0) in
+  let pf = bytes_len(b) in
+  let _ = a32_b(b, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2),
+   cons(["b24", pf, nth(insn, 5)],
+        cons(["bcond", pt, nth(insn, 4)], patches)))
+let a32_cop_prim_memcpy(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 1), false, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 1) in
+  let _ = a32_slot(b, nth(insn, 3), false, 2) in
+  let loop = bytes_len(b) in
+  let _ = a32_cmp_imm(b, 2, 0) in
+  let jeq = bytes_len(b) in
+  let _ = a32_b_eq(b, 0) in
+  let _ = a32_ldrb_imm(b, 3, 1, 0) in
+  let _ = a32_strb_imm(b, 3, 0, 0) in
+  let _ = a32_add_imm(b, 0, 0, 1) in
+  let _ = a32_add_imm(b, 1, 1, 1) in
+  let _ = a32_sub_imm(b, 2, 2, 1) in
+  let jb = bytes_len(b) in
+  let _ = a32_b(b, 0) in
+  let done = bytes_len(b) in
+  let _ = a32_patch_bcond(b, jeq, done) in
+  let _ = a32_patch_b24(b, jb, loop) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_memset(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 1), false, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 1) in
+  let loop = bytes_len(b) in
+  let _ = a32_cmp_imm(b, 1, 0) in
+  let jeq = bytes_len(b) in
+  let _ = a32_b_eq(b, 0) in
+  let _ = a32_mov_imm(b, 3, 0) in
+  let _ = a32_strb_imm(b, 3, 0, 0) in
+  let _ = a32_add_imm(b, 0, 0, 1) in
+  let _ = a32_sub_imm(b, 1, 1, 1) in
+  let jb = bytes_len(b) in
+  let _ = a32_b(b, 0) in
+  let done = bytes_len(b) in
+  let _ = a32_patch_bcond(b, jeq, done) in
+  let _ = a32_patch_b24(b, jb, loop) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_carg(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_icall(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 12) in
+  let _ = a32_blx_reg(b, 12) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_bts(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 1), false, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 1) in
+  let _ = a32_ldrb_imm(b, 3, 0, 0) in
+  let _ = a32_mov_imm(b, 2, 1) in
+  let _ = a32_lsl_reg(b, 2, 2, 1) in
+  let _ = a32_orr_reg(b, 3, 3, 2) in
+  let _ = a32_strb_imm(b, 3, 0, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+let a32_cop_prim_bt(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_slot(b, nth(insn, 3), false, 1) in
+  let _ = a32_ldrb_imm(b, 0, 0, 0) in
+  let _ = a32_lsr_reg(b, 0, 0, 1) in
+  let _ = a32_mov_imm(b, 1, 1) in
+  let _ = a32_and_reg(b, 0, 0, 1) in
+  let _ = a32_lsl1(b, 0, 0) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
 let a32_reg_ops =
   let _ = emit_reg("arm32", "untag", a32_cop_untag) in
   let _ = emit_reg("arm32", "syscall", a32_cop_syscall) in
+  let _ = emit_reg("arm32", "$and", a32_cop_prim_and) in
+  let _ = emit_reg("arm32", "$addi", a32_cop_prim_addi) in
+  let _ = emit_reg("arm32", "$add", a32_cop_prim_add) in
+  let _ = emit_reg("arm32", "$sub", a32_cop_prim_sub) in
+  let _ = emit_reg("arm32", "$or", a32_cop_prim_or) in
+  let _ = emit_reg("arm32", "$shr", a32_cop_prim_shr) in
+  let _ = emit_reg("arm32", "$clamp0", a32_cop_prim_clamp0) in
+  let _ = emit_reg("arm32", "$st64", a32_cop_prim_st64) in
+  let _ = emit_reg("arm32", "$st8", a32_cop_prim_st8) in
+  let _ = emit_reg("arm32", "$ld64", a32_cop_prim_ld64) in
+  let _ = emit_reg("arm32", "$ld8", a32_cop_prim_ld8) in
+  let _ = emit_reg("arm32", "$sp", a32_cop_prim_sp) in
+  let _ = emit_reg("arm32", "$fp", a32_cop_prim_fp) in
+  let _ = emit_reg("arm32", "$smap", a32_cop_prim_smap) in
+  let _ = emit_reg("arm32", "$gbase", a32_cop_prim_gbase) in
+  let _ = emit_reg("arm32", "$glob", a32_cop_prim_glob) in
+  let _ = emit_reg("arm32", "$icmp", a32_cop_prim_icmp) in
+  let _ = emit_reg("arm32", "$jcc", a32_cop_prim_jcc) in
+  let _ = emit_reg("arm32", "$memcpy", a32_cop_prim_memcpy) in
+  let _ = emit_reg("arm32", "$memset", a32_cop_prim_memset) in
+  let _ = emit_reg("arm32", "$carg", a32_cop_prim_carg) in
+  let _ = emit_reg("arm32", "$icall", a32_cop_prim_icall) in
+  let _ = emit_reg("arm32", "$bts", a32_cop_prim_bts) in
+  let _ = emit_reg("arm32", "$bt", a32_cop_prim_bt) in
   let _ = emit_reg("arm32", "kind", a32_cop_kind) in
   let _ = emit_reg("arm32", "ld64", a32_cop_ld64) in
   let _ = emit_reg("arm32", "st64", a32_cop_st64) in
@@ -664,7 +898,7 @@ let a32_resolve_fun_patches(b, labels, patches) =
         else
           let pos = nth(p, 1) in
           let targ = a32_lookup(labels, nth(p, 2)) in
-          if tag == "beq" then a32_patch_bcond(b, pos, targ)
+          if tag == "beq" or tag == "bcond" then a32_patch_bcond(b, pos, targ)
           else a32_patch_b24(b, pos, targ) in
       step(i + 1) in
   step(0)
