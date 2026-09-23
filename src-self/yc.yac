@@ -347,7 +347,8 @@ let run_cli(pr) =
             else if want_run or scheme_run then jit_eval(src, an)
             else
               let t = mk_target(an, fn, nth(spec, 2)) in
-              let _ = rt_w_set(if an == "arm32" then 4 else 8) in
+              /* Objects keep the shared 8-byte-word layout on every target. */
+              let _ = rt_w_set(8) in
               let out0 = if out_opt == "" then default_out(inpath) else out_opt in
               let outpath =
                 if target_shared(t) then dylib_out(out0, fn)

@@ -177,7 +177,9 @@ let emit_by_target(ast, t) =
   let _ = elf_relocs_reset(0) in
   let a = target_arch(t) in
   let _ = emit_arch_set(a) in
-  let _ = rt_w_set(if a == "arm32" then 4 else 8) in
+  /* Objects keep the shared 8-byte-word layout on every target (the runtime's
+   * string/bytes field offsets are 64-bit); arm32 frames are still 4-byte. */
+  let _ = rt_w_set(8) in
   let r =
     if a == "x86_64" then
       emit_program_x86_64(ast, target_vaddr(t), target_text_off(t),

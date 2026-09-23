@@ -234,13 +234,13 @@ let a32_ldrb_imm(b, rt, rn, off) =
   a32_u32(b, 3855613952 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
 
 let a32_strb_imm(b, rt, rn, off) =
-  a32_u32(b, 3854567424 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
+  a32_u32(b, 3854565376 + bshl(rn, 16) + bshl(rt, 12) + band(off, 4095))
 
 let a32_ldrb_reg(b, rt, rn, rm) =
   a32_u32(b, 3889168384 + bshl(rn, 16) + bshl(rt, 12) + rm)
 
 let a32_strb_reg(b, rt, rn, rm) =
-  a32_u32(b, 3888123904 + bshl(rn, 16) + bshl(rt, 12) + rm)
+  a32_u32(b, 3888119808 + bshl(rn, 16) + bshl(rt, 12) + rm)
 
 /* Post-indexed Rt,[Rn],#±off  (register unchanged semantics: writeback). */
 let a32_ldr_post(b, rt, rn, off) =
@@ -271,8 +271,9 @@ let a32_bl(b, imm24) = a32_u32(b, 3942645760 + band(imm24, 16777215))
 let a32_b_cond(b, cond, imm24) =
   a32_u32(b, bor(bshl(band(cond, 15), 28), 167772160 + band(imm24, 16777215)))
 
-let a32_b_eq(b, imm24) = a32_u32(b, 436207616 + band(imm24, 16777215))
-let a32_b_ne(b, imm24) = a32_u32(b, 704643072 + band(imm24, 16777215))
+/* ARM cond: EQ=0000 NE=0001 CS=0010 ... So BEQ = 0x0A000000, BNE = 0x1A000000. */
+let a32_b_eq(b, imm24) = a32_u32(b, 167772160 + band(imm24, 16777215))
+let a32_b_ne(b, imm24) = a32_u32(b, 436207616 + band(imm24, 16777215))
 
 /* Rewrite B<c> at pos to target (absolute byte address). */
 let a32_patch_bcond(b, pos, target) =
@@ -280,9 +281,10 @@ let a32_patch_bcond(b, pos, target) =
   let off = band(bshr(target - (pos + 8), 2), 16777215) in
   a32_u32_at(b, pos, bor(bshl(cond, 28), 167772160 + off))
 
-let a32_bx(b, rm) = a32_u32(b, 3778045088 + rm)
-let a32_blx_reg(b, rm) = a32_u32(b, 3778045120 + rm)
-let a32_ret(b) = a32_u32(b, 3778045102)
+/* BX 0xE12FFF10 | Rm ; BLX 0xE12FFF30 | Rm ; BX LR = RET. */
+let a32_bx(b, rm) = a32_u32(b, 3778019088 + rm)
+let a32_blx_reg(b, rm) = a32_u32(b, 3778019120 + rm)
+let a32_ret(b) = a32_u32(b, 3778019102)
 let a32_nop_at(b, pos) = a32_u32_at(b, pos, 3785359360)
 let a32_brk(b) = a32_u32(b, 3891265776)
 let a32_svc(b, imm24) = a32_u32(b, 4009754624 + band(imm24, 16777215))
