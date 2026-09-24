@@ -24,7 +24,9 @@ export a32_u32, a32_u32_at, a32_word,
   a32_ldr_post_dn, a32_str_post, a32_str_post_dn,
   a32_push, a32_pop,
   a32_b, a32_bl, a32_b_cond, a32_b_eq, a32_b_ne, a32_patch_bcond,
-  a32_bx, a32_blx_reg, a32_ret, a32_nop_at, a32_brk, a32_svc, a32_cset
+  a32_bx, a32_blx_reg, a32_ret, a32_nop_at, a32_brk, a32_svc, a32_cset,
+  a32_vldr_d, a32_vstr_d, a32_vadd_d, a32_vsub_d, a32_vmul_d, a32_vdiv_d,
+  a32_vcmp_d, a32_vmov_s0_r0, a32_vcvt_f64_s32, a32_vmrs, a32_vmov_rr_d
 
 let a32_u32(b, w) =
   let _ = bytes_append(b, band(w, 255)) in
@@ -294,3 +296,42 @@ let a32_svc(b, imm24) = a32_u32(b, 4009754624 + band(imm24, 16777215))
 let a32_cset(b, rd, cond) =
   let _ = a32_mov_imm_cc(b, cond, rd, 1) in
   a32_mov_imm_cc(b, bxor(cond, 1), rd, 0)
+
+/* ---- VFP (VFPv3, hard-float doubles). d-regs: Dd = (D<<4)|Vd. ---- */
+
+let a32_vldr_d(b, dd, rn, off) =
+  a32_u32(b, 3985640192 + bshl(band(bshr(dd, 4), 1), 22) +
+          bshl(band(rn, 15), 16) + bshl(band(dd, 15), 12) +
+          band(bshr(off, 2), 255))
+
+let a32_vstr_d(b, dd, rn, off) =
+  a32_u32(b, 3984591616 + bshl(band(bshr(dd, 4), 1), 22) +
+          bshl(band(rn, 15), 16) + bshl(band(dd, 15), 12) +
+          band(bshr(off, 2), 255))
+
+let a32_vfp3(b, base, dd, dn, dm) =
+  a32_u32(b, base + bshl(band(bshr(dd, 4), 1), 22) +
+          bshl(band(dn, 15), 16) + bshl(band(dd, 15), 12) +
+          bshl(band(bshr(dn, 4), 1), 7) + bshl(band(bshr(dm, 4), 1), 5) +
+          band(dm, 15))
+
+let a32_vadd_d(b, dd, dn, dm) = a32_vfp3(b, 3996125952, dd, dn, dm)
+let a32_vsub_d(b, dd, dn, dm) = a32_vfp3(b, 3996126016, dd, dn, dm)
+let a32_vmul_d(b, dd, dn, dm) = a32_vfp3(b, 3995077376, dd, dn, dm)
+let a32_vdiv_d(b, dd, dn, dm) = a32_vfp3(b, 4001368832, dd, dn, dm)
+
+let a32_vcmp_d(b, dd, dm) =
+  a32_u32(b, 4004776768 + bshl(band(bshr(dd, 4), 1), 22) +
+          bshl(band(dd, 15), 12) + bshl(band(bshr(dm, 4), 1), 5) + band(dm, 15))
+
+/* VMOV S0, R0 ; VCVT.F64.S32 D0, S0 ; VMRS APSR_nzcv, FPSCR */
+let a32_vmov_s0_r0(b) = a32_u32(b, 3992979984)
+let a32_vcvt_f64_s32(b, dd, sm) =
+  a32_u32(b, 4005039040 + bshl(band(bshr(dd, 4), 1), 22) +
+          bshl(band(dd, 15), 12) + bshl(band(bshr(sm, 4), 1), 5) + band(sm, 15))
+let a32_vmrs(b) = a32_u32(b, 4008835600)
+
+/* VMOV Rt, Rt2, Dm (doubleword -> two core regs). */
+let a32_vmov_rr_d(b, rt, rt2, dm) =
+  a32_u32(b, 3964668688 + bshl(band(bshr(dm, 4), 1), 5) + band(dm, 15) +
+          bshl(band(rt2, 15), 16) + bshl(band(rt, 15), 12))
