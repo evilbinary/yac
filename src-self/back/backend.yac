@@ -18,6 +18,7 @@ import front.eval_cps {eval_cps_all}
 import front.uncps {uncps_all, uncps_is_err}
 import lib.pass {mk_pass, run_passes}
 import back.pack.yjit {pack_yjit_ex, yjit_arch_num, yjit_imp_enc}
+import lib.log {log_i}
 
 let reverse(xs) = list_rev(xs)
 
