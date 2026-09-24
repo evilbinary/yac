@@ -11,7 +11,7 @@ import back.pack.elf {elf_dynexp_set, elf_int, elf_pic, funsym_set}
 import back.pack.pe {pe_iat_off}
 import back.pack.target {JIT_VADDR}
 import lib.log {log, log_i}
-import lib.map {intern, fmap_new64, fmap_put}
+import lib.map {intern, fmap_new64, fmap_put, fmap_get}
 
 /* emit_x86_64.yac — x86-64 emit of LIR.
  *
@@ -2228,14 +2228,6 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
    * present) so AOT calls print "host fn unavailable" and return 0 instead
    * of call [0] -> SIGSEGV (BOOTSTRAP_LINK.md 12.1). REPL (T != 0) skips:
    * host_tab_fill overwrites from the host image at run time. */
-  let stub_off(fr) =
-    let sn = intern("yac_host_unimpl") in
-    let n = len(fr) in
-    let go(f, i) =
-      if i >= n then 0 - 1
-      else if intern(nth(nth(f, 0), 0)) == sn then nth(nth(f, 0), 1)
-      else go(tail(f), i + 1) in
-    go(fr, 0) in
   /* A host-leaf name is BARE ("compile_native"), but the proc implementing it
    * is emitted under its module prefix ("back.backend/compile_native",
    * pkg_qn in front/lir.yac) -- and the self-host bundle, which is compiled as
@@ -2257,13 +2249,30 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
     if pnm == leaf then true else suffix_is(pnm, str_cat("/", leaf)) in
   /* The name-carrying stub for one leaf, so the message says WHICH one. */
   let nfr = len(funOffsRev) in
+  /* name -> proc offset (first occurrence, matching the old head-first scans).
+   * Built once so G-ref/stub lookups are O(1) instead of an O(n) scan with an
+   * intern() per element -- find_gref alone ran 504k element-steps in the
+   * self-host profile, and its interning fed the intern/fmap hotspots.
+   * Store off+1: offset 0 is a real proc offset. */
+  let noff = fmap_new64(0) in
+  let fill_off(ps, i) =
+    if i >= nfr then 0
+    else
+      let e = nth(ps, 0) in
+      let nm0 = nth(e, 0) in
+      let _ =
+        if is_int(nm0) then 0
+        else
+          let g = intern(nm0) in
+          if fmap_get(noff, g) != 0 then 0
+          else fmap_put(noff, g, nth(e, 1) + 1) in
+      fill_off(tail(ps), i + 1) in
+  let _ = fill_off(funOffsRev, 0) in
+  let gref_off(nm) =
+    let v = fmap_get(noff, nm) in
+    if v == 0 then 0 - 1 else v - 1 in
   let unstub_off(id) =
-    let sn = intern(str_cat("yac_host_unimpl_", int_to_str(id))) in
-    let go(f, i) =
-      if i >= nfr then 0 - 1
-      else if intern(nth(nth(f, 0), 0)) == sn then nth(nth(f, 0), 1)
-      else go(tail(f), i + 1) in
-    go(funOffsRev, 0) in
+    gref_off(intern(str_cat("yac_host_unimpl_", int_to_str(id)))) in
   let bake(id, fr, stub, own) =
     if id >= len(host_names(0)) then 0
     else
@@ -2294,7 +2303,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
                     LOAD_VADDR + TEXT_OFF + stub)
         else 0 in
       bake(id + 1, fr, stub, unstub_off(id + 1)) in
-  let stub = stub_off(funOffsRev) in
+  let stub = gref_off(intern("yac_host_unimpl")) in
   let _ =
     if len(host_names(0)) == 0 then 0
     else bake(0, funOffsRev, stub, unstub_off(0)) in
@@ -2308,10 +2317,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
    * (the in-image proc, or the yac_host_unimpl stub when the leaf is not in
    * this image), an in-image proc its entry. T != 0 (REPL blob) is left to
    * the jit layer. */
-  let find_gref(nm, f, i) =
-    if i >= nfr then 0 - 1
-    else if intern(nth(nth(f, 0), 0)) == nm then nth(nth(f, 0), 1)
-    else find_gref(nm, tail(f), i + 1) in
+  let find_gref(nm) = gref_off(nm) in
   /* Fill every stub-closure cell's ENTRY. A name outside this image has no
    * other source (icall would load 0) so it gets the yac_host_unimpl stub; a
    * name inside the image normally relies on tag 23, but writing it here as
@@ -2335,7 +2341,7 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
       /* A host-leaf cell gets the same target its host slot got, i.e. the
        * possibly-prefixed proc bake()'s leaf_match found. */
       let off =
-        if host_id(nm, 0) < 0 then find_gref(nm, fr, 0)
+        if host_id(nm, 0) < 0 then find_gref(nm)
         else
           let find_l(f, j) =
             if j >= nfr then 0 - 1

@@ -47,8 +47,13 @@ let pass_parse(toks) = parse_program(toks, 0, [])
 let pass_anf(prog) =
   /* AST is the only place where the package boundary is still visible, so the
    * duplicate-top-level-definition check lives here (see top_dup_scan). */
+  let _t = time_ms() in
   let _ = top_dup_scan(prog) in
-  anf_all(0, prog, list_new(), len(prog))
+  let _ = log_i("prof", "anf.dup", time_ms() - _t) in
+  let _t = time_ms() in
+  let r = anf_all(0, prog, list_new(), len(prog)) in
+  let _ = log_i("prof", "anf.all", time_ms() - _t) in
+  r
 
 /* Package lookup must not import fs.path: loading fs/path.yac would recurse. */
 let path_dirname(s) =
@@ -878,25 +883,34 @@ let pkg_init_calls(xs, i, base, acc) =
     pkg_init_calls(xs, i + 1, base, acc2)
 
 let pass_lir(anf_list) =
+  let _t = time_ms() in
   let rt = rt_for_link(0) in
+  let _ = log_i("prof", "lir.rt", time_ms() - _t) in
   let _ = pkg_prefix_set("") in
   /* sigma_host_seed too: a guest with host bindings (@name) must resolve them
    * to the G+136 host slot (fcall), exactly like the package loop above and
    * jit.yac's pass_lir_eval. Without it the call has no static entry and no
    * registry, and lir now reports it instead of emitting xcall. */
+  let _t = time_ms() in
   let fs0 = sigma_host_seed(
               toplevel_seed(anf_list, 0,
                             sigma_of_rt(nth(rt, 0), nth(rt, 1)), 0)) in
+  let _ = log_i("prof", "lir.seed", time_ms() - _t) in
   let _ = lir_tlv_set(1) in
+  let _t = time_ms() in
   let st = lir_all(0, anf_list,
              [env_new(0), 1, fs0, 0, list_new(), 0],
              len(anf_list)) in
+  let _ = log_i("prof", "lir.all", time_ms() - _t) in
   let inits = pkg_init_list(0) in
   let nin = len(inits) in
   let body = insn_extend(pkg_init_calls(inits, 0, nth(st, 1), list_new()),
                          nth(st, 4)) in
   let entry = start_proc(nth(st, 1) + nin, nth(st, 5), body) in
-  tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"])
+  let _t = time_ms() in
+  let prog = tco_prog(["prog", cons(entry, reverse(sigma_list(nth(st, 2)))), "_start"]) in
+  let _ = log_i("prof", "lir.tco", time_ms() - _t) in
+  prog
 
 /* In-process image: _eval + print, not OS _start. */
 let pass_lir_yjit(anf_list) =

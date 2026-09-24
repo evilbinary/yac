@@ -337,12 +337,13 @@ let sigma_kind(fs, name) = sigma_kind_h(fs, name, hash_str(name))
 
 let sigma_cons(fs, f) =
   let m = sigma_map(fs) in
-  let idx =
-    if len(nth(f, 4)) == 0 then 0 - 1
-    else len(sigma_list(fs)) in
+  /* Σ ent field 2 (the old proc index) is never read, so it no longer costs
+   * len(sigma_list(fs)) -- a cons-list walk that made every proc registration
+   * O(n) and the whole LIR pass O(n^2) in the number of procs (the self-host
+   * bundle's dominant front-end cost). */
   let g = intern(nth(f, 1)) in
   let src = intern(fun_src(f)) in
-  let ent = [nth(f, 1), nth(f, 3), idx, nth(f, 0)] in
+  let ent = [nth(f, 1), nth(f, 3), 0 - 1, nth(f, 0)] in
   let _ = fmap_put(m, g, ent) in
   let _ = if src == g then 0 else fmap_put(m, src, ent) in
   [cons(f, sigma_list(fs)), m, nth(fs, 2), nth(fs, 3), nth(fs, 4), nth(fs, 5)]
@@ -915,11 +916,14 @@ let lir_wrap_args(n, i, acc) =
   else lir_wrap_args(n, i + 1, cons(i, acc))
 
 let lir_proc_find(procs, nm) =
-  let go(i) =
-    if i >= len(procs) then 0
-    else if nth(nth(procs, i), 1) == nm then nth(procs, i)
-    else go(i + 1) in
-  go(0)
+  /* procs is a cons list; walk it with tail() instead of nth(procs, i), which
+   * re-walks from the head for every i and made each find O(n^2). */
+  let n = len(procs) in
+  let go(ps, i) =
+    if i >= n then 0
+    else if nth(nth(ps, 0), 1) == nm then nth(ps, 0)
+    else go(tail(ps), i + 1) in
+  go(procs, 0)
 
 /* The flat runtime $proc this source name denotes: `print` keeps its own name,
  * everything else is `yac_<name>` (LIR.md 4.10: primitives are `call yac_*`).
