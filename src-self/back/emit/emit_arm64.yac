@@ -646,7 +646,7 @@ let a64_op_cmpjmp(b, patches, tname, fname) =
   let _ = a64_b_eq(b, 0) in
   let pne = bytes_len(b) in
   let _ = a64_b(b, 0) in
-  cons(["b26", pne, fname], cons(["beq", peq, tname], patches))
+  cons(["b26", pne, tname], cons(["beq", peq, fname], patches))
 /* i_core ops (per-LIR-op form), registered into the shared table. */
 let a64_cop_mov_imm(st, insn) =
   let b = nth(st, 0) in
