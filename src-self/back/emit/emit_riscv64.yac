@@ -131,6 +131,10 @@ let rv_jal_rt(b, patches, dst, name, ids) =
 
 /* x6,x28 untagged; x7=1; tagged result in x6. */
 let rv_cmp_int(b, op) =
+  /* x7 = 1: used as the constant for the `!=` xor and as the LSL1 amount
+   * (the tagged-bool shift). Callers of `icmp` did not set it, so the value
+   * leaked from whatever ran before. */
+  let _ = rv_addi(b, 7, 0, 1) in
   let _ =
     if op == "==" then
       let _ = rv_xor(b, 6, 6, 28) in
