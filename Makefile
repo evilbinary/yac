@@ -172,6 +172,11 @@ test-qemu-arm64: $(TEST_HARNESS)
 test-qemu-riscv64: $(TEST_HARNESS)
 	PATH="$(CURDIR)/build/bin:$$PATH" ./$(TEST_HARNESS) qemu-riscv64
 
+# build/bin first: it carries the qemu-* forwarding shims (host without
+# user-mode qemu) and the timeout shim (Windows timeout.exe would eat -s).
+test-qemu-arm32: $(TEST_HARNESS)
+	PATH="$(CURDIR)/build/bin:$$PATH" ./$(TEST_HARNESS) qemu-arm32
+
 test-iso: $(TEST_HARNESS)
 	./$(TEST_HARNESS) iso
 
@@ -195,5 +200,5 @@ clean:
 	rm -f src/*.o
 
 .PHONY: all clean test test-interp test-compiler test-pkg test-link test-boot \
-	test-qemu test-qemu-arm64 test-qemu-riscv64 test-iso test-cps test-repl prop \
+	test-qemu test-qemu-arm64 test-qemu-riscv64 test-qemu-arm32 test-iso test-cps test-repl prop \
 	js yc_a yc_b bootstrap yc-iso
