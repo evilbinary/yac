@@ -16,7 +16,7 @@ import front.anf {anf_all}
 import front.cps {cps_all, cps_maybe_opt}
 import front.eval_cps {eval_cps_all}
 import front.uncps {uncps_all, uncps_is_err}
-import lib.pass {mk_pass, run_passes}
+import lib.pass {mk_pass, run_pass, run_passes}
 import back.pack.yjit {pack_yjit_ex, yjit_arch_num, yjit_imp_enc}
 import lib.log {log_i}
 
@@ -1295,20 +1295,38 @@ let compile_env_leave(env) =
   let _ = emit_jsess_set(nth(env, 0)) in
   0
 
-let compile_env_of(env, src, t) =
-  let _ = emit_jsess_set(0) in
+/* lex+parse+anf (+ syntax/unbound checks and link setup), returning the ANF
+ * list or 0 on error. The parsed AST lives ONLY in this frame, so once we
+ * return it is unreachable -- and collectable -- before the LIR/emit phases
+ * build their own (much larger) structures. Binding the AST in
+ * compile_env_of's frame kept it a GC root through the whole pipeline (yac's
+ * GC has no slot liveness), a large slice of the self-host compile's live set. */
+let anf_of(src) =
   let ast0 = pass_parse(pass_lex(src)) in
   if prog_has_err(ast0, 0) then
-    let _ = report_syntax(ast0) in
-    compile_env_leave(env)
-  else if report_unbound(src, ast0) != 0 then
-    compile_env_leave(env)
+    let _ = report_syntax(ast0) in 0
+  else if report_unbound(src, ast0) != 0 then 0
   else
     let _ = pkg_fail_set(0) in
     let _ = link_from_ast(ast0) in
-    /* ast0 is already the parsed program (syntax + unbound checks above);
-     * rerunning lex+parse on src would duplicate ~6s of a ~38s self-compile. */
-    let bin = run_passes(drop(make_pipeline(t), 2), ast0) in
+    pass_anf(ast0)
+
+/* lex..lir in ONE helper frame. Both the AST (inside anf_of) and the ANF are
+ * unreachable once this returns, so lower/pack run without them on the heap
+ * (the same slot-rooting issue as the AST: yac's GC has no liveness). */
+let lir_of(src, t) =
+  let anf = anf_of(src) in
+  if anf == 0 then 0
+  else run_pass(nth(make_pipeline(t), 3), anf)
+
+let compile_env_of(env, src, t) =
+  let _ = emit_jsess_set(0) in
+  let lir = lir_of(src, t) in
+  if lir == 0 then
+    compile_env_leave(env)
+  else
+    /* lower/pack only: the AST and ANF are already gone (see lir_of). */
+    let bin = run_passes(drop(make_pipeline(t), 4), lir) in
     /* read pkg_fail BEFORE leave restores the caller's value */
     let failed = pkg_fail(0) in
     let _ = compile_env_leave(env) in

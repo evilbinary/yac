@@ -1066,14 +1066,85 @@ let smap_set_nslots(n) =
   let _ = if len(c) == 0 then smap_reset(0) else 0 in
   list_set(c, 0, n)
 
+let smap_mask_box = let b = box_new() in let _ = box_set(b, 0) in b
+let smap_set_mask(words) = box_set(smap_mask_box, words)
+let smap_mask(_) = let v = box_get(smap_mask_box) in if v == 0 then list_new() else v
+
 let smap_note(ret_off) =
   let c = smap_buf(0) in
   let _ = if len(c) < 2 then smap_reset(0) else 0 in
-  list_push(nth(c, 1), [ret_off, nth(c, 0)])
+  list_push(nth(c, 1), [ret_off, nth(c, 0), smap_mask(0)])
 
 let smap_recs(_) =
   let c = smap_buf(0) in
   if len(c) < 2 then list_new() else nth(c, 1)
+
+/* ---- GC stack-map live mask -----------------------------------------------
+ * Each smap record (one per call site) carries a bit per frame slot: 1 = the GC
+ * must treat that slot as a root while the call is in progress. We fill it with
+ * "every slot READ somewhere in the proc" -- an over-approximation of liveness,
+ * so it is always SAFE (it never drops a live root; the worst case is the old
+ * scan-everything behaviour). A proc containing an op we do not model falls
+ * back to all-live. A precise per-call-site (CFG dataflow) mask can replace it. */
+/* Slot numbers an insn reads; -1 = "unknown op" (the caller then uses all-live). */
+let insn_uses(ins) =
+  let k = nth(ins, 0) in
+  if k == "mov_imm" or k == "strlit" or k == "gvar" or k == "gval"
+     or k == "self" or k == "local" or k == "label" or k == "jmp" then []
+  else if k == "mov" or k == "untag" or k == "tag" or k == "is_int"
+       or k == "bytes_len" or k == "str_len" or k == "bnot" then [nth(ins, 2)]
+  else if k == "cmp" then [nth(ins, 3), nth(ins, 4)]
+  else if k == "cmpjmp" or k == "ret" then [nth(ins, 1)]
+  else if k == "str_ref" then [nth(ins, 2), nth(ins, 3)]
+  else if k == "gset" then [nth(ins, 3)]
+  else if k == "closure" then nth(ins, 3)
+  else if k == "shl" or k == "shr" or k == "land" or k == "lor"
+       or k == "xor" or k == "add" or k == "sub" or k == "mul"
+       or k == "div" or k == "rem" then [nth(ins, 2), nth(ins, 3)]
+  else if k == "fcall" or k == "ycall" or k == "tcall" or k == "ccall"
+       or k == "syscall" then nth(ins, 3)
+  else if k == "icall" then append([nth(ins, 2)], nth(ins, 3))
+  else 0 - 1
+
+/* Bitmap words (ceil(nslots/64)): bit s set for every slot read in a source
+ * position anywhere in the proc; all-ones if any op is unknown. */
+let proc_use_mask(insns, nslots) =
+  let nw = bshr(nslots + 63, 6) in
+  let w = list_new() in
+  let fillw(i) = if i >= nw then 0 else let _ = list_push(w, 0) in fillw(i + 1) in
+  let _ = fillw(0) in
+  let okb = box_new() in
+  let _ = box_set(okb, 1) in
+  let n = len(insns) in
+  let go(i) =
+    if i >= n then 0
+    else
+      let us = insn_uses(nth(insns, i)) in
+      if us == 0 - 1 then let _ = box_set(okb, 0) in 0
+      else
+        let m = len(us) in
+        let g(j) =
+          if j >= m then 0
+          else
+            let u = nth(us, j) in
+            let _ =
+              if is_int(u) then
+                if u >= 0 then
+                  if u < nslots then
+                    let wi = bshr(u, 6) in
+                    list_set(w, wi, bor(nth(w, wi), bshl(1, band(u, 63))))
+                  else 0
+                else 0
+              else 0 in
+            g(j + 1) in
+        let _ = g(0) in
+        go(i + 1) in
+  let _ = go(0) in
+  if box_get(okb) == 0 then
+    let aw = list_new() in
+    let afill(i) = if i >= nw then 0 else let _ = list_push(aw, 0 - 1) in afill(i + 1) in
+    let _ = afill(0) in aw
+  else w
 
 /* Unique STR objects in the image (not yac_alloc). Same content => same ptr
  * so native == is pointer-eq. GC only walks gc_head; pool is in the ELF. */
@@ -1169,10 +1240,24 @@ let smap_emit_table(b, extra) =
     if i >= nr then 0
     else
       let e = nth(recs, i) in
+      let n = nth(e, 1) in
+      let mw = nth(e, 2) in
       let pos = bytes_len(b) in
       let _ = strlit_u64(b, 0) in
       let _ = list_push(extra, [12, pos, nth(e, 0)]) in
-      let _ = strlit_u64(b, nth(e, 1)) in
+      let _ = strlit_u64(b, n) in
+      /* Live-slot bitmap, ceil(nslots/64) words: bit k set = frame slot k is a
+       * live root at this call site (see proc_use_mask). Missing words default
+       * to all-ones = the old scan-everything behaviour, so a short mask can
+       * only ever be more conservative. */
+      let nm = len(mw) in
+      let nw = bshr(n + 63, 6) in
+      let putw(j) =
+        if j >= nw then 0
+        else
+          let _ = strlit_u64(b, if j < nm then nth(mw, j) else 0 - 1) in
+          putw(j + 1) in
+      let _ = putw(0) in
       putr(i + 1) in
   let _ = putr(0) in
   start
