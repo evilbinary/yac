@@ -236,6 +236,51 @@ let a32_f64_cset(b, opn) =
     else 1 in
   a32_cset(b, 0, cc)
 
+/* 8-byte f64 memory access (arm32: a word is 4 bytes). */
+let a32_cop_f64ld(st, insn) =
+  let b = nth(st, 0) in
+  let cur = nth(st, 1) in
+  let labels = nth(st, 2) in
+  let patches = nth(st, 3) in
+  let _ = a32_slot(b, nth(insn, 2), false, 0) in
+  let _ = a32_untag_ptr(b, 0) in
+  let _ = a32_slot(b, nth(insn, 3), false, 1) in
+  let _ = a32_asr_imm(b, 1, 1, 1) in
+  let _ = a32_add_reg(b, 0, 0, 1) in
+  let _ = a32_sub_imm(b, 13, 13, 8) in
+  let _ = a32_str_imm(b, 0, 13, 0) in
+  let _ = a32_mov_imm32(b, 0, 48) in
+  let acall = bytes_len(b) in
+  let _ = a32_bl(b, 0) in
+  let _ = a32_untag_ptr(b, 0) in
+  let _ = a32_mov_imm(b, 1, 7) in
+  let _ = a32_str_imm(b, 1, 0, 16) in
+  let _ = a32_ldr_imm(b, 1, 13, 0) in
+  let _ = a32_ldr_imm(b, 2, 1, 0) in
+  let _ = a32_ldr_imm(b, 3, 1, 4) in
+  let _ = a32_str_imm(b, 2, 0, 24) in
+  let _ = a32_str_imm(b, 3, 0, 28) in
+  let _ = a32_add_imm(b, 13, 13, 8) in
+  let _ = a32_tag(b, 0) in
+  let _ = a32_slot(b, nth(insn, 1), true, 0) in
+  emit_st4(st, b, cur, labels, emit_patch_rel(nth(st, 4), patches, acall, "yac_alloc"))
+
+let a32_cop_f64st(st, insn) =
+  let b = nth(st, 0) in
+  let _ = a32_slot(b, nth(insn, 1), false, 0) in
+  let _ = a32_untag_ptr(b, 0) in
+  let _ = a32_slot(b, nth(insn, 2), false, 1) in
+  let _ = a32_asr_imm(b, 1, 1, 1) in
+  let _ = a32_add_reg(b, 0, 0, 1) in
+  let _ = a32_slot(b, nth(insn, 3), false, 1) in
+  let _ = a32_mvn_imm(b, 12, 1) in
+  let _ = a32_and_reg(b, 1, 1, 12) in
+  let _ = a32_ldr_imm(b, 2, 1, 24) in
+  let _ = a32_ldr_imm(b, 3, 1, 28) in
+  let _ = a32_str_imm(b, 2, 0, 0) in
+  let _ = a32_str_imm(b, 3, 0, 4) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
 let a32_cop_f64fromstr(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
@@ -1770,6 +1815,8 @@ let a32_reg_ops =
   let _ = emit_reg("arm32", "$f64fromstr", a32_cop_f64fromstr) in
   let _ = emit_reg("arm32", "$f64rel", a32_cop_f64rel) in
   let _ = emit_reg("arm32", "$f64print", a32_cop_f64print) in
+  let _ = emit_reg("arm32", "$f64ld", a32_cop_f64ld) in
+  let _ = emit_reg("arm32", "$f64st", a32_cop_f64st) in
   let _ = emit_reg("arm32", "closure", a32_cop_closure) in
   let _ = emit_reg("arm32", "icall", a32_cop_icall) in
   let _ = emit_reg("arm32", "cons", a32_cop_cons) in

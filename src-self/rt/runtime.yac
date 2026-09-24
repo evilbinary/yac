@@ -21,7 +21,7 @@
 
 
 package rt.runtime
-export runtime_funs, runtime_add, yac_cimport_host_sym, yac_gval_pub, yac_gval_list, yac_gfn_pub, yac_gfn_list, rt_w_set, rt_w, rt_field
+export runtime_funs, runtime_add, yac_cimport_host_sym, yac_gval_pub, yac_gval_list, yac_gfn_pub, yac_gfn_list, rt_w_set, rt_w, rt_field, rt_pw_set, rt_pw
 /* `intern` is used by the profiling/entry-table helpers below. This file is
  * compiled BOTH concatenated into the bundle and standalone as package
  * rt.runtime (drivers like driver_emit compose it), and only an explicit
@@ -40,6 +40,15 @@ let rt_w_box =
 let rt_w_set(w) = box_set(rt_w_box, w)
 let rt_w(_) = box_get(rt_w_box)
 let rt_field(k) = k * rt_w(0)
+
+/* Target pointer width in bits (32 / 64 / …). 32 means a LIR word is 4 bytes,
+ * so an 8-byte f64 in memory needs the arch's $f64ld/$f64st. */
+let rt_pw_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let rt_pw_set(v) = box_set(rt_pw_box, v)
+let rt_pw(_) = box_get(rt_pw_box)
 
 let rt_cons_ins(_) =
   [["local", 6, 2],
@@ -749,9 +758,49 @@ let rt_bytes_put_ins(_) =
    ["mov_imm", 10, 0 + 0],
    ["ret", 10]]
 
+/* f64 (kind-16) load/store tail of kload/kstore. On a 64-bit target a LIR
+ * word IS 8 bytes, so ld64/st64 + alloc/box works. On arm32 a word is 4
+ * bytes, so the arch supplies an 8-byte $f64ld/$f64st instead. */
+let rt_kl_f64_tail(_) =
+  if rt_pw(0) == 32 then
+    [["label", "kl_f64"],
+     ["$f64ld", 7, 1, 2],
+     ["ret", 7],
+     ["label", "kl_bad"],
+     ["mov_imm", 6, 0 + 0],
+     ["ret", 6]]
+  else
+    [["label", "kl_f64"],
+     ["ld64", 6, 1, 2],
+     ["alloc", 7, rt_field(6)],
+     ["obj_sti", 7, rt_field(1), 0],
+     ["obj_sti", 7, rt_field(2), 7],
+     ["mov_imm", 4, 24 + 24],
+     ["st64", 7, 4, 6],
+     ["ret", 7],
+     ["label", "kl_bad"],
+     ["mov_imm", 6, 0 + 0],
+     ["ret", 6]]
+
+let rt_ks_f64_tail(_) =
+  if rt_pw(0) == 32 then
+    [["label", "ks_f64"],
+     ["$f64st", 1, 2, 4],
+     ["label", "ks_ok"],
+     ["mov_imm", 6, 0 + 0],
+     ["ret", 6]]
+  else
+    [["label", "ks_f64"],
+     ["mov_imm", 5, 24 + 24],
+     ["ld64", 7, 4, 5],
+     ["st64", 1, 2, 7],
+     ["label", "ks_ok"],
+     ["mov_imm", 6, 0 + 0],
+     ["ret", 6]]
+
 /* 1=base (tagged heap or fake ptr), 2=off, 3=k. */
 let rt_mem_kload_ins(_) =
-  [["mov_imm", 4, 1 + 1],
+  append([["mov_imm", 4, 1 + 1],
    ["icmp", "==", 5, 3, 4],
    ["cmpjmp", 5, "kl_i8", "kl_n1"],
    ["label", "kl_i8"],
@@ -855,22 +904,12 @@ let rt_mem_kload_ins(_) =
    ["label", "kl_n8"],
    ["mov_imm", 4, 16 + 16],
    ["icmp", "==", 5, 3, 4],
-   ["cmpjmp", 5, "kl_f64", "kl_bad"],
-   ["label", "kl_f64"],
-   ["ld64", 6, 1, 2],
-   ["alloc", 7, rt_field(6)],
-   ["obj_sti", 7, rt_field(1), 0],
-   ["obj_sti", 7, rt_field(2), 7],
-   ["mov_imm", 4, 24 + 24],
-   ["st64", 7, 4, 6],
-   ["ret", 7],
-   ["label", "kl_bad"],
-   ["mov_imm", 6, 0 + 0],
-   ["ret", 6]]
+   ["cmpjmp", 5, "kl_f64", "kl_bad"]],
+  rt_kl_f64_tail(0))
 
 /* 1=base, 2=off, 3=k, 4=v. */
 let rt_mem_kstore_ins(_) =
-  [["mov_imm", 5, 1 + 1],
+  append([["mov_imm", 5, 1 + 1],
    ["icmp", "==", 6, 3, 5],
    ["cmpjmp", 6, "ks_u8", "ks_n1"],
    ["label", "ks_n1"],
@@ -937,14 +976,8 @@ let rt_mem_kstore_ins(_) =
    ["label", "ks_n8"],
    ["mov_imm", 5, 16 + 16],
    ["icmp", "==", 6, 3, 5],
-   ["cmpjmp", 6, "ks_f64", "ks_ok"],
-   ["label", "ks_f64"],
-   ["mov_imm", 5, 24 + 24],
-   ["ld64", 7, 4, 5],
-   ["st64", 1, 2, 7],
-   ["label", "ks_ok"],
-   ["mov_imm", 6, 0 + 0],
-   ["ret", 6]]
+   ["cmpjmp", 6, "ks_f64", "ks_ok"]],
+  rt_ks_f64_tail(0))
 
 let rt_mem_load_ins(_) =
   append([["local", 20, 3]], rt_mem_kload_ins(0))

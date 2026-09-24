@@ -4,7 +4,7 @@ import back.emit.emit {asm_dump_set}
 import back.jit {compile_jit, compile_uncps, jit_asm_dump_set, jit_dump_live, jit_lir_dump_set, jit_load_yjit}
 import back.pack.elf {elf_int_set, syms_enable}
 import back.pack.target {mk_jit_target, mk_target, parse_arch_name, parse_format_name, target_shared}
-import rt.runtime {rt_w_set}
+import rt.runtime {rt_w_set, rt_pw_set}
 import lang.scheme {scheme_to_yac}
 import lib.log {log, log_i, log_set_hush}
 import back.profile {yac_prof_dump, yac_prof_enable}
@@ -349,6 +349,7 @@ let run_cli(pr) =
               let t = mk_target(an, fn, nth(spec, 2)) in
               /* Objects keep the shared 8-byte-word layout on every target. */
               let _ = rt_w_set(8) in
+              let _ = rt_pw_set(if an == "arm32" then 32 else 64) in
               let out0 = if out_opt == "" then default_out(inpath) else out_opt in
               let outpath =
                 if target_shared(t) then dylib_out(out0, fn)

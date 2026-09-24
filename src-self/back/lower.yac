@@ -18,7 +18,7 @@ import back.emit.emit_x86_64 {emit_program_x86_64}
 import back.emit.emit_arm64 {a64_resolve_loop, emit_program_arm64}
 import back.emit.emit_riscv64 {emit_program_riscv64, rv_resolve_loop}
 import back.emit.emit_arm32 {emit_program_arm32, a32_resolve_loop}
-import rt.runtime {rt_w_set}
+import rt.runtime {rt_w_set, rt_pw_set}
 import lib.log {log}
 
 let alloc_home(s) = s
@@ -180,6 +180,7 @@ let emit_by_target(ast, t) =
   /* Objects keep the shared 8-byte-word layout on every target (the runtime's
    * string/bytes field offsets are 64-bit); arm32 frames are still 4-byte. */
   let _ = rt_w_set(8) in
+  let _ = rt_pw_set(if a == "arm32" then 32 else 64) in
   let r =
     if a == "x86_64" then
       emit_program_x86_64(ast, target_vaddr(t), target_text_off(t),
