@@ -2230,10 +2230,11 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
    * host_tab_fill overwrites from the host image at run time. */
   let stub_off(fr) =
     let sn = intern("yac_host_unimpl") in
+    let n = len(fr) in
     let go(f, i) =
-      if i >= len(fr) then 0 - 1
-      else if intern(nth(nth(fr, i), 0)) == sn then nth(nth(fr, i), 1)
-      else go(f, i + 1) in
+      if i >= n then 0 - 1
+      else if intern(nth(nth(f, 0), 0)) == sn then nth(nth(f, 0), 1)
+      else go(tail(f), i + 1) in
     go(fr, 0) in
   /* A host-leaf name is BARE ("compile_native"), but the proc implementing it
    * is emitted under its module prefix ("back.backend/compile_native",
@@ -2255,12 +2256,13 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let leaf_match(pnm, leaf) =
     if pnm == leaf then true else suffix_is(pnm, str_cat("/", leaf)) in
   /* The name-carrying stub for one leaf, so the message says WHICH one. */
+  let nfr = len(funOffsRev) in
   let unstub_off(id) =
     let sn = intern(str_cat("yac_host_unimpl_", int_to_str(id))) in
     let go(f, i) =
-      if i >= len(f) then 0 - 1
-      else if intern(nth(nth(f, i), 0)) == sn then nth(nth(f, i), 1)
-      else go(f, i + 1) in
+      if i >= nfr then 0 - 1
+      else if intern(nth(nth(f, 0), 0)) == sn then nth(nth(f, 0), 1)
+      else go(tail(f), i + 1) in
     go(funOffsRev, 0) in
   let bake(id, fr, stub, own) =
     if id >= len(host_names(0)) then 0
@@ -2268,12 +2270,13 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
       let ln = nth(host_names(0), id) in
       let nm = intern(ln) in
       let find(f, i) =
-        if i >= len(fr) then 0 - 1
+        if i >= nfr then 0 - 1
         else
-          let pn = nth(nth(fr, i), 0) in
-          if intern(pn) == nm then nth(nth(fr, i), 1)
-          else if leaf_match(pn, ln) then nth(nth(fr, i), 1)
-          else find(f, i + 1) in
+          let e = nth(f, 0) in
+          let pn = nth(e, 0) in
+          if intern(pn) == nm then nth(e, 1)
+          else if leaf_match(pn, ln) then nth(e, 1)
+          else find(tail(f), i + 1) in
       let off = find(fr, 0) in
       let _ =
         if T != 0 then 0
@@ -2305,10 +2308,10 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
    * (the in-image proc, or the yac_host_unimpl stub when the leaf is not in
    * this image), an in-image proc its entry. T != 0 (REPL blob) is left to
    * the jit layer. */
-  let find_gref(nm, fr, i) =
-    if i >= len(fr) then 0 - 1
-    else if intern(nth(nth(fr, i), 0)) == nm then nth(nth(fr, i), 1)
-    else find_gref(nm, fr, i + 1) in
+  let find_gref(nm, f, i) =
+    if i >= nfr then 0 - 1
+    else if intern(nth(nth(f, 0), 0)) == nm then nth(nth(f, 0), 1)
+    else find_gref(nm, tail(f), i + 1) in
   /* Fill every stub-closure cell's ENTRY. A name outside this image has no
    * other source (icall would load 0) so it gets the yac_host_unimpl stub; a
    * name inside the image normally relies on tag 23, but writing it here as
@@ -2322,10 +2325,12 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
    * session-length too low, and `print(f(2))` on the next line called whatever
    * lived there -- usually the yac_host_unimpl stub, so the call "succeeded"
    * with the message "host fn unavailable" and 0, or jumped to 0 and crashed. */
-  let fill_gref(i, fr, stub) =
-    if i >= gref_count(0) then 0
+  let gnames = gref_names(0) in
+  let ngref = gref_count(0) in
+  let fill_gref(i, fr, stub, ns) =
+    if i >= ngref then 0
     else
-      let s = nth(gref_names(0), i) in
+      let s = nth(ns, 0) in
       let nm = intern(s) in
       /* A host-leaf cell gets the same target its host slot got, i.e. the
        * possibly-prefixed proc bake()'s leaf_match found. */
@@ -2333,12 +2338,13 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
         if host_id(nm, 0) < 0 then find_gref(nm, fr, 0)
         else
           let find_l(f, j) =
-            if j >= len(f) then 0 - 1
+            if j >= nfr then 0 - 1
             else
-              let pn = nth(nth(f, j), 0) in
-              if intern(pn) == nm then nth(nth(f, j), 1)
-              else if leaf_match(pn, s) then nth(nth(f, j), 1)
-              else find_l(f, j + 1) in
+              let e = nth(f, 0) in
+              let pn = nth(e, 0) in
+              if intern(pn) == nm then nth(e, 1)
+              else if leaf_match(pn, s) then nth(e, 1)
+              else find_l(tail(f), j + 1) in
           find_l(fr, 0) in
       let v =
         if off >= 0 then T + LOAD_VADDR + TEXT_OFF + off
@@ -2346,8 +2352,8 @@ let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
         else 0 in
       let _ = relocs_add(data_start + gref_base(0) + bshl(i, 5) + 16) in
       let _ = apply_u64(b, data_start + gref_base(0) + bshl(i, 5) + 16, v) in
-      fill_gref(i + 1, fr, stub) in
-  let _ = fill_gref(0, funOffsRev, stub) in
+      fill_gref(i + 1, fr, stub, tail(ns)) in
+  let _ = fill_gref(0, funOffsRev, stub, gnames) in
   /* The gref cell table: name -> cell offset -> [cell+0] value and [cell+16]
    * ENTRY, read back from the emitted image. The entry is absolute (fill_gref
    * writes T + LOAD_VADDR + TEXT_OFF + off) and is what `icall` jumps to, so

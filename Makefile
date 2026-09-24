@@ -63,6 +63,12 @@ $(YC_A): $(BIN) $(YC_BUNDLE)
 		echo "native rebuild pass 2 (runtime): $@.new compiling bundle"; \
 		$@.new --pkg src-self $(YC_BUNDLE) -o $@.new2 && chmod +x $@.new2 && \
 		mv -f $@.new2 $@ && rm -f $@.new; \
+	elif [ -f $(YC_BIN) ]; then \
+		echo "native rebuild via $(YC_BIN) pass 1 (emit): compiling bundle"; \
+		./$(YC_BIN) --pkg src-self $(YC_BUNDLE) -o $@.new && chmod +x $@.new && \
+		echo "native rebuild via $(YC_BIN) pass 2 (runtime): $@.new compiling bundle"; \
+		$@.new --pkg src-self $(YC_BUNDLE) -o $@.new2 && chmod +x $@.new2 && \
+		mv -f $@.new2 $@ && rm -f $@.new; \
 	else \
 		echo "L4: ./yac compiling bundle with C GC (slow; not the native <3s path)"; \
 		./$(BIN) --pkg src-self $(YC_BUNDLE) -o $@ && chmod +x $@; \

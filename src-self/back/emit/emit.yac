@@ -381,17 +381,22 @@ let is_yac_proc_name(nm) =
  * emitter has only the target's NAME in hand. */
 let tcall_tab_box =
   let b = box_new() in
-  let _ = box_set(b, []) in
+  let _ = box_set(b, list_new()) in
   b
 
 let tcall_tab_go(funs, i, acc) =
-  if i >= len(funs) then acc
+  if i < 0 then acc
   else
     let f = nth(funs, i) in
-    tcall_tab_go(funs, i + 1,
-      cons([nth(f, 1), if fun_selfabi(f) then 0 else 1], acc))
+    let _ = list_push(acc, [nth(f, 1), if fun_selfabi(f) then 0 else 1]) in
+    tcall_tab_go(funs, i - 1, acc)
 
-let tcall_tab_set(funs) = box_set(tcall_tab_box, tcall_tab_go(funs, 0, []))
+/* Build the table in the SAME order the old cons-list lookup saw (last fun
+ * first) so duplicate names resolve identically, but as a buffer so both
+ * lookup (nth) and len are O(1) instead of O(n) -- the funs loop called the
+ * lookup per tcall, making it the dominant O(n^2) cost of the whole emit. */
+let tcall_tab_set(funs) =
+  box_set(tcall_tab_box, tcall_tab_go(funs, len(funs) - 1, list_new()))
 
 let tcall_tab_lookup(t, nm, i) =
   if i >= len(t) then 0 - 1
