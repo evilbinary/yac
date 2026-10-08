@@ -188,9 +188,9 @@ let anf_all(i, prog, acc, n) =
     /* prog is a listbuf (see prog_vec). list_set clears the slot, so this
      * item's tree is unreachable once `e` is overwritten on the next turn.
      * A cons spine ignores list_set; the compile path must not keep one.
-     * Collect every 64 items so the dropped trees return to the freelist
-     * before the next chunk is allocated. */
+     * The dropped trees return on the next allocation-triggered collect;
+     * do not collect here — a full mark per batch dominates host compiles
+     * such as lang_js, which re-enters the compiler hundreds of times. */
     let _ = list_set(prog, i, 0) in
     let _ = if ast_is_hdr(e) then 0 else list_push(acc, anf_top(e)) in
-    let _ = if irem(i, 64) == 63 then gc_collect() else 0 in
     anf_all(i + 1, prog, acc, n)
