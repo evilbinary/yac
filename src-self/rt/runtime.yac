@@ -1589,6 +1589,46 @@ let rt_gc_ins(_) =
    ["fcall", 1, "yac_gc", []],
    ["ret", 1]]
 
+/* --dump-obj: after a collect gc_head holds ONLY reachable objects (the sweep
+ * unlinks the dead ones). Walk it once per kind 0..15 and print count + bytes
+ * (tagged for `print`): kind 2=cons 3=str 4=bytes 5=listbuf 7=float ... */
+let rt_heap_stats_ins(_) =
+  [["$local", 20, 0],
+   ["$gbase", 1],
+   ["mov_imm", 12, 0],          /* zero */
+   ["mov_imm", 13, 16],         /* nkinds */
+   ["mov_imm", 2, 0],           /* k */
+   ["label", "hs_k"],
+   ["$jcc", ">=u", 2, 13, "hs_done", "hs_kb"],
+   ["label", "hs_kb"],
+   ["$ld64", 3, 1, 0],          /* obj = gc_head */
+   ["mov_imm", 4, 0],           /* count */
+   ["mov_imm", 5, 0],           /* bytes */
+   ["label", "hs_loop"],
+   ["$jcc", "==", 3, 12, "hs_end", "hs_body"],
+   ["label", "hs_body"],
+   ["$ld64", 9, 3, 16],         /* kind */
+   ["$jcc", "==", 9, 2, "hs_hit", "hs_next"],
+   ["label", "hs_hit"],
+   ["$ld64", 10, 3, 0 - 8],     /* size */
+   ["$add", 5, 5, 10],
+   ["$addi", 4, 4, 1],
+   ["label", "hs_next"],
+   ["$ld64", 3, 3, 0],          /* next */
+   ["jmp", "hs_loop"],
+   ["label", "hs_end"],
+   ["mov", 8, 2], ["$add", 8, 8, 8], ["mov_imm", 9, 2],
+   ["fcall", 11, "print", [8, 9]],
+   ["mov", 8, 4], ["$add", 8, 8, 8], ["mov_imm", 9, 2],
+   ["fcall", 11, "print", [8, 9]],
+   ["mov", 8, 5], ["$add", 8, 8, 8], ["mov_imm", 9, 2],
+   ["fcall", 11, "print", [8, 9]],
+   ["$addi", 2, 2, 1],
+   ["jmp", "hs_k"],
+   ["label", "hs_done"],
+   ["mov_imm", 1, 0],
+   ["ret", 1]]
+
 /* $proc + $local: native frame, not a GC stack-map root. */
 let rt_read_file_ins(_) =
   [["$local", 10, 1],
@@ -2606,6 +2646,7 @@ let runtime_funs(_) =
    ["$proc", "yac_gc_mark", 1, 0, rt_gc_mark_ins(0), "yac_gc_mark"],
    ["$proc", "yac_gc", 0, 0, rt_gc_collect_ins(0), "yac_gc"],
    ["$proc", "gc_collect", 0, 0, rt_gc_ins(0), "gc_collect"],
+   ["$proc", "yac_heap_stats", 0, 0, rt_heap_stats_ins(0), "yac_heap_stats"],
    ["$proc", "yac_argc", 0, 0, rt_argc_ins(0), "yac_argc"],
    ["$proc", "time_ms", 0, 0, rt_time_ms_ins(0), "time_ms"],
    ["$proc", "time_ns", 0, 0, rt_time_ns_ins(0), "time_ns"],

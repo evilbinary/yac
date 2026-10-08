@@ -185,5 +185,10 @@ let anf_all(i, prog, acc, n) =
   if i >= n then acc
   else
     let e = nth(prog, i) in
+    /* Release this top-level item's AST subtree as soon as it is converted:
+     * nothing after `pass_anf` reads the AST, and the anf phase is where the
+     * peak already sits (AST + growing ANF), so this is the cheapest way to
+     * lower it. `e` (the local) keeps the item alive until anf_top returns. */
+    let _ = list_set(prog, i, 0) in
     let _ = if ast_is_hdr(e) then 0 else list_push(acc, anf_top(e)) in
     anf_all(i + 1, prog, acc, n)

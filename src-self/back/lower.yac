@@ -40,6 +40,7 @@ let is_kernel_name(n) =
     else if n == "print_int" then true
     else if n == "print_val" then true
     else if n == "gc_collect" then true
+    else if n == "yac_heap_stats" then true
     else if n == "time_ms" then true
     else if n == "time_ns" then true
     else n == "time_str"
