@@ -1479,18 +1479,23 @@ let lir_letcallcc_finish(s, p, br, rslot) =
 
 let ccall_cname(b) =
   let fn = nth(b, 2) in
-  if nth(fn, 0) != intern("var") then ""
-  else if nth(fn, 1) != intern("ccall") then ""
-  else if len(nth(b, 3)) == 0 then ""
-  else if nth(nth(nth(b, 3), 0), 0) != intern("str") then ""
-  else nth(nth(nth(b, 3), 0), 1)
+  if nth(fn, 0) == intern("var") then
+    if nth(fn, 1) == intern("ccall") then
+      if len(nth(b, 3)) == 0 then ""
+      else if nth(nth(nth(b, 3), 0), 0) == intern("str") then
+        nth(nth(nth(b, 3), 0), 1)
+      else ""
+    else ""
+  else ""
 
 let ccall_is(b) =
   let fn = nth(b, 2) in
-  if nth(fn, 0) != intern("var") then false
-  else if nth(fn, 1) != intern("ccall") then false
-  else if len(nth(b, 3)) == 0 then false
-  else true
+  if nth(fn, 0) == intern("var") then
+    if nth(fn, 1) == intern("ccall") then
+      if len(nth(b, 3)) == 0 then false
+      else true
+    else false
+  else false
 
 let lir_letccall(b, pack) =
   let s = nth(pack, 0) in

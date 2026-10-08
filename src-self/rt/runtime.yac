@@ -1873,6 +1873,7 @@ let rt_argv_ins(_) =
 
 /* G+32 is a control page (one mmap, not a GC object), not a freelist:
  *   +0    bin[0..10]  size classes 64,128,...,65536 (8 bytes each)
+ *   +88   bin for the 48-byte class (cons and any other body that pads to 48)
  *   +96   temp arena list
  *   +104  perm bump cur    +112 perm bump end
  *   +120  perm arena list  +128 perm mode (1 while intern runs)
@@ -1905,9 +1906,14 @@ let rt_ctrl_ins(_) =
    ["$st64", 2, 32, 3],
    ["ret", 3]]
 
-/* n already >= 48. <= 64K rounds up to a class; bigger stays exact. */
+/* n already >= 48. 48 stays 48; up to 64K rounds up from 64; bigger stays exact. */
 let rt_aclass_ins(_) =
   [["$local", 6, 1],
+   ["mov_imm", 4, 48],
+   ["$jcc", "<", 4, 1, "ac_pow", "ac_48"],
+   ["label", "ac_48"],
+   ["ret", 4],
+   ["label", "ac_pow"],
    ["mov_imm", 2, 65536],
    ["$jcc", "<", 2, 1, "ac_big", "ac_c"],
    ["label", "ac_c"],
@@ -1922,10 +1928,17 @@ let rt_aclass_ins(_) =
    ["label", "ac_big"],
    ["ret", 1]]
 
-/* Pointer to the bin head for a class size. */
+/* Pointer to the bin head for a class size. 48 lives at +88; the rest are log2. */
 let rt_abin_ins(_) =
-  [["$local", 8, 1],
+  [["$local", 10, 1],
    ["fcall", 2, "yac_ctrl", []],
+   ["mov_imm", 7, 48],
+   ["$jcc", "==", 1, 7, "bi_48", "bi_pow"],
+   ["label", "bi_48"],
+   ["mov_imm", 6, 88],
+   ["$add", 6, 2, 6],
+   ["ret", 6],
+   ["label", "bi_pow"],
    ["mov", 3, 1],
    ["mov_imm", 4, 0],
    ["mov_imm", 5, 64],
@@ -1989,7 +2002,7 @@ let rt_purge_ins(_) =
    ["fcall", 2, "yac_ctrl", []],
    ["mov_imm", 8, 0],
    ["mov_imm", 3, 0],
-   ["mov_imm", 4, 11],
+   ["mov_imm", 4, 12],
    ["label", "pu_l"],
    ["$jcc", "<", 3, 4, "pu_b", "pu_d"],
    ["label", "pu_b"],

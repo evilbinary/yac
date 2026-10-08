@@ -159,9 +159,9 @@ let intern_init(_) =
   let _ = box_set(intern_box, nm) in
   nm
 
-/* Perm mode: fmap nodes created here stay in the permanent arena.
- * The key is the original string. A copy would be a second object, and
- * ccall/keyword checks use that canonical object. */
+/* Perm mode: the table and the canonical string live in the permanent
+ * arena, so a temp arena is not pinned by an ident. Keep the original if
+ * the copy does not compare equal. */
 let intern_go(s) =
   let m0 = box_get(intern_box) in
   let cap = if m0 == 0 then 0 else nth(m0, 2) in
@@ -169,8 +169,13 @@ let intern_go(s) =
   let h = str_hash(s) in
   let e = fmap_get_h(m, s, h) in
   if e == 0 then
-    let _ = fmap_put_h(m, s, s, h) in
-    s
+    let c = str_slice(s, 0, str_len(s)) in
+    if c == s then
+      let _ = fmap_put_h(m, c, c, h) in
+      c
+    else
+      let _ = fmap_put_h(m, s, s, h) in
+      s
   else e
 
 let intern(s) =
