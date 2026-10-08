@@ -65,7 +65,7 @@ let path_dirname(s) =
       let c = str_ref(s, i) in
       if c == 47 then i
       else if c == 92 then i
-      else rec(i - 1) in
+    else rec(i - 1) in
   let k = rec(n - 1) in
   if k < 0 then "."
   else if k == 0 then "/"
@@ -695,8 +695,8 @@ let lir_extend_go(pkg, src, acc, synth) =
       else 0 in
     if src == 0 then acc
     else
-      let ast = pass_parse(pass_lex(src)) in
-      if prog_has_err(ast, 0) then
+  let ast = pass_parse(pass_lex(src)) in
+  if prog_has_err(ast, 0) then
         let _ = print(str_cat("error: syntax in package '", str_cat(pkg, "'"))) in
         let _ = report_syntax(ast) in
         let _ = pkg_fail_set(1) in
@@ -1309,8 +1309,22 @@ let dump_now(tag) =
 /* Each stage runs in its OWN frame so the previous stage's input is
  * unreachable -- and collectable -- before the next builds its (larger) one.
  * yac's GC has no slot liveness, so a value bound in compile_env_of's frame
- * would otherwise stay a root through the whole pipeline. */
-let anf_of(src, t) =
+ * would otherwise stay a root through the whole pipeline.
+ *
+ * A top-level form is dropped as soon as the next form starts: ANF clears
+ * the AST slot, LIR clears the ANF slot. The parse result is a cons spine,
+ * and list_set does not write those, so ast_ready copies it into a listbuf
+ * and returns — the spine dies with that frame, before ANF allocates. */
+let prog_vec(xs) =
+  let b = list_new() in
+  let rec(p) =
+    if p == [] then b
+    else
+      let _ = list_push(b, nth(p, 0)) in
+      rec(tail(p)) in
+  rec(xs)
+
+let ast_ready(src) =
   let ast0 = pass_parse(pass_lex(src)) in
   let _ = dump_now("parse") in
   if prog_has_err(ast0, 0) then
@@ -1319,7 +1333,13 @@ let anf_of(src, t) =
   else
     let _ = pkg_fail_set(0) in
     let _ = link_from_ast(ast0) in
-    let anf = run_pass(nth(make_pipeline(t), 2), ast0) in
+    prog_vec(ast0)
+
+let anf_of(src, t) =
+  let buf = ast_ready(src) in
+  if buf == 0 then 0
+  else
+    let anf = run_pass(nth(make_pipeline(t), 2), buf) in
     let _ = dump_now("anf") in
     anf
 
@@ -1332,17 +1352,22 @@ let lir_of(src, t) =
     let _ = dump_now("lir") in
     lir
 
-let lower_pack_of(lir, t) =
+let lower_of(lir, t) =
   if lir == 0 then 0
   else
     let _ = gc_collect() in
-    let code = run_pass(nth(make_pipeline(t), 4), lir) in
+    run_pass(nth(make_pipeline(t), 4), lir)
+
+let pack_of(code, t) =
+  if code == 0 then 0
+  else
+    let _ = gc_collect() in
     let _ = dump_now("lower") in
     run_pass(nth(make_pipeline(t), 5), code)
 
 let compile_env_of(env, src, t) =
   let _ = emit_jsess_set(0) in
-  let bin = lower_pack_of(lir_of(src, t), t) in
+  let bin = pack_of(lower_of(lir_of(src, t), t), t) in
   let _ = gc_collect() in
   if bin == 0 then
     compile_env_leave(env)

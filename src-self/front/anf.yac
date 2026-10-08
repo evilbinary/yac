@@ -185,10 +185,12 @@ let anf_all(i, prog, acc, n) =
   if i >= n then acc
   else
     let e = nth(prog, i) in
-    /* Release this top-level item's AST subtree as soon as it is converted:
-     * nothing after `pass_anf` reads the AST, and the anf phase is where the
-     * peak already sits (AST + growing ANF), so this is the cheapest way to
-     * lower it. `e` (the local) keeps the item alive until anf_top returns. */
+    /* prog is a listbuf (see prog_vec). list_set clears the slot, so this
+     * item's tree is unreachable once `e` is overwritten on the next turn.
+     * A cons spine ignores list_set; the compile path must not keep one.
+     * Collect every 64 items so the dropped trees return to the freelist
+     * before the next chunk is allocated. */
     let _ = list_set(prog, i, 0) in
     let _ = if ast_is_hdr(e) then 0 else list_push(acc, anf_top(e)) in
+    let _ = if irem(i, 64) == 63 then gc_collect() else 0 in
     anf_all(i + 1, prog, acc, n)
