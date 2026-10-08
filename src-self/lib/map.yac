@@ -159,7 +159,10 @@ let intern_init(_) =
   let _ = box_set(intern_box, nm) in
   nm
 
-let intern(s) =
+/* Perm mode: fmap nodes created here stay in the permanent arena.
+ * The key is the original string. A copy would be a second object, and
+ * ccall/keyword checks use that canonical object. */
+let intern_go(s) =
   let m0 = box_get(intern_box) in
   let cap = if m0 == 0 then 0 else nth(m0, 2) in
   let m = if fmap_cap_ok(cap) then m0 else intern_init(0) in
@@ -169,3 +172,9 @@ let intern(s) =
     let _ = fmap_put_h(m, s, s, h) in
     s
   else e
+
+let intern(s) =
+  let _ = yac_perm_on() in
+  let r = intern_go(s) in
+  let _ = yac_perm_off() in
+  r

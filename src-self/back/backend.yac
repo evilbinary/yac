@@ -1299,8 +1299,12 @@ let compile_env_leave(env) =
 let heap_dump_box = let b = box_new() in let _ = box_set(b, 0) in b
 let heap_dump_set(v) = box_set(heap_dump_box, v)
 let heap_dump(_) = box_get(heap_dump_box)
-let dump_now(_) =
-  if heap_dump(0) != 0 then (let _ = gc_collect() in yac_heap_stats()) else 0
+let dump_now(tag) =
+  if heap_dump(0) != 0 then
+    let _ = gc_collect() in
+    let _ = print(str_cat("heap ", tag)) in
+    yac_heap_stats()
+  else 0
 
 /* Each stage runs in its OWN frame so the previous stage's input is
  * unreachable -- and collectable -- before the next builds its (larger) one.
@@ -1308,7 +1312,7 @@ let dump_now(_) =
  * would otherwise stay a root through the whole pipeline. */
 let anf_of(src, t) =
   let ast0 = pass_parse(pass_lex(src)) in
-  let _ = dump_now(0) in
+  let _ = dump_now("parse") in
   if prog_has_err(ast0, 0) then
     let _ = report_syntax(ast0) in 0
   else if report_unbound(src, ast0) != 0 then 0
@@ -1316,27 +1320,30 @@ let anf_of(src, t) =
     let _ = pkg_fail_set(0) in
     let _ = link_from_ast(ast0) in
     let anf = run_pass(nth(make_pipeline(t), 2), ast0) in
-    let _ = dump_now(0) in
+    let _ = dump_now("anf") in
     anf
 
 let lir_of(src, t) =
   let anf = anf_of(src, t) in
   if anf == 0 then 0
   else
+    let _ = gc_collect() in
     let lir = run_pass(nth(make_pipeline(t), 3), anf) in
-    let _ = dump_now(0) in
+    let _ = dump_now("lir") in
     lir
 
 let lower_pack_of(lir, t) =
   if lir == 0 then 0
   else
+    let _ = gc_collect() in
     let code = run_pass(nth(make_pipeline(t), 4), lir) in
-    let _ = dump_now(0) in
+    let _ = dump_now("lower") in
     run_pass(nth(make_pipeline(t), 5), code)
 
 let compile_env_of(env, src, t) =
   let _ = emit_jsess_set(0) in
   let bin = lower_pack_of(lir_of(src, t), t) in
+  let _ = gc_collect() in
   if bin == 0 then
     compile_env_leave(env)
   else

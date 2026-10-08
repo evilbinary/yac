@@ -647,6 +647,8 @@ let is_prim_name(w) =
   else if w == "bshl" then true
   else if w == "bshr" then true
   else if w == "gc_collect" then true
+  else if w == "yac_perm_on" then true
+  else if w == "yac_perm_off" then true
   else if w == "yac_heap_stats" then true
   else if w == "is_int" then true
   else if w == "kind" then true
