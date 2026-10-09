@@ -852,8 +852,12 @@ let rt_base(_) =
  * field 4 by sigma_of_rt so cross-package top-level values get `gval`. */
 let rt_for_link(_) =
   let _ = pkg_init_reset(0) in
-  let st = visit_go(1, 0, box_get(link_need_box), 0,
-                    cons("rt.num", box_get(link_local_box)), []) in
+  /* Local packages stay out of the seen set. The main file still compiles
+   * them, but under bare names and only after this link. A dependency that
+   * imports one (lower.yac imports emit_arm64, which imports emit) needs the
+   * qualified procs now; marking the local name seen skipped that disk compile
+   * and the call died as an undefined back.emit.emit/... procedure. */
+  let st = visit_go(1, 0, box_get(link_need_box), 0, cons("rt.num", []), []) in
   let pkgs = reverse(nth(st, 1)) in
   let rec(i, acc, ex) =
     if i >= len(pkgs) then [acc, ex]

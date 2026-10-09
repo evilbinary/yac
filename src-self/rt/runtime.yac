@@ -1494,6 +1494,27 @@ let rt_gc_collect_ins(_) =
    ["jmp", "gc_js1"],
    ["label", "gc_jsx"],
    ["$ld64", 2, 1, 24],
+   /* A JIT image never runs _start, so G+24 stays 0 and both the frame walk
+    * and the conservative scan treat every stack address as already past the
+    * limit. $local frames (str_cat, ...) are not in the slot map, so the
+    * first guest collection then frees their arguments. Publish the top of
+    * the rbp chain as the limit instead. Each saved rbp must sit strictly
+    * above the frame that holds it; a break in the chain stops the walk. */
+   ["$jcc", "==", 2, 8, "gc_findhi", "gc_havehi"],
+   ["label", "gc_findhi"],
+   ["$fp", 4],
+   ["label", "gc_fhl"],
+   ["$ld64", 5, 4, 0],
+   ["$jcc", "==", 5, 8, "gc_fhset", "gc_fhcmp"],
+   ["label", "gc_fhcmp"],
+   ["$jcc", "<", 4, 5, "gc_fhup", "gc_fhset"],
+   ["label", "gc_fhup"],
+   ["mov", 4, 5],
+   ["jmp", "gc_fhl"],
+   ["label", "gc_fhset"],
+   ["mov", 2, 4],
+   ["$st64", 1, 24, 2],
+   ["label", "gc_havehi"],
    ["$smap", 21],
    ["$jcc", "==", 21, 8, "gc_cons", "gc_smp"],
    ["label", "gc_smp"],
