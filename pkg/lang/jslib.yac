@@ -7,7 +7,8 @@
 package lang.jslib
 export js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_date_now, js_from_char_code,
   js_native, js_json_stringify, js_json_parse, js_str_pad, js_str_trim_start, js_str_trim_end,
-  js_install
+  js_install, js_re_test, js_re_exec, js_promise_new, js_promise_of, js_promise_then,
+  js_promise_all, js_await
 import data.fmap { fmap_new, fmap_get, fmap_put }
 import num.math { ftoi, log, exp, powf, abs, pow, sqrt, sin, cos, log2, sign }
 import lang.jsrt { _js_iter, _js_str }
@@ -490,6 +491,258 @@ let js_set(self, op, args) =
      (let rec(i) = (if i >= n then 0 else (let _ = f(nth(d, i)) in rec(i + 1))) in
       (let _ = rec(0) in 0))))
   else 0
+
+/* ---- regex (backtracking subset) -------------------------------------- */
+
+let js_re_eq(a, b, ign) =
+  if a == b then true
+  else if ign == false then false
+  else
+    let fa = if a >= 65 and a <= 90 then a + 32 else a in
+    let fb = if b >= 65 and b <= 90 then b + 32 else b in
+    fa == fb
+
+let js_re_esc(e, ch, ign) =
+  if e == 100 then ch >= 48 and ch <= 57
+  else if e == 68 then ch < 48 or ch > 57
+  else if e == 119 then (ch >= 48 and ch <= 57) or (ch >= 65 and ch <= 90) or (ch >= 97 and ch <= 122) or ch == 95
+  else if e == 87 then not ((ch >= 48 and ch <= 57) or (ch >= 65 and ch <= 90) or (ch >= 97 and ch <= 122) or ch == 95)
+  else if e == 115 then ch == 32 or ch == 9 or ch == 10 or ch == 13
+  else if e == 83 then not (ch == 32 or ch == 9 or ch == 10 or ch == 13)
+  else if e == 110 then ch == 10
+  else if e == 116 then ch == 9
+  else js_re_eq(e, ch, ign)
+
+let js_re_has(fl, ch) =
+  let n = str_len(fl) in
+  let rec(i) = if i >= n then false else if str_ref(fl, i) == ch then true else rec(i + 1) in
+  rec(0)
+
+/* Match `pat` against `s`. Returns the matched slice, or 0 when it fails.
+ * Supports literals, `.`, classes, groups, `|`, greedy `*+?`, `^$`, and
+ * the usual single-character escapes. Flag `i` folds ASCII case. */
+let js_re_exec(pat0, flags0, s0) =
+  let pat = if kind(pat0) == 3 then pat0 else "" in
+  let fl = if kind(flags0) == 3 then flags0 else "" in
+  let s = _js_str(s0) in
+  let pn = str_len(pat) in
+  let sn = str_len(s) in
+  let ign = js_re_has(fl, 105) in
+  let js_re_span(pi) =
+    let c = if pi < pn then str_ref(pat, pi) else 0 in
+    if c == 92 then pi + 2
+    else if c == 91 then
+      let rec(j) =
+        if j >= pn then j
+        else if str_ref(pat, j) == 92 then rec(j + 2)
+        else if str_ref(pat, j) == 93 then j + 1
+        else rec(j + 1) in
+      rec(pi + 1)
+    else if c == 40 then
+      let rec(j, d) =
+        if j >= pn then j
+        else if str_ref(pat, j) == 92 then rec(j + 2, d)
+        else if str_ref(pat, j) == 40 then rec(j + 1, d + 1)
+        else if str_ref(pat, j) == 41 then (if d == 1 then j + 1 else rec(j + 1, d - 1))
+        else rec(j + 1, d) in
+      rec(pi + 1, 1)
+    else pi + 1 in
+  let js_re_bar(pi) =
+    let rec(j, d) =
+      if j >= pn then 0 - 1
+      else if str_ref(pat, j) == 92 then rec(j + 2, d)
+      else if str_ref(pat, j) == 40 then rec(j + 1, d + 1)
+      else if str_ref(pat, j) == 41 then (if d == 0 then 0 - 1 else rec(j + 1, d - 1))
+      else if str_ref(pat, j) == 124 and d == 0 then j
+      else rec(j + 1, d) in
+    rec(pi, 0) in
+  let js_re_cls(pi, ch) =
+    let neg = pi < pn and str_ref(pat, pi) == 94 in
+    let p0 = if neg then pi + 1 else pi in
+    let rec(j, ok) =
+      if j >= pn or str_ref(pat, j) == 93 then ok
+      else if str_ref(pat, j) == 92 and j + 1 < pn then rec(j + 2, ok or js_re_esc(str_ref(pat, j + 1), ch, ign))
+      else if j + 2 < pn and str_ref(pat, j + 1) == 45 and str_ref(pat, j + 2) != 93 then
+        rec(j + 3, ok or (ch >= str_ref(pat, j) and ch <= str_ref(pat, j + 2)))
+      else rec(j + 1, ok or js_re_eq(str_ref(pat, j), ch, ign)) in
+    let hit = rec(p0, false) in
+    if neg then not hit else hit in
+  /* mode 0 = sequence, 1 = one atom, 2 = alternatives. Result is [ok, si, pi]. */
+  let run(mode, pi, si) =
+    if mode == 1 then
+      if pi >= pn then [false, si, pi]
+      else
+        let c = str_ref(pat, pi) in
+        if c == 94 then [si == 0, si, pi]
+        else if c == 36 then [si == sn, si, pi]
+        else if c == 46 then
+          if si >= sn or str_ref(s, si) == 10 then [false, si, pi] else [true, si + 1, pi]
+        else if c == 92 then
+          if pi + 1 >= pn or si >= sn then [false, si, pi]
+          else [js_re_esc(str_ref(pat, pi + 1), str_ref(s, si), ign), (if js_re_esc(str_ref(pat, pi + 1), str_ref(s, si), ign) then si + 1 else si), pi]
+        else if c == 91 then
+          if si >= sn then [false, si, pi]
+          else
+            let hit = js_re_cls(pi + 1, str_ref(s, si)) in
+            [hit, (if hit then si + 1 else si), pi]
+        else if c == 40 then
+          let r = run(2, pi + 1, si) in
+          [nth(r, 0), nth(r, 1), pi]
+        else if si >= sn then [false, si, pi]
+        else
+          let hit = js_re_eq(c, str_ref(s, si), ign) in
+          [hit, (if hit then si + 1 else si), pi]
+    else if mode == 2 then
+      let r = run(0, pi, si) in
+      if nth(r, 0) then r
+      else
+        let bar = js_re_bar(pi) in
+        if bar < 0 then [false, si, pi] else run(2, bar + 1, si)
+    else if pi >= pn then [true, si, pi]
+    else
+      let c = str_ref(pat, pi) in
+      if c == 41 or c == 124 then [true, si, pi]
+      else
+        let ae = js_re_span(pi) in
+        let q = if ae < pn then str_ref(pat, ae) else 0 in
+        let starred = q == 42 or q == 43 or q == 63 in
+        let qn = if starred then ae + 1 else ae in
+        let minc = if q == 42 or q == 63 then 0 else 1 in
+        let maxc = if q == 63 then 1 else 1000000 in
+        let eat(n, sj, acc) =
+          if n >= maxc then [n, acc]
+          else
+            let one = run(1, pi, sj) in
+            if nth(one, 0) == false or nth(one, 1) == sj then [n, acc]
+            else eat(n + 1, nth(one, 1), cons(nth(one, 1), acc)) in
+        let got = eat(0, si, cons(si, [])) in
+        let back(a, n) =
+          if n < minc then [false, si, pi]
+          else
+            let rest = run(0, qn, nth(a, 0)) in
+            if nth(rest, 0) then rest
+            else if n == 0 then [false, si, pi]
+            else back(tail(a), n - 1) in
+        back(nth(got, 1), nth(got, 0)) in
+  let search(i) =
+    if i > sn then 0
+    else
+      let r = run(2, 0, i) in
+      if nth(r, 0) then str_slice(s, i, nth(r, 1) - i) else search(i + 1) in
+  search(0)
+
+let js_re_test(pat, flags, s) = js_re_exec(pat, flags, s) != 0
+
+/* ---- Promise (synchronous job queue) ---------------------------------- */
+
+/* mode 0 flush, 1 fire, 2 then, 3 resolve, 4 reject.
+ * A reaction is the list [q, d, src, fulfill, reject, dst]. One function so
+ * the modes can call each other; lambdas close over this function's parameters. */
+let js_promise_step(mode, q, d, p, f, r, np, v) =
+  if mode == 0 then
+    let xs = box_get(q) in
+    if len(xs) == 0 then 0
+    else
+      let job = nth(xs, 0) in
+      let rest = list_new() in
+      let n = len(xs) in
+      let copy(i) =
+        if i >= n then 0
+        else
+          let _ = list_push(rest, nth(xs, i)) in
+          copy(i + 1) in
+      let _ = copy(1) in
+      let _ = box_set(q, rest) in
+      let _ = js_promise_step(1, nth(job, 0), nth(job, 1), nth(job, 2), nth(job, 3), nth(job, 4), nth(job, 5), 0) in
+      js_promise_step(0, q, d, p, f, r, np, v)
+  else if mode == 1 then
+    let pst = box_get(nth(p, 1)) in
+    if pst == 1 then
+      if f == 0 then js_promise_step(3, q, d, np, 0, 0, 0, box_get(nth(p, 2)))
+      else
+        let v2 = f(box_get(nth(p, 2))) in
+        if kind(v2) == 2 and len(v2) > 0 and nth(v2, 0) == "$p" then
+          js_promise_step(2, q, d, v2, fun(x) -> js_promise_step(3, q, d, np, 0, 0, 0, x), fun(e) -> js_promise_step(4, q, d, np, 0, 0, 0, e), 0, 0)
+        else js_promise_step(3, q, d, np, 0, 0, 0, v2)
+    else if r == 0 then js_promise_step(4, q, d, np, 0, 0, 0, box_get(nth(p, 2)))
+    else
+      let v2 = r(box_get(nth(p, 2))) in
+      if kind(v2) == 2 and len(v2) > 0 and nth(v2, 0) == "$p" then
+        js_promise_step(2, q, d, v2, fun(x) -> js_promise_step(3, q, d, np, 0, 0, 0, x), fun(e) -> js_promise_step(4, q, d, np, 0, 0, 0, e), 0, 0)
+      else js_promise_step(3, q, d, np, 0, 0, 0, v2)
+  else if mode == 2 then
+    let st = box_new() in
+    let _ = box_set(st, 0) in
+    let val = box_new() in
+    let _ = box_set(val, 0) in
+    let dst = ["$p", st, val, list_new()] in
+    let job = [q, d, p, f, r, dst] in
+    let _ =
+      if box_get(nth(p, 1)) == 0 then list_push(nth(p, 3), job)
+      else
+        let _ = list_push(box_get(q), job) in
+        if box_get(d) == 0 then js_promise_step(0, q, d, p, f, r, np, v) else 0 in
+    dst
+  else if box_get(nth(p, 1)) != 0 then p
+  else
+    let _ = box_set(nth(p, 1), if mode == 3 then 1 else 2) in
+    let _ = box_set(nth(p, 2), v) in
+    let ts = nth(p, 3) in
+    let n = len(ts) in
+    let rec(i) =
+      if i >= n then (if box_get(d) == 0 then js_promise_step(0, q, d, p, f, r, np, v) else 0)
+      else
+        let _ = list_push(box_get(q), nth(ts, i)) in
+        rec(i + 1) in
+    rec(0)
+
+let js_promise_flush(q) = js_promise_step(0, q, 0, 0, 0, 0, 0, 0)
+
+let js_promise_reject(q, d, p, v) = js_promise_step(4, q, d, p, 0, 0, 0, v)
+
+let js_promise_resolve(q, d, p, v) = js_promise_step(3, q, d, p, 0, 0, 0, v)
+
+/* Lambdas only close over parameters, so the promise they settle is an
+ * argument of the function that builds them. */
+let js_promise_go(q, d, exec, p) =
+  let _ = box_set(d, box_get(d) + 1) in
+  let _ = exec(fun(v) -> js_promise_resolve(q, d, p, v), fun(e) -> js_promise_reject(q, d, p, e)) in
+  let _ = box_set(d, box_get(d) - 1) in
+  let _ = if box_get(d) == 0 then js_promise_flush(q) else 0 in
+  p
+
+let js_promise_new(q, d, exec) =
+  let st = box_new() in
+  let _ = box_set(st, 0) in
+  let val = box_new() in
+  let _ = box_set(val, 0) in
+  js_promise_go(q, d, exec, ["$p", st, val, list_new()])
+
+let js_promise_of(q, d, v) =
+  if kind(v) == 2 and len(v) > 0 and nth(v, 0) == "$p" then v
+  else js_promise_new(q, d, fun(res, _rej) -> res(v))
+
+let js_promise_then(q, d, p, f, r) = js_promise_step(2, q, d, p, f, r, 0, 0)
+
+let js_promise_all(q, d, xs) =
+  js_promise_new(q, d, fun(res, _rej) ->
+    let n = len(xs) in
+    let out = list_new() in
+    let rec(i) =
+      if i >= n then res(out)
+      else
+        let el = nth(xs, i) in
+        let v =
+          if kind(el) == 2 and len(el) > 0 and nth(el, 0) == "$p" then box_get(nth(el, 2))
+          else el in
+        let _ = list_push(out, v) in
+        rec(i + 1) in
+    rec(0))
+
+let js_await(p) =
+  if kind(p) == 2 and len(p) > 0 and nth(p, 0) == "$p" then
+    (if box_get(nth(p, 1)) == 1 then box_get(nth(p, 2)) else 0)
+  else p
 
 /* Register Map/Set prototype methods. `this` is the generated program`s
  * _js_this box and `proto` its _js_proto function (closure captures both). */
