@@ -276,11 +276,7 @@ int eval_cps_run_in(const CExp *prog, Frame *env0, Arena *a, Value *result,
         case CE_IF: {
             Value c = eval_val(&code->u.if_.cond, env, &st);
             if (st.errored) goto err;
-            if (c.tag != V_BOOL) {
-                fail(&st, "%d:%d: if condition must be a boolean", code->line, 0);
-                goto err;
-            }
-            code = c.u.b ? code->u.if_.then : code->u.if_.els;
+            code = value_truthy(c) ? code->u.if_.then : code->u.if_.els;
             break;
         }
         case CE_HALT: {

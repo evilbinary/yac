@@ -534,13 +534,17 @@ static Ast *parse_expr(Parser *p) {
         }
         Ast *bound = parse_expr(p);
         if (!bound) { free(params); return NULL; }
-        if (!eat(p, TK_KW_IN)) {
-            p_err(p, "expected 'in'");
-            free(params);
-            return NULL;
+        /* `in` is optional, same as the self-hosted parser: a let with no
+         * `in` is sequenced for effect and yields unit, so `let _ = e else`
+         * leaves the `else` for the enclosing if. */
+        Ast *body;
+        if (at(p, TK_KW_IN)) {
+            advance(p);
+            body = parse_expr(p);
+            if (!body) { free(params); return NULL; }
+        } else {
+            body = mk_unit(p, lt->line, lt->col);
         }
-        Ast *body = parse_expr(p);
-        if (!body) { free(params); return NULL; }
         Ast *b = bound;
         if (nparams > 0) {
             char **parr = params_to_arena(p, params, nparams);

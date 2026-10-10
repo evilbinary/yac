@@ -157,7 +157,7 @@ const Prim *prim_table(int *count);
 const char *binop_prim_name(int op);
 void yac_set_args(int argc, char **argv);
 
-bool value_truthy(Value v);              /* only for V_BOOL */
+bool value_truthy(Value v);              /* native if: bool, int 0, unit */
 bool value_equal(Value a, Value b);
 char *value_to_string(Arena *a, Value v);
 

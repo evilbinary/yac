@@ -247,11 +247,7 @@ static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
         case N_IF: {
             Value c = eval_atom(&node->u.if_.cond, env, &st);
             if (st.errored) goto err;
-            if (c.tag != V_BOOL) {
-                fail(&st, "%d:%d: if condition must be a boolean", node->line, 0);
-                goto err;
-            }
-            node = c.u.b ? node->u.if_.then : node->u.if_.els;
+            node = value_truthy(c) ? node->u.if_.then : node->u.if_.els;
             break;
         }
         case N_TAIL_CALL: {

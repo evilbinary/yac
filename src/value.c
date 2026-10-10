@@ -813,6 +813,16 @@ static Value prim_yac_host_sym(Value *args, int nargs, PrimCtx *ctx) {
     return VALUE_NULL;
 }
 
+/* emit.yac / jit.yac call these host-image reads. L4 AOT never takes that
+ * path; bind the names so the bundle can ANF. */
+static Value prim_yac_host_only(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    ctx->errored = true;
+    strcpy(ctx->errmsg, "host-image primitive: only available in native yc");
+    return VALUE_NULL;
+}
+
 /* popen(cmd, stdin) -> [rc, stdout, stderr].
  * Same shell as system, but stdio is three pipes: stdin is the
  * given string (or bytes); stdout/stderr are collected. Compose a
@@ -945,8 +955,10 @@ static Value prim_time_ns(Value *args, int nargs, PrimCtx *ctx) {
 static Value prim_box_new(Value *args, int nargs, PrimCtx *ctx) {
     (void)args;
     (void)nargs;
+    /* Native yac_box_new stores nil (compares equal to 0). Callers such as
+     * emit_opmap_of treat an unset box as 0 and only then allocate the map. */
     List *l = gc_new_list(ctx->gc, 1);
-    l->items[0] = v_list(gc_new_list(ctx->gc, 0));
+    l->items[0] = v_int(0);
     return v_list(l);
 }
 
@@ -1039,37 +1051,21 @@ static Value prim_append(Value *args, int nargs, PrimCtx *ctx) {
 static Value prim_len(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
     (void)ctx;
-    if (args[0].tag != V_LIST) {
-        ctx->errored = true;
-        snprintf(ctx->errmsg, sizeof(ctx->errmsg),
-                 "len: argument must be a list");
-        return VALUE_NULL;
-    }
+    /* Native yac_len: listbuf length, cons-spine length, otherwise 0
+     * (nil, int, string). The self-hosted compiler relies on that. */
+    if (args[0].tag != V_LIST) return v_int(0);
     return v_int(args[0].u.l->len);
 }
 
 static Value prim_nth(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
-    if (args[0].tag != V_LIST) {
-        ctx->errored = true;
-        snprintf(ctx->errmsg, sizeof(ctx->errmsg),
-                 "nth: first argument must be a list");
-        return VALUE_NULL;
-    }
-    if (args[1].tag != V_INT) {
-        ctx->errored = true;
-        snprintf(ctx->errmsg, sizeof(ctx->errmsg),
-                 "nth: index must be an integer");
-        return VALUE_NULL;
-    }
+    (void)ctx;
+    /* Native yac_nth returns nil on a non-list, a non-int index, or an
+     * out-of-range index. The self-hosted compiler uses that as "missing". */
+    if (args[0].tag != V_LIST || args[1].tag != V_INT) return v_int(0);
     List *l = args[0].u.l;
     long long i = args[1].u.i;
-    if (i < 0 || i >= l->len) {
-        ctx->errored = true;
-        snprintf(ctx->errmsg, sizeof(ctx->errmsg),
-                 "nth: index %lld out of range (len=%d)", i, l->len);
-        return VALUE_NULL;
-    }
+    if (i < 0 || i >= l->len) return v_int(0);
     return l->items[i];
 }
 
@@ -1109,6 +1105,30 @@ static Value prim_gc_collect(Value *args, int nargs, PrimCtx *ctx) {
     (void)args;
     (void)nargs;
     if (ctx->gc) gc_collect(ctx->gc);
+    return v_unit();
+}
+
+/* Self-hosted intern() brackets the table update with these. The C heap has
+ * one arena, so the calls are no-ops; the intern box keeps the strings live. */
+static Value prim_perm_on(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    (void)ctx;
+    return v_unit();
+}
+
+static Value prim_perm_off(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    (void)ctx;
+    return v_unit();
+}
+
+/* dump_now prints this after a collect. Bootstrap never sets the flag. */
+static Value prim_heap_stats(Value *args, int nargs, PrimCtx *ctx) {
+    (void)args;
+    (void)nargs;
+    (void)ctx;
     return v_unit();
 }
 
@@ -1320,6 +1340,9 @@ static const Prim PRIMS[] = {
     {"read_line", -1, false, true, prim_read_line},
     {"jit_run", 3, false, true, prim_jit_run},
     {"yac_host_sym", 1, false, true, prim_yac_host_sym},
+    {"yac_cimport_host_sym", 1, false, true, prim_yac_host_only},
+    {"yac_gfn_list", 1, false, true, prim_yac_host_only},
+    {"yac_gval_list", 1, false, true, prim_yac_host_only},
     {"popen", 2, false, true, prim_popen},
     {"uname", 1, true, true, prim_uname}, /* called as uname(); parser passes unit */
     {"bshl", 2, true, false, prim_bshl},
@@ -1343,6 +1366,9 @@ static const Prim PRIMS[] = {
     {"drop", 2, true, true, prim_drop},
     {"tail", 1, true, true, prim_tail},
     {"gc_collect", 1, false, false, prim_gc_collect},
+    {"yac_perm_on", 1, false, false, prim_perm_on},
+    {"yac_perm_off", 1, false, false, prim_perm_off},
+    {"yac_heap_stats", 1, false, false, prim_heap_stats},
     {"ccall", -1, false, true, prim_ccall},
     {"str_chr", 1, true, true, prim_str_chr},
     {"map", 2, true, true, prim_map},
@@ -1364,7 +1390,12 @@ const Prim *prim_table(int *count) {
 }
 
 bool value_truthy(Value v) {
-    return v.tag == V_BOOL && v.u.b;
+    /* Native cmpjmp is `test rax, rax`: bool false and int 0 are false.
+     * Unit is nil. Heap objects (including 0.0) are true. */
+    if (v.tag == V_BOOL) return v.u.b;
+    if (v.tag == V_INT) return v.u.i != 0;
+    if (v.tag == V_UNIT) return false;
+    return true;
 }
 
 bool value_equal(Value a, Value b) {
