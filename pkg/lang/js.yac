@@ -23,7 +23,8 @@
  * ES6 forms this translator lowers onto yac: arrows (defaults and
  * destructuring params), destructuring defaults, classes, template literals,
  * `delete`, regex literals (a backtracking subset: literals, `.`, classes,
- * groups, `|`, `*+?`, `^$`, and `\d\w\s`), `import`/`export` (named imports
+ * groups, `|`, `*+?`, `^$`, `\d\w\s`, backreferences, `(?:)`, `(?=)`, and
+ * `(?!)`), `import`/`export` (named imports
  * become yac imports), generators (`function*` / `yield`, including `if` /
  * `while` / `for`), `async`/`await`, Promise, Proxy and Reflect.
  * Promise jobs run on a synchronous queue flushed when the executor returns
