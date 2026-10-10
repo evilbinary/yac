@@ -292,7 +292,7 @@ bool rd_atom(Rd *r, Atom *out) {
         }
         rd_expect(r, '}');
         Anf *body = rd_node(r);
-        *out = atom_lam(params, n, nslots, body);
+        *out = atom_lam(params, n, nslots, body, 0);
         return true;
     }
     rd_fail(r, "runtime file: bad atom '%s'", kw);

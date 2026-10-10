@@ -32,7 +32,7 @@ struct Ast {
         char *sval;
         char *name;
         struct { Ast *fn; Ast **args; int nargs; } app;
-        struct { char **params; int nparams; Ast *body; } fun;
+        struct { char **params; int nparams; Ast *body; int rest; } fun;
         struct { Ast *cond, *then, *els; } if_;
         struct { char *name; Ast *bound; Ast *body; } let;
         struct { int op; Ast *lhs, *rhs; } bin;

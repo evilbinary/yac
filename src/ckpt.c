@@ -530,6 +530,7 @@ bool ckpt_resume(const char *path, Arena *a, Gc *gc, const Anf **root,
         k->body = (void *)bw.found;
         k->params = tks[i].params;
         k->nparams = tks[i].np;
+        k->rest = 0;
         k->nslots = tks[i].nslots;
         k->kslot = tks[i].kslot;
         k->frame = tks[i].fid >= 0 ? farr[tks[i].fid] : NULL;

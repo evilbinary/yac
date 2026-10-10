@@ -64,6 +64,7 @@ static Value eval_atom(const Atom *atom, Frame *env, Est *st) {
         clo->body = atom->u.lam.body;
         clo->params = atom->u.lam.params;
         clo->nparams = atom->u.lam.nparams;
+        clo->rest = atom->u.lam.rest;
         clo->nslots = atom->u.lam.nslots;
         clo->kslot = -1;
         clo->frame = env;
@@ -82,9 +83,22 @@ static const char *clo_prof_name(const Closure *clo) {
     return "lam";
 }
 
+/* The C lexer tokens `()` as unit, so `g()` arrives as one unit argument.
+ * A rest-only function treats that as the empty call. */
+static int rest_nargs(const Closure *clo, Value *args, int nargs) {
+    if (clo->rest && clo->nparams == 1 && nargs == 1 && args[0].tag == V_UNIT)
+        return 0;
+    return nargs;
+}
+
 static void apply_prim(Value head, Value *args, int nargs, Value *out, Est *st) {
     const Prim *p = head.u.prim;
-    if (p->arity >= 0 && p->arity != nargs) {
+    if (p->arity == 1 && nargs == 0) {
+        /* f() is zero args. Arity-1 prims (argc, list_new, ...) take unit. */
+        Value u = v_unit();
+        args = &u;
+        nargs = 1;
+    } else if (p->arity >= 0 && p->arity != nargs) {
         fail(st, "primitive '%s' expects %d argument(s), got %d", p->name, p->arity, nargs);
         return;
     }
@@ -117,15 +131,27 @@ static bool call_value(void *ud, Value head, Value *args, int nargs,
         return false;
     }
     Closure *clo = head.u.clo;
-    if (clo->nparams != nargs) {
-        fail(st, "function expects %d argument(s), got %d", clo->nparams, nargs);
+    nargs = rest_nargs(clo, args, nargs);
+    int need = clo->rest ? clo->nparams - 1 : clo->nparams;
+    if (clo->rest ? nargs < need : clo->nparams != nargs) {
+        fail(st, "function expects %s%d argument(s), got %d",
+             clo->rest ? "at least " : "", need, nargs);
         return false;
     }
     gc_push_root(st->gc, (GObj *)st->env);
     gc_push_root(st->gc, (GObj *)st->cframe);
     Frame *nf = gc_new_frame(st->gc, clo->nslots);
     nf->parent = clo->frame;
-    for (int i = 0; i < nargs; i++) nf->slots[i] = args[i];
+    if (clo->rest) {
+        for (int i = 0; i < need; i++) nf->slots[i] = args[i];
+        List *xs = gc_new_list(st->gc, nargs - need);
+        gc_push_root(st->gc, (GObj *)xs);
+        for (int i = 0; i < nargs - need; i++) xs->items[i] = args[need + i];
+        nf->slots[need] = v_list(xs);
+        gc_pop_root(st->gc);
+    } else {
+        for (int i = 0; i < nargs; i++) nf->slots[i] = args[i];
+    }
     int rc;
     if (yac_prof_enabled()) yac_prof_enter(clo_prof_name(clo));
     rc = eval_anf_core(clo->body, clo->body, nf, NULL, 0, st->a, out,
@@ -150,7 +176,17 @@ static void enter_call(Gc *gc, const Closure *clo, Value *args, int nargs,
                        Frame **env) {
     Frame *nf = gc_new_frame(gc, clo->nslots);
     nf->parent = clo->frame;
-    for (int i = 0; i < nargs; i++) nf->slots[i] = args[i];
+    if (clo->rest) {
+        int need = clo->nparams - 1;
+        for (int i = 0; i < need; i++) nf->slots[i] = args[i];
+        List *xs = gc_new_list(gc, nargs - need);
+        gc_push_root(gc, (GObj *)xs);
+        for (int i = 0; i < nargs - need; i++) xs->items[i] = args[need + i];
+        nf->slots[need] = v_list(xs);
+        gc_pop_root(gc);
+    } else {
+        for (int i = 0; i < nargs; i++) nf->slots[i] = args[i];
+    }
     *env = nf;
     gc_set_env(gc, nf);
 }
@@ -211,10 +247,15 @@ static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
             }
             if (head.tag == V_FUN) {
                 Closure *clo = head.u.clo;
-                if (clo->nparams != node->u.call.nargs) {
-                    fail(&st, "%d:%d: function expects %d argument(s), got %d",
-                         node->line, 0, clo->nparams, node->u.call.nargs);
-                    goto err;
+                int got = rest_nargs(clo, args, node->u.call.nargs);
+                {
+                    int need = clo->rest ? clo->nparams - 1 : clo->nparams;
+                    if (clo->rest ? got < need : clo->nparams != got) {
+                        fail(&st, "%d:%d: function expects %s%d argument(s), got %d",
+                             node->line, 0, clo->rest ? "at least " : "",
+                             need, got);
+                        goto err;
+                    }
                 }
                 CFrame *f = (CFrame *)gc_alloc(gc, G_FRAME, sizeof(CFrame));
                 f->prev = cframe;
@@ -223,7 +264,7 @@ static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
                 f->env = env;
                 cframe = f;
                 gc_set_frame(gc, (GObj *)f);
-                enter_call(gc, clo, args, node->u.call.nargs, &env);
+                enter_call(gc, clo, args, got, &env);
                 if (yac_prof_enabled()) yac_prof_enter(clo_prof_name(clo));
                 node = clo->body;
             } else if (head.tag == V_PRIM) {
@@ -263,12 +304,17 @@ static int eval_anf_core(const Anf *root, const Anf *node, Frame *env0,
             }
             if (head.tag == V_FUN) {
                 Closure *clo = head.u.clo;
-                if (clo->nparams != node->u.tailcall.nargs) {
-                    fail(&st, "%d:%d: function expects %d argument(s), got %d",
-                         node->line, 0, clo->nparams, node->u.tailcall.nargs);
-                    goto err;
+                int got = rest_nargs(clo, args, node->u.tailcall.nargs);
+                {
+                    int need = clo->rest ? clo->nparams - 1 : clo->nparams;
+                    if (clo->rest ? got < need : clo->nparams != got) {
+                        fail(&st, "%d:%d: function expects %s%d argument(s), got %d",
+                             node->line, 0, clo->rest ? "at least " : "",
+                             need, got);
+                        goto err;
+                    }
                 }
-                enter_call(gc, clo, args, node->u.tailcall.nargs, &env);
+                enter_call(gc, clo, args, got, &env);
                 if (yac_prof_enabled()) {
                     yac_prof_leave();
                     yac_prof_enter(clo_prof_name(clo));

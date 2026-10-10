@@ -97,6 +97,7 @@ struct Closure {
     char **params;  /* V_FUN: IR params (continuation param is last);
                        V_CONT: unused (see cont_name) */
     int nparams;
+    int rest;       /* V_FUN: last param is a rest list; nparams includes it */
     int nslots;     /* V_FUN: activation frame size (params + locals) */
     int kslot;      /* V_FUN: slot of the continuation param in the frame */
     Frame *frame;   /* captured lexical frame */

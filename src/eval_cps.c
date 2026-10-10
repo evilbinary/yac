@@ -90,6 +90,7 @@ static bool call_value(void *ud, Value head, Value *args, int nargs,
     k->body = halt;
     k->params = NULL;
     k->nparams = 1;
+    k->rest = 0;
     k->nslots = 1;
     k->kslot = -1;
     k->frame = gc_new_frame(st->gc, 1);
@@ -144,6 +145,7 @@ static Value eval_val(const CVal *v, Frame *env, Cst *st) {
         clo->body = v->u.fun.body;
         clo->params = v->u.fun.params;
         clo->nparams = v->u.fun.nparams;
+        clo->rest = 0;
         clo->nslots = v->u.fun.nslots;
         clo->kslot = v->u.fun.kslot;
         clo->frame = env;
@@ -156,6 +158,7 @@ static Value eval_val(const CVal *v, Frame *env, Cst *st) {
         clo->body = v->u.cont.body;
         clo->params = NULL;
         clo->nparams = 1;
+        clo->rest = 0;
         clo->nslots = 1;
         clo->frame = env;
         clo->cont_name = v->u.cont.param;

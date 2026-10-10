@@ -221,7 +221,9 @@ let lower_cases(_) = [
   /* kind 原语（is_prim_name -> kind）全类型安全：int 0 / str 3 / float 7 */
   ["kind_int", "rc", "0"],
   ["kind_str", "rc", "3"],
-  ["kind_float", "rc", "7"]
+  ["kind_float", "rc", "7"],
+  /* rest: last param is the leftover list; f() with only rest is the empty list */
+  ["rest", "rc", "23"]
 ]
 
 let lower_one(st, yc, c) =

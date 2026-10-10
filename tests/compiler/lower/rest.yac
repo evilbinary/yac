@@ -1,0 +1,7 @@
+let f(a, ...xs) = a + len(xs)
+let g(...ys) = len(ys)
+let h(a, b, ...xs) = a + b + len(xs)
+let rec(n, ...xs) =
+  if n == 0 then len(xs)
+  else rec(n - 1, 7, 8, 9)
+f(10, 1, 2) + g() + h(3, 4) + f(1) + rec(2)

@@ -78,12 +78,21 @@ static Ast *mk_let(Parser *p, const char *name, Ast *bound, Ast *body, int line,
     return n;
 }
 
-static Ast *mk_fun(Parser *p, char **params, int nparams, Ast *body, int line, int col) {
+static Ast *mk_fun(Parser *p, char **params, int nparams, Ast *body, int line, int col, int rest) {
     Ast *n = mk(p, A_FUN, line, col);
     n->u.fun.params = params;
     n->u.fun.nparams = nparams;
     n->u.fun.body = body;
+    n->u.fun.rest = rest;
     return n;
+}
+
+/* `...` is three dot tokens. Rest is only legal as the last parameter. */
+static bool at_dots(const Parser *p) {
+    return p->pos + 2 < p->n
+        && p->toks[p->pos].kind == TK_DOT
+        && p->toks[p->pos + 1].kind == TK_DOT
+        && p->toks[p->pos + 2].kind == TK_DOT;
 }
 
 static bool atom_start(TokKind k) {
@@ -105,7 +114,8 @@ static bool atom_start(TokKind k) {
 }
 
 /* parses '(' x, y, z ')' -- caller has consumed nothing. */
-static bool parse_param_list(Parser *p, char ***params_out, int *nparams_out) {
+static bool parse_param_list(Parser *p, char ***params_out, int *nparams_out, int *rest_out) {
+    *rest_out = 0;
     if (!eat(p, TK_LPAREN)) {
         *params_out = NULL;
         *nparams_out = 0;
@@ -114,6 +124,27 @@ static bool parse_param_list(Parser *p, char ***params_out, int *nparams_out) {
     char **params = NULL;
     int cnt = 0, cap = 0;
     while (!at(p, TK_RPAREN)) {
+        if (at_dots(p)) {
+            advance(p); advance(p); advance(p);
+            if (!at(p, TK_IDENT)) {
+                p_err(p, "expected parameter name after '...'");
+                free(params);
+                return false;
+            }
+            const Token *pt = advance(p);
+            if (cnt == cap) {
+                cap = cap ? cap * 2 : 4;
+                params = (char **)realloc(params, (size_t)cap * sizeof(char *));
+            }
+            params[cnt++] = (char *)pt->text;
+            *rest_out = 1;
+            if (at(p, TK_COMMA)) {
+                p_err(p, "rest parameter must be last");
+                free(params);
+                return false;
+            }
+            break;
+        }
         if (!at(p, TK_IDENT)) {
             p_err(p, "expected parameter name");
             free(params);
@@ -200,8 +231,8 @@ static Ast *parse_atom(Parser *p) {
     case TK_KW_FUN: {
         advance(p);
         char **params;
-        int nparams;
-        if (!parse_param_list(p, &params, &nparams)) return NULL;
+        int nparams, rest = 0;
+        if (!parse_param_list(p, &params, &nparams, &rest)) return NULL;
         if (!eat(p, TK_ARROW)) {
             p_err(p, "expected '->' after parameter list");
             free(params);
@@ -211,7 +242,7 @@ static Ast *parse_atom(Parser *p) {
         if (!body) { free(params); return NULL; }
         char **parr = params_to_arena(p, params, nparams);
         free(params);
-        Ast *n = mk_fun(p, parr, nparams, body, t->line, t->col);
+        Ast *n = mk_fun(p, parr, nparams, body, t->line, t->col, rest);
         return n;
     }
     case TK_LBRACKET: {
@@ -289,7 +320,19 @@ static Ast *parse_app(Parser *p) {
     int nargs = 0, cap = 0;
 
     int app_line = p->toks[p->pos - 1].line;
+    int empty_call = 0;
     while (atom_start(peek(p)->kind)) {
+        /* f() is a zero-arg call. A parenthesized expression still
+         * juxtaposes; only the empty pair is the call. */
+        if (at(p, TK_LPAREN) && p->pos + 1 < p->n
+            && p->toks[p->pos + 1].kind == TK_RPAREN
+            && peek(p)->line == app_line) {
+            advance(p);
+            advance(p);
+            empty_call = 1;
+            app_line = p->toks[p->pos - 1].line;
+            continue;
+        }
         if (at(p, TK_LPAREN) && paren_is_arg_list(p)) {
             advance(p); /* consume '(' */
             Ast *a0 = parse_expr(p);
@@ -332,7 +375,7 @@ static Ast *parse_app(Parser *p) {
         app_line = p->toks[p->pos - 1].line;
     }
 
-    if (nargs == 0) {
+    if (nargs == 0 && !empty_call) {
         free(args);
         return head;
     }
@@ -525,8 +568,8 @@ static Ast *parse_expr(Parser *p) {
         }
         const Token *nt = advance(p);
         char **params;
-        int nparams;
-        if (!parse_param_list(p, &params, &nparams)) return NULL;
+        int nparams, rest = 0;
+        if (!parse_param_list(p, &params, &nparams, &rest)) return NULL;
         if (!eat(p, TK_EQ)) {
             p_err(p, "expected '='");
             free(params);
@@ -546,9 +589,9 @@ static Ast *parse_expr(Parser *p) {
             body = mk_unit(p, lt->line, lt->col);
         }
         Ast *b = bound;
-        if (nparams > 0) {
+        if (nparams > 0 || rest) {
             char **parr = params_to_arena(p, params, nparams);
-            b = mk_fun(p, parr, nparams, bound, lt->line, lt->col);
+            b = mk_fun(p, parr, nparams, bound, lt->line, lt->col, rest);
         }
         free(params);
         return mk_let(p, nt->text, b, body, lt->line, lt->col);
@@ -561,6 +604,7 @@ typedef struct {
     const char *name; /* bindings only */
     char **params;    /* bindings only */
     int nparams;      /* bindings only */
+    int rest;         /* bindings only: last param is rest */
     Ast *expr;        /* bound expr (bindings) or plain expr */
 } Item;
 
@@ -858,8 +902,8 @@ static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, in
             }
             const Token *nt = advance(p);
             char **params;
-            int nparams;
-            if (!parse_param_list(p, &params, &nparams)) return 0;
+            int nparams, rest = 0;
+            if (!parse_param_list(p, &params, &nparams, &rest)) return 0;
             if (!eat(p, TK_EQ)) {
                 p_err(p, "expected '='");
                 return 0;
@@ -872,9 +916,9 @@ static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, in
                 Ast *body = parse_expr(p);
                 if (!body) return 0;
                 Ast *b = bound;
-                if (nparams > 0) {
+                if (nparams > 0 || rest) {
                     char **parr = params_to_arena(p, params, nparams);
-                    b = mk_fun(p, parr, nparams, bound, lt->line, lt->col);
+                    b = mk_fun(p, parr, nparams, bound, lt->line, lt->col, rest);
                 }
                 free(params);
                 Ast *le = mk_let(p, nt->text, b, body, lt->line, lt->col);
@@ -882,13 +926,13 @@ static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, in
                     *cap = *cap ? *cap * 2 : 8;
                     *items = (Item *)realloc(*items, (size_t)*cap * sizeof(Item));
                 }
-                (*items)[(*nitems)++] = (Item){false, NULL, NULL, 0, le};
+                (*items)[(*nitems)++] = (Item){false, NULL, NULL, 0, 0, le};
             } else {
                 if (*nitems == *cap) {
                     *cap = *cap ? *cap * 2 : 8;
                     *items = (Item *)realloc(*items, (size_t)*cap * sizeof(Item));
                 }
-                (*items)[(*nitems)++] = (Item){true, nt->text, params, nparams, bound};
+                (*items)[(*nitems)++] = (Item){true, nt->text, params, nparams, rest, bound};
             }
         } else {
             Ast *e = parse_expr(p);
@@ -897,7 +941,7 @@ static int parse_items(Parser *p, ImportCtx *ictx, Item **items, int *nitems, in
                 *cap = *cap ? *cap * 2 : 8;
                 *items = (Item *)realloc(*items, (size_t)*cap * sizeof(Item));
             }
-            (*items)[(*nitems)++] = (Item){false, NULL, NULL, 0, e};
+            (*items)[(*nitems)++] = (Item){false, NULL, NULL, 0, 0, e};
         }
         eat(p, TK_SEMI);
     }
@@ -926,9 +970,9 @@ ParseResult parse_program(const Token *toks, int n, Arena *a) {
         Item *it = &items[i];
         if (it->is_bind) {
             Ast *b = it->expr;
-            if (it->nparams > 0) {
+            if (it->nparams > 0 || it->rest) {
                 char **parr = params_to_arena(&p, it->params, it->nparams);
-                b = mk_fun(&p, parr, it->nparams, b, 0, 0);
+                b = mk_fun(&p, parr, it->nparams, b, 0, 0, it->rest);
             }
             Ast *body = prog ? prog : mk_unit(&p, 0, 0);
             Ast *le = mk_let(&p, it->name, b, body, 0, 0);

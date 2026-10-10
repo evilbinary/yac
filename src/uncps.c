@@ -89,7 +89,7 @@ static bool cv_atom(const CVal *v, Uc *u, Atom *out) {
         Kenv *k2 = kenv_push(u->a, NULL, kname, (Cont){CT_RETURN, NULL, 0, NULL});
         Anf *body = uncps(v->u.fun.body, k2, u);
         if (u->error) return false;
-        *out = atom_lam(up, np - 1, v->u.fun.nslots, body);
+        *out = atom_lam(up, np - 1, v->u.fun.nslots, body, 0);
         return true;
     }
     case CV_CONT:

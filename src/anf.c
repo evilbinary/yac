@@ -124,12 +124,13 @@ Atom atom_lit(Value v) {
     return at;
 }
 
-Atom atom_lam(char **params, int nparams, int nslots, Anf *body) {
+Atom atom_lam(char **params, int nparams, int nslots, Anf *body, int rest) {
     Atom at;
     at.kind = AT_LAM;
     at.u.lam.params = params;
     at.u.lam.nparams = nparams;
     at.u.lam.nslots = nslots;
+    at.u.lam.rest = rest;
     at.u.lam.body = body;
     return at;
 }
@@ -277,7 +278,7 @@ static Anf *norm_tail(const Ast *e, const char *vname, Anf *k, NrmCtx *c, Scope 
             int lam_nslots = c->frameslots[c->curframe];
             frame_exit(c);
             Anf *body = norm_tail(e->u.let.body, vname, k, c, s2);
-            return anf_let(c->a, name, nslot, atom_lam(fn->u.fun.params, fn->u.fun.nparams, lam_nslots, fbody), body);
+            return anf_let(c->a, name, nslot, atom_lam(fn->u.fun.params, fn->u.fun.nparams, lam_nslots, fbody, fn->u.fun.rest), body);
         }
         Atom batom;
         if (atomize(e->u.let.bound, &batom, c, s2)) {
@@ -411,7 +412,7 @@ static Anf *norm(const Ast *e, const char *vname, Anf *k, NrmCtx *c, Scope *scop
             int lam_nslots = c->frameslots[c->curframe];
             frame_exit(c);
             Anf *body = norm(e->u.let.body, vname, k, c, s2);
-            return anf_let(c->a, name, nslot, atom_lam(fn->u.fun.params, fn->u.fun.nparams, lam_nslots, fbody), body);
+            return anf_let(c->a, name, nslot, atom_lam(fn->u.fun.params, fn->u.fun.nparams, lam_nslots, fbody, fn->u.fun.rest), body);
         }
         Atom batom;
         if (atomize(e->u.let.bound, &batom, c, s2)) {
@@ -542,7 +543,7 @@ static bool atomize(const Ast *e, Atom *out, NrmCtx *c, Scope *scope) {
         Anf *body = norm_tail(e->u.fun.body, ret, anf_ret(c->a, atom_var_ds(ret, 0, retslot)), c, s2);
         int nslots = c->frameslots[c->curframe];
         frame_exit(c);
-        *out = atom_lam(e->u.fun.params, e->u.fun.nparams, nslots, body);
+        *out = atom_lam(e->u.fun.params, e->u.fun.nparams, nslots, body, e->u.fun.rest);
         return true;
     }
     default:

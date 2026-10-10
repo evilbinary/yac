@@ -236,7 +236,9 @@ let jslot_rw_expr(e, sc) =
   else if k == "call" then
     ["call", jslot_rw_expr(nth(e, 1), sc), rw_list(nth(e, 2))]
   else if k == "fun" then
-    ["fun", nth(e, 1), jslot_rw_expr(nth(e, 2), append(nth(e, 1), sc))]
+    let body = jslot_rw_expr(nth(e, 2), append(nth(e, 1), sc)) in
+    if len(e) > 3 then ["fun", nth(e, 1), body, nth(e, 3)]
+    else ["fun", nth(e, 1), body]
   else if k == "if" then
     ["if", jslot_rw_expr(nth(e, 1), sc),
      jslot_rw_expr(nth(e, 2), sc), jslot_rw_expr(nth(e, 3), sc)]

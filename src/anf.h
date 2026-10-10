@@ -50,6 +50,7 @@ typedef struct Atom {
             char **params;
             int nparams;
             int nslots; /* frame size: nparams + locals */
+            int rest;   /* last param receives extra args as a list */
             Anf *body;
         } lam;
     } u;
@@ -113,7 +114,7 @@ bool ast_to_anf_prelude(const Ast *prog, Arena *a, Anf **out, int *top_nslots,
 Atom atom_var(const char *name);
 Atom atom_var_ds(const char *name, int depth, int slot);
 Atom atom_lit(Value v);
-Atom atom_lam(char **params, int nparams, int nslots, Anf *body);
+Atom atom_lam(char **params, int nparams, int nslots, Anf *body, int rest);
 Anf *anf_let(Arena *a, const char *name, int slot, Atom atom, Anf *body);
 Anf *anf_let_call(Arena *a, const char *name, int slot, Atom head, Atom *args, int nargs, Anf *body);
 Anf *anf_if(Arena *a, Atom cond, Anf *then, Anf *els);
