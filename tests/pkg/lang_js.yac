@@ -272,6 +272,12 @@ let _ = check("spread_call", "function add(a, b){ return a + b; } console.log(ad
 let _ = check("spread_rest", "function g(...ys){ return ys.length; } console.log(g(...[1, 2, 3]));", "3")
 let _ = check("spread_mid", "function f(a, ...xs){ return a + xs.length; } console.log(f(1, ...[2, 3, 4]));", "4")
 let _ = check("rest_iife", "console.log((function(...xs){ return xs.length; })(1, 2));", "2")
+let _ = check("rest_method", "let o={m(a, ...xs){ return a + xs.length; }}; console.log(o.m(10, 1, 2));", "12")
+let _ = check("rest_method0", "let o={m(...xs){ return xs.length; }}; console.log(o.m());", "0")
+let _ = check("spread_method", "let o={m(a, b){ return a + b; }}; console.log(o.m(...[20, 22]));", "42")
+let _ = check("rest_class", "class A { m(a, ...xs){ return a + xs.length; } } console.log(new A().m(10, 1, 2));", "12")
+let _ = check("rest_static", "class A { static m(...xs){ return xs.length; } } console.log(A.m(1, 2));", "2")
+let _ = check("spread_super", "class B { hi(x){ return x + 1; } } class C extends B { hi(x){ return super.hi(...[x]); } } console.log(new C().hi(4));", "5")
 
 /* ES6 numeric literals + B-class built-ins */
 let _ = check("num_bin", "console.log(0b1010);", "10")

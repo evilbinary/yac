@@ -31,8 +31,9 @@
  * promise. A rest parameter (`function f(a, ...xs)`, an arrow, or a function
  * expression) is one list argument. The call site packs it when the callee is
  * that function, an immediately called function expression, or a `let` bound
- * to one. `f(...xs)` spreads into a known callee the same way. Method calls
- * are not packed. */
+ * to one. `f(...xs)` spreads into a known callee the same way. Methods take
+ * one argument list, so rest parameters and call spread work on them too.
+ * A call through an unknown function value still cannot spread. */
 
 package lang.js
 export js_to_yac
@@ -651,7 +652,6 @@ let js_parse_expr(toks, i, min, st) =
               if is_acc then
                 let aname = js_t(js_at(toks, j + 1)) in
                 let pr = pdef(j + 3, []) in
-                let _ = if js_ps_rest(nth(pr, 0)) then js_fail(st, "rest parameters are not supported on methods") else 0 in
                 let bd = js_parse_stmts_v(toks, nth(pr, 1) + 1, ["list", "}"], st) in
                 let fe = ["funexpr", "", nth(pr, 0), nth(bd, 0)] in
                 [["str", aname], (if js_t(kt) == "get" then ["acc", fe, 0] else ["acc", 0, fe]), nth(bd, 1)]
@@ -664,9 +664,8 @@ let js_parse_expr(toks, i, min, st) =
               let j2 = j + 1 in
               if js_is(toks, j2, "(") then
                 let pr = pdef(j2 + 1, []) in
-                let _ = if js_ps_rest(nth(pr, 0)) then js_fail(st, "rest parameters are not supported on methods") else 0 in
                 let bd = js_parse_stmts_v(toks, nth(pr, 1) + 1, ["list", "}"], st) in
-                [key, ["funexpr", "", nth(pr, 0), nth(bd, 0)], nth(bd, 1)]
+                [key, ["funexpr", "", nth(pr, 0), nth(bd, 0), "method"], nth(bd, 1)]
               else if js_is(toks, j2, ":") then
                 let r = js_parse_expr(toks, j2 + 1, 0, st) in
                 [key, nth(r, 0), nth(r, 1)]
@@ -933,7 +932,6 @@ let js_parse_stmts(toks, i, mode, st) =
           let k1 = if is_acc then k + 1 else if is_static then k + 1 else k in
           let mname = js_t(js_at(toks, k1)) in
           let pr = cdef(k1 + 2, []) in
-          let _ = if js_ps_rest(nth(pr, 0)) then js_fail(st, "rest parameters are not supported on methods") else 0 in
           let bd = js_parse_stmts(toks, nth(pr, 1) + 1, ["list", "}"], st) in
           let kind =
             if is_acc then (if js_is(toks, k, "get") then "getter" else "setter")
@@ -1417,6 +1415,10 @@ let js_emit_invoke(cf, callee, args, ctx, st) =
       else js_nths(av, nfixed, 0) in
     js_cat(["(let ", av, " = ", packed, " in (", cf, ")(", formals, "))"])
 
+/* `(cf)(packedArgs)` for a method, which always takes one list. */
+let js_method_invoke(cf, args, ctx, st) =
+  js_cat(["(", cf, ")(", js_pack_list(args, ctx, st), ")"])
+
 /* Param node kinds: a plain name (string), ["def", name, expr],
  * ["rest", name], ["pat", patternNode], ["patdef", patternNode, expr]. */
 let js_param_names(p, st) =
@@ -1442,8 +1444,8 @@ let js_bind_flat(flat, inner) =
   wrap2(n - 1, inner)
 
 /* `if raw == 0 then dv else raw` (JS default when the argument is missing). */
-let js_def_if0(raw, dv) =
-  let t = str_cat("_d", raw) in
+let js_def_if0(raw, dv, st) =
+  let t = js_fresh(st, "df") in
   js_cat(["(let ", t, " = ", raw, " in if ", t, " == 0 then ", dv, " else ", t, ")"])
 
 /* Bind each param to a fresh box, create fresh return flag/value boxes (flag
@@ -1472,9 +1474,24 @@ let js_func_body(ps, body, ctx, st, mode) =
   let pbs = map(fun(p) -> js_binds_of(p, st), ps) in
   let allb = foldl(fun(acc, xs) -> append(acc, xs), [], pbs) in
   let ctx3 = [append(allb, nth(ctx, 0)), nth(ctx, 1), retf2, retv2, nth(ctx, 4), 0] in
+  /* Methods take one list. Formals are nth/slice of that list, so a call
+   * can spread or pass a rest tail without knowing the method's arity. */
+  let method = mode == "method" in
+  let an = if method then js_fresh(st, "ma") else "" in
+  let _ = if method and js_ps_rest(ps) then box_set(st_lib(st), 1) else 0 in
   let pnames =
     let n = len(ps) in
-    if n == 0 then ["_"]
+    if method then
+      let pn(i, acc) =
+        if i >= n then list_rev(acc)
+        else
+          let raw =
+            if js_is_rest_param(nth(ps, i)) then
+              js_cat(["_js_arr_slice(", an, ", ", int_to_str(i), ", len(", an, "))"])
+            else js_cat(["nth(", an, ", ", int_to_str(i), ")"]) in
+          pn(i + 1, cons(raw, acc)) in
+      pn(0, [])
+    else if n == 0 then ["_"]
     else
       let pn(i, acc) = if i >= n then list_rev(acc) else pn(i + 1, cons(str_cat("_p", int_to_str(i)), acc)) in
       pn(0, []) in
@@ -1491,7 +1508,7 @@ let js_func_body(ps, body, ctx, st, mode) =
       else if nth(p, 0) == "def" then
         let m = nth(nth(binds, 0), 1) in
         let dv = js_call_expr(nth(p, 2), ctx3, st) in
-        wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", js_def_if0(raw, dv), ") in ", inner, "))"]))
+        wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", js_def_if0(raw, dv, st), ") in ", inner, "))"]))
       else
         let pat = nth(p, 1) in
         let isdef = nth(p, 0) == "patdef" in
@@ -1503,10 +1520,10 @@ let js_func_body(ps, body, ctx, st, mode) =
         let des2 =
           if isdef then
             let dv = js_call_expr(nth(p, 2), ctx3, st) in
-            js_cat(["(let ", base, " = ", js_def_if0(raw, dv), " in ", des, ")"])
+            js_cat(["(let ", base, " = ", js_def_if0(raw, dv, st), " in ", des, ")"])
           else des in
         wrap(i - 1, des2) in
-  let sig = js_join(pnames, ", ", 0, "") in
+  let sig = if method then an else js_join(pnames, ", ", 0, "") in
   if mode == "gen" then
     let _ = box_set(st_obj(st), 1) in
     let _ = box_set(st_fmap(st), 1) in
@@ -1656,8 +1673,13 @@ let js_emit_expr(e, ctx, st) =
     let obj = nth(callee, 1) in
     let m = nth(callee, 2) in
     let o = js_emit_expr(obj, ctx, st) in
-    let a0 = if len(args) > 0 then js_emit_expr(nth(args, 0), ctx, st) else "0" in
-    let a1 = if len(args) > 1 then js_emit_expr(nth(args, 1), ctx, st) else "0" in
+    /* Spread arguments are packed by the call, not emitted as one expression. */
+    let safe_arg(i) =
+      if i >= len(args) then "0"
+      else if nth(nth(args, i), 0) == "spread" then "0"
+      else js_emit_expr(nth(args, i), ctx, st) in
+    let a0 = safe_arg(0) in
+    let a1 = safe_arg(1) in
     let is_str =
       if js_str_lit(obj) then true
       else if nth(obj, 0) == "id" then js_in(nth(ctx, 4), nth(obj, 1))
@@ -1674,7 +1696,7 @@ let js_emit_expr(e, ctx, st) =
       let vf = js_fresh(st, "f") in
       let vs = js_fresh(st, "s") in
       let vr = js_fresh(st, "r") in
-      js_cat(["(let ", vo, " = ", o, " in (let ", vf, " = _js_get(", vo, ", \"", js_esc(m), "\") in (let ", vs, " = box_get(_js_this) in (let _ = box_set(_js_this, ", vo, ") in (let ", vr, " = (", vf, ")(", emit_args(args), ") in (let _ = box_set(_js_this, ", vs, ") in ", vr, "))))))"]) in
+      js_cat(["(let ", vo, " = ", o, " in (let ", vf, " = _js_get(", vo, ", \"", js_esc(m), "\") in (let ", vs, " = box_get(_js_this) in (let _ = box_set(_js_this, ", vo, ") in (let ", vr, " = ", js_method_invoke(vf, args, ctx, st), " in (let _ = box_set(_js_this, ", vs, ") in ", vr, "))))))"]) in
     if is_str then
       if m == "charAt" then (let _ = box_set(st_lib(st), 1) in js_cat(["_js_char_at(", o, ", ", a0, ")"]))
       else if m == "charCodeAt" then js_cat(["str_ref(", o, ", ", a0, ")"])
@@ -1718,7 +1740,7 @@ let js_emit_expr(e, ctx, st) =
       let is_builtin = bn != "" in
       if is_static_obj then
         (let _ = box_set(st_obj(st), 1) in
-         js_cat(["_js_static_get(\"", js_esc(nth(obj, 1)), "\", \"", js_esc(m), "\")(", emit_args(args), ")"]))
+         js_method_invoke(js_cat(["_js_static_get(\"", js_esc(nth(obj, 1)), "\", \"", js_esc(m), "\")"]), args, ctx, st))
       else if bn == "Reflect" then
         (let _ = box_set(st_obj(st), 1) in
          let _ = box_set(st_fmap(st), 1) in
@@ -1909,7 +1931,7 @@ let js_emit_expr(e, ctx, st) =
     let _ = box_set(st_jslib(st), 1) in
     let pe = js_cat(["\"", js_esc(nth(e, 1)), "\""]) in
     let fe = js_cat(["\"", js_esc(nth(e, 2)), "\""]) in
-    js_cat(["(let _p = ", pe, " in (let _f = ", fe, " in (let _o = _js_obj(0) in (let _ = fmap_put(nth(_o, 1), \"source\", _p) in (let _ = fmap_put(nth(_o, 1), \"flags\", _f) in (let _ = fmap_put(nth(_o, 1), \"test\", fun(s) -> js_re_test(_p, _f, s)) in (let _ = fmap_put(nth(_o, 1), \"exec\", fun(s) -> js_re_exec(_p, _f, s)) in _o)))))))"])
+    js_cat(["(let _p = ", pe, " in (let _f = ", fe, " in (let _o = _js_obj(0) in (let _ = fmap_put(nth(_o, 1), \"source\", _p) in (let _ = fmap_put(nth(_o, 1), \"flags\", _f) in (let _ = fmap_put(nth(_o, 1), \"test\", fun(args) -> js_re_test(_p, _f, nth(args, 0))) in (let _ = fmap_put(nth(_o, 1), \"exec\", fun(args) -> js_re_exec(_p, _f, nth(args, 0))) in _o)))))))"])
   else if tag == "await" then
     let _ = box_set(st_prom(st), 1) in
     let _ = box_set(st_jslib(st), 1) in
@@ -1952,7 +1974,7 @@ let js_emit_expr(e, ctx, st) =
        let _ = box_set(st_jslib(st), 1) in
        let pe = if len(args) > 0 then js_emit_expr(nth(args, 0), ctx, st) else "\"\"" in
        let fe = if len(args) > 1 then js_emit_expr(nth(args, 1), ctx, st) else "\"\"" in
-       js_cat(["(let _p = ", pe, " in (let _f = ", fe, " in (let _o = _js_obj(0) in (let _ = fmap_put(nth(_o, 1), \"source\", _p) in (let _ = fmap_put(nth(_o, 1), \"flags\", _f) in (let _ = fmap_put(nth(_o, 1), \"test\", fun(s) -> js_re_test(_p, _f, s)) in (let _ = fmap_put(nth(_o, 1), \"exec\", fun(s) -> js_re_exec(_p, _f, s)) in _o)))))))"]))
+       js_cat(["(let _p = ", pe, " in (let _f = ", fe, " in (let _o = _js_obj(0) in (let _ = fmap_put(nth(_o, 1), \"source\", _p) in (let _ = fmap_put(nth(_o, 1), \"flags\", _f) in (let _ = fmap_put(nth(_o, 1), \"test\", fun(args) -> js_re_test(_p, _f, nth(args, 0))) in (let _ = fmap_put(nth(_o, 1), \"exec\", fun(args) -> js_re_exec(_p, _f, nth(args, 0))) in _o)))))))"]))
     else if cname == "Map" or cname == "Set" or cname == "WeakMap" or cname == "WeakSet" then
       (let _ = box_set(st_jslib(st), 1) in
        let canon = if cname == "Map" or cname == "WeakMap" then "Map" else "Set" in
@@ -2167,8 +2189,11 @@ let js_emit_expr(e, ctx, st) =
        let f = if nth(callee, 1) == "isNaN" then "js_is_nan" else "js_is_finite" in
        if len(args) == 0 then "false" else js_cat([f, "(", js_emit_expr(nth(args, 0), ctx, st), ")"]))
     else
-      /* `(callee)(args)`. Rest and spread pack when the callee's arity is known. */
-      js_emit_invoke(js_emit_expr(callee, ctx, st), callee, args, ctx, st)
+      /* `(callee)(args)`. Rest and spread pack when the callee's arity is known.
+       * `super.m(...)` is a method, so it receives one argument list. */
+      let cf = js_emit_expr(callee, ctx, st) in
+      if nth(callee, 0) == "supermem" then js_method_invoke(cf, args, ctx, st)
+      else js_emit_invoke(cf, callee, args, ctx, st)
   else
     let _ = js_fail(st, js_cat(["unsupported expression '", tag, "'"])) in
     "0"
@@ -2431,7 +2456,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
               let md = nth(methods, i) in
               if nth(md, 0) == "ctor" then go2(i + 1)
               else if nth(md, 0) == "static" then
-                (let fexpr = ["funexpr", "", nth(md, 2), rw(nth(md, 3))] in
+                (let fexpr = ["funexpr", "", nth(md, 2), rw(nth(md, 3)), "method"] in
                  let fe = js_emit_expr(fexpr, ctxC, st) in
                  let e = js_cat(["_js_static_set(\"", js_esc(nm), "\", \"", js_esc(nth(md, 1)), "\", ", fe, ")"]) in
                  js_cat(["(let _ = ", e, " in ", go2(i + 1), ")"]))
@@ -2446,7 +2471,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
                 let target =
                   if nth(md, 0) == "static" then ["mem", ["id", nm], nth(md, 1)]
                   else ["mem", ["mem", ["id", nm], "prototype"], nth(md, 1)] in
-                let fexpr = ["funexpr", "", nth(md, 2), rw(nth(md, 3))] in
+                let fexpr = ["funexpr", "", nth(md, 2), rw(nth(md, 3)), "method"] in
                 let e = js_emit_expr(["assign", "=", target, fexpr], ctxC, st) in
                 js_cat(["(let _ = ", e, " in ", go2(i + 1), ")"]) in
           go2(0) in
