@@ -259,6 +259,20 @@ let _ = check("spread_arr", "let a=[1,2]; let b=[0,...a,3]; console.log(b.join('
 let _ = check("spread_obj", "let o={a:1}; let p={...o, b:2}; console.log(p.a+p.b);", "3")
 let _ = check("rest_destr", "let [a,...r] = [1,2,3]; console.log(a + '/' + r.join(','));", "1/2,3")
 
+/* ES6 rest parameters and call spread */
+let _ = check("rest_fn", "function f(a, ...xs){ return a + xs.length; } console.log(f(10, 1, 2));", "12")
+let _ = check("rest_only", "function g(...ys){ return ys.length; } console.log(g());", "0")
+let _ = check("rest_none", "function h(a, b, ...xs){ return a + b + xs.length; } console.log(h(3, 4));", "7")
+let _ = check("rest_missing", "function f(a, ...xs){ return a + xs.length; } console.log(f(1));", "1")
+let _ = check("rest_idx", "function f(...xs){ return xs[1]; } console.log(f(4, 5, 6));", "5")
+let _ = check("rest_arrow", "let f = (...ys) => ys.length; console.log(f(1, 2, 3));", "3")
+let _ = check("rest_arrow_fixed", "let f = (a, ...xs) => a + xs.length; console.log(f(10, 1, 2));", "12")
+let _ = check("rest_rec", "function rec(n, ...xs){ if (n === 0) { return xs.length; } return rec(n - 1, 7, 8, 9); } console.log(rec(2));", "3")
+let _ = check("spread_call", "function add(a, b){ return a + b; } console.log(add(...[20, 22]));", "42")
+let _ = check("spread_rest", "function g(...ys){ return ys.length; } console.log(g(...[1, 2, 3]));", "3")
+let _ = check("spread_mid", "function f(a, ...xs){ return a + xs.length; } console.log(f(1, ...[2, 3, 4]));", "4")
+let _ = check("rest_iife", "console.log((function(...xs){ return xs.length; })(1, 2));", "2")
+
 /* ES6 numeric literals + B-class built-ins */
 let _ = check("num_bin", "console.log(0b1010);", "10")
 let _ = check("num_oct", "console.log(0o17);", "15")
