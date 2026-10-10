@@ -139,7 +139,7 @@ let js_run_file(path) =
 let js_dump_file(path) =
   let src = read_or_0(path) in
   if src == 0 then print(str_cat("error: cannot read ", path))
-  else print(js_to_yac(src))
+  else js_dump_src(src)
 
 let js_compile_file(path, out0) =
   let src = read_or_0(path) in
@@ -163,7 +163,7 @@ let js_help(_) =
   let _ = print("命令行:") in
   let _ = print("  --run FILE                 翻译并就地运行") in
   let _ = print("  --compile FILE [-o OUT]    翻译并编成本机可执行文件") in
-  let _ = print("  --dump FILE                打印翻译出的 yac 源码") in
+  let _ = print("  --dump FILE                按语句打印翻译出的 yac") in
   let _ = print("  --eval JS                  执行内联 JS") in
   let _ = print("  --repl                     进入 REPL（无参数时默认）") in
   let _ = print("  --help, -h                 本帮助") in
@@ -172,7 +172,7 @@ let js_help(_) =
   let _ = print("REPL（以 : 开头）:") in
   let _ = print("  :run FILE                  翻译并就地运行") in
   let _ = print("  :compile FILE [OUT]        翻译并编成本机可执行文件") in
-  let _ = print("  :dump FILE                 打印翻译出的 yac 源码") in
+  let _ = print("  :dump FILE                 按语句打印翻译出的 yac") in
   let _ = print("  :eval JS                   执行内联 JS") in
   let _ = print("  :help                      本帮助") in
   let _ = print("  :quit, :q                  退出") in

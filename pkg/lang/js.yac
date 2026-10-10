@@ -37,7 +37,7 @@
  * A call through an unknown function value still cannot spread. */
 
 package lang.js
-export js_to_yac
+export js_to_yac, js_dump_src
 
 /* ---- character classes ------------------------------------------------ */
 
@@ -79,46 +79,52 @@ let js_skip(src, i, n) =
 /* String literal starting after quote `q`; decodes \n \t \r \0 and \\ \q.
  * Returns [decoded, next-index]. */
 let js_lex_str(src, i, n, q) =
-  let rec(j, acc) =
-    if j >= n then [acc, j]
+  /* One byte buffer and one tail call. str_cat per character copied a
+   * 100KB literal once per byte. */
+  let buf = bytes_new() in
+  let rec(j) =
+    if j >= n then [bytes_to_str(buf), j]
     else
       let c = str_ref(src, j) in
-      if c == q then [acc, j + 1]
-      else if c == 92 then
-        if j + 1 >= n then [acc, j]
-        else
-          let e = str_ref(src, j + 1) in
-          let bit =
-            if e == 110 then "\n"
-            else if e == 116 then "\t"
-            else if e == 114 then str_chr(13)
-            else if e == 48 then str_chr(0)
-            else str_slice(src, j + 1, 1) in
-          rec(j + 2, str_cat(acc, bit))
-      else rec(j + 1, str_cat(acc, str_slice(src, j, 1))) in
-  rec(i, "")
+      if c == q then [bytes_to_str(buf), j + 1]
+      else if c == 92 and j + 1 >= n then [bytes_to_str(buf), j]
+      else
+        let esc = if c == 92 then 1 else 0 in
+        let e = if esc == 1 then str_ref(src, j + 1) else c in
+        let code =
+          if esc == 0 then c
+          else if e == 110 then 10
+          else if e == 116 then 9
+          else if e == 114 then 13
+          else if e == 48 then 0
+          else e in
+        let _ = bytes_append(buf, code) in
+        rec(if esc == 1 then j + 2 else j + 1) in
+  rec(i)
 
 /* Template literal body after the opening backtick. `${…}` is kept verbatim
  * for the parser; escapes are decoded (`\`` -> backtick, `\$` -> `$`).
  * Returns [raw, next-index]. */
 let js_lex_tmpl(src, i, n) =
-  let rec(j, acc) =
-    if j >= n then [acc, j]
+  let buf = bytes_new() in
+  let rec(j) =
+    if j >= n then [bytes_to_str(buf), j]
     else
       let c = str_ref(src, j) in
-      if c == 96 then [acc, j + 1]
-      else if c == 92 then
-        if j + 1 >= n then [acc, j]
-        else
-          let e = str_ref(src, j + 1) in
-          let bit =
-            if e == 110 then "\n"
-            else if e == 116 then "\t"
-            else if e == 114 then str_chr(13)
-            else str_slice(src, j + 1, 1) in
-          rec(j + 2, str_cat(acc, bit))
-      else rec(j + 1, str_cat(acc, str_slice(src, j, 1))) in
-  rec(i, "")
+      if c == 96 then [bytes_to_str(buf), j + 1]
+      else if c == 92 and j + 1 >= n then [bytes_to_str(buf), j]
+      else
+        let esc = if c == 92 then 1 else 0 in
+        let e = if esc == 1 then str_ref(src, j + 1) else c in
+        let code =
+          if esc == 0 then c
+          else if e == 110 then 10
+          else if e == 116 then 9
+          else if e == 114 then 13
+          else e in
+        let _ = bytes_append(buf, code) in
+        rec(if esc == 1 then j + 2 else j + 1) in
+  rec(i)
 
 /* Number literal: digits with at most one `.`; returns [text, next-index]. */
 /* Drop `_` separators from src[a..b). */
@@ -199,21 +205,26 @@ let js_op1c(c) =
  * Returns [pattern, flags, next-index]. A `\` escapes the next character,
  * including a slash; a class `[...]` may contain an unescaped slash. */
 let js_lex_re(src, i, n) =
-  let rec(j, acc, cls) =
-    if j >= n then [acc, "", j]
+  let buf = bytes_new() in
+  let flags(k, f) =
+    if k >= n then [bytes_to_str(buf), f, k]
+    else if js_idc(str_ref(src, k)) then flags(k + 1, str_cat(f, str_slice(src, k, 1)))
+    else [bytes_to_str(buf), f, k] in
+  let rec(j, cls) =
+    if j >= n then [bytes_to_str(buf), "", j]
     else
       let c = str_ref(src, j) in
-      if c == 92 and j + 1 < n then rec(j + 2, str_cat(acc, str_slice(src, j, 2)), cls)
-      else if c == 91 then rec(j + 1, str_cat(acc, "["), true)
-      else if c == 93 and cls then rec(j + 1, str_cat(acc, "]"), false)
-      else if c == 47 and cls == false then
-        let flags(k, f) =
-          if k >= n then [acc, f, k]
-          else if js_idc(str_ref(src, k)) then flags(k + 1, str_cat(f, str_slice(src, k, 1)))
-          else [acc, f, k] in
-        flags(j + 1, "")
-      else rec(j + 1, str_cat(acc, str_slice(src, j, 1)), cls) in
-  rec(i, "", false)
+      if c == 47 and cls == false then flags(j + 1, "")
+      else
+        let esc = if c == 92 and j + 1 < n then 1 else 0 in
+        let _ =
+          if esc == 1 then
+            let _ = bytes_append(buf, 92) in
+            bytes_append(buf, str_ref(src, j + 1))
+          else bytes_append(buf, c) in
+        let ncls = if c == 91 then true else if c == 93 and cls then false else cls in
+        rec(if esc == 1 then j + 2 else j + 1, ncls) in
+  rec(i, false)
 
 /* Keywords after which `/` starts a regex rather than a division. */
 let js_re_kw(t) =
@@ -442,8 +453,12 @@ let js_parse_stmts_v(toks, i, mode, st) = (box_get(js_stmts_parse_box))(toks, i,
 
 /* If toks[i] is `(` of an arrow `(params) =>`, return the index of `=>`;
  * otherwise -1. The parameter list itself is parsed by `pdef` (defaults,
- * destructuring, and a final `...rest`). */
+ * destructuring, and a final `...rest`). A `(` whose next token cannot start
+ * a parameter list is not an arrow; scanning it walked every argument. */
 let js_arrow_end(toks, i) =
+  let nx = js_at(toks, i + 1) in
+  let nt = js_t(nx) in
+  if js_k(nx) == "id" or nt == "[" or nt == "{" or nt == "..." or nt == ")" then
   let go(j, d) =
     if js_k(js_at(toks, j)) == "eof" then 0 - 1
     else if js_is(toks, j, "(") or js_is(toks, j, "[") or js_is(toks, j, "{") then go(j + 1, d + 1)
@@ -454,6 +469,40 @@ let js_arrow_end(toks, i) =
       if d <= 1 then 0 - 1 else go(j + 1, d - 1)
     else go(j + 1, d) in
   go(i, 0)
+  else 0 - 1
+
+/* True when the token after an atom is postfix or an infix that still binds
+ * at `min`. */
+let js_expr_cont(toks, j, min) =
+  let t = js_at(toks, j) in
+  let k = js_k(t) in
+  let x = js_t(t) in
+  let op = if k == "p" then true else (k == "id" and (x == "in" or x == "instanceof")) in
+  if op == false then false
+  else if x == "." or x == "[" or x == "(" or x == "=>" or x == "++" or x == "--" then true
+  else if x == "?" then min <= 2
+  else if js_assign_op(x) then min <= 1
+  else
+    let p = js_prec2(x) in
+    if p == 0 then false else p >= min
+
+/* str / num / re / plain id, not a keyword form. */
+let js_atom_ok(kk, tx) =
+  if kk == "str" or kk == "num" or kk == "re" then true
+  else if kk != "id" then false
+  else if tx == "typeof" or tx == "void" or tx == "delete" or tx == "yield" then false
+  else if tx == "await" or tx == "async" or tx == "function" or tx == "new" then false
+  else true
+
+let js_atom(kk, tx, tk, i) =
+  if kk == "num" then [["num", tx], i + 1]
+  else if kk == "str" then [["str", tx], i + 1]
+  else if kk == "re" then [["re", tx, nth(tk, 2)], i + 1]
+  else if tx == "true" or tx == "false" then [["bool", tx], i + 1]
+  else if tx == "null" then [["null"], i + 1]
+  else if tx == "undefined" then [["undef"], i + 1]
+  else if tx == "this" then [["this"], i + 1]
+  else [["id", tx], i + 1]
 
 /* Parse one expression at minimum precedence `min`. Self-recursive for
  * prefix / grouping / args / infix, so it needs no forward references.
@@ -468,6 +517,8 @@ let js_parse_expr(toks, i, min, st) =
   let tk = js_at(toks, i) in
   let tx = js_t(tk) in
   let kk = js_k(tk) in
+  if js_atom_ok(kk, tx) and js_expr_cont(toks, i + 1, min) == false then js_atom(kk, tx, tk, i)
+  else (
   let arrow_body(j) =
     if js_is(toks, j, "{") then
       let bd = js_parse_stmts_v(toks, j + 1, ["list", "}"], st) in
@@ -747,7 +798,7 @@ let js_parse_expr(toks, i, min, st) =
         let pn = if x2 == "**" then p else p + 1 in
         let r = js_parse_expr(toks, j + 1, pn, st) in
         loop(["bin", x2, lhs, nth(r, 0)], nth(r, 1)) in
-  loop(nth(pre, 0), nth(pre, 1))
+  loop(nth(pre, 0), nth(pre, 1)))
 
 /* ---- statement parser ------------------------------------------------- */
 
@@ -884,9 +935,32 @@ let js_pat_has_obj(pat) =
     go(0)
   else false
 
+/* --dump walks one statement at a time. These stay 0 unless js_dump_src armed them. */
+let js_stream_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let js_stream_fn =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let js_stream_ctx =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let js_stream_st =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let js_stream_reuse =
+  let b = box_new() in
+  let _ = box_set(b, "") in
+  b
+
 /* Returns [stmt(s), next-index]. */
 let js_parse_stmts(toks, i, mode, st) =
   let one(j) =
+    let got = (
     let tk = js_at(toks, j) in
     let tx = js_t(tk) in
   let kk = js_k(tk) in
@@ -1181,7 +1255,9 @@ let js_parse_stmts(toks, i, mode, st) =
     else
       let r = js_parse_expr(toks, j, 0, st) in
       let j2 = if js_is(toks, nth(r, 1), ";") then nth(r, 1) + 1 else nth(r, 1) in
-      [["expr", nth(r, 0)], j2] in
+      [["expr", nth(r, 0)], j2]) in
+    let _ = if box_get(js_stream_box) == 0 then 0 else (box_get(js_stream_fn))(nth(got, 0)) in
+    got in
   let m0 = nth(mode, 0) in
   if m0 == "list" then
     let stop = nth(mode, 1) in
@@ -1196,7 +1272,12 @@ let js_parse_stmts(toks, i, mode, st) =
       else
         let r = one(j) in
         go(nth(r, 1), cons(nth(r, 0), acc)) in
-    go(i, [])
+    if box_get(js_stream_box) == 0 then go(i, [])
+    else
+      let saved = box_get(js_stream_ctx) in
+      let out = go(i, []) in
+      let _ = box_set(js_stream_ctx, saved) in
+      out
   else one(i)
 
 /* ---- emit helpers ----------------------------------------------------- */
@@ -1208,16 +1289,49 @@ let js_fresh(st, p) =
   let _ = box_set(b, n + 1) in
   str_cat("_", str_cat(p, int_to_str(n)))
 
-/* Join xs[i..] with sep, seeding the accumulator with xs[0]. */
+/* Join xs[i..] with sep. The result is a list of pieces (strings or nested
+ * lists), not a copied string: a function body wraps its continuation, and
+ * copying that continuation per statement was the quadratic cost. */
 let js_join(xs, sep, i, acc) =
-  if i >= len(xs) then acc
-  else if i == 0 then js_join(xs, sep, 1, nth(xs, 0))
-  else js_join(xs, sep, i + 1, str_cat(acc, str_cat(sep, nth(xs, i))))
+  if i >= len(xs) then list_rev(acc)
+  else if i == 0 then js_join(xs, sep, 1, cons(nth(xs, 0), acc))
+  else js_join(xs, sep, i + 1, cons(nth(xs, i), cons(sep, acc)))
+
+let js_cat(xs) = js_join(xs, "", 0, [])
+
+/* One left-to-right copy into a byte buffer. Strings are kind 3, lists kind
+ * 2 or 5. The walk stack is a heap list so a long statement spine stays flat. */
+let js_flat(root) =
+  let buf = bytes_new() in
+  let copy(s) =
+    let n = str_len(s) in
+    let rec(i) =
+      if i >= n then 0
+      else
+        let _ = bytes_append(buf, str_ref(s, i)) in
+        rec(i + 1) in
+    rec(0) in
+  let step(st) =
+    if len(st) == 0 then bytes_to_str(buf)
+    else
+      let fr = nth(st, 0) in
+      let node = nth(fr, 0) in
+      let i = nth(fr, 1) in
+      let k = kind(node) in
+      let rest = tail(st) in
+      let nxt =
+        if k == 3 then rest
+        else if k != 2 and k != 5 then rest
+        else if i >= len(node) then rest
+        else cons([nth(node, i), 0], cons([node, i + 1], rest)) in
+      let _ = if k == 3 then copy(node) else 0 in
+      step(nxt) in
+  step(cons([root, 0], []))
 
 /* Pack expr strings into a list of lists, 128 per row. A flat list of
  * thousands of elements overflows the parser; each row stays small. */
 let js_row_flush(cur) =
-  str_cat("[", str_cat(js_join(list_rev(cur), ", ", 0, ""), "]"))
+  js_cat(["[", js_join(list_rev(cur), ", ", 0, []), "]"])
 
 let js_row_go(ys, k, cur, acc) =
   if len(ys) == 0 then
@@ -1226,10 +1340,7 @@ let js_row_go(ys, k, cur, acc) =
   else js_row_go(tail(ys), k + 1, cons(nth(ys, 0), cur), acc)
 
 let js_rows(xs) =
-  str_cat("[", str_cat(js_join(js_row_go(xs, 0, [], []), ", ", 0, ""), "]"))
-
-/* Concatenate a list of fragments (avoids deep str_cat nesting). */
-let js_cat(xs) = js_join(xs, "", 0, "")
+  js_cat(["[", js_join(js_row_go(xs, 0, [], []), ", ", 0, []), "]"])
 
 /* Wrap an expression in the JS-truthiness helper and mark jsrt for import. */
 let js_truth(x, st) =
@@ -1239,20 +1350,21 @@ let js_truth(x, st) =
 /* Escape a string for use inside a generated yac `"…"` literal. */
 let js_esc(s) =
   let n = str_len(s) in
-  let rec(i, acc) =
-    if i >= n then acc
+  let buf = bytes_new() in
+  let rec(i) =
+    if i >= n then bytes_to_str(buf)
     else
       let c = str_ref(s, i) in
-      let bit =
-        if c == 34 then "\\\""
-        else if c == 92 then "\\\\"
-        else if c == 10 then "\\n"
-        else if c == 9 then "\\t"
-        else if c == 13 then "\\r"
-        else if c == 0 then "\\0"
-        else str_slice(s, i, 1) in
-      rec(i + 1, str_cat(acc, bit)) in
-  rec(0, "")
+      let _ =
+        if c == 34 then (let _ = bytes_append(buf, 92) in bytes_append(buf, 34))
+        else if c == 92 then (let _ = bytes_append(buf, 92) in bytes_append(buf, 92))
+        else if c == 10 then (let _ = bytes_append(buf, 92) in bytes_append(buf, 110))
+        else if c == 9 then (let _ = bytes_append(buf, 92) in bytes_append(buf, 116))
+        else if c == 13 then (let _ = bytes_append(buf, 92) in bytes_append(buf, 114))
+        else if c == 0 then (let _ = bytes_append(buf, 92) in bytes_append(buf, 48))
+        else bytes_append(buf, c) in
+      rec(i + 1) in
+  rec(0)
 
 /* JS name -> yac name: `v_` prefix (avoids kernel/keyword clashes), `$` ->
  * `_ds_`. Deterministic, so every reference to a name agrees. */
@@ -2550,7 +2662,10 @@ let js_emit_stmts(stmts, ctx, k, st) =
         js_cat(["(let ", o, " = box_new() in (let _ = box_set(", o, ", ", ie, ") in ", wrap(n - 1, cont), "))"])
       else if tag == "let" then
         let nm = nth(s, 2) in
-        let m = js_fresh(st, js_mangle(nm)) in
+        let prev = js_lookup(vars2, nm) in
+        let reuse = box_get(js_stream_reuse) in
+        let _ = if reuse == nm then box_set(js_stream_reuse, "") else 0 in
+        let m = if reuse == nm and prev != "" then prev else js_fresh(st, js_mangle(nm)) in
         let init = nth(s, 3) in
         let ie = js_emit_expr(init, [vars2, funcs2, retf, retv, strs2, brk2], st) in
         let sg = if nth(init, 0) == "funexpr" then js_sig_of(nth(init, 2)) else 0 in
@@ -2755,7 +2870,7 @@ let js_to_yac(src) =
         go(i - 1, js_cat(["(let ", nth(b, 2), " = box_new() in (let _ = box_set(", nth(b, 2), ", ", nth(b, 1), ") in ", acc, "))"])) in
     go(nb - 1, body0) in
   let e = box_get(err) in
-  if e != "" then js_cat(["error: ", e])
+  if e != "" then js_flat(js_cat(["error: ", e]))
   else
     let h0 = "let _js_exc = box_new()\nlet _js_pq = box_new()\nlet _js_pd = box_new()\nlet _ = box_set(_js_pq, list_new())\nlet _ = box_set(_js_pd, 0)\n" in
     let h1 = if box_get(ufmap) == 1 or box_get(uobj) == 1 then "import data.fmap { fmap_new, fmap_get, fmap_put }\n" else "" in
@@ -2794,4 +2909,91 @@ let js_to_yac(src) =
       if box_get(ubuiltin) == 1 then
         "let _ = fmap_put(nth(_js_proto(\"Promise\"), 1), \"then\", fun(f) -> js_promise_then(_js_pq, _js_pd, box_get(_js_this), f, 0)) in let _ = fmap_put(nth(_js_proto(\"Promise\"), 1), \"catch\", fun(f) -> js_promise_then(_js_pq, _js_pd, box_get(_js_this), 0, f)) in "
       else "" in
-    js_cat([h0, h1, h2, h6, himp, h10, hjsrt, h8, hinst, hp, body, "\n"])
+    js_flat(js_cat([h0, h1, h2, h6, himp, h10, hjsrt, h8, hinst, hp, body, "\n"]))
+
+/* A statement that owns a nested statement list. Its pieces are printed on
+ * their own; emitting the container again would rebuild the whole body. */
+let js_stream_nest(tag) =
+  if tag == "func" or tag == "class" or tag == "block" or tag == "if" then true
+  else if tag == "while" or tag == "do" or tag == "for" or tag == "forin" then true
+  else if tag == "forof" or tag == "switch" or tag == "try" then true
+  else false
+
+let js_stream_iife(e) =
+  if kind(e) != 2 and kind(e) != 5 then false
+  else if len(e) == 0 then false
+  else
+    let t = nth(e, 0) in
+    if t == "funexpr" then true
+    else if t == "call" and len(e) > 1 then js_stream_iife(nth(e, 1))
+    else false
+
+let js_stream_prebind(nm) =
+  let st = box_get(js_stream_st) in
+  let ctx = box_get(js_stream_ctx) in
+  let m = js_fresh(st, js_mangle(nm)) in
+  let _ = box_set(js_stream_reuse, nm) in
+  box_set(js_stream_ctx, [cons([nm, m], nth(ctx, 0)), nth(ctx, 1), nth(ctx, 2), nth(ctx, 3), nth(ctx, 4), nth(ctx, 5)])
+
+let js_stream_hit(s) =
+  let tag = nth(s, 0) in
+  if tag == "func" then print(str_cat("/* function ", str_cat(nth(s, 1), " */")))
+  else if tag == "class" then print(str_cat("/* class ", str_cat(nth(s, 1), " */")))
+  else if tag == "switch" then print("/* switch */")
+  else if js_stream_nest(tag) then 0
+  else if tag == "expr" and js_stream_iife(nth(s, 1)) then print("/* function */")
+  else
+    let _ = if tag == "let" then js_stream_prebind(nth(s, 2)) else 0 in
+    let st = box_get(js_stream_st) in
+    let y = js_emit_stmts([s], box_get(js_stream_ctx), "0", st) in
+    print(js_flat(y))
+
+/* Parse one statement, print its yac, then the next. A function body is a
+ * sequence of units, not one string held until the closing brace. */
+let js_dump_src(src) =
+  let err = box_new() in
+  let _ = box_set(err, "") in
+  let ns = box_new() in
+  let _ = box_set(ns, 0) in
+  let ufmap = box_new() in
+  let _ = box_set(ufmap, 0) in
+  let umath = box_new() in
+  let _ = box_set(umath, 0) in
+  let ustr = box_new() in
+  let _ = box_set(ustr, 0) in
+  let ubool = box_new() in
+  let _ = box_set(ubool, 0) in
+  let utype = box_new() in
+  let _ = box_set(utype, 0) in
+  let ulib = box_new() in
+  let _ = box_set(ulib, 0) in
+  let ustrpkg = box_new() in
+  let _ = box_set(ustrpkg, 0) in
+  let uobj = box_new() in
+  let _ = box_set(uobj, 0) in
+  let ujslib = box_new() in
+  let _ = box_set(ujslib, 0) in
+  let utruth = box_new() in
+  let _ = box_set(utruth, 0) in
+  let ubuiltin = box_new() in
+  let _ = box_set(ubuiltin, 0) in
+  let uimp = box_new() in
+  let _ = box_set(uimp, list_new()) in
+  let urest = box_new() in
+  let _ = box_set(urest, list_new()) in
+  let st = [err, ns, ufmap, umath, ustr, ubool, utype, ulib, ustrpkg, uobj, ujslib, utruth, ubuiltin, uimp, urest] in
+  let _ = box_set(js_stmts_parse_box, js_parse_stmts) in
+  let _ = box_set(js_stmts_box, js_emit_stmts) in
+  let _ = box_set(js_expr_box, js_emit_expr) in
+  let _ = box_set(js_pat_box, js_pat_parse) in
+  let _ = box_set(js_gen_box, js_gen_compile) in
+  let _ = box_set(js_stream_st, st) in
+  let _ = box_set(js_stream_ctx, [[], [], 0, 0, [], 0]) in
+  let _ = box_set(js_stream_reuse, "") in
+  let _ = box_set(js_stream_fn, js_stream_hit) in
+  let _ = box_set(js_stream_box, 1) in
+  let toks = js_lex(src) in
+  let _ = js_parse_stmts(toks, 0, ["list", 0], st) in
+  let _ = box_set(js_stream_box, 0) in
+  let e = box_get(err) in
+  if e != "" then print(str_cat("error: ", e)) else 0
