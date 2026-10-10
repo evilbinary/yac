@@ -1214,6 +1214,20 @@ let js_join(xs, sep, i, acc) =
   else if i == 0 then js_join(xs, sep, 1, nth(xs, 0))
   else js_join(xs, sep, i + 1, str_cat(acc, str_cat(sep, nth(xs, i))))
 
+/* Pack expr strings into a list of lists, 128 per row. A flat list of
+ * thousands of elements overflows the parser; each row stays small. */
+let js_row_flush(cur) =
+  str_cat("[", str_cat(js_join(list_rev(cur), ", ", 0, ""), "]"))
+
+let js_row_go(ys, k, cur, acc) =
+  if len(ys) == 0 then
+    if k == 0 then list_rev(acc) else list_rev(cons(js_row_flush(cur), acc))
+  else if k == 128 then js_row_go(ys, 0, [], cons(js_row_flush(cur), acc))
+  else js_row_go(tail(ys), k + 1, cons(nth(ys, 0), cur), acc)
+
+let js_rows(xs) =
+  str_cat("[", str_cat(js_join(js_row_go(xs, 0, [], []), ", ", 0, ""), "]"))
+
 /* Concatenate a list of fragments (avoids deep str_cat nesting). */
 let js_cat(xs) = js_join(xs, "", 0, "")
 
@@ -1568,6 +1582,100 @@ let js_func_body(ps, body, ctx, st, mode) =
 
 /* ---- expression emitter ---------------------------------------------- */
 
+/* Array and object literals live outside js_emit_expr. Thousands of nested
+ * list_push / fmap_put calls were one function the compiler could not hold.
+ * Rows of 128 stay small; one tail call copies them into the listbuf or fmap. */
+let js_ex(e, ctx, st) = (box_get(js_expr_box))(e, ctx, st)
+
+let js_arr_plain(strs, a, st) =
+  let srcn = js_fresh(st, "src") in
+  let fill = js_fresh(st, "af") in
+  js_cat(["(let ", srcn, " = ", js_rows(strs), " in (let ", fill, "(ci, i) = (if ci >= len(", srcn, ") then 0 else (let row = nth(", srcn, ", ci) in (let adv = if i >= len(row) then 1 else 0 in (let nci = if adv == 1 then ci + 1 else ci in (let ni = if adv == 1 then 0 else i + 1 in (let _ = if adv == 1 then 0 else list_push(", a, ", nth(row, i)) in ", fill, "(nci, ni))))))) in ", fill, "(0, 0)))"])
+
+let js_arr_spread(el, a, ctx, st) =
+  let sv = js_fresh(st, "sv") in
+  let sw = js_fresh(st, "sw") in
+  let si = str_cat(sw, "i") in
+  let se = js_ex(nth(el, 1), ctx, st) in
+  js_cat(["(let ", sv, " = ", se, " in (let ", sw, "(", si, ") = (if ", si, " < len(", sv, ") then (let _ = list_push(", a, ", nth(", sv, ", ", si, ")) in ", sw, "(", si, " + 1)) else 0) in ", sw, "(0)))"])
+
+let js_arr_take(ys, ctx, st, acc) =
+  if len(ys) == 0 then [list_rev(acc), ys]
+  else if nth(nth(ys, 0), 0) == "spread" then [list_rev(acc), ys]
+  else js_arr_take(tail(ys), ctx, st, cons(js_ex(nth(ys, 0), ctx, st), acc))
+
+let js_arr_segs(ys, a, ctx, st) =
+  if len(ys) == 0 then "0"
+  else if nth(nth(ys, 0), 0) == "spread" then
+    js_cat(["(let _ = ", js_arr_spread(nth(ys, 0), a, ctx, st), " in ", js_arr_segs(tail(ys), a, ctx, st), ")"])
+  else
+    let got = js_arr_take(ys, ctx, st, []) in
+    js_cat(["(let _ = ", js_arr_plain(nth(got, 0), a, st), " in ", js_arr_segs(nth(got, 1), a, ctx, st), ")"])
+
+let js_emit_arr(e, ctx, st) =
+  let a = js_fresh(st, "arr") in
+  let elems = nth(e, 1) in
+  if len(elems) == 0 then js_cat(["(let ", a, " = list_new() in ", a, ")"])
+  else js_cat(["(let ", a, " = list_new() in (let _ = ", js_arr_segs(elems, a, ctx, st), " in ", a, "))"])
+
+let js_obj_key(kn, ctx, st) =
+  if nth(kn, 0) == "str" then js_cat(["\"", js_esc(js_lit_quote(kn)), "\""])
+  else js_ex(kn, ctx, st)
+
+let js_obj_split(ps, ka, va) =
+  if len(ps) == 0 then [list_rev(ka), list_rev(va)]
+  else js_obj_split(tail(ps), cons(nth(nth(ps, 0), 0), ka), cons(nth(nth(ps, 0), 1), va))
+
+let js_obj_plain(ps, o, st) =
+  let ks = js_fresh(st, "ks") in
+  let vs = js_fresh(st, "vs") in
+  let fill = js_fresh(st, "of") in
+  let both = js_obj_split(ps, [], []) in
+  let keys = nth(both, 0) in
+  let vals = nth(both, 1) in
+  js_cat(["(let ", ks, " = ", js_rows(keys), " in (let ", vs, " = ", js_rows(vals), " in (let ", fill, "(ci, i) = (if ci >= len(", ks, ") then 0 else (let kr = nth(", ks, ", ci) in (let vr = nth(", vs, ", ci) in (let adv = if i >= len(kr) then 1 else 0 in (let nci = if adv == 1 then ci + 1 else ci in (let ni = if adv == 1 then 0 else i + 1 in (let _ = if adv == 1 then 0 else fmap_put(nth(", o, ", 1), nth(kr, i), nth(vr, i)) in ", fill, "(nci, ni)))))))) in ", fill, "(0, 0))))"])
+
+let js_obj_spread(pair, o, ctx, st) =
+  let so = js_fresh(st, "so") in
+  let sk = js_fresh(st, "sk") in
+  let sw = js_fresh(st, "sw") in
+  let si = str_cat(sw, "i") in
+  let se = js_ex(nth(pair, 1), ctx, st) in
+  js_cat(["(let ", so, " = ", se, " in (let ", sk, " = _js_keys(", so, ") in (let ", sw, "(", si, ") = (if ", si, " < len(", sk, ") then (let _ = fmap_put(nth(", o, ", 1), nth(", sk, ", ", si, "), _js_get(", so, ", nth(", sk, ", ", si, "))) in ", sw, "(", si, " + 1)) else 0) in ", sw, "(0))))"])
+
+let js_obj_acc(pair, o, ctx, st) =
+  let ke = js_obj_key(nth(pair, 0), ctx, st) in
+  let val = nth(pair, 1) in
+  let isget = if nth(val, 1) == 0 then "0" else "1" in
+  let fe = if nth(val, 1) == 0 then js_ex(nth(val, 2), ctx, st) else js_ex(nth(val, 1), ctx, st) in
+  js_cat(["_js_acc_put(nth(", o, ", 1), ", ke, ", ", isget, ", ", fe, ")"])
+
+let js_obj_take(ys, ctx, st, acc) =
+  if len(ys) == 0 then [list_rev(acc), ys]
+  else if nth(nth(ys, 0), 0) == "spread" then [list_rev(acc), ys]
+  else if nth(nth(nth(ys, 0), 1), 0) == "acc" then [list_rev(acc), ys]
+  else
+    let p = nth(ys, 0) in
+    js_obj_take(tail(ys), ctx, st, cons([js_obj_key(nth(p, 0), ctx, st), js_ex(nth(p, 1), ctx, st)], acc))
+
+let js_obj_segs(ys, o, ctx, st) =
+  if len(ys) == 0 then "0"
+  else if nth(nth(ys, 0), 0) == "spread" then
+    js_cat(["(let _ = ", js_obj_spread(nth(ys, 0), o, ctx, st), " in ", js_obj_segs(tail(ys), o, ctx, st), ")"])
+  else if nth(nth(nth(ys, 0), 1), 0) == "acc" then
+    js_cat(["(let _ = ", js_obj_acc(nth(ys, 0), o, ctx, st), " in ", js_obj_segs(tail(ys), o, ctx, st), ")"])
+  else
+    let got = js_obj_take(ys, ctx, st, []) in
+    js_cat(["(let _ = ", js_obj_plain(nth(got, 0), o, st), " in ", js_obj_segs(nth(got, 1), o, ctx, st), ")"])
+
+let js_emit_obj(e, ctx, st) =
+  let o = js_fresh(st, "obj") in
+  let _ = box_set(st_fmap(st), 1) in
+  let _ = box_set(st_obj(st), 1) in
+  let pairs = nth(e, 1) in
+  if len(pairs) == 0 then js_cat(["(let ", o, " = _js_obj(0) in ", o, ")"])
+  else js_cat(["(let ", o, " = _js_obj(0) in (let _ = ", js_obj_segs(pairs, o, ctx, st), " in ", o, "))"])
+
 /* ctx = [vars, funcs, retf, retv]: boxed variable names, declared function
  * names, and the enclosing function's return flag/value boxes (0 at top
  * level). Emits a yac expression string. Self-recursive. */
@@ -1845,62 +1953,8 @@ let js_emit_expr(e, ctx, st) =
     if nm == "console" or nm == "Math" then "0"
     else if js_in(funcs, nm) then js_mangle(nm)
     else let b = js_lookup(vars, nm) in (if b != "" then js_cat(["box_get(", b, ")"]) else js_mangle(nm))
-  else if tag == "arr" then
-    /* Array literal: a fresh listbuf plus one list_push per element; a `...x`
-     * element appends x's elements with a small loop. */
-    let a = js_fresh(st, "arr") in
-    let go(ys, acc) =
-      if len(ys) == 0 then js_cat(["(let ", a, " = list_new() in ", acc, a, ")"])
-      else
-        let el = nth(ys, 0) in
-        if nth(el, 0) == "spread" then
-          let sv = js_fresh(st, "sv") in
-          let sw = js_fresh(st, "sw") in
-          let si = str_cat(sw, "i") in
-          let se = js_emit_expr(nth(el, 1), ctx, st) in
-          let code =
-            js_cat(["(let ", sv, " = ", se, " in (let ", sw, "(", si, ") = (if ", si, " < len(", sv,
-              ") then (let _ = list_push(", a, ", nth(", sv, ", ", si, ")) in ", sw, "(", si,
-              " + 1)) else 0) in ", sw, "(0)))"]) in
-          go(tail(ys), js_cat([acc, "let _ = ", code, " in "]))
-        else
-          go(tail(ys), js_cat([acc, "let _ = list_push(", a, ", ", js_emit_expr(el, ctx, st), ") in "])) in
-    go(nth(e, 1), "")
-  else if tag == "obj" then
-    /* Object literal: a tagged object (["$o", fmap]), one fmap_put per pair. */
-    let o = js_fresh(st, "obj") in
-    let _ = box_set(st_fmap(st), 1) in
-    let _ = box_set(st_obj(st), 1) in
-    let go(ys, acc) =
-      if len(ys) == 0 then js_cat(["(let ", o, " = _js_obj(0) in ", acc, o, ")"])
-      else
-        let pair = nth(ys, 0) in
-        if nth(pair, 0) == "spread" then
-          let so = js_fresh(st, "so") in
-          let sk = js_fresh(st, "sk") in
-          let sw = js_fresh(st, "sw") in
-          let si = str_cat(sw, "i") in
-          let se = js_emit_expr(nth(pair, 1), ctx, st) in
-          let code =
-            js_cat(["(let ", so, " = ", se, " in (let ", sk, " = _js_keys(", so, ") in (let ", sw,
-              "(", si, ") = (if ", si, " < len(", sk, ") then (let _ = fmap_put(nth(", o, ", 1), nth(", sk, ", ",
-              si, "), _js_get(", so, ", nth(", sk, ", ", si, "))) in ", sw, "(", si,
-              " + 1)) else 0) in ", sw, "(0))))"]) in
-          go(tail(ys), js_cat([acc, "let _ = ", code, " in "]))
-        else
-        let kn = nth(pair, 0) in
-        let ke =
-          if nth(kn, 0) == "str" then js_cat(["\"", js_esc(js_lit_quote(kn)), "\""])
-          else js_emit_expr(kn, ctx, st) in
-        let val = nth(pair, 1) in
-        if nth(val, 0) == "acc" then
-          let isget = if nth(val, 1) == 0 then "0" else "1" in
-          let fe = if nth(val, 1) == 0 then js_emit_expr(nth(val, 2), ctx, st) else js_emit_expr(nth(val, 1), ctx, st) in
-          go(tail(ys), js_cat([acc, "let _ = _js_acc_put(nth(", o, ", 1), ", ke, ", ", isget, ", ", fe, ") in "]))
-        else
-          let vs = js_emit_expr(val, ctx, st) in
-          go(tail(ys), js_cat([acc, "let _ = fmap_put(nth(", o, ", 1), ", ke, ", ", vs, ") in "])) in
-    go(nth(e, 1), "")
+  else if tag == "arr" then js_emit_arr(e, ctx, st)
+  else if tag == "obj" then js_emit_obj(e, ctx, st)
   else if tag == "tmpl" then
     /* Template literal: str_cat of literal segments and stringified exprs. */
     let parts = nth(e, 1) in
