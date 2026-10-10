@@ -241,45 +241,62 @@ let js_mod_name(s) =
 let js_lex(src) =
   let n = str_len(src) in
   let acc = list_new() in
+  /* One tail call. The compiler only turns the last self-call of a function
+   * into a loop, and this file is far too long for a real call per token. */
+  let step(j, divok) =
+    let c = str_ref(src, j) in
+    if c == 34 or c == 39 then
+      let r = js_lex_str(src, j + 1, n, c) in
+      let _ = list_push(acc, ["str", nth(r, 0)]) in
+      [nth(r, 1), true]
+    else if c == 96 then
+      let r = js_lex_tmpl(src, j + 1, n) in
+      let _ = list_push(acc, ["tmpl", nth(r, 0)]) in
+      [nth(r, 1), true]
+    else if js_digit(c) then
+      let r = js_lex_num(src, j, n) in
+      let _ = list_push(acc, ["num", nth(r, 0)]) in
+      [nth(r, 1), true]
+    else if js_id0(c) then
+      let r = js_lex_id(src, j, n) in
+      let t = nth(r, 0) in
+      let _ = list_push(acc, ["id", t]) in
+      [nth(r, 1), js_re_kw(t) == false]
+    else if c == 47 and divok == false then
+      let r = js_lex_re(src, j + 1, n) in
+      let _ = list_push(acc, ["re", nth(r, 0), nth(r, 1)]) in
+      [nth(r, 2), true]
+    else if (j + 3 <= n) and (str_slice(src, j, 3) == "===") then
+      let _ = list_push(acc, ["p", "==="]) in
+      [j + 3, false]
+    else if (j + 3 <= n) and (str_slice(src, j, 3) == "!==") then
+      let _ = list_push(acc, ["p", "!=="]) in
+      [j + 3, false]
+    else if (j + 4 <= n) and js_op4(str_slice(src, j, 4)) then
+      let _ = list_push(acc, ["p", str_slice(src, j, 4)]) in
+      [j + 4, false]
+    else if (j + 3 <= n) and js_op3(str_slice(src, j, 3)) then
+      let tx = str_slice(src, j, 3) in
+      let _ = list_push(acc, ["p", tx]) in
+      [j + 3, false]
+    else if (j + 2 <= n) and js_op2(str_slice(src, j, 2)) then
+      let tx = str_slice(src, j, 2) in
+      let _ = list_push(acc, ["p", tx]) in
+      [j + 2, tx == "++" or tx == "--"]
+    else if js_op1c(c) then
+      let tx = str_slice(src, j, 1) in
+      let _ = list_push(acc, ["p", tx]) in
+      [j + 1, tx == ")" or tx == "]"]
+    else
+      let _ = list_push(acc, ["unk", str_slice(src, j, 1)]) in
+      [j + 1, false] in
   let rec(i, divok) =
     let j = js_skip(src, i, n) in
     if j >= n then
       let _ = list_push(acc, ["eof", ""]) in acc
     else
-      let c = str_ref(src, j) in
-      if c == 34 or c == 39 then
-        let r = js_lex_str(src, j + 1, n, c) in
-        let _ = list_push(acc, ["str", nth(r, 0)]) in rec(nth(r, 1), true)
-      else if c == 96 then
-        let r = js_lex_tmpl(src, j + 1, n) in
-        let _ = list_push(acc, ["tmpl", nth(r, 0)]) in rec(nth(r, 1), true)
-      else if js_digit(c) then
-        let r = js_lex_num(src, j, n) in
-        let _ = list_push(acc, ["num", nth(r, 0)]) in rec(nth(r, 1), true)
-      else if js_id0(c) then
-        let r = js_lex_id(src, j, n) in
-        let t = nth(r, 0) in
-        let _ = list_push(acc, ["id", t]) in rec(nth(r, 1), js_re_kw(t) == false)
-      else if c == 47 and divok == false then
-        let r = js_lex_re(src, j + 1, n) in
-        let _ = list_push(acc, ["re", nth(r, 0), nth(r, 1)]) in rec(nth(r, 2), true)
-      else if (j + 3 <= n) and (str_slice(src, j, 3) == "===") then
-        let _ = list_push(acc, ["p", "==="]) in rec(j + 3, false)
-      else if (j + 3 <= n) and (str_slice(src, j, 3) == "!==") then
-        let _ = list_push(acc, ["p", "!=="]) in rec(j + 3, false)
-      else if (j + 4 <= n) and js_op4(str_slice(src, j, 4)) then
-        let _ = list_push(acc, ["p", str_slice(src, j, 4)]) in rec(j + 4, false)
-      else if (j + 3 <= n) and js_op3(str_slice(src, j, 3)) then
-        let tx = str_slice(src, j, 3) in
-        let _ = list_push(acc, ["p", tx]) in rec(j + 3, false)
-      else if (j + 2 <= n) and js_op2(str_slice(src, j, 2)) then
-        let tx = str_slice(src, j, 2) in
-        let _ = list_push(acc, ["p", tx]) in rec(j + 2, tx == "++" or tx == "--")
-      else if js_op1c(c) then
-        let tx = str_slice(src, j, 1) in
-        let _ = list_push(acc, ["p", tx]) in rec(j + 1, tx == ")" or tx == "]")
-      else
-        let _ = list_push(acc, ["unk", str_slice(src, j, 1)]) in rec(j + 1, false) in
+      let s = step(j, divok) in
+      rec(nth(s, 0), nth(s, 1)) in
   rec(0, false)
 
 /* ---- token access ----------------------------------------------------- */
@@ -1170,8 +1187,12 @@ let js_parse_stmts(toks, i, mode, st) =
     let stop = nth(mode, 1) in
     let go(j, acc) =
       let tk = js_at(toks, j) in
-      if js_k(tk) == "eof" then [list_rev(acc), j]
-      else if stop == "}" and js_t(tk) == "}" then [list_rev(acc), j + 1]
+      let done =
+        if js_k(tk) == "eof" then 1
+        else if stop == "}" and js_t(tk) == "}" then 1
+        else 0 in
+      if done == 1 then
+        if js_k(tk) == "eof" then [list_rev(acc), j] else [list_rev(acc), j + 1]
       else
         let r = one(j) in
         go(nth(r, 1), cons(nth(r, 0), acc)) in
@@ -2371,9 +2392,6 @@ let js_emit_stmts(stmts, ctx, k, st) =
       else js_cat(["(let _ = box_set(", retf, ", true) in (let _ = box_set(", retv, ", ", v, ") in ", retv, "))"])
     else "0" in
   /* Function declarations use the shared js_func_body. */
-  /* Walk the list, threading scope and continuation. Every non-declaration
-   * statement is followed by a guard so an early return / break stops the rest
-   * of the list. */
   let go(xs, vars2, funcs2, strs2, brk2, k2) =
     if len(xs) == 0 then k2
     else
@@ -2393,32 +2411,6 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let cont = go(rest, vars2, funcs3, strs2, brk2, k2) in
         let _ = js_arity_pop(st) in
         js_cat(["(let ", m, "(", nth(fb, 0), ") = ", nth(fb, 1), " in ", cont, ")"])
-      else if tag == "dlet" then
-        /* Destructuring declaration: bind a temp to the initialiser, then one
-         * boxed let per name (array slots via nth, object keys via _js_get).
-         * The names are added to the var list before the continuation so the
-         * rest of the block sees them. */
-        let pat = nth(s, 1) in
-        let ie = js_emit_expr(nth(s, 2), [vars2, funcs2, retf, retv, strs2, brk2], st) in
-        let _ = if js_pat_has_obj(pat) then box_set(st_obj(st), 1) else 0 in
-        let o = js_fresh(st, "d") in
-        let _ = box_set(js_ctx_box, [vars2, funcs2, retf, retv, strs2, brk2]) in
-        let flat = js_pat_flat(pat, js_cat(["box_get(", o, ")"]), st) in
-        let n = len(flat) in
-        let boxes =
-          let rec(i, acc) = if i >= n then list_rev(acc) else rec(i + 1, cons(js_fresh(st, js_mangle(nth(nth(flat, i), 0))), acc)) in
-          rec(0, []) in
-        let extvars =
-          let rec(i, acc) = if i >= n then acc else rec(i + 1, cons([nth(nth(flat, i), 0), nth(boxes, i)], acc)) in
-          rec(0, vars2) in
-        let cont = go(rest, extvars, funcs2, strs2, brk2, k2) in
-        let wrap(i, inner) =
-          if i < 0 then inner
-          else
-            let ae = nth(nth(flat, i), 1) in
-            let m = nth(boxes, i) in
-            wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ae, ") in ", inner, "))"])) in
-        js_cat(["(let ", o, " = box_new() in (let _ = box_set(", o, ", ", ie, ") in ", wrap(n - 1, cont), "))"])
       else if tag == "class" then
         /* Class declaration -> constructor function + `Prototype.m = fn`
          * assignments (static methods on the constructor itself). `extends`
@@ -2480,6 +2472,28 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let cont = go(rest, vars3, funcs3, strs2, brk2, k2) in
         let _ = js_arity_pop(st) in
         js_cat(["(let ", mm, "(", nth(fb, 0), ") = ", nth(fb, 1), " in (let _ = ", defs2, " in ", cont, "))"])
+      else if tag == "dlet" then
+        let pat = nth(s, 1) in
+        let ie = js_emit_expr(nth(s, 2), [vars2, funcs2, retf, retv, strs2, brk2], st) in
+        let _ = if js_pat_has_obj(pat) then box_set(st_obj(st), 1) else 0 in
+        let o = js_fresh(st, "d") in
+        let _ = box_set(js_ctx_box, [vars2, funcs2, retf, retv, strs2, brk2]) in
+        let flat = js_pat_flat(pat, js_cat(["box_get(", o, ")"]), st) in
+        let n = len(flat) in
+        let boxes =
+          let rec(i, acc) = if i >= n then list_rev(acc) else rec(i + 1, cons(js_fresh(st, js_mangle(nth(nth(flat, i), 0))), acc)) in
+          rec(0, []) in
+        let extvars =
+          let rec(i, acc) = if i >= n then acc else rec(i + 1, cons([nth(nth(flat, i), 0), nth(boxes, i)], acc)) in
+          rec(0, vars2) in
+        let cont = go(rest, extvars, funcs2, strs2, brk2, k2) in
+        let wrap(i, inner) =
+          if i < 0 then inner
+          else
+            let ae = nth(nth(flat, i), 1) in
+            let m = nth(boxes, i) in
+            wrap(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ae, ") in ", inner, "))"])) in
+        js_cat(["(let ", o, " = box_new() in (let _ = box_set(", o, ", ", ie, ") in ", wrap(n - 1, cont), "))"])
       else if tag == "let" then
         let nm = nth(s, 2) in
         let m = js_fresh(st, js_mangle(nm)) in
@@ -2493,15 +2507,47 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let _ = if sg == 0 then 0 else js_arity_pop(st) in
         js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ie, ") in ", cont, "))"])
       else
-        let se = sstmt(s, [vars2, funcs2, retf, retv, strs2, brk2], k2) in
-        let cont = go(rest, vars2, funcs2, strs2, brk2, k2) in
-        let inner = if brk2 == 0 then cont
-                    else js_cat(["(if box_get(", brk2, ") != 0 then 0 else ", cont, ")"]) in
-        let inner2 = js_cat(["(if box_get(_js_exc) != 0 then 0 else ", inner, ")"]) in
-        let guard =
+        /* CPS copies a statement's continuation, so a few hundred nested
+         * statements blow up. A straight run becomes local functions of at
+         * most 32 statements; `let` / function / class stay real bindings. */
+        let is_plain(t) =
+          if t == "func" then false
+          else if t == "class" then false
+          else if t == "let" then false
+          else if t == "dlet" then false
+          else true in
+        let take(ys, n, acc) =
+          if n >= 32 then [list_rev(acc), ys]
+          else if len(ys) == 0 then [list_rev(acc), ys]
+          else if is_plain(nth(nth(ys, 0), 0)) then
+            take(tail(ys), n + 1, cons(nth(ys, 0), acc))
+          else [list_rev(acc), ys] in
+        let got = take(xs, 0, []) in
+        let chunk = nth(got, 0) in
+        let more = nth(got, 1) in
+        let guard(cont) =
+          let inner = if brk2 == 0 then cont
+                      else js_cat(["(if box_get(", brk2, ") != 0 then 0 else ", cont, ")"]) in
+          let inner2 = js_cat(["(if box_get(_js_exc) != 0 then 0 else ", inner, ")"]) in
           if retf == 0 then inner2
           else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", inner2, ")"]) in
-        js_cat(["(let _ = ", se, " in ", guard, ")"]) in
+        let emit_chunk(cs) =
+          if len(cs) == 0 then "0"
+          else
+            let se = sstmt(nth(cs, 0), [vars2, funcs2, retf, retv, strs2, brk2], k2) in
+            js_cat(["(let _ = ", se, " in ", guard(emit_chunk(tail(cs))), ")"]) in
+        if len(chunk) >= 32 then
+          let body = emit_chunk(chunk) in
+          let cont = go(more, vars2, funcs2, strs2, brk2, k2) in
+          let ck = js_fresh(st, "ck") in
+          js_cat(["(let ", ck, "(_) = ", body, " in (let _ = ", ck, "(0) in ", guard(cont), "))"])
+        else
+          let emit_onto(cs) =
+            if len(cs) == 0 then go(more, vars2, funcs2, strs2, brk2, k2)
+            else
+              let se = sstmt(nth(cs, 0), [vars2, funcs2, retf, retv, strs2, brk2], k2) in
+              js_cat(["(let _ = ", se, " in ", guard(emit_onto(tail(cs))), ")"]) in
+          emit_onto(chunk) in
   go(stmts, nth(ctx, 0), nth(ctx, 1), nth(ctx, 4), nth(ctx, 5), k)
 
 /* True when an AST node contains a `yield` expression. */

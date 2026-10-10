@@ -73,7 +73,9 @@ let pack_pe_target(t, code) =
   let _ = pe_le32(out, 0, 216) in
   let _ = pe_le16(out, 3, 220) in
   let _ = pe_le16(out, if shared then 320 else 0, 222) in
-  let _ = pe_le64(out, 8388608, 224) in
+  /* 512MB stack reserve (not committed). Large JS functions lower to a
+   * nested `let` per statement; 8MB overflowed while compiling them. */
+  let _ = pe_le64(out, 536870912, 224) in
   let _ = pe_le64(out, 65536, 232) in
   let _ = pe_le64(out, 1048576, 240) in
   let _ = pe_le64(out, 4096, 248) in
