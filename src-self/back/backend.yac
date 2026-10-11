@@ -4,6 +4,7 @@ package back.backend
 export pkg_src, link_is_dylib, compile_native, compile_env_of, compile_env_new, dump_ast, dump_anf, dump_cps, dump_uncps, dump_lex, dump_lir, verify_lir, eval_cps_src, make_pipeline, pass_lex, pass_parse, pass_anf, pkg_set, link_set, report_unbound, link_from_ast, backend_pack, backend_compile, backend_emit, ast_imports, entry_off, link_need_box, rewrite_imports, rt_for_link, pkg_init_list, pkg_init_calls, heap_dump_set, heap_dump
 import back.lower
 import back.pack.elf {elf_shared_set, funsym_get, pack_elf, pack_elf_libc}
+import back.pack.macho {macho_finish_binds}
 import back.pack.target {target_arch, target_emachine, target_format, target_shared, target_text_off, target_vaddr}
 import back.pack.pe {pack_pe_target, pe_finish_dll, pe_finish_imports}
 import back.pack.pack {pack_image}
@@ -32,6 +33,8 @@ let backend_pack(t, code) =
     let _ = pe_finish_imports(img, t, cimport_names(0), cimport_got(0)) in
     let _ = if target_shared(t) then pe_finish_dll(img, t) else 0 in
     img
+  else if target_format(t) == "macho" then
+    macho_finish_binds(pack_image(t, code), t, cimport_names(0), cimport_got(0))
   else if target_format(t) != "elf" then pack_image(t, code)
   else if cimport_n(0) != 0 then
     pack_elf_libc(code, target_emachine(t), target_vaddr(t),

@@ -16,6 +16,12 @@ export JIT_VADDR, mk_target, mk_jit_target, target_by_name, parse_arch_name, par
 
 let T_VADDR = 4194304
 let JIT_VADDR = 8589934592
+/* Mach-O exec __TEXT must live above 4 GiB: macOS maps the first 4 GiB as
+ * __PAGEZERO (NULL-guard) and the kernel refuses to exec anything whose
+ * __TEXT overlaps it ("Killed: 9", lldb "Bad executable"). ELF/PE keep the
+ * historical 0x400000. Emit and pack both read this, so absolute patches and
+ * segment vmaddr stay consistent. */
+let MO_EXEC_VADDR = 4294967296
 
 let target_arch(t) = nth(t, 1)
 let target_format(t) = nth(t, 2)
@@ -61,7 +67,9 @@ let mk_target(arch, format, kind) =
      nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(arch, format, kind)]
   else if format == "macho" then
     ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
-     nth(ids, 2), nth(ids, 3), T_VADDR, layout_off(arch, format, kind)]
+     nth(ids, 2), nth(ids, 3),
+     if kind == "exec" then MO_EXEC_VADDR else T_VADDR,
+     layout_off(arch, format, kind)]
   else if format == "yjit" then
     ["target", arch, format, kind, nth(ids, 0), nth(ids, 1),
      nth(ids, 2), nth(ids, 3), JIT_VADDR, 0]

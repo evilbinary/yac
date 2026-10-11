@@ -3,7 +3,7 @@
  */
 
 package back.pack.macho
-export pack_macho_target
+export pack_macho_target, macho_finish_binds
 import back.pack.target {target_macho_cpusub, target_macho_cputype, target_shared, target_text_off, target_vaddr}
 import back.pack.elf {elf_dynexp_get, elf_init_off, elf_relocs_get}
 
@@ -39,6 +39,15 @@ let mo_uleb(b, v) =
   else
     let _ = bytes_append(b, bor(band(v, 127), 128)) in
     mo_uleb(b, bshr(v, 7))
+
+let mo_puts(b, i, s) =
+  let n = str_len(s) in
+  let loop(j) =
+    if j >= n then 0
+    else
+      let _ = bytes_put(b, i + j, str_ref(s, j)) in
+      loop(j + 1) in
+  loop(0)
 
 let mo_app_str(b, s, i, n) =
   if i >= n then 0
@@ -116,18 +125,22 @@ let macho_finish_dylib(out, t, cmdat) =
       let _ = mo_le32(out, 0, cmdat + 120 + i) in
       z(i + 4) in
   let _ = z(0) in
-  let _ = mo_le32(out, 5, 16) in
-  let _ = mo_le32(out, 344, 20) in
+  let _ = mo_le32(out, 3, 16) in
+  let _ = mo_le32(out, 272, 20) in
   out
+
+/* Page-aligned up. */
+let mo_align(n, a) =
+  let r = band(n, a - 1) in
+  if r == 0 then n else n + a - r
 
 let pack_macho_target(t, code) =
   let cputype = target_macho_cputype(t) in
   let cpusub = target_macho_cpusub(t) in
+  let shared = target_shared(t) in
   let vaddr = target_vaddr(t) in
   let text_off = target_text_off(t) in
-  let shared = target_shared(t) in
   let code_len = bytes_len(code) in
-  let filesz = text_off + code_len in
   let out = bytes_new() in
   let _ = bytes_put(out, text_off - 1, 0) in
   let _ = bytes_put(out, 0, 207) in
@@ -138,37 +151,49 @@ let pack_macho_target(t, code) =
   let _ = mo_le32(out, cpusub, 8) in
   let filetype = if shared then 6 else 2 in
   let _ = mo_le32(out, filetype, 12) in
-  let ncmds = 2 in
-  let sizeofcmds = if shared then 192 else 176 in
-  let _ = mo_le32(out, ncmds, 16) in
-  let _ = mo_le32(out, sizeofcmds, 20) in
+  /* bytes_put never zero-fills: every header byte not written below keeps
+   * heap garbage, so every field (and the header slack before text_off) is
+   * stored explicitly. */
   let _ = mo_le32(out, 1, 24) in
   let _ = mo_le32(out, 0, 28) in
-  let _ = mo_le32(out, 25, 32) in
-  let _ = mo_le32(out, 152, 36) in
-  let _ = mo_name16(out, 40, "__TEXT") in
-  let _ = mo_le64(out, vaddr, 56) in
-  let _ = mo_le64(out, filesz, 64) in
-  let _ = mo_le64(out, 0, 72) in
-  let _ = mo_le64(out, filesz, 80) in
-  let _ = mo_le32(out, 7, 88) in
-  let _ = mo_le32(out, 7, 92) in
-  let _ = mo_le32(out, 1, 96) in
-  let _ = mo_le32(out, 0, 100) in
-  let _ = mo_name16(out, 104, "__text") in
-  let _ = mo_name16(out, 120, "__TEXT") in
-  let _ = mo_le64(out, vaddr + text_off, 136) in
-  let _ = mo_le64(out, code_len, 144) in
-  let _ = mo_le32(out, text_off, 152) in
-  let _ = mo_le32(out, 4, 156) in
-  let _ = mo_le32(out, 0, 160) in
-  let _ = mo_le32(out, 0, 164) in
-  let _ = mo_le32(out, 2147484672, 168) in
-  let _ = mo_le32(out, 0, 172) in
-  let _ = mo_le32(out, 0, 176) in
-  let _ = mo_le32(out, 0, 180) in
+  /* exec layout is documented at the dyld-command block below. */
+  let evaddr = 4294967296 in
+  let padded = band(text_off + code_len, 4095) != 0 in
+  let text_filesz = mo_align(text_off + code_len, 4096) in
+  let text_vmsz = mo_align(text_off + code_len, 16384) in
+  let le_size = 4096 in
+  let tail(i, n) =
+    if i >= n then 0
+    else
+      let _ = mo_le32(out, 0, i) in
+      tail(i + 4, n) in
   let cmdend =
     if shared then
+      let _ = mo_le32(out, 5, 16) in
+      let _ = mo_le32(out, 344, 20) in
+      let _ = mo_le32(out, 25, 32) in
+      let _ = mo_le32(out, 152, 36) in
+      let _ = mo_name16(out, 40, "__TEXT") in
+      let _ = mo_le64(out, vaddr, 56) in
+      let _ = mo_le64(out, text_off + code_len, 64) in
+      let _ = mo_le64(out, 0, 72) in
+      let _ = mo_le64(out, text_off + code_len, 80) in
+      let _ = mo_le32(out, 7, 88) in
+      let _ = mo_le32(out, 7, 92) in
+      let _ = mo_le32(out, 1, 96) in
+      let _ = mo_le32(out, 0, 100) in
+      let _ = mo_name16(out, 104, "__text") in
+      let _ = mo_name16(out, 120, "__TEXT") in
+      let _ = mo_le64(out, vaddr + text_off, 136) in
+      let _ = mo_le64(out, code_len, 144) in
+      let _ = mo_le32(out, text_off, 152) in
+      let _ = mo_le32(out, 4, 156) in
+      let _ = mo_le32(out, 0, 160) in
+      let _ = mo_le32(out, 0, 164) in
+      let _ = mo_le32(out, 2147484672, 168) in
+      let _ = mo_le32(out, 0, 172) in
+      let _ = mo_le32(out, 0, 176) in
+      let _ = mo_le32(out, 0, 180) in
       let _ = mo_le32(out, 13, 184) in
       let _ = mo_le32(out, 40, 188) in
       let _ = mo_le32(out, 24, 192) in
@@ -178,10 +203,154 @@ let pack_macho_target(t, code) =
       let _ = mo_name16(out, 208, "libyac.dylib") in
       224
     else
-      let _ = mo_le32(out, 2147483688, 184) in
-      let _ = mo_le32(out, 24, 188) in
-      let _ = mo_le64(out, text_off, 192) in
-      let _ = mo_le64(out, 0, 200) in
-      208 in
+      /* macOS kernels SIGKILL any MH_EXECUTE without LC_LOAD_DYLINKER (dyld
+       * must launch it), and dyld needs libSystem (for LC_MAIN) plus
+       * LC_DYLD_INFO/LC_SYMTAB/LC_DYSYMTAB to accept the image. All the fixup
+       * and symbol tables are empty: guest images are raw syscalls. Layout:
+       *   LC0 __PAGEZERO     @ 32  72
+       *   LC1 __TEXT         @104 152  vmaddr 4 GiB, +1 __text section
+       *   LC2 __LINKEDIT     @256  72  empty, after __TEXT's vmsize
+       *   LC3 LOAD_DYLIB     @328  96  /usr/lib/libSystem.B.dylib
+       *   LC4 LOAD_DYLINKER  @424  96  /usr/lib/dyld
+       *   LC5 DYLD_INFO_ONLY @520  48  all-zero fixups
+       *   LC6 SYMTAB         @568  24  empty
+       *   LC7 DYSYMTAB       @592  80  empty
+       *   LC8 MAIN           @672  24  entryoff text_off
+       * ncmds 9, sizeofcmds 664. Verified end-to-end on macOS (exit 42). */
+      let _ = mo_le32(out, 9, 16) in
+      let _ = mo_le32(out, 664, 20) in
+      let _ = mo_le32(out, 25, 32) in
+      let _ = mo_le32(out, 72, 36) in
+      let _ = mo_name16(out, 40, "__PAGEZERO") in
+      let _ = mo_le64(out, 0, 56) in
+      let _ = mo_le64(out, evaddr, 64) in
+      let _ = mo_le64(out, 0, 72) in
+      let _ = mo_le64(out, 0, 80) in
+      let _ = mo_le32(out, 0, 88) in
+      let _ = mo_le32(out, 0, 92) in
+      let _ = mo_le32(out, 0, 96) in
+      let _ = mo_le32(out, 0, 100) in
+      let _ = mo_le32(out, 25, 104) in
+      let _ = mo_le32(out, 152, 108) in
+      let _ = mo_name16(out, 112, "__TEXT") in
+      let _ = mo_le64(out, evaddr, 128) in
+      let _ = mo_le64(out, text_vmsz, 136) in
+      let _ = mo_le64(out, 0, 144) in
+      let _ = mo_le64(out, text_filesz, 152) in
+      let _ = mo_le32(out, 7, 160) in
+      let _ = mo_le32(out, 7, 164) in
+      let _ = mo_le32(out, 1, 168) in
+      let _ = mo_le32(out, 0, 172) in
+      let _ = mo_name16(out, 176, "__text") in
+      let _ = mo_name16(out, 192, "__TEXT") in
+      let _ = mo_le64(out, evaddr + text_off, 208) in
+      let _ = mo_le64(out, code_len, 216) in
+      let _ = mo_le32(out, text_off, 224) in
+      let _ = mo_le32(out, 4, 228) in
+      let _ = mo_le32(out, 0, 232) in
+      let _ = mo_le32(out, 0, 236) in
+      let _ = mo_le32(out, 2147484672, 240) in
+      let _ = mo_le32(out, 0, 244) in
+      let _ = mo_le32(out, 0, 248) in
+      let _ = mo_le32(out, 0, 252) in
+      let _ = mo_le32(out, 25, 256) in
+      let _ = mo_le32(out, 72, 260) in
+      let _ = mo_name16(out, 264, "__LINKEDIT") in
+      let _ = mo_le64(out, evaddr + text_vmsz, 280) in
+      let _ = mo_le64(out, le_size, 288) in
+      let _ = mo_le64(out, text_filesz, 296) in
+      let _ = mo_le64(out, le_size, 304) in
+      let _ = mo_le32(out, 1, 312) in
+      let _ = mo_le32(out, 1, 316) in
+      let _ = mo_le32(out, 0, 320) in
+      let _ = mo_le32(out, 0, 324) in
+      /* Clear the whole dyld-command region first: bytes_put never zero-fills,
+       * and the commands carry only sparse fields (the rest must be 0). */
+      let _ = tail(328, 696) in
+      let _ = tail(696, text_off) in
+      let _ = mo_le32(out, 12, 328) in
+      let _ = mo_le32(out, 96, 332) in
+      let _ = mo_le32(out, 24, 336) in
+      let _ = mo_puts(out, 352, "/usr/lib/libSystem.B.dylib") in
+      let _ = mo_le32(out, 14, 424) in
+      let _ = mo_le32(out, 96, 428) in
+      let _ = mo_le32(out, 12, 432) in
+      let _ = mo_puts(out, 436, "/usr/lib/dyld") in
+      let _ = mo_le32(out, 2147483682, 520) in
+      let _ = mo_le32(out, 48, 524) in
+      let _ = mo_le32(out, 2, 568) in
+      let _ = mo_le32(out, 24, 572) in
+      let _ = mo_le32(out, 11, 592) in
+      let _ = mo_le32(out, 80, 596) in
+      let _ = mo_le32(out, 2147483688, 672) in
+      let _ = mo_le32(out, 24, 676) in
+      let _ = mo_le64(out, text_off, 680) in
+      let _ = mo_le64(out, 0, 688) in
+      696 in
   let _ = bytes_extend(out, code) in
-  if shared then macho_finish_dylib(out, t, cmdend) else out
+  if shared then macho_finish_dylib(out, t, cmdend)
+  else
+    /* Pad the __TEXT tail up to the page boundary and back __LINKEDIT's empty
+     * page (macho_finish_binds later stores the dyld bind blob there). */
+    let _ = if padded then tail(text_off + code_len, text_filesz) else 0 in
+    let _ = tail(text_filesz, text_filesz + le_size) in
+    out
+
+/* Offset read/write for fields already stored in a packed image. */
+let mo_u32_at(b, i) =
+  bytes_ref(b, i) + bshl(bytes_ref(b, i + 1), 8)
+  + bshl(bytes_ref(b, i + 2), 16) + bshl(bytes_ref(b, i + 3), 24)
+
+/* dyld bind blob: one entry per ccall host leaf, binding emit_cplt's GOT cell
+ * (at text_off + got + 24 + i*8) to the libSystem symbol. ELF gets the same
+ * effect from its dynamic linker via JUMP_SLOT relocs; Mach-O has no relocs,
+ * so the opcode stream below IS the whole binding. Validated byte-for-byte
+ * against a handcrafted image: [0x51 type=pointer, 0x70|seg1 + uleb(cell),
+ * 0x11 dylib ordinal 1, 0x40 + "_name", 0x90 DO_BIND]. */
+let macho_bind_blob(names, got, text_off) =
+  let n = len(names) in
+  let b = bytes_new() in
+  let entry(i) =
+    if i >= n then 0
+    else
+      let _ = bytes_append(b, 81) in
+      let _ = bytes_append(b, 113) in
+      let _ = mo_uleb(b, text_off + got + 24 + i * 8) in
+      let _ = bytes_append(b, 17) in
+      let _ = bytes_append(b, 64) in
+      let _ = bytes_append(b, 95) in
+      let _ = mo_app_str(b, nth(names, i), 0, str_len(nth(names, i))) in
+      let _ = bytes_append(b, 0) in
+      let _ = bytes_append(b, 144) in
+      entry(i + 1) in
+  let _ = entry(0) in
+  b
+
+/* Fill the LC_DYLD_INFO_ONLY bind table of an exec image packed above: the
+ * blob goes at __LINKEDIT's fileoff (text_filesz, already zero-padded by the
+ * packer), __LINKEDIT grows to hold it, and the leftover page is zeroed. */
+let macho_finish_binds(img, t, names, got) =
+  if bytes_ref(img, 12) != 2 then img
+  else
+    let text_off = target_text_off(t) in
+    let text_filesz = mo_u32_at(img, 152) in
+    let blob = macho_bind_blob(names, got, text_off) in
+    let blob_len = bytes_len(blob) in
+    let le_size = mo_align(if blob_len < 4096 then 4096 else blob_len, 4096) in
+    let _ = mo_le64(img, le_size, 288) in
+    let _ = mo_le64(img, le_size, 304) in
+    let _ = mo_le32(img, text_filesz, 536) in
+    let _ = mo_le32(img, blob_len, 540) in
+    let put(i) =
+      if i >= blob_len then 0
+      else
+        let _ = bytes_put(img, text_filesz + i, bytes_ref(blob, i)) in
+        put(i + 1) in
+    let _ = put(0) in
+    let zero(i, n) =
+      if i >= n then 0
+      else
+        let _ = mo_le32(img, 0, i) in
+        zero(i + 4, n) in
+    let _ = zero(text_filesz + blob_len, text_filesz + le_size) in
+    img

@@ -1,0 +1,159 @@
+/* darwin_x86_64.yac — x86-64 macOS host: SysV ccall (shared with Linux),
+ * dyld-launched _start, BSD syscalls (sys/syscall.h).
+ *
+ * Same SysV frame/marshal helpers as Linux (linux_x86_64.yac); only the raw
+ * syscall layer differs:
+ *   - numbers carry the 0x2000000 BSD flag (gcc's syscall.h SYS_* values);
+ *   - errors return carry set + errno in rax, rewritten to -errno so guests
+ *     see the Linux convention;
+ *   - MAP_ANON is 0x1000, not 0x20: the guest's Linux flags (0x22 / 0x32)
+ *     are converted in r10 with xor 0x1020;
+ *   - no clock_gettime syscall: gettimeofday(116) fills a timeval (sec qword,
+ *     usec dword), scaled to timespec nsec by the emitter.
+ */
+
+package back.emit.darwin_x86_64
+export darwin_begin, darwin_cc_marshal, darwin_ccall_patch, darwin_clock, darwin_entry, darwin_exit, darwin_finish, darwin_num_syscall, darwin_syscall, darwin_write1
+import back.emit.emit {emit_st4}
+import back.emit.linux_x86_64 {linux_begin, linux_cc_marshal, linux_ccall_patch, linux_entry, linux_finish, linux_sysarg, emit_load_rax_slot, emit_store_rax_slot}
+import back.encode.encode_x64 {add_rsp_imm32, e8, lea_rsi_rsp, mov_mem_rsp_al, mov_r64_imm, mov_rax_mem_rsp, mov_rax_rsi, mov_rdi_imm, mov_rdi_rax, mov_rsi_rsp, mov_rdx_imm, sar_rax_1, shl_rax_1, sub_rsp_imm32, syscall}
+
+let darwin_raw_nr(name) =
+  if name == "open" then 5
+  else if name == "lseek" then 199
+  else if name == "read" then 3
+  else if name == "close" then 6
+  else if name == "write" then 4
+  else if name == "fork" then 2
+  else if name == "wait4" then 7
+  else if name == "execve" then 59
+  else if name == "exit" then 1
+  else if name == "mmap" then 197
+  else if name == "munmap" then 73
+  else 3
+
+/* LIR carries raw syscall numbers in the Linux numbering (start_proc's
+ * ["syscall", 0, 60, ...] is exit(60)); translate to the BSD number before
+ * adding the 0x2000000 flag. Unlisted numbers pass through unchanged. */
+let darwin_map_nr(n) =
+  if n == 0 then 3            /* read */
+  else if n == 1 then 4       /* write */
+  else if n == 2 then 5       /* open */
+  else if n == 3 then 6       /* close */
+  else if n == 8 then 199     /* lseek */
+  else if n == 9 then 197     /* mmap */
+  else if n == 11 then 73     /* munmap */
+  else if n == 57 then 2      /* fork */
+  else if n == 60 then 1      /* exit */
+  else if n == 61 then 7      /* wait4 */
+  else if n == 228 then 116   /* clock_gettime -> gettimeofday */
+  else n
+
+/* Linux: errno as a negative return. Darwin: carry set + errno in rax. Emit
+ * `jae +3; neg rax` so guests see the same negative errno convention. */
+let darwin_ret(b) =
+  let _ = e8(b, 115) in
+  let _ = e8(b, 3) in
+  let _ = e8(b, 72) in
+  let _ = e8(b, 247) in
+  e8(b, 216)
+
+/* The guest's mmap flags are Linux constants (MAP_PRIVATE 2 | MAP_ANONYMOUS
+ * 0x20 | MAP_FIXED 0x10). Darwin has MAP_ANON at 0x1000: xor 0x1020 converts
+ * both 0x22 -> 0x1002 and 0x32 -> 0x1012. r10 already holds the flags arg. */
+let darwin_mmap_flags(b) =
+  let _ = e8(b, 73) in
+  let _ = e8(b, 129) in
+  let _ = e8(b, 242) in
+  let _ = e8(b, 32) in
+  let _ = e8(b, 16) in
+  let _ = e8(b, 0) in
+  e8(b, 0)
+
+let darwin_syscall(st, insn) =
+  let b = nth(st, 0) in
+  let name = nth(insn, 2) in
+  let _ = linux_sysarg(b, nth(insn, 3), 0) in
+  let _ = if name == "mmap" then darwin_mmap_flags(b) else 0 in
+  let _ = mov_r64_imm(b, 0, darwin_raw_nr(name) + 33554432) in
+  let _ = syscall(b) in
+  let _ = darwin_ret(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
+let darwin_num_syscall(st, insn) =
+  let b = nth(st, 0) in
+  let _ = linux_sysarg(b, nth(insn, 3), 0) in
+  let _ = mov_r64_imm(b, 0, darwin_map_nr(nth(insn, 2)) + 33554432) in
+  let _ = syscall(b) in
+  let _ = darwin_ret(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
+let darwin_exit(st, patches) =
+  let b = nth(st, 0) in
+  let _ = mov_rdi_rax(b) in
+  let _ = mov_r64_imm(b, 0, 1 + 33554432) in
+  let _ = syscall(b) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), patches)
+
+let darwin_write1(st, insn) =
+  let b = nth(st, 0) in
+  let _ = emit_load_rax_slot(b, nth(insn, 1)) in
+  let _ = sar_rax_1(b) in
+  let _ = sub_rsp_imm32(b, 8) in
+  let _ = mov_mem_rsp_al(b) in
+  let _ = mov_rsi_rsp(b) in
+  let _ = mov_rdx_imm(b, 1) in
+  let _ = mov_rdi_imm(b, 1) in
+  let _ = mov_r64_imm(b, 0, 4 + 33554432) in
+  let _ = syscall(b) in
+  let _ = add_rsp_imm32(b, 8) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
+let darwin_clock(st, insn) =
+  let b = nth(st, 0) in
+  let _ = sub_rsp_imm32(b, 16) in
+  /* gettimeofday(tp, tzp): tp is the FIRST arg (rdi), unlike Linux
+   * clock_gettime(clk_id, ts). tzp is ignored on macOS; pass NULL. */
+  let _ = lea_rsi_rsp(b) in
+  let _ = mov_rax_rsi(b) in
+  let _ = mov_rdi_rax(b) in
+  let _ = mov_r64_imm(b, 6, 0) in
+  let _ = mov_r64_imm(b, 0, 116 + 33554432) in
+  let _ = syscall(b) in
+  let _ = mov_rax_mem_rsp(b) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  /* gettimeofday fills a timeval: tv_sec qword @0, tv_usec dword @8. The
+   * guest expects timespec's nsec qword @8: zero-extend the dword and scale
+   * by 1000 (imul eax, eax, 1000). */
+  let _ = e8(b, 139) in
+  let _ = e8(b, 68) in
+  let _ = e8(b, 36) in
+  let _ = e8(b, 8) in
+  let _ = e8(b, 105) in
+  let _ = e8(b, 192) in
+  let _ = e8(b, 232) in
+  let _ = e8(b, 3) in
+  let _ = e8(b, 0) in
+  let _ = shl_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 2)) in
+  let _ = add_rsp_imm32(b, 16) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), nth(st, 3))
+
+/* Marshal / begin / finish are plain SysV: reuse the Linux layer as-is.
+ * The ENTRY differs: dyld calls the LC_MAIN entry like a function, passing
+ * argc in rdi, argv in rsi and envp in rdx -- the stack does NOT carry the
+ * kernel's argc/argv layout that linux_entry reads. The prologue stores
+ * rdi/rsi into the argc/argv globals right after this, so nothing to load. */
+let darwin_begin(_) = linux_begin(0)
+
+let darwin_cc_marshal(b, args) = linux_cc_marshal(b, args)
+
+let darwin_ccall_patch(ps, pos, fn) = linux_ccall_patch(ps, pos, fn)
+
+let darwin_entry(b, patches) = patches
+
+let darwin_finish(b, extra) = linux_finish(b, extra)
