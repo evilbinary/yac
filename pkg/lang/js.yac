@@ -2,7 +2,7 @@
  * js_to_yac(src) -> yac source string, or "error: ..." on failure.
  *
  * Core subset: literals (num/string/bool/null/undefined, array, object),
- * arithmetic / compare / logic, ternary, member / index / call, assignment
+ * arithmetic / compare / logic, ternary, ??, ?., member / index / call, assignment
  * (incl. compound), let/const/var, if/else, while, for(;;), return, function
  * declarations, console.log, Math.*.
  *
@@ -191,7 +191,7 @@ let js_lex_id(src, i, n) =
 
 /* True for the two-character operators the lexer recognises. */
 let js_op2(s) =
-  s == "==" or s == "!=" or s == "<=" or s == ">=" or s == "&&" or s == "||" or s == "+=" or s == "-=" or s == "*=" or s == "/=" or s == "%=" or s == "++" or s == "--" or s == "<<" or s == ">>" or s == "&=" or s == "|=" or s == "^=" or s == "=>" or s == "**"
+  s == "==" or s == "!=" or s == "<=" or s == ">=" or s == "&&" or s == "||" or s == "+=" or s == "-=" or s == "*=" or s == "/=" or s == "%=" or s == "++" or s == "--" or s == "<<" or s == ">>" or s == "&=" or s == "|=" or s == "^=" or s == "=>" or s == "**" or s == "?." or s == "??"
 
 let js_op3(s) = s == ">>>" or s == "<<=" or s == ">>=" or s == "**=" or s == "..."
 
@@ -421,7 +421,7 @@ let js_arity_pop(st) =
 /* Binary precedence: assignment (1) < `?` (2) < `||` < `&&` < eq < rel <
  * add < mul. Everything lower than the current min stops the climb. */
 let js_prec2(op) =
-  if op == "||" then 3
+  if op == "||" or op == "??" then 3
   else if op == "&&" then 4
   else if op == "|" then 5
   else if op == "^" then 6
@@ -483,7 +483,7 @@ let js_expr_cont(toks, j, min) =
   let x = js_t(t) in
   let op = if k == "p" then true else (k == "id" and (x == "in" or x == "instanceof")) in
   if op == false then false
-  else if x == "." or x == "[" or x == "(" or x == "=>" or x == "++" or x == "--" then true
+  else if x == "." or x == "?." or x == "[" or x == "(" or x == "=>" or x == "++" or x == "--" then true
   else if x == "?" then min <= 2
   else if js_assign_op(x) then min <= 1
   else
@@ -763,6 +763,60 @@ let js_parse_expr(toks, i, min, st) =
     if k2 == "p" and x2 == "." then
       let nt = js_at(toks, j + 1) in
       again(["mem", lhs, js_t(nt)], j + 2)
+    else if k2 == "p" and x2 == "?." then
+      /* `a?.b.c()` is one chain: a nullish base skips every later step.
+       * A nested `?.` checks again. `["raw","HOLE"]` is filled with the
+       * temp that holds the base. */
+      let hop(lhs0, k) =
+        let tk = js_at(toks, k) in
+        let tx = js_t(tk) in
+        if js_k(tk) == "id" then [["mem", lhs0, tx], k + 1]
+        else if tx == "[" then
+          let r = js_parse_expr(toks, k + 1, 0, st) in
+          if js_is(toks, nth(r, 1), "]") then [["idx", lhs0, nth(r, 0)], nth(r, 1) + 1]
+          else [js_bad(st, "expected ']'"), nth(r, 1)]
+        else if tx == "(" then
+          let pargs(jj, acc) =
+            if js_is(toks, jj, ")") then [list_rev(acc), jj + 1]
+            else
+              let sp = js_is(toks, jj, "...") in
+              let r = if sp then js_parse_expr(toks, jj + 1, 0, st) else js_parse_expr(toks, jj, 0, st) in
+              let node = if sp then ["spread", nth(r, 0)] else nth(r, 0) in
+              let j2 = nth(r, 1) in
+              if js_is(toks, j2, ",") then pargs(j2 + 1, cons(node, acc))
+              else if js_is(toks, j2, ")") then [list_rev(cons(node, acc)), j2 + 1]
+              else [0, j2] in
+          let ar = pargs(k + 1, []) in
+          [["call", lhs0, nth(ar, 0)], nth(ar, 1)]
+        else [js_bad(st, "expected property or call after '?.'"), k] in
+      let rest(lhs0, k) =
+        let tx = js_t(js_at(toks, k)) in
+        if tx == "." then rest(["mem", lhs0, js_t(js_at(toks, k + 1))], k + 2)
+        else if tx == "?." then
+          let op = hop(["raw", "HOLE"], k + 1) in
+          if nth(op, 1) <= k + 1 then [nth(op, 0), nth(op, 1)]
+          else rest(["opt", lhs0, nth(op, 0)], nth(op, 1))
+        else if tx == "[" then
+          let r = js_parse_expr(toks, k + 1, 0, st) in
+          if js_is(toks, nth(r, 1), "]") then rest(["idx", lhs0, nth(r, 0)], nth(r, 1) + 1)
+          else [js_bad(st, "expected ']'"), nth(r, 1)]
+        else if tx == "(" then
+          let pargs(jj, acc) =
+            if js_is(toks, jj, ")") then [list_rev(acc), jj + 1]
+            else
+              let sp = js_is(toks, jj, "...") in
+              let r = if sp then js_parse_expr(toks, jj + 1, 0, st) else js_parse_expr(toks, jj, 0, st) in
+              let node = if sp then ["spread", nth(r, 0)] else nth(r, 0) in
+              let j2 = nth(r, 1) in
+              if js_is(toks, j2, ",") then pargs(j2 + 1, cons(node, acc))
+              else if js_is(toks, j2, ")") then [list_rev(cons(node, acc)), j2 + 1]
+              else [0, j2] in
+          let ar = pargs(k + 1, []) in
+          rest(["call", lhs0, nth(ar, 0)], nth(ar, 1))
+        else [lhs0, k] in
+      let head = hop(["raw", "HOLE"], j + 1) in
+      let ch = rest(nth(head, 0), nth(head, 1)) in
+      again(["opt", lhs, nth(ch, 0)], nth(ch, 1))
     else if k2 == "p" and x2 == "[" then
       let r = js_parse_expr(toks, j + 1, 0, st) in
       if js_is(toks, nth(r, 1), "]") then again(["idx", lhs, nth(r, 0)], nth(r, 1) + 1)
@@ -1862,6 +1916,28 @@ let js_emit_obj(e, ctx, st) =
   if len(pairs) == 0 then js_cat(["(let ", o, " = _js_obj(0) in ", o, ")"])
   else js_cat(["(let ", o, " = _js_obj(0) in (let _ = ", js_obj_segs(pairs, o, ctx, st), " in ", o, "))"])
 
+/* Replace the outer chain's hole. A nested `?.` keeps its own hole. */
+let js_opt_fill(e, name) =
+  let kids(i, acc) =
+    if i >= len(e) then list_rev(acc)
+    else kids(i + 1, cons(js_opt_fill(nth(e, i), name), acc)) in
+  if kind(e) != 2 and kind(e) != 5 then e
+  else if len(e) == 0 then e
+  else if nth(e, 0) == "raw" then
+    if len(e) > 1 then (if nth(e, 1) == "HOLE" then ["raw", name] else kids(0, []))
+    else kids(0, [])
+  else if nth(e, 0) == "opt" then
+    if len(e) > 2 then ["opt", js_opt_fill(nth(e, 1), name), nth(e, 2)]
+    else e
+  else kids(0, [])
+
+/* `base?.rest`. Null and undefined are 0, so a numeric 0 also skips `rest`. */
+let js_emit_opt(e, ctx, st) =
+  let b = js_fresh(st, "ob") in
+  let base = (box_get(js_expr_box))(nth(e, 1), ctx, st) in
+  let cont = (box_get(js_expr_box))(js_opt_fill(nth(e, 2), b), ctx, st) in
+  js_cat(["(let ", b, " = ", base, " in (if ", b, " == 0 then 0 else ", cont, "))"])
+
 /* ctx = [vars, funcs, retf, retv]: boxed variable names, declared function
  * names, and the enclosing function's return flag/value boxes (0 at top
  * level). Emits a yac expression string. Self-recursive. */
@@ -2136,6 +2212,8 @@ let js_emit_expr(e, ctx, st) =
   else if tag == "null" then "0"
   else if tag == "undef" then "0"
   else if tag == "err" then "0"
+  else if tag == "raw" then nth(e, 1)
+  else if tag == "opt" then js_emit_opt(e, ctx, st)
   else if tag == "id" then
     /* Function -> direct name; boxed var -> box_get; else assume global fn. */
     let nm = nth(e, 1) in
@@ -2281,6 +2359,11 @@ let js_emit_expr(e, ctx, st) =
       else if op == "||" then
         let t = js_fresh(st, "or") in
         js_cat(["(let ", t, " = ", ls, " in if ", js_truth(t, st), " then ", t, " else ", rs, ")"])
+      else if op == "??" then
+        /* Null and undefined are the integer 0, so a numeric 0 also takes the
+         * right-hand side. The right-hand side is not evaluated otherwise. */
+        let t = js_fresh(st, "nil") in
+        js_cat(["(let ", t, " = ", ls, " in if ", t, " == 0 then ", rs, " else ", t, ")"])
       else if op == "===" then js_cat(["(", ls, " == ", rs, ")"])
       else if op == "!==" then js_cat(["(", ls, " != ", rs, ")"])
       else if op == "**" then (let _ = box_set(st_math(st), 1) in js_cat(["powf(", ls, ", ", rs, ")"]))
