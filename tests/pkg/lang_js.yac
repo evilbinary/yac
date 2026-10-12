@@ -247,12 +247,23 @@ let _ = check("class_prop", "class A { constructor(){ this.v = 7; } } let a = ne
 let _ = check("class_default_ctor", "class A { m(){ return 3; } } let a = new A(); console.log(a.m());", "3")
 let _ = check("class_extends", "class B { constructor(x){ this.x = x; } val(){ return this.x; } } class C extends B { constructor(x){ super(x); this.y = 2; } sum(){ return this.x + this.y; } } let c = new C(5); console.log(c.sum());", "7")
 let _ = check("class_super_method", "class B { hi(){ return 1; } } class C extends B { hi(){ return super.hi() + 1; } } console.log(new C().hi());", "2")
+let _ = check("class_expr", "const p = class { constructor(x){ this.x = x; } get(){ return this.x; } }; let a = new p(5); console.log(a.get());", "5")
+let _ = check("class_expr_ext", "class B { constructor(x){ this.x = x; } val(){ return this.x; } } const C = class extends B { constructor(x){ super(x); this.y = 2; } sum(){ return this.x + this.y; } }; console.log(new C(5).sum());", "7")
+let _ = check("class_expr_chain", "const B = class { constructor(x){ this.x = x; } val(){ return this.x; } }; const C = class extends B { constructor(x){ super(x); this.y = 2; } sum(){ return this.x + this.y; } }; console.log(new C(5).sum());", "7")
+let _ = check("class_expr_super_m", "const B = class { hi(){ return 1; } }; const C = class extends B { hi(){ return super.hi() + 1; } }; console.log(new C().hi());", "2")
+let _ = check("class_expr_static", "const a = class { static s(){ return 3; } }; console.log(a.s());", "3")
+let _ = check("class_expr_get", "const A = class { constructor(){ this._v = 1; } get v(){ return this._v * 10; } }; console.log(new A().v);", "10")
+let _ = check("class_expr_mem", "const a = { B: class { constructor(x){ this.x = x; } val(){ return this.x; } } }; const C = class extends a.B { constructor(x){ super(x); this.y = 1; } sum(){ return this.x + this.y; } }; console.log(new C(4).sum());", "5")
 
 /* ES6 for...of (arrays) */
 let _ = check("forof_sum", "let s=0; for (let x of [1,2,3]) { s = s + x; } console.log(s);", "6")
 let _ = check("forof_str", "let s=''; for (let c of ['a','b']) { s = s + c; } console.log(s);", "ab")
 let _ = check("forof_continue", "let s=0; for (let x of [1,2,3]) { if (x === 2) { continue; } s = s + x; } console.log(s);", "4")
 let _ = check("forof_break", "let n=0; for (let x of [1,2,3]) { n = n + 1; if (n === 2) { break; } } console.log(n);", "2")
+let _ = check("forof_pat", "let s=0; for (const [u, y] of [[1,2],[3,4]]) { s = s + u + y; } console.log(s);", "10")
+let _ = check("forof_pat_one", "let s=0; for (const [u] of [[7,8]]) { s = s + u; } console.log(s);", "7")
+let _ = check("forof_pat_obj", "let s=0; for (const {id:k, n:v} of [{id:1, n:2}]) { s = s + k + v; } console.log(s);", "3")
+let _ = check("for_var_pat", "var s=0; for (var {a:x} = {a:2}, i=0; i<3; i++) { s = s + x; } console.log(s + ',' + x);", "6,2")
 
 /* ES6 spread / rest (arrays + objects) */
 let _ = check("spread_arr", "let a=[1,2]; let b=[0,...a,3]; console.log(b.join(','));", "0,1,2,3")
