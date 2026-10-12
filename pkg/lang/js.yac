@@ -103,6 +103,24 @@ let js_lex_str(src, i, n, q) =
         rec(if esc == 1 then j + 2 else j + 1) in
   rec(i)
 
+/* End index of a regex literal starting after its opening `/` (includes flags). */
+let js_re_end(src, i, n) =
+  let rec(j, cls) =
+    if j >= n then j
+    else
+      let c = str_ref(src, j) in
+      if c == 47 and cls == false then
+        let flags(k) =
+          if k >= n then k
+          else if js_idc(str_ref(src, k)) then flags(k + 1)
+          else k in
+        flags(j + 1)
+      else if c == 92 and j + 1 < n then rec(j + 2, cls)
+      else
+        let ncls = if c == 91 then true else if c == 93 and cls then false else cls in
+        rec(j + 1, ncls) in
+  rec(i, false)
+
 /* Template literal body after the opening backtick. `${…}` is kept verbatim
  * for the parser; escapes are decoded (`\`` -> backtick, `\$` -> `$`).
  * Nested templates inside `${…}` are included (brace depth + recursive lex).
@@ -143,6 +161,29 @@ let js_lex_tmpl(src, i, n) =
         let _ = put_str(nth(r, 0)) in
         let _ = put(96) in
         rec(nth(r, 1), depth)
+      else if c == 47 then
+        /* `/re/` inside `${…}` — do not treat quotes in a class as strings. */
+        let prev_at(k) =
+          if k < i then 0
+          else
+            let ch = str_ref(src, k) in
+            if ch == 32 or ch == 9 or ch == 10 or ch == 13 then prev_at(k - 1)
+            else ch in
+        let prev = prev_at(j - 1) in
+        let re_ok =
+          prev == 0 or prev == 40 or prev == 44 or prev == 61 or prev == 58
+            or prev == 33 or prev == 91 or prev == 123 or prev == 125 or prev == 63
+            or prev == 38 or prev == 124 or prev == 43 or prev == 45 or prev == 42
+            or prev == 47 or prev == 37 or prev == 126 or prev == 94 or prev == 60
+            or prev == 62 in
+        if re_ok then
+          let end = js_re_end(src, j + 1, n) in
+          let copy(k) = if k >= end then 0 else (let _ = put(str_ref(src, k)) in copy(k + 1)) in
+          let _ = copy(j) in
+          rec(end, depth)
+        else
+          let _ = put(c) in
+          rec(j + 1, depth)
       else if c == 34 or c == 39 then
         /* Keep the source text of the string so nested `${}` re-lexes cleanly. */
         let r = js_lex_str(src, j + 1, n, c) in
@@ -369,8 +410,13 @@ let js_lex(src) =
       [j + 3, false]
     else if (j + 2 <= n) and js_op2(str_slice(src, j, 2)) then
       let tx = str_slice(src, j, 2) in
-      let _ = list_push(acc, ["p", tx]) in
-      [j + 2, tx == "++" or tx == "--"]
+      /* `x?.1` is ternary `x ? .1 : …`, not optional chaining (spec). */
+      if tx == "?." and j + 2 < n and js_digit(str_ref(src, j + 2)) then
+        let _ = list_push(acc, ["p", "?"]) in
+        [j + 1, false]
+      else
+        let _ = list_push(acc, ["p", tx]) in
+        [j + 2, tx == "++" or tx == "--"]
     else if js_op1c(c) then
       let tx = str_slice(src, j, 1) in
       let _ = list_push(acc, ["p", tx]) in
@@ -392,7 +438,12 @@ let js_lex(src) =
 let js_k(t) = nth(t, 0)
 let js_t(t) = nth(t, 1)
 let js_at(toks, i) = if i >= len(toks) then ["eof", ""] else nth(toks, i)
-let js_is(toks, i, s) = js_t(js_at(toks, i)) == s
+/* Punctuation or keyword/id text. A string token whose text is ")" must not
+ * count as a closing paren. */
+let js_is(toks, i, s) =
+  let t = js_at(toks, i) in
+  let k = js_k(t) in
+  (k == "p" or k == "id") and js_t(t) == s
 
 /* ---- errors (state is threaded; see header) --------------------------- */
 
@@ -676,6 +727,24 @@ let js_parse_expr(toks, i, min, st) =
            else if d == q then find(j + 1, depth, false, q)
            else find(j + 1, depth, instr, q))
         else if d == 96 then find(skip_tmpl(j + 1), depth, false, q)
+        else if d == 47 then
+          /* Skip `/re/flags` so quotes in a class do not look like strings. */
+          let prev =
+            let rec(k) =
+              if k < 0 then 0
+              else
+                let ch = str_ref(raw, k) in
+                if ch == 32 or ch == 9 or ch == 10 or ch == 13 then rec(k - 1)
+                else ch in
+            rec(j - 1) in
+          let re_ok =
+            prev == 0 or prev == 40 or prev == 44 or prev == 61 or prev == 58
+              or prev == 33 or prev == 91 or prev == 123 or prev == 125 or prev == 63
+              or prev == 38 or prev == 124 or prev == 43 or prev == 45 or prev == 42
+              or prev == 47 or prev == 37 or prev == 126 or prev == 94 or prev == 60
+              or prev == 62 in
+          if re_ok then find(js_re_end(raw, j + 1, n), depth, false, q)
+          else find(j + 1, depth, false, q)
         else if d == 39 or d == 34 then find(j + 1, depth, true, d)
         else if d == 123 then find(j + 1, depth + 1, false, q)
         else if d == 125 then (if depth == 0 then j else find(j + 1, depth - 1, false, q))
@@ -1188,12 +1257,14 @@ let js_parse_class_members(toks, j, st) =
     if js_is(toks, k, "}") then [list_rev(acc), k + 1]
     else if js_is(toks, k, ";") then mgo(k + 1, acc)
     else
-      /* `get v()`, `set v(n)`, and the static forms `static get v()`.
-       * A method literally named `get` is `get()` with no name in between. */
+      /* `get v()`, `set v(n)`, `async m()`, and the static forms
+       * `static get v()` / `static async m()`. A method literally named
+       * `get`/`async` is `get()` / `async()` with no name in between. */
       let stat = js_is(toks, k, "static") in
       let k0 = if stat then k + 1 else k in
       let acc_here = (js_is(toks, k0, "get") or js_is(toks, k0, "set")) and js_k(js_at(toks, k0 + 1)) == "id" and js_is(toks, k0 + 2, "(") in
-      let k1 = if acc_here then k0 + 1 else k0 in
+      let async_here = js_is(toks, k0, "async") and js_k(js_at(toks, k0 + 1)) == "id" and js_is(toks, k0 + 2, "(") in
+      let k1 = if acc_here or async_here then k0 + 1 else k0 in
       let mname = js_t(js_at(toks, k1)) in
       let pr = cdef(k1 + 2, []) in
       let bd = js_parse_stmts_v(toks, nth(pr, 1) + 1, ["list", "}"], st) in
@@ -1201,6 +1272,7 @@ let js_parse_class_members(toks, j, st) =
         if acc_here then
           (if stat then (if js_is(toks, k0, "get") then "staticget" else "staticset")
            else (if js_is(toks, k0, "get") then "getter" else "setter"))
+        else if async_here then (if stat then "staticasync" else "async")
         else if stat then "static"
         else if mname == "constructor" then "ctor"
         else "method" in
@@ -2259,8 +2331,9 @@ let js_emit_classexpr(e, ctx, st) =
         let md = nth(methods, i) in
         let knd = nth(md, 0) in
         if knd == "ctor" then go2(i + 1)
-        else if knd == "static" then
-          let fe = ex(["funexpr", "", nth(md, 2), rw(nth(md, 3)), "method"]) in
+        else if knd == "static" or knd == "staticasync" then
+          let mode = if knd == "staticasync" then "async" else "method" in
+          let fe = ex(["funexpr", "", nth(md, 2), rw(nth(md, 3)), mode]) in
           let put = js_cat(["fmap_put(nth(box_get(", wb, "), 1), \"", js_esc(nth(md, 1)), "\", ", fe, ")"]) in
           js_cat(["(let _ = ", put, " in ", go2(i + 1), ")"])
         else if knd == "getter" or knd == "setter" or knd == "staticget" or knd == "staticset" then
@@ -2273,7 +2346,8 @@ let js_emit_classexpr(e, ctx, st) =
               js_cat(["_js_acc_put(nth(_js_proto(\"", js_esc(key), "\"), 1), \"", js_esc(nth(md, 1)), "\", ", isget, ", ", fe, ")"]) in
           js_cat(["(let _ = ", put, " in ", go2(i + 1), ")"])
         else
-          let fe = ex(["funexpr", "", nth(md, 2), rw(nth(md, 3)), "method"]) in
+          let mode = if knd == "async" then "async" else "method" in
+          let fe = ex(["funexpr", "", nth(md, 2), rw(nth(md, 3)), mode]) in
           let put = js_cat(["fmap_put(nth(_js_proto(\"", js_esc(key), "\"), 1), \"", js_esc(nth(md, 1)), "\", ", fe, ")"]) in
           js_cat(["(let _ = ", put, " in ", go2(i + 1), ")"]) in
     let link =
@@ -2438,13 +2512,17 @@ let js_emit_expr(e, ctx, st) =
       let c = str_ref(nm, 0) in
       if c >= 65 and c <= 90 then nm else ""
   in
-  /* `[a, b, …]` for js_native's argument list. */
+  /* `[a, b, …]` for js_native's argument list. Spread packs into one list. */
   let args_arr(args) =
-    let go(i) =
-      if i >= len(args) then ""
-      else if i == len(args) - 1 then js_emit_expr(nth(args, i), ctx, st)
-      else js_cat([js_emit_expr(nth(args, i), ctx, st), ", ", go(i + 1)]) in
-    if len(args) == 0 then "[]" else js_cat(["[", go(0), "]"])
+    if js_has_spread(args) then
+      let _ = box_set(st_lib(st), 1) in
+      js_pack_list(args, ctx, st)
+    else
+      let go(i) =
+        if i >= len(args) then ""
+        else if i == len(args) - 1 then js_emit_expr(nth(args, i), ctx, st)
+        else js_cat([js_emit_expr(nth(args, i), ctx, st), ", ", go(i + 1)]) in
+      if len(args) == 0 then "[]" else js_cat(["[", go(0), "]"])
   in
   /* Method dispatch for `obj.m(args)`. String vs array is decided statically
    * (string literal or a name known to hold a string); else assume array.
@@ -3245,8 +3323,9 @@ let js_emit_stmts(stmts, ctx, k, st) =
             else
               let md = nth(methods, i) in
               if nth(md, 0) == "ctor" then go2(i + 1)
-              else if nth(md, 0) == "static" then
-                (let fexpr = ["funexpr", "", nth(md, 2), rw(nth(md, 3)), "method"] in
+              else if nth(md, 0) == "static" or nth(md, 0) == "staticasync" then
+                (let mode = if nth(md, 0) == "staticasync" then "async" else "method" in
+                 let fexpr = ["funexpr", "", nth(md, 2), rw(nth(md, 3)), mode] in
                  let fe = js_emit_expr(fexpr, ctxC, st) in
                  let e = js_cat(["_js_static_set(\"", js_esc(nm), "\", \"", js_esc(nth(md, 1)), "\", ", fe, ")"]) in
                  js_cat(["(let _ = ", e, " in ", go2(i + 1), ")"]))
@@ -3262,10 +3341,9 @@ let js_emit_stmts(stmts, ctx, k, st) =
                      js_cat(["_js_acc_put(nth(_js_proto(\"", js_esc(nm), "\"), 1), \"", js_esc(nth(md, 1)), "\", ", isget, ", ", fe, ")"]) in
                  js_cat(["(let _ = ", e, " in ", go2(i + 1), ")"]))
               else
-                let target =
-                  if nth(md, 0) == "static" then ["mem", ["id", nm], nth(md, 1)]
-                  else ["mem", ["mem", ["id", nm], "prototype"], nth(md, 1)] in
-                let fexpr = ["funexpr", "", nth(md, 2), rw(nth(md, 3)), "method"] in
+                let mode = if nth(md, 0) == "async" then "async" else "method" in
+                let target = ["mem", ["mem", ["id", nm], "prototype"], nth(md, 1)] in
+                let fexpr = ["funexpr", "", nth(md, 2), rw(nth(md, 3)), mode] in
                 let e = js_emit_expr(["assign", "=", target, fexpr], ctxC, st) in
                 js_cat(["(let _ = ", e, " in ", go2(i + 1), ")"]) in
           go2(0) in
