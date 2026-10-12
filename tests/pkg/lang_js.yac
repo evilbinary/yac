@@ -395,6 +395,12 @@ let _ = check("areverse", "let a=[1,2,3]; console.log(a.reverse().length);", "3"
 /* function expressions / closures / higher-order callbacks */
 let _ = check("fnexpr", "let f = function(x){ return x + 1; }; console.log(f(41));", "42")
 let _ = check("iife", "console.log((function(){ return 5; })());", "5")
+let _ = check("fn_call", "console.log((function(){ return 5; }).call(this));", "5")
+let _ = check("fn_call_arg", "console.log((function(x){ return x + 1; }).call(this, 4));", "5")
+let _ = check("fn_call_fn", "function f(x){ console.log(x); } f.call(this, 3);", "3")
+let _ = check("fn_call_this", "function f(){ console.log(this.n); } f.call({n: 9});", "9")
+let _ = check("fn_call_local", "let f = function(x){ return x + 1; }; console.log(f.call(this, 4));", "5")
+let _ = check("fn_call_param", "function g(f){ console.log(f.call(null, 6)); } g(function(n){ return n + 1; });", "7")
 let _ = check("closure", "function make(){ let c = 0; return function(){ c = c + 1; return c; }; } let n = make(); console.log(n()); console.log(n());", "1\n2")
 let _ = check("adder", "function adder(x){ return function(y){ return x + y; }; } console.log(adder(5)(3));", "8")
 let _ = check("mapcb", "console.log([1,2,3].map(function(x){ return x * 2; })[1]);", "4")

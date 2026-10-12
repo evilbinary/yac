@@ -1585,6 +1585,30 @@ let js_emit_invoke(cf, callee, args, ctx, st) =
 let js_method_invoke(cf, args, ctx, st) =
   js_cat(["(", cf, ")(", js_pack_list(args, ctx, st), ")"])
 
+/* True for Function.prototype.call on a function expression, a declared
+ * function, or a local that holds one. Kept at top level: the same test
+ * inside js_emit_expr's nested mcall was compiled as always false. */
+let js_is_fn_recv(m, obj, funcs, vars) =
+  if m == "call" then
+    let tag = nth(obj, 0) in
+    if tag == "funexpr" then true
+    else if tag == "id" then
+      let nm = nth(obj, 1) in
+      if js_in(funcs, nm) then true else js_lookup(vars, nm) != ""
+    else false
+  else false
+
+/* `fn.call(thisArg, ...args)` — a yac function has no `call` property.
+ * Bind `this` to the first argument, then call `fn` with the rest. */
+let js_fn_call(cf, callee, args, ctx, st) =
+  let _ = box_set(st_obj(st), 1) in
+  let thise = if len(args) == 0 then "0" else js_call_expr(nth(args, 0), ctx, st) in
+  let rest = if len(args) <= 1 then [] else tail(args) in
+  let inv = js_emit_invoke(cf, callee, rest, ctx, st) in
+  let s = js_fresh(st, "ts") in
+  let r = js_fresh(st, "tr") in
+  js_cat(["(let ", s, " = box_get(_js_this) in (let _ = box_set(_js_this, ", thise, ") in (let ", r, " = ", inv, " in (let _ = box_set(_js_this, ", s, ") in ", r, "))))"])
+
 /* Param node kinds: a plain name (string), ["def", name, expr],
  * ["rest", name], ["pat", patternNode], ["patdef", patternNode, expr]. */
 let js_param_names(p, st) =
@@ -1995,10 +2019,13 @@ let js_emit_expr(e, ctx, st) =
       else if m == "toString" or m == "valueOf" then o
       else dyn_call(0)
     else
+      /* `fn.call(thisArg, ...args)` is Function.prototype.call, not a static method. */
+      let fn_call = js_is_fn_recv(m, obj, funcs, vars) in
       let is_static_obj = nth(obj, 0) == "id" and js_in(nth(ctx, 1), nth(obj, 1)) in
       let bn = builtin_name(obj) in
       let is_builtin = bn != "" in
-      if is_static_obj then
+      if fn_call then js_fn_call(o, obj, args, ctx, st)
+      else if is_static_obj then
         (let _ = box_set(st_obj(st), 1) in
          js_method_invoke(js_cat(["_js_static_get(\"", js_esc(nth(obj, 1)), "\", \"", js_esc(m), "\")"]), args, ctx, st))
       else if bn == "Reflect" then
@@ -2582,8 +2609,13 @@ let js_emit_stmts(stmts, ctx, k, st) =
   /* Function declarations use the shared js_func_body. */
   let go(xs, vars2, funcs2, strs2, brk2, k2) =
     /* Dump prints each statement as it is parsed. A long list here is a
-     * function or switch body being emitted a second time. */
-    if box_get(js_stream_box) != 0 and len(xs) > 1 then k2
+     * function or switch body being emitted a second time. len is only read
+     * when dumping; `and` would walk the list on every translate. */
+    let skip =
+      if box_get(js_stream_box) == 0 then 0
+      else if len(xs) > 1 then 1
+      else 0 in
+    if skip == 1 then k2
     else if len(xs) == 0 then k2
     else
       let s = nth(xs, 0) in
@@ -2870,6 +2902,9 @@ let js_to_yac(src) =
   let _ = box_set(js_expr_box, js_emit_expr) in
   let _ = box_set(js_pat_box, js_pat_parse) in
   let _ = box_set(js_gen_box, js_gen_compile) in
+  /* Dump sets this so a long file is not kept. A translate must see every
+   * statement; a stale non-zero flag drops the program and leaves `0`. */
+  let _ = box_set(js_stream_box, 0) in
   let toks = js_lex(src) in
   let r = js_parse_stmts(toks, 0, ["list", 0], st) in
   let imps = box_get(uimp) in
