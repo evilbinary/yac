@@ -335,6 +335,11 @@ let sigma_kind_h(fs, name, h) =
 
 let sigma_kind(fs, name) = sigma_kind_h(fs, name, hash_str(name))
 
+/* Σ 的源码名注册只对顶层 letfun（TL 表 kind==1）生效；局部抬升函数只保留
+ * gname 键。见 sigma_cons 内的修复注释。 */
+let sigma_src_put(fs, m, src, ent) =
+  if sigma_kind(fs, src) == 1 then fmap_put(m, src, ent) else m
+
 let sigma_cons(fs, f) =
   let m = sigma_map(fs) in
   /* Σ ent field 2 (the old proc index) is never read, so it no longer costs
@@ -348,7 +353,13 @@ let sigma_cons(fs, f) =
   let restp = if len(f) > 6 then nth(f, 6) else 0 in
   let ent = [nth(f, 1), nth(f, 3), 0 - 1, nth(f, 0), nth(f, 2), restp] in
   let _ = fmap_put(m, g, ent) in
-  let _ = if src == g then 0 else fmap_put(m, src, ent) in
+  /* Fix: 只有顶层 proc 才按源码名注册。局部 letfun 抬升后只能经闭包/caps
+   * 触达，若把源码名也塞进跨包共享的 Σ，包里任何一个叫 `tail`/`print`/… 的
+   * 局部助手都会遮蔽后续单元的同名全局与 kernel builtin —— back.pack.macho
+   * 的局部 tail(i,n) 遮蔽 builtin tail，prog_vec 的 rec(tail(p)) 被 ycall 到
+   * 它，top-level 项因此全部丢失。判定复用 lir_letfun_prep 的同一事实源：
+   * sigma_kind(TL 表) == 1（toplevel_seed 登记的顶层 letfun）。 */
+  let _ = if src == g then 0 else sigma_src_put(fs, m, src, ent) in
   [cons(f, sigma_list(fs)), m, nth(fs, 2), nth(fs, 3), nth(fs, 4), nth(fs, 5)]
 
 /* A name containing '/' is already package-qualified. */
@@ -664,14 +675,32 @@ let is_prim_name(w) =
   else false
 
 let resolve_call(fs, nm) =
-  if is_prim_name(nm) then nm
+  if is_prim_name(nm) then
+    let p = box_get(pkg_prefix_box) in
+    if p == "" or pkg_is_rt(p) then nm
+    else
+      let q = pkg_qn(p, nm) in
+      if sigma_ent_h(fs, q, hash_str(q)) != 0 then q else nm
   else
     let m = imap_find(box_get(imap_box), nm, 0) in
     if m != 0 then m
     else if name_has_slash(nm, 0) then nm
-    /* kernel / rt.* procs are registered bare in Sigma (Σ field 5 `globals`):
-     * keep the bare name so a per-package source-link does not qualify it. */
-    else if sigma_global_p(fs, nm) then nm
+    /* prim names (tail/len/nth/...) short-circuit to the LIR prim -- UNLESS
+     * this unit defines a same-named proc whose gname pkg_qn(prefix, nm) is
+     * already in Σ (the letfun's own sigma_cons runs before its body is
+     * lowered). Then the unit-local definition shadows the prim: resolve to
+     * the gname so calli's Σ lookup reaches ycall gname instead of falling
+     * through to lir_rt's 1-arg builtin form (the tail(i+4, n) self-recursion
+     * of back.pack.macho was emitted as yac_tail(i+4) -- n dropped -- once
+     * the Σ[src] leak was plugged). The check is prefix-scoped: entry units
+     * (prefix "") and rt packages keep the bare prim, and a cross-unit bare
+     * name never sees another unit's gname. */
+    else if sigma_global_p(fs, nm) then
+      let p = box_get(pkg_prefix_box) in
+      if p == "" or pkg_is_rt(p) then nm
+      else
+        let q = pkg_qn(p, nm) in
+        if sigma_ent_h(fs, q, hash_str(q)) != 0 then q else nm
     else
       let p = box_get(pkg_prefix_box) in
       if p == "" then nm
