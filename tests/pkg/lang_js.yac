@@ -253,6 +253,9 @@ let _ = check("class_expr_chain", "const B = class { constructor(x){ this.x = x;
 let _ = check("class_expr_super_m", "const B = class { hi(){ return 1; } }; const C = class extends B { hi(){ return super.hi() + 1; } }; console.log(new C().hi());", "2")
 let _ = check("class_expr_static", "const a = class { static s(){ return 3; } }; console.log(a.s());", "3")
 let _ = check("class_expr_get", "const A = class { constructor(){ this._v = 1; } get v(){ return this._v * 10; } }; console.log(new A().v);", "10")
+let _ = check("static_get", "class r { static get shared(){ return 1; } } console.log(r.shared);", "1")
+let _ = check("static_get_ctor", "class r { constructor(x){ this.x = x; } static get shared(){ return 7; } } console.log(new r(3).x + ',' + r.shared);", "3,7")
+let _ = check("static_get_expr", "const a = class { static get shared(){ return 2; } }; console.log(a.shared);", "2")
 let _ = check("class_expr_mem", "const a = { B: class { constructor(x){ this.x = x; } val(){ return this.x; } } }; const C = class extends a.B { constructor(x){ super(x); this.y = 1; } sum(){ return this.x + this.y; } }; console.log(new C(4).sum());", "5")
 
 /* ES6 for...of (arrays) */
