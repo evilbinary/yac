@@ -459,15 +459,19 @@ let js_arrow_end(toks, i) =
   let nx = js_at(toks, i + 1) in
   let nt = js_t(nx) in
   if js_k(nx) == "id" or nt == "[" or nt == "{" or nt == "..." or nt == ")" then
+  /* One tail call. Several recursive sites are not rewritten, and a long
+   * argument list then grows the stack by one frame per token. */
   let go(j, d) =
     if js_k(js_at(toks, j)) == "eof" then 0 - 1
-    else if js_is(toks, j, "(") or js_is(toks, j, "[") or js_is(toks, j, "{") then go(j + 1, d + 1)
-    else if js_is(toks, j, ")") then
-      if d == 1 then (if js_is(toks, j + 1, "=>") then j + 1 else 0 - 1)
-      else go(j + 1, d - 1)
-    else if js_is(toks, j, "]") or js_is(toks, j, "}") then
-      if d <= 1 then 0 - 1 else go(j + 1, d - 1)
-    else go(j + 1, d) in
+    else
+      let open = js_is(toks, j, "(") or js_is(toks, j, "[") or js_is(toks, j, "{") in
+      let clp = js_is(toks, j, ")") in
+      let clb = js_is(toks, j, "]") or js_is(toks, j, "}") in
+      let stop = if clp and d == 1 then 1 else if clb and d <= 1 then 1 else 0 in
+      if stop == 1 then (if clp and js_is(toks, j + 1, "=>") then j + 1 else 0 - 1)
+      else
+        let d2 = if open then d + 1 else if clp or clb then d - 1 else d in
+        go(j + 1, d2) in
   go(i, 0)
   else 0 - 1
 
@@ -754,12 +758,14 @@ let js_parse_expr(toks, i, min, st) =
     let t2 = js_at(toks, j) in
     let x2 = js_t(t2) in
     let k2 = js_k(t2) in
+    /* A postfix that does not consume tokens would rebuild the same node forever. */
+    let again(node, j2) = if j2 <= j then [node, j] else loop(node, j2) in
     if k2 == "p" and x2 == "." then
       let nt = js_at(toks, j + 1) in
-      loop(["mem", lhs, js_t(nt)], j + 2)
+      again(["mem", lhs, js_t(nt)], j + 2)
     else if k2 == "p" and x2 == "[" then
       let r = js_parse_expr(toks, j + 1, 0, st) in
-      if js_is(toks, nth(r, 1), "]") then loop(["idx", lhs, nth(r, 0)], nth(r, 1) + 1)
+      if js_is(toks, nth(r, 1), "]") then again(["idx", lhs, nth(r, 0)], nth(r, 1) + 1)
       else [js_bad(st, "expected ']'"), nth(r, 1)]
     else if k2 == "p" and x2 == "(" then
       let args(jj, acc) =
@@ -773,21 +779,21 @@ let js_parse_expr(toks, i, min, st) =
           else if js_is(toks, j2, ")") then [list_rev(cons(node, acc)), j2 + 1]
           else [0, j2] in
       let ar = args(j + 1, []) in
-      loop(["call", lhs, nth(ar, 0)], nth(ar, 1))
+      again(["call", lhs, nth(ar, 0)], nth(ar, 1))
     else if k2 == "p" and x2 == "=>" then
       let ps = if nth(lhs, 0) == "id" then [nth(lhs, 1)] else [] in
       let bd = arrow_body(j + 1) in
       [["funexpr", "", ps, nth(bd, 0)], nth(bd, 1)]
-    else if k2 == "p" and (x2 == "++" or x2 == "--") then loop(["postfix", lhs, x2], j + 1)
+    else if k2 == "p" and (x2 == "++" or x2 == "--") then again(["postfix", lhs, x2], j + 1)
     else if k2 == "p" and (x2 == "?") and (min <= 2) then
       let a = js_parse_expr(toks, j + 1, 0, st) in
       if js_is(toks, nth(a, 1), ":") then
         let b = js_parse_expr(toks, nth(a, 1) + 1, 2, st) in
-        loop(["cond", lhs, nth(a, 0), nth(b, 0)], nth(b, 1))
+        again(["cond", lhs, nth(a, 0), nth(b, 0)], nth(b, 1))
       else [js_bad(st, "expected ':' in conditional"), nth(a, 1)]
     else if k2 == "p" and js_assign_op(x2) and (min <= 1) then
       let r = js_parse_expr(toks, j + 1, 1, st) in
-      loop(["assign", x2, lhs, nth(r, 0)], nth(r, 1))
+      again(["assign", x2, lhs, nth(r, 0)], nth(r, 1))
     else
       /* Infix operators: punctuation, or the keyword operators in / instanceof.
        * Any other token kind ends the climb. */
@@ -797,7 +803,7 @@ let js_parse_expr(toks, i, min, st) =
       else
         let pn = if x2 == "**" then p else p + 1 in
         let r = js_parse_expr(toks, j + 1, pn, st) in
-        loop(["bin", x2, lhs, nth(r, 0)], nth(r, 1)) in
+        again(["bin", x2, lhs, nth(r, 0)], nth(r, 1)) in
   loop(nth(pre, 0), nth(pre, 1)))
 
 /* ---- statement parser ------------------------------------------------- */
@@ -860,47 +866,6 @@ let js_pat_parse(toks, i, st) =
           else [js_bad(st, "expected ',' or '}' in pattern"), j2] in
     go(i + 1, [])
   else [js_bad(st, "expected binding pattern"), i + 1]
-
-/* Flatten a pattern against an access expression into [[name, access], …]. */
-let js_pat_flat(pat, ae, st) =
-  if nth(pat, 0) == "id" then [[nth(pat, 1), ae]]
-  else if nth(pat, 0) == "pdef" then
-    if ae == "0" then js_pat_flat(nth(pat, 1), ae, st)
-    else
-      let dv = (box_get(js_expr_box))(nth(pat, 2), box_get(js_ctx_box), st) in
-      let nb = st_ns(st) in
-      let n0 = box_get(nb) in
-      let _ = box_set(nb, n0 + 1) in
-      let t = str_cat("_pd", int_to_str(n0)) in
-      let ae2 = str_cat("(let ", str_cat(t, str_cat(" = ", str_cat(ae, str_cat(" in if ", str_cat(t, str_cat(" == 0 then ", str_cat(dv, str_cat(" else ", str_cat(t, ")")))))))))) in
-      js_pat_flat(nth(pat, 1), ae2, st)
-  else if nth(pat, 0) == "arrpat" then
-    let xs = nth(pat, 1) in
-    let n = len(xs) in
-    let go(i, acc) =
-      if i >= n then acc
-      else
-        let e = nth(xs, i) in
-        if e == 0 then go(i + 1, acc)
-        else if nth(e, 0) == "rest" then
-          let _ = box_set(st_lib(st), 1) in
-          let ae2 = str_cat("_js_arr_slice(", str_cat(ae, str_cat(", ", str_cat(int_to_str(i),
-                     str_cat(", len(", str_cat(ae, "))")))))) in
-          go(i + 1, append(acc, js_pat_flat(nth(e, 1), ae2, st)))
-        else
-          let ae2 = str_cat("nth(", str_cat(ae, str_cat(", ", str_cat(int_to_str(i), ")")))) in
-          go(i + 1, append(acc, js_pat_flat(e, ae2, st))) in
-    go(0, [])
-  else
-    let ps = nth(pat, 1) in
-    let n = len(ps) in
-    let go(i, acc) =
-      if i >= n then acc
-      else
-        let pr = nth(ps, i) in
-        let ae2 = str_cat("_js_get(", str_cat(ae, str_cat(", \"", str_cat(nth(pr, 0), "\")")))) in
-        go(i + 1, append(acc, js_pat_flat(nth(pr, 1), ae2, st))) in
-    go(0, [])
 
 /* Rewrite `super` references in a class method body: `super` -> parent name,
  * `super.m` -> ["supermem", parent, m]. Rewrites in place (returns a new tree). */
@@ -1268,10 +1233,21 @@ let js_parse_stmts(toks, i, mode, st) =
         else if stop == "}" and js_t(tk) == "}" then 1
         else 0 in
       if done == 1 then
-        if js_k(tk) == "eof" then [list_rev(acc), j] else [list_rev(acc), j + 1]
+        /* While dumping, acc is empty; reversing a kept body is the whole file. */
+        if box_get(js_stream_box) != 0 then
+          if js_k(tk) == "eof" then [[], j] else [[], j + 1]
+        else if js_k(tk) == "eof" then [list_rev(acc), j]
+        else [list_rev(acc), j + 1]
       else
         let r = one(j) in
-        go(nth(r, 1), cons(nth(r, 0), acc)) in
+        /* Dump already printed this statement. Keeping it would retain the
+         * whole file, then the closing `(function(){...}).call(...)` would
+         * emit that body a second time. A statement that does not advance
+         * the token index would spin here. */
+        let j2 = nth(r, 1) in
+        if j2 <= j then
+          (if box_get(js_stream_box) != 0 then [[], j] else [list_rev(acc), j])
+        else go(j2, if box_get(js_stream_box) == 0 then cons(nth(r, 0), acc) else []) in
     if box_get(js_stream_box) == 0 then go(i, [])
     else
       let saved = box_get(js_stream_ctx) in
@@ -1327,6 +1303,48 @@ let js_flat(root) =
       let _ = if k == 3 then copy(node) else 0 in
       step(nxt) in
   step(cons([root, 0], []))
+
+/* Flatten a pattern against an access expression into [[name, access], …].
+ * Access text is a rope: callers pass js_cat results, and str_cat would
+ * read that list as a string. */
+let js_pat_flat(pat, ae, st) =
+  if nth(pat, 0) == "id" then [[nth(pat, 1), ae]]
+  else if nth(pat, 0) == "pdef" then
+    if ae == "0" then js_pat_flat(nth(pat, 1), ae, st)
+    else
+      let dv = (box_get(js_expr_box))(nth(pat, 2), box_get(js_ctx_box), st) in
+      let nb = st_ns(st) in
+      let n0 = box_get(nb) in
+      let _ = box_set(nb, n0 + 1) in
+      let t = str_cat("_pd", int_to_str(n0)) in
+      let ae2 = js_cat(["(let ", t, " = ", ae, " in if ", t, " == 0 then ", dv, " else ", t, ")"]) in
+      js_pat_flat(nth(pat, 1), ae2, st)
+  else if nth(pat, 0) == "arrpat" then
+    let xs = nth(pat, 1) in
+    let n = len(xs) in
+    let go(i, acc) =
+      if i >= n then acc
+      else
+        let e = nth(xs, i) in
+        if e == 0 then go(i + 1, acc)
+        else if nth(e, 0) == "rest" then
+          let _ = box_set(st_lib(st), 1) in
+          let ae2 = js_cat(["_js_arr_slice(", ae, ", ", int_to_str(i), ", len(", ae, "))"]) in
+          go(i + 1, append(acc, js_pat_flat(nth(e, 1), ae2, st)))
+        else
+          let ae2 = js_cat(["nth(", ae, ", ", int_to_str(i), ")"]) in
+          go(i + 1, append(acc, js_pat_flat(e, ae2, st))) in
+    go(0, [])
+  else
+    let ps = nth(pat, 1) in
+    let n = len(ps) in
+    let go(i, acc) =
+      if i >= n then acc
+      else
+        let pr = nth(ps, i) in
+        let ae2 = js_cat(["_js_get(", ae, ", \"", nth(pr, 0), "\")"]) in
+        go(i + 1, append(acc, js_pat_flat(nth(pr, 1), ae2, st))) in
+    go(0, [])
 
 /* Pack expr strings into a list of lists, 128 per row. A flat list of
  * thousands of elements overflows the parser; each row stays small. */
@@ -2129,9 +2147,13 @@ let js_emit_expr(e, ctx, st) =
     let _ = js_fail(st, "'yield' outside generator") in
     "0"
   else if tag == "funexpr" then
-    let fk = if len(e) > 4 then nth(e, 4) else "" in
-    let fb = js_func_body(nth(e, 2), nth(e, 3), ctx, st, fk) in
-    js_cat(["fun (", nth(fb, 0), ") -> ", nth(fb, 1)])
+    /* Dump already printed the body statement by statement. Emitting it again
+     * rebuilds the whole function; `(function(){...}).call(this)` is that case. */
+    if box_get(js_stream_box) != 0 then "fun (_) -> 0"
+    else
+      let fk = if len(e) > 4 then nth(e, 4) else "" in
+      let fb = js_func_body(nth(e, 2), nth(e, 3), ctx, st, fk) in
+      js_cat(["fun (", nth(fb, 0), ") -> ", nth(fb, 1)])
   else if tag == "this" then
     let _ = box_set(st_obj(st), 1) in
     "box_get(_js_this)"
@@ -2559,7 +2581,10 @@ let js_emit_stmts(stmts, ctx, k, st) =
     else "0" in
   /* Function declarations use the shared js_func_body. */
   let go(xs, vars2, funcs2, strs2, brk2, k2) =
-    if len(xs) == 0 then k2
+    /* Dump prints each statement as it is parsed. A long list here is a
+     * function or switch body being emitted a second time. */
+    if box_get(js_stream_box) != 0 and len(xs) > 1 then k2
+    else if len(xs) == 0 then k2
     else
       let s = nth(xs, 0) in
       let rest = tail(xs) in
@@ -2925,7 +2950,8 @@ let js_stream_iife(e) =
   else
     let t = nth(e, 0) in
     if t == "funexpr" then true
-    else if t == "call" and len(e) > 1 then js_stream_iife(nth(e, 1))
+    else if t == "call" or t == "mem" then
+      if len(e) > 1 then js_stream_iife(nth(e, 1)) else false
     else false
 
 let js_stream_prebind(nm) =
@@ -2935,18 +2961,29 @@ let js_stream_prebind(nm) =
   let _ = box_set(js_stream_reuse, nm) in
   box_set(js_stream_ctx, [cons([nm, m], nth(ctx, 0)), nth(ctx, 1), nth(ctx, 2), nth(ctx, 3), nth(ctx, 4), nth(ctx, 5)])
 
+let js_stream_emit(s) =
+  let st = box_get(js_stream_st) in
+  let y = js_emit_stmts([s], box_get(js_stream_ctx), "0", st) in
+  print(js_flat(y))
+
 let js_stream_hit(s) =
   let tag = nth(s, 0) in
   if tag == "func" then print(str_cat("/* function ", str_cat(nth(s, 1), " */")))
   else if tag == "class" then print(str_cat("/* class ", str_cat(nth(s, 1), " */")))
   else if tag == "switch" then print("/* switch */")
   else if js_stream_nest(tag) then 0
-  else if tag == "expr" and js_stream_iife(nth(s, 1)) then print("/* function */")
+  else if tag == "expr" then
+    let e = nth(s, 1) in
+    let et = nth(e, 0) in
+    /* An error node has no usable body. Emitting it still builds the whole
+     * expression compiler, which is what kept the dump alive after the last
+     * real statement. */
+    if et == "err" then print("0")
+    else if js_stream_iife(e) then print("/* function */")
+    else js_stream_emit(s)
   else
     let _ = if tag == "let" then js_stream_prebind(nth(s, 2)) else 0 in
-    let st = box_get(js_stream_st) in
-    let y = js_emit_stmts([s], box_get(js_stream_ctx), "0", st) in
-    print(js_flat(y))
+    js_stream_emit(s)
 
 /* Parse one statement, print its yac, then the next. A function body is a
  * sequence of units, not one string held until the closing brace. */
