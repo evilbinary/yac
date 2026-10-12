@@ -271,6 +271,10 @@ let _ = check("for_var_pat", "var s=0; for (var {a:x} = {a:2}, i=0; i<3; i++) { 
 /* ES6 spread / rest (arrays + objects) */
 let _ = check("spread_arr", "let a=[1,2]; let b=[0,...a,3]; console.log(b.join(','));", "0,1,2,3")
 let _ = check("spread_obj", "let o={a:1}; let p={...o, b:2}; console.log(p.a+p.b);", "3")
+let _ = check("spread_obj_nest", "let p={...{a:1}, b:2}; console.log(p.a+','+p.b);", "1,2")
+let _ = check("spread_obj_tern", "let c={extension:'x'}; c={...(typeof c.extension!=='object'?{type:c.extension}:c.extension),ref:c}; console.log(c.type);", "x")
+let _ = check("destr_obj_rest", "const {element:c, anchor:b, ...k} = {element:1, anchor:2, x:3}; console.log(c + ',' + b + ',' + k.x);", "1,2,3")
+let _ = check("assign_obj_rest", "let a,b,k; ({a, b, ...k} = {a:1, b:2, x:9}); console.log(a + ',' + b + ',' + k.x);", "1,2,9")
 let _ = check("rest_destr", "let [a,...r] = [1,2,3]; console.log(a + '/' + r.join(','));", "1/2,3")
 
 /* ES6 rest parameters and call spread */
