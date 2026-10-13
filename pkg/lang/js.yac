@@ -3574,12 +3574,13 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let got = take(xs, 0, []) in
         let chunk = nth(got, 0) in
         let more = nth(got, 1) in
+        /* Per-statement return/break only. `_js_exc` is checked at try/loop
+         * edges; doing it on every statement blew up React-sized modules. */
         let guard(cont) =
           let inner = if brk2 == 0 then cont
                       else js_cat(["(if box_get(", brk2, ") != 0 then 0 else ", cont, ")"]) in
-          let inner2 = js_cat(["(if box_get(_js_exc) != 0 then 0 else ", inner, ")"]) in
-          if retf == 0 then inner2
-          else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", inner2, ")"]) in
+          if retf == 0 then inner
+          else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", inner, ")"]) in
         let emit_chunk(cs) =
           if len(cs) == 0 then "0"
           else
