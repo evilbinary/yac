@@ -1827,11 +1827,6 @@ let js_lookup(vars, nm) =
     else rec(tail(xs)) in
   rec(vars)
 
-/* Box name for a variable reference, or the global mangled name if unbound. */
-let js_var(vars, nm) =
-  let b = js_lookup(vars, nm) in
-  if b == "" then js_mangle(nm) else b
-
 /* Membership in a name list (scopes are small). */
 let js_in(xs, x) =
   let rec(i) =
@@ -1839,6 +1834,24 @@ let js_in(xs, x) =
     else if nth(xs, i) == x then true
     else rec(i + 1) in
   rec(0)
+
+/* Implicit globals (`window`, bare assigns). Reset in js_to_yac. */
+let js_globals =
+  let b = box_new() in
+  let _ = box_set(b, list_new()) in
+  b
+
+let js_note_global(nm) =
+  let xs = box_get(js_globals) in
+  if js_in(xs, nm) then 0 else list_push(xs, nm)
+
+/* Box name for a variable reference, or a noted global mangled name. */
+let js_var(vars, nm) =
+  let b = js_lookup(vars, nm) in
+  if b != "" then b
+  else
+    let _ = js_note_global(nm) in
+    js_mangle(nm)
 
 let js_str_lit(e) = nth(e, 0) == "str"
 
@@ -2099,13 +2112,63 @@ let js_ps_args(ps, body) =
   else if js_tree_has_id(body, "arguments") then [["rest", "arguments"]]
   else ps
 
+/* `var` names in this function body (not nested functions). JS hoists them. */
+let js_var_add(acc, nm) =
+  if js_in(acc, nm) then acc else cons(nm, acc)
+
+let js_collect_vars(stmts) =
+  let n = len(stmts) in
+  let rec(i, acc) =
+    if i >= n then acc
+    else
+      let s = nth(stmts, i) in
+      let tag = if len(s) == 0 then "" else nth(s, 0) in
+      let acc2 =
+        if tag == "let" then
+          (if nth(s, 1) == "var" then js_var_add(acc, nth(s, 2)) else acc)
+        else if tag == "seq" or tag == "block" then
+          append(acc, js_collect_vars(nth(s, 1)))
+        else if tag == "if" then
+          append(js_collect_vars(nth(s, 2)), append(js_collect_vars(nth(s, 3)), acc))
+        else if tag == "while" then append(acc, js_collect_vars(nth(s, 2)))
+        else if tag == "do" then append(acc, js_collect_vars(nth(s, 1)))
+        else if tag == "for" then
+          let init = nth(s, 1) in
+          let a0 =
+            if len(init) > 1 and nth(init, 0) == "let" and nth(init, 1) == "var" then
+              js_var_add(acc, nth(init, 2))
+            else if len(init) > 0 and nth(init, 0) == "seq" then
+              append(acc, js_collect_vars(nth(init, 1)))
+            else acc in
+          append(a0, js_collect_vars(nth(s, 4)))
+        else if tag == "forin" or tag == "forof" then append(acc, js_collect_vars(nth(s, 3)))
+        else if tag == "try" then
+          append(acc, append(js_collect_vars(nth(s, 1)), append(js_collect_vars(nth(s, 3)), js_collect_vars(nth(s, 4)))))
+        else if tag == "label" then
+          append(acc, js_collect_vars([nth(s, 2)]))
+        else acc in
+      rec(i + 1, acc2) in
+  list_rev(rec(0, []))
+
 let js_func_body(ps0, body, ctx, st, mode) =
   let ps = js_ps_args(ps0, body) in
   let retf2 = js_fresh(st, "retf") in
   let retv2 = js_fresh(st, "retv") in
   let pbs = map(fun(p) -> js_binds_of(p, st), ps) in
   let allb = foldl(fun(acc, xs) -> append(acc, xs), [], pbs) in
-  let ctx3 = [append(allb, nth(ctx, 0)), nth(ctx, 1), retf2, retv2, nth(ctx, 4), 0] in
+  /* Hoist `var` boxes so earlier closures see the binding (Howler `this||f`). */
+  let vnames0 = js_collect_vars(body) in
+  let vnames =
+    let n = len(vnames0) in
+    let rec(i, acc) =
+      if i >= n then list_rev(acc)
+      else
+        let nm = nth(vnames0, i) in
+        if js_lookup(allb, nm) != "" then rec(i + 1, acc)
+        else rec(i + 1, cons(nm, acc)) in
+    rec(0, []) in
+  let vbinds = map(fun(nm) -> [nm, js_fresh(st, js_mangle(nm))], vnames) in
+  let ctx3 = [append(vbinds, append(allb, nth(ctx, 0))), nth(ctx, 1), retf2, retv2, nth(ctx, 4), 0] in
   /* Methods take one list. Formals are nth/slice of that list, so a call
    * can spread or pass a rest tail without knowing the method's arity. */
   let method = mode == "method" in
@@ -2156,17 +2219,25 @@ let js_func_body(ps0, body, ctx, st, mode) =
           else des in
         wrap(i - 1, des2) in
   let sig = if method then an else js_join(pnames, ", ", 0, "") in
+  let hoist_vars(inner) =
+    let n = len(vbinds) in
+    let rec(i, acc) =
+      if i < 0 then acc
+      else
+        let m = nth(nth(vbinds, i), 1) in
+        rec(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", 0) in ", acc, "))"])) in
+    rec(n - 1, inner) in
   if mode == "gen" then
     let _ = box_set(st_obj(st), 1) in
     let _ = box_set(st_fmap(st), 1) in
     let ctxg = [nth(ctx3, 0), nth(ctx3, 1), 0, 0, nth(ctx3, 4), 0] in
     let start = js_gen_stmts(body, ctxg, st) in
-    [sig, wrap(len(ps) - 1, js_cat(["_js_gen(", start, ")"]))]
+    [sig, wrap(len(ps) - 1, hoist_vars(js_cat(["_js_gen(", start, ")"])))]
   else
     let b0 = js_call_stmts(body, ctx3, "0", st) in
     let b1 = js_cat(["(let ", retv2, " = box_new() in ", b0, ")"]) in
     let b2 = js_cat(["(let ", retf2, " = box_new() in (let _ = box_set(", retf2, ", false) in ", b1, "))"]) in
-    let wrapped = wrap(len(ps) - 1, b2) in
+    let wrapped = wrap(len(ps) - 1, hoist_vars(b2)) in
     if mode == "async" then
       let _ = box_set(st_prom(st), 1) in
       let _ = box_set(st_jslib(st), 1) in
@@ -2690,11 +2761,11 @@ let js_emit_expr(e, ctx, st) =
   else if tag == "comma" then
     js_cat(["(let _ = ", js_emit_expr(nth(e, 1), ctx, st), " in ", js_emit_expr(nth(e, 2), ctx, st), ")"])
   else if tag == "id" then
-    /* Function -> direct name; boxed var -> box_get; else assume global fn. */
+    /* Function -> direct name; locals/globals -> box_get. */
     let nm = nth(e, 1) in
     if nm == "console" or nm == "Math" then "0"
     else if js_in(funcs, nm) then js_mangle(nm)
-    else let b = js_lookup(vars, nm) in (if b != "" then js_cat(["box_get(", b, ")"]) else js_mangle(nm))
+    else js_cat(["box_get(", js_var(vars, nm), ")"])
   else if tag == "arr" then js_emit_arr(e, ctx, st)
   else if tag == "obj" then js_emit_obj(e, ctx, st)
   else if tag == "tmpl" then
@@ -3379,19 +3450,26 @@ let js_emit_stmts(stmts, ctx, k, st) =
         js_cat(["(let ", o, " = box_new() in (let _ = box_set(", o, ", ", ie, ") in ", wrap(n - 1, cont), "))"])
       else if tag == "let" then
         let nm = nth(s, 2) in
+        let kw = nth(s, 1) in
         let prev = js_lookup(vars2, nm) in
         let reuse = box_get(js_stream_reuse) in
         let _ = if reuse == nm then box_set(js_stream_reuse, "") else 0 in
-        let m = if reuse == nm and prev != "" then prev else js_fresh(st, js_mangle(nm)) in
+        /* Hoisted `var` already has a box; just assign. */
+        let hoisted = kw == "var" and prev != "" in
+        let m =
+          if hoisted then prev
+          else if reuse == nm and prev != "" then prev
+          else js_fresh(st, js_mangle(nm)) in
         let init = nth(s, 3) in
         let ie = js_emit_expr(init, [vars2, funcs2, retf, retv, strs2, brk2], st) in
         let sg = if nth(init, 0) == "funexpr" then js_sig_of(nth(init, 2)) else 0 in
         let _ = if sg == 0 then 0 else js_arity_push(st, nm, nth(sg, 0), nth(sg, 1)) in
-        let vars3 = cons([nm, m], vars2) in
+        let vars3 = if hoisted then vars2 else cons([nm, m], vars2) in
         let strs3 = if js_is_str_expr(init, strs2) then cons(nm, strs2) else strs2 in
         let cont = go(rest, vars3, funcs2, strs3, brk2, k2) in
         let _ = if sg == 0 then 0 else js_arity_pop(st) in
-        js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ie, ") in ", cont, "))"])
+        if hoisted then js_cat(["(let _ = box_set(", m, ", ", ie, ") in ", cont, ")"])
+        else js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ie, ") in ", cont, "))"])
       else
         /* CPS copies a statement's continuation, so a few hundred nested
          * statements blow up. A straight run becomes local functions of at
@@ -3570,6 +3648,7 @@ let js_to_yac(src) =
   let _ = box_set(js_labs, []) in
   let _ = box_set(js_lab_n, 3) in
   let _ = box_set(js_lab_here, 0) in
+  let _ = box_set(js_globals, list_new()) in
   let toks = js_lex(src) in
   let r = js_parse_stmts(toks, 0, ["list", 0], st) in
   let imps = box_get(uimp) in
@@ -3634,7 +3713,16 @@ let js_to_yac(src) =
       if box_get(ubuiltin) == 1 then
         "let _ = fmap_put(nth(_js_proto(\"Promise\"), 1), \"then\", fun(f) -> js_promise_then(_js_pq, _js_pd, box_get(_js_this), f, 0)) in let _ = fmap_put(nth(_js_proto(\"Promise\"), 1), \"catch\", fun(f) -> js_promise_then(_js_pq, _js_pd, box_get(_js_this), 0, f)) in "
       else "" in
-    js_flat(js_cat([h0, h1, h2, h6, himp, h10, hjsrt, h8, hinst, hp, body, "\n"]))
+    let hglob =
+      let xs = box_get(js_globals) in
+      let n = len(xs) in
+      let rec(i, acc) =
+        if i >= n then acc
+        else
+          let m = js_mangle(nth(xs, i)) in
+          rec(i + 1, js_cat([acc, "let ", m, " = box_new()\nlet _ = box_set(", m, ", 0)\n"])) in
+      rec(0, "") in
+    js_flat(js_cat([h0, h1, h2, h6, himp, h10, hjsrt, h8, hglob, hinst, hp, body, "\n"]))
 
 /* A statement that owns a nested statement list. Its pieces are printed on
  * their own; emitting the container again would rebuild the whole body. */
@@ -3733,6 +3821,7 @@ let js_dump_src(src) =
   let _ = box_set(js_labs, []) in
   let _ = box_set(js_lab_n, 3) in
   let _ = box_set(js_lab_here, 0) in
+  let _ = box_set(js_globals, list_new()) in
   let toks = js_lex(src) in
   let _ = js_parse_stmts(toks, 0, ["list", 0], st) in
   let _ = box_set(js_stream_box, 0) in

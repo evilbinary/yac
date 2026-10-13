@@ -149,6 +149,7 @@ let js_compile_file(path, out0) =
     if js_is_error(y) then print(y)
     else
       let out = if out0 == 0 then js_default_out(path) else out0 in
+      let _ = print(str_cat("js: translated ", str_cat(int_to_str(str_len(y)), " bytes"))) in
       let bin = compile(y) in
       if bin == 0 then print("error: native compilation failed")
       else
