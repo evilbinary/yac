@@ -3104,7 +3104,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let c3 = with_brk(ctx2, sc) in
       let body = js_emit_stmts(nth(s, 2), c3, "0", st) in
       let c = js_emit_expr(nth(s, 1), c3, st) in
-      let loopbody = js_cat(["(if ", js_truth(c, st), " then (let _ = box_set(", sc, ", 0) in (let _ = ", body, " in ", after_loop(sc, js_cat([w, "(0)"])), ")) else 0)"]) in
+      let loopbody = js_cat(["(if ", js_truth(c, st), " then (let _ = box_set(", sc, ", 0) in (let _ = ", body, " in ", after_loop(sc, 0, js_cat([w, "(0)"])), ")) else 0)"]) in
       js_cat(["(let ", sc, " = box_new() in (let ", w, "(_) = ", loopbody, " in ", w, "(0)))"])
     else if tag == "do" then
       let w = js_fresh(st, "w") in
@@ -3113,7 +3113,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let body = js_emit_stmts(nth(s, 1), c3, "0", st) in
       let c = js_emit_expr(nth(s, 2), c3, st) in
       let nxt = js_cat(["(if ", js_truth(c, st), " then ", w, "(0) else 0)"]) in
-      let loopbody = js_cat(["(let _ = box_set(", sc, ", 0) in (let _ = ", body, " in ", after_loop(sc, nxt), "))"]) in
+      let loopbody = js_cat(["(let _ = box_set(", sc, ", 0) in (let _ = ", body, " in ", after_loop(sc, 0, nxt), "))"]) in
       js_cat(["(let ", sc, " = box_new() in (let ", w, "(_) = ", loopbody, " in ", w, "(0)))"])
     else if tag == "for" then
       let init = nth(s, 1) in
@@ -3142,7 +3142,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
            else js_cat(["(let _ = ", js_emit_expr(upd, c3, st), " in ", w, "(0))"])) in
       let body_e = js_emit_stmts(body, c3, "0", st) in
       let testc = js_emit_expr(test, c3, st) in
-      let loopbody = js_cat(["(if ", js_truth(testc, st), " then (let _ = box_set(", sc, ", 0) in (let _ = ", body_e, " in ", after_loop(sc, nxt), ")) else 0)"]) in
+      let loopbody = js_cat(["(if ", js_truth(testc, st), " then (let _ = box_set(", sc, ", 0) in (let _ = ", body_e, " in ", after_loop(sc, 0, nxt), ")) else 0)"]) in
       if is_let then
         let wbody = js_cat(["(let ", ib, " = box_new() in (let _ = box_set(", ib, ", ", iv, ") in (let ", bb, " = box_new() in (let _ = box_set(", bb, ", box_get(", ib, ")) in ", loopbody, "))))"]) in
         js_cat(["(let ", sc, " = box_new() in (let ", w, "(", iv, ") = ", wbody, " in ", w, "(", js_emit_expr(nth(init, 3), ctx2, st), ")))"])
