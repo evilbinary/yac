@@ -4,10 +4,10 @@
  * Output: AST as nested Lists.
  *
  * Architecture: yac has no mutual recursion / forward refs across top-level
- * lets, so the parser is ONE self-recursive top-level function `parse_expr`
- * with all auxiliary parsers defined as nested local functions inside it
- * (they may reference parse_expr, which is in scope). Each returns
- * [ast, nextIndex].
+ * lets, so auxiliaries live inside `mk_parse(toks)`. Internal recursion goes
+ * through a boxed `go` (same helpers) — re-entering a top-level parse_expr
+ * per subexpr rebuilt every nested closure and made main.yac parse O(minutes).
+ * Each helper returns [ast, nextIndex].
  *
  * AST shapes:
  *   ["int", text] ["float", text] ["str", text] ["bool","true"|"false"]
@@ -191,7 +191,14 @@ let parse_implist(toks, i, acc) =
 let hdr_semi(toks, j) =
   if tok_k(toks, j) == "semi" then j + 1 else j
 
-let parse_expr(toks, i, min_prec) =
+/* Session cache: same toks ⇒ reuse boxed go (helpers built once per program). */
+let parse_sess = box_new()
+
+/* Build one parser closure for `toks`. Internal recursion uses boxed `go`
+ * so nested lets/calls reuse helpers instead of re-entering parse_expr. */
+let mk_parse(toks) =
+  let go_b = box_new() in
+  let go(j, mp) = (box_get(go_b))(j, mp) in
   /* ---- token access ---- */
   let ntoks = len(toks) in
   let tk_at(j) = if j >= ntoks then ["eof", "", 0] else nth(toks, j) in
@@ -244,7 +251,7 @@ let parse_expr(toks, i, min_prec) =
   let parse_arglist(j, acc) =
     if kk(j) == "rparen" then [true, reverse(acc), j + 1]
     else
-      let r = parse_expr(toks, j, 0) in
+      let r = go(j, 0) in
       if is_err(nth(r, 0)) then [false, nth(r, 0), nth(r, 1)]
       else if kk(nth(r, 1)) == "comma" then
         parse_arglist(nth(r, 1) + 1, cons(nth(r, 0), acc))
@@ -280,7 +287,7 @@ let parse_expr(toks, i, min_prec) =
   let parse_listitems(j, acc) =
     if kk(j) == "rbrk" then [true, reverse(acc), j + 1]
     else
-      let r = parse_expr(toks, j, 0) in
+      let r = go(j, 0) in
       if is_err(nth(r, 0)) then [false, nth(r, 0), nth(r, 1)]
       else if kk(nth(r, 1)) == "comma" then
         parse_listitems(nth(r, 1) + 1, cons(nth(r, 0), acc))
@@ -315,7 +322,7 @@ let parse_expr(toks, i, min_prec) =
       if nth(r, 0) then [["list", nth(r, 1)], nth(r, 2)]
       else close_fail(r, "expected ']' to close list")
     else if is_kw(j, "not") then
-      let r = parse_expr(toks, j + 1, 0) in
+      let r = go(j + 1, 0) in
       if is_err(nth(r, 0)) then r
       else [["not", nth(r, 0)], nth(r, 1)]
     else if is_kw(j, "print") then
@@ -331,11 +338,11 @@ let parse_expr(toks, i, min_prec) =
             [["call", ["var", "print"], args], nth(r, 2)]
           else parse_err(toks,j)
       else
-        let r = parse_expr(toks, j + 1, 0) in
+        let r = go(j + 1, 0) in
         if is_err(nth(r, 0)) then r
         else [["call", ["var", "print"], [nth(r, 0), ["bool", "true"]]], nth(r, 1)]
     else if is_kw(j, "callcc") then
-      let r = parse_expr(toks, j + 1, 0) in
+      let r = go(j + 1, 0) in
       if is_err(nth(r, 0)) then r
       else [["callcc", nth(r, 0)], nth(r, 1)]
     else if is_kw(j, "throw") then
@@ -354,7 +361,7 @@ let parse_expr(toks, i, min_prec) =
         else
           let after = nth(pr, 2) in
           if is_op(after, "->") then
-            let r = parse_expr(toks, after + 1, 0) in
+            let r = go(after + 1, 0) in
             if is_err(nth(r, 0)) then r
             else [fun_of(nth(pr, 1), nth(r, 0), nth(pr, 3)), nth(r, 1)]
           else parse_err_msg(toks, after, "expected '->'")
@@ -369,12 +376,12 @@ let parse_expr(toks, i, min_prec) =
         else
           let after = nth(pr, 2) in
           if is_op(after, "->") then
-            let r = parse_expr(toks, after + 1, 0) in
+            let r = go(after + 1, 0) in
             if is_err(nth(r, 0)) then r
             else [fun_of(nth(pr, 1), nth(r, 0), nth(pr, 3)), nth(r, 1)]
           else parse_err_msg(toks, after, "expected '->'")
       else
-        let r = parse_expr(toks, j + 1, 0) in
+        let r = go(j + 1, 0) in
         if is_err(nth(r, 0)) then r
         else if kk(nth(r, 1)) != "rparen" then
           parse_err_msg(toks, nth(r, 1), "expected ')'")
@@ -395,7 +402,7 @@ let parse_expr(toks, i, min_prec) =
       let juxta(_) =
         if nth(nth(toks, j), 2) != nth(nth(toks, j - 1), 2) then [head, j]
         else
-          let r = parse_expr(toks, j, 0) in
+          let r = go(j, 0) in
           if is_err(nth(r, 0)) then [head, j]
           else parse_app(nth(r, 1), ["call", head, [nth(r, 0)]]) in
       if k == "ident" then juxta(0)
@@ -408,19 +415,19 @@ let parse_expr(toks, i, min_prec) =
 
   /* ---- if ---- */
   let parse_if(j) =
-    let cr = parse_expr(toks, j, 0) in
+    let cr = go(j, 0) in
     if is_err(nth(cr, 0)) then cr
     else
       let cond = nth(cr, 0) in
       let k = nth(cr, 1) in
       if is_kw(k, "then") then
-        let tr = parse_expr(toks, k + 1, 0) in
+        let tr = go(k + 1, 0) in
         if is_err(nth(tr, 0)) then tr
         else
           let thena = nth(tr, 0) in
           let m = nth(tr, 1) in
           if is_kw(m, "else") then
-            let er = parse_expr(toks, m + 1, 0) in
+            let er = go(m + 1, 0) in
             if is_err(nth(er, 0)) then er
             else [["if", cond, thena, nth(er, 0)], nth(er, 1)]
           else parse_err_msg(toks, m, "expected 'else'")
@@ -441,14 +448,14 @@ let parse_expr(toks, i, min_prec) =
         let params = nth(params_res, 1) in
         let after_params = nth(params_res, 2) in
         if is_op(after_params, "=") then
-          let br = parse_expr(toks, after_params + 1, 0) in
+          let br = go(after_params + 1, 0) in
           let bound0 = nth(br, 0) in
           let k = nth(br, 1) in
           let bound1 =
             if has_params then fun_of(params, bound0, nth(params_res, 3)) else bound0 in
           if is_err(bound0) then br
           else if is_kw(k, "in") then
-            let bodyr = parse_expr(toks, k + 1, 0) in
+            let bodyr = go(k + 1, 0) in
             if is_err(nth(bodyr, 0)) then bodyr
             else [["let", name, bound1, nth(bodyr, 0)], nth(bodyr, 1)]
           else [["let", name, bound1, ["unit"]], k]
@@ -461,95 +468,111 @@ let parse_expr(toks, i, min_prec) =
       let op = tt(j) in
       let p = prec_of(op) in
       if p >= minp then
-        let rr = parse_expr(toks, j + 1, p + 1) in
+        let rr = go(j + 1, p + 1) in
         if is_err(nth(rr, 0)) then rr
         else parse_binloop(nth(rr, 1), ["binop", op, lhs, nth(rr, 0)], minp)
       else [lhs, j]
     else [lhs, j] in
 
-  /* ---- main dispatch ---- */
-  if is_kw(i, "let") then parse_let(i + 1)
-  else if is_kw(i, "if") then parse_if(i + 1)
-  else if is_op(i, "-") then
-    /* unary minus: -x  ==  (0 - x); operand binds tightest (min_prec high),
-     * then continue with trailing binary operators */
-    let ur = parse_expr(toks, i + 1, 7) in
-    if is_err(nth(ur, 0)) then ur
+  /* ---- main dispatch (installed into go_b for mutual use) ---- */
+  let rec_go(i, min_prec) =
+    if is_kw(i, "let") then parse_let(i + 1)
+    else if is_kw(i, "if") then parse_if(i + 1)
+    else if is_op(i, "-") then
+      /* unary minus: -x  ==  (0 - x); operand binds tightest (min_prec high),
+       * then continue with trailing binary operators */
+      let ur = go(i + 1, 7) in
+      if is_err(nth(ur, 0)) then ur
+      else
+        let u = nth(ur, 0) in
+        let un =
+          if nth(u, 0) == "float" then
+            let t = nth(u, 1) in
+            if str_len(t) == 0 then u
+            else if str_ref(t, 0) == 45 then
+              ["float", str_slice(t, 1, str_len(t) - 1)]
+            else ["float", str_cat("-", t)]
+          else ["binop", "-", ["int", "0"], u] in
+        parse_binloop(nth(ur, 1), un, min_prec)
     else
-      let u = nth(ur, 0) in
-      let un =
-        if nth(u, 0) == "float" then
-          let t = nth(u, 1) in
-          if str_len(t) == 0 then u
-          else if str_ref(t, 0) == 45 then
-            ["float", str_slice(t, 1, str_len(t) - 1)]
-          else ["float", str_cat("-", t)]
-        else ["binop", "-", ["int", "0"], u] in
-      parse_binloop(nth(ur, 1), un, min_prec)
-  else
-    let pr = parse_primary(i) in
-    if is_err(nth(pr, 0)) then pr
-    else
-      let appr = parse_app(nth(pr, 1), nth(pr, 0)) in
-      if is_err(nth(appr, 0)) then appr
-      else parse_binloop(nth(appr, 1), nth(appr, 0), min_prec)
+      let pr = parse_primary(i) in
+      if is_err(nth(pr, 0)) then pr
+      else
+        let appr = parse_app(nth(pr, 1), nth(pr, 0)) in
+        if is_err(nth(appr, 0)) then appr
+        else parse_binloop(nth(appr, 1), nth(appr, 0), min_prec) in
+  let _ = box_set(go_b, rec_go) in
+  let _ = box_set(parse_sess, [toks, rec_go]) in
+  rec_go
+
+let parse_expr(toks, i, min_prec) =
+  let s = box_get(parse_sess) in
+  if s != 0 then
+    if nth(s, 0) == toks then (nth(s, 1))(i, min_prec)
+    else (mk_parse(toks))(i, min_prec)
+  else (mk_parse(toks))(i, min_prec)
 
 /* ---- program: headers then a sequence of top-level exprs ----
  * Acc is a listbuf (O(1) push). Returning cons+reverse made every later
  * len/nth on the program O(n)/O(n²) — main.yac (~29k forms) spent minutes
- * in hoist_imports / ub_prog alone. */
+ * in hoist_imports / ub_prog alone.
+ * parse_expr caches mk_parse(toks) in parse_sess so top-level forms share helpers. */
 let parse_program(toks, i, acc0) =
   let acc = if kind(acc0) == 5 then acc0 else list_new() in
-  if i >= len(toks) then acc
-  else if tok_k(toks, i) == "eof" then acc
-  else if tok_is_kw(toks, i, "package") then
-    let d = parse_dotted(toks, i + 1, "") in
-    if nth(d, 0) == "" then
-      let _ = list_push(acc, nth(parse_err(toks, i + 1), 0)) in acc
-    else
-      let _ = list_push(acc, ["package", nth(d, 0)]) in
-      parse_program(toks, hdr_semi(toks, nth(d, 1)), acc)
-  else if tok_is_kw(toks, i, "export") then
-    let ids = parse_idlist(toks, i + 1, []) in
-    if nth(ids, 0) == [] then
-      let _ = list_push(acc, nth(parse_err(toks, i + 1), 0)) in acc
-    else
-      let _ = list_push(acc, ["export", nth(ids, 0)]) in
-      parse_program(toks, hdr_semi(toks, nth(ids, 1)), acc)
-  else if tok_is_kw(toks, i, "import") then
-    let d = parse_dotted(toks, i + 1, "") in
-    if nth(d, 0) == "" then
-      let _ = list_push(acc, nth(parse_err(toks, i + 1), 0)) in acc
-    else
-      let j = nth(d, 1) in
-      if tok_k(toks, j) == "lbrace" then
-        let ids = parse_implist(toks, j + 1, []) in
-        if tok_k(toks, nth(ids, 1)) != "rbrace" then
-          let _ = list_push(acc, nth(parse_err_msg(toks, nth(ids, 1), "expected '}'"), 0)) in acc
-        else
-          let _ = list_push(acc, ["import", nth(d, 0), nth(ids, 0), 0]) in
-          parse_program(toks, hdr_semi(toks, nth(ids, 1) + 1), acc)
-      else if tok_k(toks, j) == "ident" then
-        if tok_t(toks, j) == "as" then
-          if tok_k(toks, j + 1) != "ident" then
-            let _ = list_push(acc, nth(parse_err(toks, j + 1), 0)) in acc
+  let ntoks = len(toks) in
+  let _ = box_set(parse_sess, 0) in
+  let loop(i, acc) =
+    if i >= ntoks then acc
+    else if tok_k(toks, i) == "eof" then acc
+    else if tok_is_kw(toks, i, "package") then
+      let d = parse_dotted(toks, i + 1, "") in
+      if nth(d, 0) == "" then
+        let _ = list_push(acc, nth(parse_err(toks, i + 1), 0)) in acc
+      else
+        let _ = list_push(acc, ["package", nth(d, 0)]) in
+        loop(hdr_semi(toks, nth(d, 1)), acc)
+    else if tok_is_kw(toks, i, "export") then
+      let ids = parse_idlist(toks, i + 1, []) in
+      if nth(ids, 0) == [] then
+        let _ = list_push(acc, nth(parse_err(toks, i + 1), 0)) in acc
+      else
+        let _ = list_push(acc, ["export", nth(ids, 0)]) in
+        loop(hdr_semi(toks, nth(ids, 1)), acc)
+    else if tok_is_kw(toks, i, "import") then
+      let d = parse_dotted(toks, i + 1, "") in
+      if nth(d, 0) == "" then
+        let _ = list_push(acc, nth(parse_err(toks, i + 1), 0)) in acc
+      else
+        let j = nth(d, 1) in
+        if tok_k(toks, j) == "lbrace" then
+          let ids = parse_implist(toks, j + 1, []) in
+          if tok_k(toks, nth(ids, 1)) != "rbrace" then
+            let _ = list_push(acc, nth(parse_err_msg(toks, nth(ids, 1), "expected '}'"), 0)) in acc
           else
-            let _ = list_push(acc, ["import", nth(d, 0), 0, tok_t(toks, j + 1)]) in
-            parse_program(toks, hdr_semi(toks, j + 2), acc)
+            let _ = list_push(acc, ["import", nth(d, 0), nth(ids, 0), 0]) in
+            loop(hdr_semi(toks, nth(ids, 1) + 1), acc)
+        else if tok_k(toks, j) == "ident" then
+          if tok_t(toks, j) == "as" then
+            if tok_k(toks, j + 1) != "ident" then
+              let _ = list_push(acc, nth(parse_err(toks, j + 1), 0)) in acc
+            else
+              let _ = list_push(acc, ["import", nth(d, 0), 0, tok_t(toks, j + 1)]) in
+              loop(hdr_semi(toks, j + 2), acc)
+          else
+            let _ = list_push(acc, ["import", nth(d, 0)]) in
+            loop(hdr_semi(toks, j), acc)
         else
           let _ = list_push(acc, ["import", nth(d, 0)]) in
-          parse_program(toks, hdr_semi(toks, j), acc)
-      else
-        let _ = list_push(acc, ["import", nth(d, 0)]) in
-        parse_program(toks, hdr_semi(toks, j), acc)
-  else
-    let r = parse_expr(toks, i, 0) in
-    if is_err(nth(r, 0)) then
-      let _ = list_push(acc, nth(r, 0)) in acc
+          loop(hdr_semi(toks, j), acc)
     else
-      let rawj = nth(r, 1) in
-      let j2 = if rawj < len(toks) then
-                 if tok_k(toks, rawj) == "semi" then rawj + 1 else rawj
-               else rawj in
-      let _ = list_push(acc, nth(r, 0)) in
-      parse_program(toks, j2, acc)
+      let r = parse_expr(toks, i, 0) in
+      if is_err(nth(r, 0)) then
+        let _ = list_push(acc, nth(r, 0)) in acc
+      else
+        let rawj = nth(r, 1) in
+        let j2 = if rawj < ntoks then
+                   if tok_k(toks, rawj) == "semi" then rawj + 1 else rawj
+                 else rawj in
+        let _ = list_push(acc, nth(r, 0)) in
+        loop(j2, acc) in
+  loop(i, acc)

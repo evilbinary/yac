@@ -23,8 +23,12 @@ let is_space(c) = c == 32 or c == 9 or c == 10 or c == 13
 let is_opchar(c) = c == 43 or c == 45 or c == 42 or c == 47 or c == 37 or
                    c == 61 or c == 60 or c == 62 or c == 33
 
+/* Keywords are 2..7 chars; gensyms like `_v_obj20979` bail out cheaply. */
 let is_kw(w) =
-  if w == "let" then true
+  let n = str_len(w) in
+  if n < 2 then false
+  else if n > 7 then false
+  else if w == "let" then true
   else if w == "in" then true
   else if w == "fun" then true
   else if w == "if" then true
