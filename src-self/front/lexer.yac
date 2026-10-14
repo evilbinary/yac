@@ -366,8 +366,10 @@ let intern_seed(_) =
   let _ = intern("csym") in
   0
 
-/* After lex: intern ident/kw/op/punct/num/str text so later == is pointer-eq
- * on native (and cheap intern-table hits). TCO loop; not nested inside lex. */
+/* After lex: intern kw/op/punct and short idents so later == is pointer-eq.
+ * Long gensyms (`_v_obj20979`, …) are almost unique: interning copies them
+ * into the permanent arena and fills the intern fmap — main.yac paid ~1GB
+ * and a large fraction of lex for no reuse. Leave those texts as-is. */
 let intern_toks(toks, i, n) =
   if i >= n then toks
   else
@@ -376,6 +378,8 @@ let intern_toks(toks, i, n) =
     if k == "eof" then intern_toks(toks, i + 1, n)
     else if k == "num" then intern_toks(toks, i + 1, n)
     else if k == "str" then intern_toks(toks, i + 1, n)
+    else if k == "ident" and str_len(nth(t, 1)) > 12 then
+      intern_toks(toks, i + 1, n)
     else
       let _ = list_set(toks, i, [k, intern(nth(t, 1)), nth(t, 2)]) in
       intern_toks(toks, i + 1, n)

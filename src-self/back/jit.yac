@@ -463,13 +463,21 @@ let import_repl_str(e) =
     let s = import_spec_locals(nth(e, 2), 0, "") in
     if s == "" then nth(e, 1) else s
 
+/* Echo the import name as a trailing str so the REPL line has a value.
+ * parse_program returns a listbuf; append() walks cons cdrs and SIGSEGVs
+ * (or corrupts) on kind=5 — push in place instead. */
 let ast_repl_import(ast) =
   let n = len(ast) in
   if n == 0 then ast
   else
     let e = nth(ast, n - 1) in
     if nth(e, 0) != "import" then ast
-    else append(ast, [["str", import_repl_str(e)]])
+    else
+      let s = ["str", import_repl_str(e)] in
+      if kind(ast) == 5 then
+        let _ = list_push(ast, s) in
+        ast
+      else append(ast, [s])
 
 let jit_run_ok(t) = target_arch(t) == host_arch(0)
 

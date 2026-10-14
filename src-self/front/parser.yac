@@ -494,47 +494,62 @@ let parse_expr(toks, i, min_prec) =
       if is_err(nth(appr, 0)) then appr
       else parse_binloop(nth(appr, 1), nth(appr, 0), min_prec)
 
-/* ---- program: headers then a sequence of top-level exprs ---- */
-let parse_program(toks, i, acc) =
-  if i >= len(toks) then reverse(acc)
-  else if tok_k(toks, i) == "eof" then reverse(acc)
+/* ---- program: headers then a sequence of top-level exprs ----
+ * Acc is a listbuf (O(1) push). Returning cons+reverse made every later
+ * len/nth on the program O(n)/O(n²) — main.yac (~29k forms) spent minutes
+ * in hoist_imports / ub_prog alone. */
+let parse_program(toks, i, acc0) =
+  let acc = if kind(acc0) == 5 then acc0 else list_new() in
+  if i >= len(toks) then acc
+  else if tok_k(toks, i) == "eof" then acc
   else if tok_is_kw(toks, i, "package") then
     let d = parse_dotted(toks, i + 1, "") in
-    if nth(d, 0) == "" then cons(nth(parse_err(toks, i + 1), 0), acc)
-    else parse_program(toks, hdr_semi(toks, nth(d, 1)),
-           cons(["package", nth(d, 0)], acc))
+    if nth(d, 0) == "" then
+      let _ = list_push(acc, nth(parse_err(toks, i + 1), 0)) in acc
+    else
+      let _ = list_push(acc, ["package", nth(d, 0)]) in
+      parse_program(toks, hdr_semi(toks, nth(d, 1)), acc)
   else if tok_is_kw(toks, i, "export") then
     let ids = parse_idlist(toks, i + 1, []) in
-    if nth(ids, 0) == [] then cons(nth(parse_err(toks, i + 1), 0), acc)
-    else parse_program(toks, hdr_semi(toks, nth(ids, 1)),
-           cons(["export", nth(ids, 0)], acc))
+    if nth(ids, 0) == [] then
+      let _ = list_push(acc, nth(parse_err(toks, i + 1), 0)) in acc
+    else
+      let _ = list_push(acc, ["export", nth(ids, 0)]) in
+      parse_program(toks, hdr_semi(toks, nth(ids, 1)), acc)
   else if tok_is_kw(toks, i, "import") then
     let d = parse_dotted(toks, i + 1, "") in
-    if nth(d, 0) == "" then cons(nth(parse_err(toks, i + 1), 0), acc)
+    if nth(d, 0) == "" then
+      let _ = list_push(acc, nth(parse_err(toks, i + 1), 0)) in acc
     else
       let j = nth(d, 1) in
       if tok_k(toks, j) == "lbrace" then
         let ids = parse_implist(toks, j + 1, []) in
         if tok_k(toks, nth(ids, 1)) != "rbrace" then
-          cons(nth(parse_err_msg(toks, nth(ids, 1), "expected '}'"), 0), acc)
-        else parse_program(toks, hdr_semi(toks, nth(ids, 1) + 1),
-               cons(["import", nth(d, 0), nth(ids, 0), 0], acc))
+          let _ = list_push(acc, nth(parse_err_msg(toks, nth(ids, 1), "expected '}'"), 0)) in acc
+        else
+          let _ = list_push(acc, ["import", nth(d, 0), nth(ids, 0), 0]) in
+          parse_program(toks, hdr_semi(toks, nth(ids, 1) + 1), acc)
       else if tok_k(toks, j) == "ident" then
         if tok_t(toks, j) == "as" then
           if tok_k(toks, j + 1) != "ident" then
-            cons(nth(parse_err(toks, j + 1), 0), acc)
-          else parse_program(toks, hdr_semi(toks, j + 2),
-                 cons(["import", nth(d, 0), 0, tok_t(toks, j + 1)], acc))
-        else parse_program(toks, hdr_semi(toks, j),
-               cons(["import", nth(d, 0)], acc))
-      else parse_program(toks, hdr_semi(toks, j),
-             cons(["import", nth(d, 0)], acc))
+            let _ = list_push(acc, nth(parse_err(toks, j + 1), 0)) in acc
+          else
+            let _ = list_push(acc, ["import", nth(d, 0), 0, tok_t(toks, j + 1)]) in
+            parse_program(toks, hdr_semi(toks, j + 2), acc)
+        else
+          let _ = list_push(acc, ["import", nth(d, 0)]) in
+          parse_program(toks, hdr_semi(toks, j), acc)
+      else
+        let _ = list_push(acc, ["import", nth(d, 0)]) in
+        parse_program(toks, hdr_semi(toks, j), acc)
   else
     let r = parse_expr(toks, i, 0) in
-    if is_err(nth(r, 0)) then cons(nth(r, 0), acc)
+    if is_err(nth(r, 0)) then
+      let _ = list_push(acc, nth(r, 0)) in acc
     else
       let rawj = nth(r, 1) in
       let j2 = if rawj < len(toks) then
                  if tok_k(toks, rawj) == "semi" then rawj + 1 else rawj
                else rawj in
-      parse_program(toks, j2, cons(nth(r, 0), acc))
+      let _ = list_push(acc, nth(r, 0)) in
+      parse_program(toks, j2, acc)
