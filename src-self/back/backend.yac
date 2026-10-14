@@ -1097,7 +1097,7 @@ let vops(_) =
    "gst", "time_ms", "time_str", "argc", "argv", "closure", "icall",
    "nil", "cons", "len", "nth", "tail", "append",
    "list_rev", "list_new", "list_push", "strlit", "str_len", "str_ref",
-   "bytes_new", "bytes_len", "bytes_ref", "bytes_put", "bytes_append",
+   "bytes_new", "bytes_len", "bytes_grow", "bytes_ref", "bytes_put", "bytes_append",
    "bytes_extend", "bytes_cat_str", "str_cat", "str_slice", "int_to_str", "bytes_to_str",
    "drop", "foldl", "map", "read_file", "write_file", "mkcont", "throwk",
    "cc_recv", "untag", "syscall", "$syscall", "memcpy"]

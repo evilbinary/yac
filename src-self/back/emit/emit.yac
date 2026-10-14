@@ -1398,7 +1398,7 @@ let emit_insn_disp(st, insn) =
 let emit_rt_ops = [["bytes_new", 0], ["bytes_ref", 2], ["bytes_put", 3],
   ["len", 1], ["nth", 2], ["tail", 1], ["append", 2], ["list_rev", 1],
   ["list_new", 0], ["list_push", 2], ["str_cat", 2], ["str_slice", 3],
-  ["int_to_str", 1], ["bytes_to_str", 1], ["bytes_extend", 2], ["bytes_cat_str", 2],
+  ["int_to_str", 1], ["bytes_to_str", 1], ["bytes_grow", 2], ["bytes_extend", 2], ["bytes_cat_str", 2],
   ["bytes_append", 2], ["drop", 2], ["foldl", 3], ["map", 2],
   ["read_file", 1], ["write_file", 2]]
 
