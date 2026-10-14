@@ -2191,36 +2191,43 @@ let js_has_ret(stmts) =
       else rec(i + 1) in
   rec(0)
 
-/* Function declaration names in this body (not nested function bodies). */
-let js_collect_funcs(stmts) =
+/* Walk statement lists for function declarations (not nested fn bodies). */
+let js_each_func(stmts, fn, acc) =
   let n = len(stmts) in
-  let rec(i, acc) =
-    if i >= n then acc
+  let rec(i, a) =
+    if i >= n then a
     else
       let s = nth(stmts, i) in
       let tag = if len(s) == 0 then "" else nth(s, 0) in
-      let acc2 =
-        if tag == "func" then js_var_add(acc, nth(s, 1))
-        else if tag == "seq" or tag == "block" then append(acc, js_collect_funcs(nth(s, 1)))
-        else if tag == "if" then
-          append(js_collect_funcs(nth(s, 2)), append(js_collect_funcs(nth(s, 3)), acc))
-        else if tag == "while" then append(acc, js_collect_funcs(nth(s, 2)))
-        else if tag == "do" then append(acc, js_collect_funcs(nth(s, 1)))
-        else if tag == "for" then append(acc, js_collect_funcs(nth(s, 4)))
-        else if tag == "forin" or tag == "forof" then append(acc, js_collect_funcs(nth(s, 3)))
+      let a2 =
+        if tag == "func" then fn(s, a)
+        else if tag == "seq" or tag == "block" then js_each_func(nth(s, 1), fn, a)
+        else if tag == "if" then js_each_func(nth(s, 3), fn, js_each_func(nth(s, 2), fn, a))
+        else if tag == "while" then js_each_func(nth(s, 2), fn, a)
+        else if tag == "do" then js_each_func(nth(s, 1), fn, a)
+        else if tag == "for" then js_each_func(nth(s, 4), fn, a)
+        else if tag == "forin" or tag == "forof" then js_each_func(nth(s, 3), fn, a)
         else if tag == "try" then
-          append(acc, append(js_collect_funcs(nth(s, 1)), append(js_collect_funcs(nth(s, 3)), js_collect_funcs(nth(s, 4)))))
-        else if tag == "label" then append(acc, js_collect_funcs([nth(s, 2)]))
+          js_each_func(nth(s, 4), fn, js_each_func(nth(s, 3), fn, js_each_func(nth(s, 1), fn, a)))
+        else if tag == "label" then js_each_func([nth(s, 2)], fn, a)
         else if tag == "switch" then
           let cls = nth(s, 2) in
           let nc = len(cls) in
-          let rec2(j, a) =
-            if j >= nc then a
-            else rec2(j + 1, append(a, js_collect_funcs(nth(nth(cls, j), 1)))) in
-          rec2(0, acc)
-        else acc in
-      rec(i + 1, acc2) in
-  list_rev(rec(0, []))
+          let rec2(j, a3) =
+            if j >= nc then a3
+            else rec2(j + 1, js_each_func(nth(nth(cls, j), 1), fn, a3)) in
+          rec2(0, a)
+        else a in
+      rec(i + 1, a2) in
+  rec(0, acc)
+
+/* Function declaration names in this body. */
+let js_collect_funcs(stmts) =
+  list_rev(js_each_func(stmts, fun(s, a) -> js_var_add(a, nth(s, 1)), []))
+
+/* Function declaration statements in source order (later duplicate wins). */
+let js_collect_func_stmts(stmts) =
+  list_rev(js_each_func(stmts, fun(s, a) -> cons(s, a), []))
 
 let js_func_body(ps0, body, ctx, st, mode) =
   let ps = js_ps_args(ps0, body) in
@@ -2314,14 +2321,55 @@ let js_func_body(ps0, body, ctx, st, mode) =
         let m = nth(nth(allh, i), 1) in
         rec(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", 0) in\n", acc, "))"])) in
     rec(n - 1, inner) in
+  /* Install function declarations before any statement runs (JS hoist).
+   * Push arities before emitting the body so call sites see rest/spread. */
+  let with_funcs(emit_body) =
+    let fs = js_collect_func_stmts(body) in
+    let n = len(fs) in
+    let push_i(i) =
+      if i >= n then 0
+      else
+        let s = nth(fs, i) in
+        let nm = nth(s, 1) in
+        let bx = js_lookup(nth(ctx3, 0), nm) in
+        if bx == "" then push_i(i + 1)
+        else
+          let sg = js_sig_of(js_ps_args(nth(s, 2), nth(s, 3))) in
+          let _ = js_arity_push(st, nm, nth(sg, 0), nth(sg, 1)) in
+          push_i(i + 1) in
+    let pop_i(i) =
+      if i < 0 then 0
+      else
+        let s = nth(fs, i) in
+        let bx = js_lookup(nth(ctx3, 0), nth(s, 1)) in
+        let _ = if bx == "" then 0 else js_arity_pop(st) in
+        pop_i(i - 1) in
+    let _ = push_i(0) in
+    let inner = emit_body(0) in
+    let rec(i, acc) =
+      if i < 0 then acc
+      else
+        let s = nth(fs, i) in
+        let nm = nth(s, 1) in
+        let bx = js_lookup(nth(ctx3, 0), nm) in
+        if bx == "" then rec(i - 1, acc)
+        else
+          let bdy = nth(s, 3) in
+          let ps2 = js_ps_args(nth(s, 2), bdy) in
+          let fk = if len(s) > 4 then nth(s, 4) else "" in
+          let fb = js_func_body(ps2, bdy, ctx3, st, fk) in
+          rec(i - 1, js_cat(["(let _ = box_set(", bx, ", fun (", nth(fb, 0), ") -> ", nth(fb, 1), ") in\n", acc, ")"])) in
+    let out = rec(n - 1, inner) in
+    let _ = pop_i(n - 1) in
+    out in
   if mode == "gen" then
     let _ = box_set(st_obj(st), 1) in
     let _ = box_set(st_fmap(st), 1) in
     let ctxg = [nth(ctx3, 0), nth(ctx3, 1), 0, 0, nth(ctx3, 4), 0] in
-    let start = js_gen_stmts(body, ctxg, st) in
+    let start = with_funcs(fun(_) -> js_gen_stmts(body, ctxg, st)) in
     [sig, wrap(len(ps) - 1, hoist_vars(js_cat(["_js_gen(", start, ")"])))]
   else
-    let b0 = js_call_stmts(body, ctx3, "0", st) in
+    let b0 = with_funcs(fun(_) -> js_call_stmts(body, ctx3, "0", st)) in
     let bcore =
       if need_ret == false then b0
       else
@@ -3441,16 +3489,15 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let ps = js_ps_args(nth(s, 2), body) in
         let bx = js_lookup(vars2, nm) in
         let funcs3 = if js_in(funcs2, nm) then funcs2 else cons(nm, funcs2) in
-        let fk = if len(s) > 4 then nth(s, 4) else "" in
-        let sg = js_sig_of(ps) in
-        let _ = js_arity_push(st, nm, nth(sg, 0), nth(sg, 1)) in
-        let fb = js_func_body(ps, body, [vars2, funcs3, retf, retv, strs2, brk2], st, fk) in
-        let cont = go(rest, vars2, funcs3, strs2, brk2, k2) in
-        let _ = js_arity_pop(st) in
-        /* Hoisted box: assign the function value (keeps the let-spine flat). */
-        if bx != "" then
-          js_cat(["(let _ = box_set(", bx, ", fun (", nth(fb, 0), ") -> ", nth(fb, 1), ") in\n", cont, ")"])
+        /* Hoisted decls are bound at function entry; skip the source site. */
+        if bx != "" then go(rest, vars2, funcs3, strs2, brk2, k2)
         else
+          let fk = if len(s) > 4 then nth(s, 4) else "" in
+          let sg = js_sig_of(ps) in
+          let _ = js_arity_push(st, nm, nth(sg, 0), nth(sg, 1)) in
+          let fb = js_func_body(ps, body, [vars2, funcs3, retf, retv, strs2, brk2], st, fk) in
+          let cont = go(rest, vars2, funcs3, strs2, brk2, k2) in
+          let _ = js_arity_pop(st) in
           let m = js_mangle(nm) in
           js_cat(["(let ", m, "(", nth(fb, 0), ") = ", nth(fb, 1), " in\n", cont, ")"])
       else if tag == "class" then
@@ -3783,7 +3830,57 @@ let js_to_yac(src) =
     let nb = len(binds) in
     let go(i, acc) = if i >= nb then acc else go(i + 1, cons([nth(nth(binds, i), 0), nth(nth(binds, i), 2)], acc)) in
     go(0, []) in
-  let body0 = js_emit_stmts(nth(r, 0), [ivars, [], 0, 0, [], 0], "0", st) in
+  /* Top-level function decls: boxes + bind before any statement (JS hoist). */
+  let stmts0 = nth(r, 0) in
+  let fnames0 = js_collect_funcs(stmts0) in
+  let fbinds = map(fun(nm) -> [nm, js_fresh(st, js_mangle(nm))], fnames0) in
+  let ctx0 = [append(fbinds, ivars), fnames0, 0, 0, [], 0] in
+  let fs = js_collect_func_stmts(stmts0) in
+  let nfs = len(fs) in
+  let push_i(i) =
+    if i >= nfs then 0
+    else
+      let s = nth(fs, i) in
+      let nm = nth(s, 1) in
+      let bx = js_lookup(nth(ctx0, 0), nm) in
+      if bx == "" then push_i(i + 1)
+      else
+        let sg = js_sig_of(js_ps_args(nth(s, 2), nth(s, 3))) in
+        let _ = js_arity_push(st, nm, nth(sg, 0), nth(sg, 1)) in
+        push_i(i + 1) in
+  let pop_i(i) =
+    if i < 0 then 0
+    else
+      let bx = js_lookup(nth(ctx0, 0), nth(nth(fs, i), 1)) in
+      let _ = if bx == "" then 0 else js_arity_pop(st) in
+      pop_i(i - 1) in
+  let _ = push_i(0) in
+  let body_stmts = js_emit_stmts(stmts0, ctx0, "0", st) in
+  let body_bound =
+    let rec(i, acc) =
+      if i < 0 then acc
+      else
+        let s = nth(fs, i) in
+        let nm = nth(s, 1) in
+        let bx = js_lookup(nth(ctx0, 0), nm) in
+        if bx == "" then rec(i - 1, acc)
+        else
+          let bdy = nth(s, 3) in
+          let ps2 = js_ps_args(nth(s, 2), bdy) in
+          let fk = if len(s) > 4 then nth(s, 4) else "" in
+          let fb = js_func_body(ps2, bdy, ctx0, st, fk) in
+          rec(i - 1, js_cat(["(let _ = box_set(", bx, ", fun (", nth(fb, 0), ") -> ", nth(fb, 1), ") in\n", acc, ")"])) in
+    rec(nfs - 1, body_stmts) in
+  let _ = pop_i(nfs - 1) in
+  let body_hoist =
+    let n = len(fbinds) in
+    let rec(i, acc) =
+      if i < 0 then acc
+      else
+        let m = nth(nth(fbinds, i), 1) in
+        rec(i - 1, js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", 0) in\n", acc, "))"])) in
+    rec(n - 1, body_bound) in
+  let body0 = body_hoist in
   let body =
     let nb = len(binds) in
     let go(i, acc) =

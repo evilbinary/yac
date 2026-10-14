@@ -37,9 +37,20 @@ let _js_f64_str(x) =
   let s = if fs == "" then int_to_str(ip) else str_cat(int_to_str(ip), str_cat(".", fs)) in
   if neg then str_cat("-", s) else s
 
-/* Stringify a JS value for console.log / `+`: int -> decimal, float -> decimal,
- * else as-is. */
-let _js_str(x) = if is_int(x) then int_to_str(x) else if kind(x) == 7 then _js_f64_str(x) else x
+/* Stringify a JS value for console.log / `+`: int/float -> decimal, listbuf
+ * like JS Array#toString (comma-joined), else as-is. */
+let _js_str(x) =
+  if is_int(x) then int_to_str(x)
+  else if kind(x) == 7 then _js_f64_str(x)
+  else if kind(x) == 5 then
+    let n = len(x) in
+    let rec(i, acc) =
+      if i >= n then acc
+      else
+        let s = _js_str(nth(x, i)) in
+        if i == 0 then rec(1, s) else rec(i + 1, str_cat(acc, str_cat(",", s))) in
+    rec(0, "")
+  else x
 
 /* Boolean -> "true"/"false" (yac's own bool prints as 1/0). */
 let _js_bool(x) = if x then "true" else "false"

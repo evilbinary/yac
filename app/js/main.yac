@@ -25,8 +25,8 @@
  *   --help / -h               帮助
  *   --version / -V            版本
  *
- * 注意：lang.js 的变量在翻译后是局部 let，因此 REPL 每行相互独立，
- * 上一行声明的变量不会带到下一行（文件内多行是正常的）。
+ * REPL 会把 `let`/`const`/`var`/`function`/`class` 声明累加进会话上下文，
+ * 后续表达式在完整声明前缀下求值（文件内多行本来就是一整段翻译）。
  */
 
 import yc.compiler
@@ -120,16 +120,33 @@ let js_exec_y(y) =
   if js_is_error(y) then print(y)
   else run(js_suppress(y))
 
+/* REPL 会话里已接受的声明源码（let/const/var/function/class）。 */
+let js_repl_acc =
+  let b = box_new() in
+  let _ = box_set(b, "") in
+  b
+
+let js_with_acc(src) =
+  let acc = box_get(js_repl_acc) in
+  if acc == "" then src else str_cat(acc, str_cat("\n", src))
+
 /* 就地运行一段 JS。
  * lang.js 把语句序列的最后一个值丢掉（续延是 0），所以“表达式行”先包成
  * console.log(...) 再翻译，才能把值打出来；声明 / 语句 / console.* 原样翻译。 */
 let js_exec(src) =
   let t = trim(src) in
-  if js_is_decl(t) or js_is_stmt(t) or starts_with(t, "console") then
-    js_exec_y(js_to_yac(src))
+  if js_is_decl(t) then
+    let src2 = js_with_acc(t) in
+    let y = js_to_yac(src2) in
+    if js_is_error(y) then print(y)
+    else
+      let _ = run(js_suppress(y)) in
+      box_set(js_repl_acc, src2)
+  else if js_is_stmt(t) or starts_with(t, "console") then
+    js_exec_y(js_to_yac(js_with_acc(t)))
   else
     let e = js_strip_semi(t) in
-    js_exec_y(js_to_yac(str_cat("console.log(", str_cat(e, ")"))))
+    js_exec_y(js_to_yac(js_with_acc(str_cat("console.log(", str_cat(e, ")")))))
 
 let js_run_file(path) =
   let src = read_or_0(path) in
@@ -180,7 +197,7 @@ let js_help(_) =
   let _ = print("  :help                      本帮助") in
   let _ = print("  :quit, :q                  退出") in
   let _ = print("") in
-  let _ = print("直接输入 JS 会立即求值（每行独立）。") in
+  let _ = print("直接输入 JS 会立即求值（声明会保留在会话里）。") in
   let _ = print("-o 与 --out 相同。") in
   0
 
