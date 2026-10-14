@@ -1704,7 +1704,7 @@ let js_flat_step(buf, nodes, idxs, depth) =
     let k = kind(node) in
     if k == 3 then
       let _ = box_set(depth, d1) in
-      let _ = if str_len(node) > 0 then bytes_cat_str(buf, node) else 0 in
+      let _ = bytes_cat_str(buf, node) in
       js_flat_step(buf, nodes, idxs, depth)
     else if k != 2 and k != 5 then
       let _ = box_set(depth, d1) in
@@ -1849,8 +1849,13 @@ let js_rw_super_val(x, sp) =
       go(0, [])
 
 /* JS name -> yac name: `v_` prefix (avoids kernel/keyword clashes), `$` ->
- * `_ds_`. Deterministic, so every reference to a name agrees. */
-let js_mangle(s) =
+ * `_ds_`. Deterministic; cached across a translate (names repeat a lot). */
+let js_mc =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let js_mangle_raw(s) =
   let n = str_len(s) in
   let run(k) =
     if k >= n then k
@@ -1872,6 +1877,16 @@ let js_mangle(s) =
         let _ = bytes_cat_str(buf, str_slice(s, i, end - i)) in
         rec(end) in
     rec(e0)
+
+let js_mangle(s) =
+  let m0 = box_get(js_mc) in
+  let m = if m0 == 0 then (let x = fmap_new(0) in (let _ = box_set(js_mc, x) in x)) else m0 in
+  let hit = fmap_get(m, s) in
+  if hit != 0 then hit
+  else
+    let r = js_mangle_raw(s) in
+    let _ = fmap_put(m, s, r) in
+    r
 
 /* Variable scope entry: [jsName, boxName]. Box names are unique per binding so
  * a block-local `let x` shadows an outer `x` instead of overwriting its box.
@@ -3881,6 +3896,7 @@ let js_to_yac(src) =
   let _ = box_set(js_lab_n, 3) in
   let _ = box_set(js_lab_here, 0) in
   let _ = box_set(js_globals, list_new()) in
+  let _ = box_set(js_mc, fmap_new(0)) in
   let toks = js_lex(src) in
   let r = js_parse_stmts(toks, 0, ["list", 0], st) in
   let imps = box_get(uimp) in
@@ -4104,6 +4120,7 @@ let js_dump_src(src) =
   let _ = box_set(js_lab_n, 3) in
   let _ = box_set(js_lab_here, 0) in
   let _ = box_set(js_globals, list_new()) in
+  let _ = box_set(js_mc, fmap_new(0)) in
   let toks = js_lex(src) in
   let _ = js_parse_stmts(toks, 0, ["list", 0], st) in
   let _ = box_set(js_stream_box, 0) in
