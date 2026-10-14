@@ -1658,24 +1658,19 @@ let js_fresh(st, p) =
 let js_join(xs, sep, i, acc) =
   if i >= len(xs) then list_rev(acc)
   else if i == 0 then js_join(xs, sep, 1, cons(nth(xs, 0), acc))
+  else if sep == "" then js_join(xs, sep, i + 1, cons(nth(xs, i), acc))
   else js_join(xs, sep, i + 1, cons(nth(xs, i), cons(sep, acc)))
 
 let js_cat(xs) = js_join(xs, "", 0, [])
 
-/* One left-to-right copy into a byte buffer. Strings are kind 3, lists kind
- * 2 or 5. The walk stack is a heap list so a long statement spine stays flat. */
+/* Flatten a rope (nested string/list tree) to one string.
+ * Walk collects non-empty string leaves, then balanced str_cat joins them
+ * (O(n log leaves) memcpy). Per-byte bytes_append was ~62% of main.js
+ * translate time. */
 let js_flat(root) =
-  let buf = bytes_new() in
-  let copy(s) =
-    let n = str_len(s) in
-    let rec(i) =
-      if i >= n then 0
-      else
-        let _ = bytes_append(buf, str_ref(s, i)) in
-        rec(i + 1) in
-    rec(0) in
+  let leaves = list_new() in
   let step(st) =
-    if len(st) == 0 then bytes_to_str(buf)
+    if len(st) == 0 then 0
     else
       let fr = nth(st, 0) in
       let node = nth(fr, 0) in
@@ -1687,9 +1682,19 @@ let js_flat(root) =
         else if k != 2 and k != 5 then rest
         else if i >= len(node) then rest
         else cons([nth(node, i), 0], cons([node, i + 1], rest)) in
-      let _ = if k == 3 then copy(node) else 0 in
+      let _ =
+        if k == 3 and str_len(node) > 0 then list_push(leaves, node)
+        else 0 in
       step(nxt) in
-  step(cons([root, 0], []))
+  let _ = step(cons([root, 0], [])) in
+  let n = len(leaves) in
+  let join(lo, hi) =
+    if lo >= hi then ""
+    else if lo + 1 == hi then nth(leaves, lo)
+    else
+      let mid = (lo + hi) / 2 in
+      str_cat(join(lo, mid), join(mid, hi)) in
+  join(0, n)
 
 /* Flatten a pattern against an access expression into [[name, access], …].
  * Access text is a rope: callers pass js_cat results, and str_cat would
