@@ -38,6 +38,7 @@
  * A call through an unknown function value still cannot spread. */
 
 package lang.js
+import data.fmap { fmap_new, fmap_get, fmap_put }
 export js_to_yac, js_dump_src
 
 /* ---- character classes ------------------------------------------------ */
@@ -446,11 +447,13 @@ let js_k(t) = nth(t, 0)
 let js_t(t) = nth(t, 1)
 let js_at(toks, i) = if i >= len(toks) then ["eof", ""] else nth(toks, i)
 /* Punctuation or keyword/id text. A string token whose text is ")" must not
- * count as a closing paren. */
+ * count as a closing paren. Hot: avoid js_at eof alloc + helper calls. */
 let js_is(toks, i, s) =
-  let t = js_at(toks, i) in
-  let k = js_k(t) in
-  (k == "p" or k == "id") and js_t(t) == s
+  if i >= len(toks) then false
+  else
+    let t = nth(toks, i) in
+    let k = nth(t, 0) in
+    (k == "p" or k == "id") and nth(t, 1) == s
 
 /* ---- errors (state is threaded; see header) --------------------------- */
 
@@ -1668,19 +1671,15 @@ let js_join(xs, sep, i, acc) =
   else if sep == "" then js_join(xs, sep, i + 1, cons(nth(xs, i), acc))
   else js_join(xs, sep, i + 1, cons(nth(xs, i), cons(sep, acc)))
 
-/* Rope node from pieces. listbuf (no cons/rev); singleton unwraps to cut depth. */
+/* Rope node from pieces. Reuse the piece list (no copy); unwrap singleton
+ * so emit of one string stays a string leaf. Avoid len(cons). */
 let js_cat(xs) =
-  let n = len(xs) in
-  if n == 0 then ""
-  else if n == 1 then nth(xs, 0)
-  else
-    let b = list_new() in
-    let rec(i) =
-      if i >= n then b
-      else
-        let _ = list_push(b, nth(xs, i)) in
-        rec(i + 1) in
-    rec(0)
+  if kind(xs) == 5 then
+    let n = len(xs) in
+    if n == 0 then "" else if n == 1 then nth(xs, 0) else xs
+  else if xs == [] then ""
+  else if tail(xs) == [] then nth(xs, 0)
+  else xs
 
 /* Push one frame onto the js_flat listbuf stack (reuse slots when possible). */
 let js_flat_push(nodes, idxs, depth, n, i) =
