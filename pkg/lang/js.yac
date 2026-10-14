@@ -78,29 +78,36 @@ let js_skip(src, i, n) =
   rec(i)
 
 /* String literal starting after quote `q`; decodes \n \t \r \0 and \\ \q.
- * Returns [decoded, next-index]. */
+ * Returns [decoded, next-index]. Plain runs are memcpy'd; only escapes are
+ * one-byte. */
 let js_lex_str(src, i, n, q) =
-  /* One byte buffer and one tail call. str_cat per character copied a
-   * 100KB literal once per byte. */
   let buf = bytes_new() in
+  let run_end(k) =
+    if k >= n then k
+    else
+      let ck = str_ref(src, k) in
+      if ck == q or ck == 92 then k else run_end(k + 1) in
   let rec(j) =
     if j >= n then [bytes_to_str(buf), j]
     else
       let c = str_ref(src, j) in
       if c == q then [bytes_to_str(buf), j + 1]
-      else if c == 92 and j + 1 >= n then [bytes_to_str(buf), j]
+      else if c == 92 then
+        if j + 1 >= n then [bytes_to_str(buf), j]
+        else
+          let e = str_ref(src, j + 1) in
+          let code =
+            if e == 110 then 10
+            else if e == 116 then 9
+            else if e == 114 then 13
+            else if e == 48 then 0
+            else e in
+          let _ = bytes_append(buf, code) in
+          rec(j + 2)
       else
-        let esc = if c == 92 then 1 else 0 in
-        let e = if esc == 1 then str_ref(src, j + 1) else c in
-        let code =
-          if esc == 0 then c
-          else if e == 110 then 10
-          else if e == 116 then 9
-          else if e == 114 then 13
-          else if e == 48 then 0
-          else e in
-        let _ = bytes_append(buf, code) in
-        rec(if esc == 1 then j + 2 else j + 1) in
+        let end = run_end(j + 1) in
+        let _ = bytes_cat_str(buf, str_slice(src, j, end - j)) in
+        rec(end) in
   rec(i)
 
 /* End index of a regex literal starting after its opening `/` (includes flags). */
@@ -533,7 +540,7 @@ let js_sig_of(ps) =
 /* Most recent binding wins. 0 if this name was not recorded. */
 let js_arity_find(st, nm) =
   let rec(ys) =
-    if len(ys) == 0 then 0
+    if ys == [] then 0
     else if nth(nth(ys, 0), 0) == nm then nth(ys, 0)
     else rec(tail(ys)) in
   rec(box_get(st_rest(st)))
@@ -1661,40 +1668,67 @@ let js_join(xs, sep, i, acc) =
   else if sep == "" then js_join(xs, sep, i + 1, cons(nth(xs, i), acc))
   else js_join(xs, sep, i + 1, cons(nth(xs, i), cons(sep, acc)))
 
-let js_cat(xs) = js_join(xs, "", 0, [])
+/* Rope node from pieces. listbuf (no cons/rev); singleton unwraps to cut depth. */
+let js_cat(xs) =
+  let n = len(xs) in
+  if n == 0 then ""
+  else if n == 1 then nth(xs, 0)
+  else
+    let b = list_new() in
+    let rec(i) =
+      if i >= n then b
+      else
+        let _ = list_push(b, nth(xs, i)) in
+        rec(i + 1) in
+    rec(0)
+
+/* Push one frame onto the js_flat listbuf stack (reuse slots when possible). */
+let js_flat_push(nodes, idxs, depth, n, i) =
+  let d = box_get(depth) in
+  let _ =
+    if d < len(nodes) then
+      let _ = list_set(nodes, d, n) in
+      list_set(idxs, d, i)
+    else
+      let _ = list_push(nodes, n) in
+      list_push(idxs, i) in
+  box_set(depth, d + 1)
+
+/* Top-level so the walk is TCO-flat (a local `step` closure blew the stack). */
+let js_flat_step(buf, nodes, idxs, depth) =
+  let d = box_get(depth) in
+  if d == 0 then bytes_to_str(buf)
+  else
+    let d1 = d - 1 in
+    let node = nth(nodes, d1) in
+    let i = nth(idxs, d1) in
+    let k = kind(node) in
+    if k == 3 then
+      let _ = box_set(depth, d1) in
+      let _ = if str_len(node) > 0 then bytes_cat_str(buf, node) else 0 in
+      js_flat_step(buf, nodes, idxs, depth)
+    else if k != 2 and k != 5 then
+      let _ = box_set(depth, d1) in
+      js_flat_step(buf, nodes, idxs, depth)
+    else if i >= len(node) then
+      let _ = box_set(depth, d1) in
+      js_flat_step(buf, nodes, idxs, depth)
+    else
+      let _ = list_set(idxs, d1, i + 1) in
+      let _ = js_flat_push(nodes, idxs, depth, nth(node, i), 0) in
+      js_flat_step(buf, nodes, idxs, depth)
 
 /* Flatten a rope (nested string/list tree) to one string.
- * Walk collects non-empty string leaves, then balanced str_cat joins them
- * (O(n log leaves) memcpy). Per-byte bytes_append was ~62% of main.js
- * translate time. */
+ * Listbuf stack + bytes_cat_str (memcpy). Old per-byte append was ~62% of
+ * main.js translate; cons-stack walk was the next hotspot. */
 let js_flat(root) =
-  let leaves = list_new() in
-  let step(st) =
-    if len(st) == 0 then 0
-    else
-      let fr = nth(st, 0) in
-      let node = nth(fr, 0) in
-      let i = nth(fr, 1) in
-      let k = kind(node) in
-      let rest = tail(st) in
-      let nxt =
-        if k == 3 then rest
-        else if k != 2 and k != 5 then rest
-        else if i >= len(node) then rest
-        else cons([nth(node, i), 0], cons([node, i + 1], rest)) in
-      let _ =
-        if k == 3 and str_len(node) > 0 then list_push(leaves, node)
-        else 0 in
-      step(nxt) in
-  let _ = step(cons([root, 0], [])) in
-  let n = len(leaves) in
-  let join(lo, hi) =
-    if lo >= hi then ""
-    else if lo + 1 == hi then nth(leaves, lo)
-    else
-      let mid = (lo + hi) / 2 in
-      str_cat(join(lo, mid), join(mid, hi)) in
-  join(0, n)
+  let buf = bytes_new() in
+  let nodes = list_new() in
+  let idxs = list_new() in
+  let depth = box_new() in
+  let _ = box_set(depth, 0) in
+  let _ = js_flat_push(nodes, idxs, depth, root, 0) in
+  js_flat_step(buf, nodes, idxs, depth)
 
 /* Flatten a pattern against an access expression into [[name, access], …].
  * Access text is a rope: callers pass js_cat results, and str_cat would
@@ -1762,8 +1796,12 @@ let js_pat_flat(pat, ae, st) =
 let js_row_flush(cur) =
   js_cat(["[", js_join(list_rev(cur), ", ", 0, []), "]"])
 
+/* Empty cons (`[]`) or empty listbuf. Avoid len(cons) in hot loops. */
+let js_empty(xs) =
+  if kind(xs) == 5 then len(xs) == 0 else xs == []
+
 let js_row_go(ys, k, cur, acc) =
-  if len(ys) == 0 then
+  if js_empty(ys) then
     if k == 0 then list_rev(acc) else list_rev(cons(js_row_flush(cur), acc))
   else if k == 128 then js_row_go(ys, 0, [], cons(js_row_flush(cur), acc))
   else js_row_go(tail(ys), k + 1, cons(nth(ys, 0), cur), acc)
@@ -1815,30 +1853,54 @@ let js_rw_super_val(x, sp) =
  * `_ds_`. Deterministic, so every reference to a name agrees. */
 let js_mangle(s) =
   let n = str_len(s) in
-  let rec(i, acc) =
-    if i >= n then acc
-    else
-      let c = str_ref(s, i) in
-      let bit = if c == 36 then "_ds_" else str_slice(s, i, 1) in
-      rec(i + 1, str_cat(acc, bit)) in
-  str_cat("v_", rec(0, ""))
+  let run(k) =
+    if k >= n then k
+    else if str_ref(s, k) == 36 then k
+    else run(k + 1) in
+  let e0 = run(0) in
+  if e0 >= n then str_cat("v_", s)
+  else
+    let buf = bytes_new() in
+    let _ = bytes_cat_str(buf, "v_") in
+    let _ = if e0 > 0 then bytes_cat_str(buf, str_slice(s, 0, e0)) else 0 in
+    let rec(i) =
+      if i >= n then bytes_to_str(buf)
+      else if str_ref(s, i) == 36 then
+        let _ = bytes_cat_str(buf, "_ds_") in
+        rec(i + 1)
+      else
+        let end = run(i + 1) in
+        let _ = bytes_cat_str(buf, str_slice(s, i, end - i)) in
+        rec(end) in
+    rec(e0)
 
 /* Variable scope entry: [jsName, boxName]. Box names are unique per binding so
- * a block-local `let x` shadows an outer `x` instead of overwriting its box. */
+ * a block-local `let x` shadows an outer `x` instead of overwriting its box.
+ * Cons-list empty checks must not use len(): len(cons) walks the spine. */
 let js_lookup(vars, nm) =
   let rec(xs) =
-    if len(xs) == 0 then ""
-    else if nth(nth(xs, 0), 0) == nm then nth(nth(xs, 0), 1)
-    else rec(tail(xs)) in
+    if xs == [] then ""
+    else
+      let e = nth(xs, 0) in
+      if nth(e, 0) == nm then nth(e, 1)
+      else rec(tail(xs)) in
   rec(vars)
 
-/* Membership in a name list (scopes are small). */
+/* Membership in a name list. listbuf: O(1) len + index; cons: walk cdr. */
 let js_in(xs, x) =
-  let rec(i) =
-    if i >= len(xs) then false
-    else if nth(xs, i) == x then true
-    else rec(i + 1) in
-  rec(0)
+  if kind(xs) == 5 then
+    let n = len(xs) in
+    let rec(i) =
+      if i >= n then false
+      else if nth(xs, i) == x then true
+      else rec(i + 1) in
+    rec(0)
+  else
+    let rec(ys) =
+      if ys == [] then false
+      else if nth(ys, 0) == x then true
+      else rec(tail(ys)) in
+    rec(xs)
 
 /* Implicit globals (`window`, bare assigns). Reset in js_to_yac. */
 let js_globals =
@@ -2410,12 +2472,12 @@ let js_arr_spread(el, a, ctx, st) =
   js_cat(["(let ", sv, " = ", se, " in (let ", sw, "(", si, ") = (if ", si, " < len(", sv, ") then (let _ = list_push(", a, ", nth(", sv, ", ", si, ")) in ", sw, "(", si, " + 1)) else 0) in ", sw, "(0)))"])
 
 let js_arr_take(ys, ctx, st, acc) =
-  if len(ys) == 0 then [list_rev(acc), ys]
+  if js_empty(ys) then [list_rev(acc), ys]
   else if nth(nth(ys, 0), 0) == "spread" then [list_rev(acc), ys]
   else js_arr_take(tail(ys), ctx, st, cons(js_ex(nth(ys, 0), ctx, st), acc))
 
 let js_arr_segs(ys, a, ctx, st) =
-  if len(ys) == 0 then "0"
+  if js_empty(ys) then "0"
   else if nth(nth(ys, 0), 0) == "spread" then
     js_cat(["(let _ = ", js_arr_spread(nth(ys, 0), a, ctx, st), " in ", js_arr_segs(tail(ys), a, ctx, st), ")"])
   else
@@ -2433,7 +2495,7 @@ let js_obj_key(kn, ctx, st) =
   else js_ex(kn, ctx, st)
 
 let js_obj_split(ps, ka, va) =
-  if len(ps) == 0 then [list_rev(ka), list_rev(va)]
+  if js_empty(ps) then [list_rev(ka), list_rev(va)]
   else js_obj_split(tail(ps), cons(nth(nth(ps, 0), 0), ka), cons(nth(nth(ps, 0), 1), va))
 
 let js_obj_plain(ps, o, st) =
@@ -2461,7 +2523,7 @@ let js_obj_acc(pair, o, ctx, st) =
   js_cat(["_js_acc_put(nth(", o, ", 1), ", ke, ", ", isget, ", ", fe, ")"])
 
 let js_obj_take(ys, ctx, st, acc) =
-  if len(ys) == 0 then [list_rev(acc), ys]
+  if js_empty(ys) then [list_rev(acc), ys]
   else if nth(nth(ys, 0), 0) == "spread" then [list_rev(acc), ys]
   else if nth(nth(nth(ys, 0), 1), 0) == "acc" then [list_rev(acc), ys]
   else
@@ -2469,7 +2531,7 @@ let js_obj_take(ys, ctx, st, acc) =
     js_obj_take(tail(ys), ctx, st, cons([js_obj_key(nth(p, 0), ctx, st), js_ex(nth(p, 1), ctx, st)], acc))
 
 let js_obj_segs(ys, o, ctx, st) =
-  if len(ys) == 0 then "0"
+  if js_empty(ys) then "0"
   else if nth(nth(ys, 0), 0) == "spread" then
     js_cat(["(let _ = ", js_obj_spread(nth(ys, 0), o, ctx, st), " in ", js_obj_segs(tail(ys), o, ctx, st), ")"])
   else if nth(nth(nth(ys, 0), 1), 0) == "acc" then
