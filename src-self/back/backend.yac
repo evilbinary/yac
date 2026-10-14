@@ -1329,15 +1329,29 @@ let prog_vec(xs) =
   rec(xs)
 
 let ast_ready(src) =
-  let ast0 = pass_parse(pass_lex(src)) in
+  let t0 = time_ms() in
+  let toks = pass_lex(src) in
+  let _ = log_i("prof", "lex", time_ms() - t0) in
+  let t1 = time_ms() in
+  let ast0 = pass_parse(toks) in
+  let _ = log_i("prof", "parse", time_ms() - t1) in
   let _ = dump_now("parse") in
   if prog_has_err(ast0, 0) then
     let _ = report_syntax(ast0) in 0
-  else if report_unbound(src, ast0) != 0 then 0
   else
-    let _ = pkg_fail_set(0) in
-    let _ = link_from_ast(ast0) in
-    prog_vec(ast0)
+    let t2 = time_ms() in
+    let ub = report_unbound(src, ast0) in
+    let _ = log_i("prof", "unbound", time_ms() - t2) in
+    if ub != 0 then 0
+    else
+      let _ = pkg_fail_set(0) in
+      let t3 = time_ms() in
+      let _ = link_from_ast(ast0) in
+      let _ = log_i("prof", "link", time_ms() - t3) in
+      let t4 = time_ms() in
+      let buf = prog_vec(ast0) in
+      let _ = log_i("prof", "ast_vec", time_ms() - t4) in
+      buf
 
 let anf_of(src, t) =
   let buf = ast_ready(src) in
