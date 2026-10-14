@@ -1057,6 +1057,22 @@ let rt_bytes_extend_ins(_) =
    ["obj_st_int", 1, rt_field(3), 5],
    ["ret", 1]]
 
+/* bytes_cat_str(dst, s): append string payload (inline at +32) onto dst. */
+let rt_bytes_cat_str_ins(_) =
+  [["local", 16, 2],
+   ["mref", 3, 2, rt_field(3)],
+   ["tag", 3, 3],
+   ["mref", 4, 1, rt_field(3)],
+   ["tag", 4, 4],
+   ["add", 5, 4, 3],
+   ["fcall", 6, "yac_bytes_grow", [1, 5]],
+   ["mref", 7, 1, rt_field(5)],
+   ["mov_imm", 9, 32 + 32],
+   ["add", 10, 9, 4],
+   ["memcpy", 7, 10, 2, 9, 3],
+   ["obj_st_int", 1, rt_field(3), 5],
+   ["ret", 1]]
+
 let rt_print_val_ins(_) =
   [["local", 18, 1],
    ["is_int", 3, 1],
@@ -3057,6 +3073,7 @@ let runtime_funs(_) =
    ["$proc", "yac_mem_ref", 3, 0, rt_mem_ref_ins(0), "yac_mem_ref"],
    ["$proc", "yac_mem_put", 4, 0, rt_mem_put_ins(0), "yac_mem_put"],
    ["$proc", "yac_bytes_extend", 2, 0, rt_bytes_extend_ins(0), "yac_bytes_extend"],
+   ["$proc", "yac_bytes_cat_str", 2, 0, rt_bytes_cat_str_ins(0), "yac_bytes_cat_str"],
    ["$proc", "yac_bytes_to_str", 1, 0, rt_bytes_to_str_ins(0), "yac_bytes_to_str"],
    ["$proc", "print_int", 1, 0, rt_print_int_ins(0), "print_int"],
    ["$proc", "print_val", 1, 0, rt_print_val_ins(0), "print_val"],

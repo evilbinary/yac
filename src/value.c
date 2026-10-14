@@ -661,6 +661,23 @@ static Value prim_bytes_extend(Value *args, int nargs, PrimCtx *ctx) {
     return v_unit();
 }
 
+/* bytes_cat_str(dst, s) -> unit. Append string bytes onto dst (memcpy). */
+static Value prim_bytes_cat_str(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_BYTES || args[1].tag != V_STR) {
+        ctx->errored = true;
+        strcpy(ctx->errmsg, "bytes_cat_str: expected buffer and string");
+        return VALUE_NULL;
+    }
+    Bytes *dst = args[0].u.bytes;
+    Str *s = args[1].u.s;
+    if (s->len <= 0) return v_unit();
+    bytes_grow(dst, dst->len + s->len);
+    memcpy(dst->data + dst->len, s->data, (size_t)s->len);
+    dst->len += s->len;
+    return v_unit();
+}
+
 /* bytes-len(b) -> int */
 static Value prim_bytes_len(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
@@ -1330,6 +1347,7 @@ static const Prim PRIMS[] = {
     {"bytes_put", 3, false, true, prim_bytes_put},
     {"bytes_append", 2, false, true, prim_bytes_append},
     {"bytes_extend", 2, false, true, prim_bytes_extend},
+    {"bytes_cat_str", 2, false, true, prim_bytes_cat_str},
     {"bytes_len", 1, true, false, prim_bytes_len},
     {"bytes_ref", 2, true, false, prim_bytes_ref},
     {"bytes_to_str", 1, true, true, prim_bytes_to_str},
