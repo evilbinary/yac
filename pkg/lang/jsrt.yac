@@ -38,19 +38,45 @@ let _js_f64_str(x) =
   if neg then str_cat("-", s) else s
 
 /* Stringify a JS value for console.log / `+`: int/float -> decimal, listbuf
- * like JS Array#toString (comma-joined), else as-is. */
+ * like JS Array#toString, objects as `{k: v, ...}`, else as-is. */
 let _js_str(x) =
-  if is_int(x) then int_to_str(x)
-  else if kind(x) == 7 then _js_f64_str(x)
-  else if kind(x) == 5 then
-    let n = len(x) in
-    let rec(i, acc) =
-      if i >= n then acc
-      else
-        let s = _js_str(nth(x, i)) in
-        if i == 0 then rec(1, s) else rec(i + 1, str_cat(acc, str_cat(",", s))) in
-    rec(0, "")
-  else x
+  let go(v) =
+    if is_int(v) then int_to_str(v)
+    else if kind(v) == 7 then _js_f64_str(v)
+    else if kind(v) == 5 then
+      let n = len(v) in
+      let rec(i, acc) =
+        if i >= n then acc
+        else
+          let s = go(nth(v, i)) in
+          if i == 0 then rec(1, s) else rec(i + 1, str_cat(acc, str_cat(",", s))) in
+      rec(0, "")
+    else if kind(v) == 2 and len(v) > 0 and nth(v, 0) == "$o" then
+      let m = nth(v, 1) in
+      let vec = nth(m, 0) in
+      let cap = nth(m, 2) in
+      let skip(k) =
+        if k == "__proto__" then true
+        else if str_len(k) > 0 and str_ref(k, 0) == 36 then true
+        else false in
+      let field(x2) =
+        if kind(x2) == 3 then str_cat("\"", str_cat(x2, "\""))
+        else go(x2) in
+      let rec(i, acc, first) =
+        if i >= cap then acc
+        else
+          let e = nth(vec, i) in
+          if e == 0 then rec(i + 1, acc, first)
+          else
+            let k = nth(e, 0) in
+            if skip(k) then rec(i + 1, acc, first)
+            else
+              let piece = str_cat(k, str_cat(": ", field(nth(e, 1)))) in
+              if first then rec(i + 1, piece, false)
+              else rec(i + 1, str_cat(acc, str_cat(", ", piece)), false) in
+      str_cat("{", str_cat(rec(0, "", true), "}"))
+    else v in
+  go(x)
 
 /* Boolean -> "true"/"false" (yac's own bool prints as 1/0). */
 let _js_bool(x) = if x then "true" else "false"

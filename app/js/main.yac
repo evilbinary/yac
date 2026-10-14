@@ -25,8 +25,8 @@
  *   --help / -h               帮助
  *   --version / -V            版本
  *
- * REPL 会把 `let`/`const`/`var`/`function`/`class` 声明累加进会话上下文，
- * 后续表达式在完整声明前缀下求值（文件内多行本来就是一整段翻译）。
+ * REPL 会把声明、语句和表达式累加进会话前缀（console.* 除外），后续行在
+ * 此前缀下求值，以便 `xs.sort(...)` 这类就地修改对下一行可见。
  */
 
 import yc.compiler
@@ -120,7 +120,7 @@ let js_exec_y(y) =
   if js_is_error(y) then print(y)
   else run(js_suppress(y))
 
-/* REPL 会话里已接受的声明源码（let/const/var/function/class）。 */
+/* REPL 会话前缀：声明 + 有副作用的语句/表达式（不含 console.*，避免重放打印）。 */
 let js_repl_acc =
   let b = box_new() in
   let _ = box_set(b, "") in
@@ -130,23 +130,34 @@ let js_with_acc(src) =
   let acc = box_get(js_repl_acc) in
   if acc == "" then src else str_cat(acc, str_cat("\n", src))
 
+/* 前缀跑通后写入会话（翻译失败则不改）。 */
+let js_repl_commit(src2, y) =
+  if js_is_error(y) then print(y)
+  else
+    let _ = run(js_suppress(y)) in
+    box_set(js_repl_acc, src2)
+
 /* 就地运行一段 JS。
  * lang.js 把语句序列的最后一个值丢掉（续延是 0），所以“表达式行”先包成
- * console.log(...) 再翻译，才能把值打出来；声明 / 语句 / console.* 原样翻译。 */
+ * console.log(...) 再翻译，才能把值打出来；声明 / 语句 / console.* 原样翻译。
+ * 表达式在打印后还会把裸表达式记入会话，这样 `xs.sort(...)` 的就地修改下一行仍在。 */
 let js_exec(src) =
   let t = trim(src) in
   if js_is_decl(t) then
     let src2 = js_with_acc(t) in
-    let y = js_to_yac(src2) in
+    js_repl_commit(src2, js_to_yac(src2))
+  else if starts_with(t, "console") then
+    js_exec_y(js_to_yac(js_with_acc(t)))
+  else if js_is_stmt(t) then
+    let src2 = js_with_acc(t) in
+    js_repl_commit(src2, js_to_yac(src2))
+  else
+    let e = js_strip_semi(t) in
+    let y = js_to_yac(js_with_acc(str_cat("console.log(", str_cat(e, ")")))) in
     if js_is_error(y) then print(y)
     else
       let _ = run(js_suppress(y)) in
-      box_set(js_repl_acc, src2)
-  else if js_is_stmt(t) or starts_with(t, "console") then
-    js_exec_y(js_to_yac(js_with_acc(t)))
-  else
-    let e = js_strip_semi(t) in
-    js_exec_y(js_to_yac(js_with_acc(str_cat("console.log(", str_cat(e, ")")))))
+      box_set(js_repl_acc, js_with_acc(str_cat(e, ";")))
 
 let js_run_file(path) =
   let src = read_or_0(path) in
