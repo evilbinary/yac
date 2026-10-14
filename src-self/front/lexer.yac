@@ -111,44 +111,55 @@ let read_opchars(s, i, n) =
 /* --- token constructors --- */
 let mk_tok(kind, text, line) = [kind, text, line]
 
-/* C lexer: longest valid operator, not a run of op chars (`=-` is `=` then `-`). */
+/* C lexer: longest valid operator, not a run of op chars (`=-` is `=` then `-`).
+ * Texts are interned here so tokenize can skip a second full token pass. */
 let scan_op(s, i, line, n) =
   let c = sat(s, i) in
   let has1 = i + 1 < n in
   let c1 = if has1 then sat(s, i + 1) else 0 in
   if c == 61 then
     if has1 then
-      if c1 == 61 then [mk_tok("op", "==", line), i + 2]
-      else if c1 == 62 then [mk_tok("op", "->", line), i + 2]
-      else [mk_tok("op", "=", line), i + 1]
-    else [mk_tok("op", "=", line), i + 1]
+      if c1 == 61 then [mk_tok("op", intern("=="), line), i + 2]
+      else if c1 == 62 then [mk_tok("op", intern("->"), line), i + 2]
+      else [mk_tok("op", intern("="), line), i + 1]
+    else [mk_tok("op", intern("="), line), i + 1]
   else if c == 33 then
     if has1 then
-      if c1 == 61 then [mk_tok("op", "!=", line), i + 2]
-      else [mk_tok("op", "!", line), i + 1]
-    else [mk_tok("op", "!", line), i + 1]
+      if c1 == 61 then [mk_tok("op", intern("!="), line), i + 2]
+      else [mk_tok("op", intern("!"), line), i + 1]
+    else [mk_tok("op", intern("!"), line), i + 1]
   else if c == 60 then
     if has1 then
-      if c1 == 61 then [mk_tok("op", "<=", line), i + 2]
-      else [mk_tok("op", "<", line), i + 1]
-    else [mk_tok("op", "<", line), i + 1]
+      if c1 == 61 then [mk_tok("op", intern("<="), line), i + 2]
+      else [mk_tok("op", intern("<"), line), i + 1]
+    else [mk_tok("op", intern("<"), line), i + 1]
   else if c == 62 then
     if has1 then
-      if c1 == 61 then [mk_tok("op", ">=", line), i + 2]
-      else [mk_tok("op", ">", line), i + 1]
-    else [mk_tok("op", ">", line), i + 1]
+      if c1 == 61 then [mk_tok("op", intern(">="), line), i + 2]
+      else [mk_tok("op", intern(">"), line), i + 1]
+    else [mk_tok("op", intern(">"), line), i + 1]
   else if c == 45 then
     if has1 then
-      if c1 == 62 then [mk_tok("op", "->", line), i + 2]
-      else [mk_tok("op", "-", line), i + 1]
-    else [mk_tok("op", "-", line), i + 1]
-  else [mk_tok("op", str_slice(s, i, 1), line), i + 1]
+      if c1 == 62 then [mk_tok("op", intern("->"), line), i + 2]
+      else [mk_tok("op", intern("-"), line), i + 1]
+    else [mk_tok("op", intern("-"), line), i + 1]
+  else if c == 43 then [mk_tok("op", intern("+"), line), i + 1]
+  else if c == 42 then [mk_tok("op", intern("*"), line), i + 1]
+  else if c == 47 then [mk_tok("op", intern("/"), line), i + 1]
+  else if c == 37 then [mk_tok("op", intern("%"), line), i + 1]
+  else [mk_tok("op", intern(str_slice(s, i, 1)), line), i + 1]
 
 /* scan an identifier or keyword starting at pos */
 let scan_ident(s, i, line, n) =
   let e = read_alnum(s, i, n) in
-  let w = str_slice(s, i, e - i) in
-  let k = if is_kw(w) then "kw" else "ident" in
+  let w0 = str_slice(s, i, e - i) in
+  let kw = is_kw(w0) in
+  let k = if kw then "kw" else "ident" in
+  /* Long gensyms are nearly unique — skip intern (permanent arena + fmap). */
+  let w =
+    if kw then intern(w0)
+    else if str_len(w0) > 12 then w0
+    else intern(w0) in
   [mk_tok(k, w, line), e]
 
 /* scan a number (int or float) starting at pos. Grammar:
@@ -286,16 +297,16 @@ let lex(s, i, line, acc, n) =
       let _ = list_push(acc, nth(r, 0)) in
       lex(s, nth(r, 1), line, acc, n)
     else if is_punct(c) then
-      let txt = str_slice(s, i, 1) in
+      let txt = intern(str_slice(s, i, 1)) in
       let _ = list_push(acc, mk_tok(punct_kind(c), txt, line)) in
       lex(s, i + 1, line, acc, n)
     else
-      let txt = str_slice(s, i, 1) in
+      let txt = intern(str_slice(s, i, 1)) in
       let _ = list_push(acc, mk_tok("punct", txt, line)) in
       lex(s, i + 1, line, acc, n)
 
 /* Seed intern table with compiler literals (pooled in native yc) so
- * intern_toks of source text returns the same pointers as k == "ident". */
+ * scan-time intern of source text returns the same pointers as k == "ident". */
 let intern_seed(_) =
   let _ = intern("ident") in
   let _ = intern("kw") in
@@ -370,30 +381,11 @@ let intern_seed(_) =
   let _ = intern("csym") in
   0
 
-/* After lex: intern kw/op/punct and short idents so later == is pointer-eq.
- * Long gensyms (`_v_obj20979`, …) are almost unique: interning copies them
- * into the permanent arena and fills the intern fmap — main.yac paid ~1GB
- * and a large fraction of lex for no reuse. Leave those texts as-is. */
-let intern_toks(toks, i, n) =
-  if i >= n then toks
-  else
-    let t = nth(toks, i) in
-    let k = nth(t, 0) in
-    if k == "eof" then intern_toks(toks, i + 1, n)
-    else if k == "num" then intern_toks(toks, i + 1, n)
-    else if k == "str" then intern_toks(toks, i + 1, n)
-    else if k == "ident" and str_len(nth(t, 1)) > 12 then
-      intern_toks(toks, i + 1, n)
-    else
-      let _ = list_set(toks, i, [k, intern(nth(t, 1)), nth(t, 2)]) in
-      intern_toks(toks, i + 1, n)
-
-/* public API */
+/* public API — texts interned at scan (see scan_ident / scan_op / punct). */
 let tokenize(src) =
   let _ = intern_seed(0) in
   let acc = list_new() in
-  let toks = lex(src, 0, 1, acc, str_len(src)) in
-  intern_toks(toks, 0, len(toks))
+  lex(src, 0, 1, acc, str_len(src))
 
 let token_kind(t) = nth(t, 0)
 let token_text(t) = nth(t, 1)

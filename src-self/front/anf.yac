@@ -15,9 +15,10 @@
  * Every non-atomic computation is bound to a fresh temp, making evaluation
  * order explicit. Fresh names use a counter threaded through the calls.
  *
- * Architecture: yac has no mutual recursion across top-level lets, so anf_expr
- * is a single top-level self-recursive function; anf_atom (which needs
- * anf_expr) is a nested local closure inside it.
+ * Architecture: yac has no mutual recursion across top-level lets, so helpers
+ * live inside mk_anf. Internal recursion goes through boxed `go` — re-entering
+ * top-level anf_expr per subexpr rebuilt anf_atom every time (same cliff as
+ * parse_expr on main.yac).
  */
 
 package front.anf
@@ -26,9 +27,15 @@ import lib.map {intern}
 
 let reverse(xs) = list_rev(xs)
 
-let anf_expr(ast, counter) =
-  /* fresh temp name + incremented counter */
-  let fresh(c) = [intern(str_cat("t", int_to_str(c))), c + 1] in
+/* One go closure for the whole anf_all pass (helpers do not close over AST). */
+let anf_sess = box_new()
+
+let mk_anf(_) =
+  let go_b = box_new() in
+  let go(ast, c) = (box_get(go_b))(ast, c) in
+  /* Fresh temps are unique per counter — do not intern. Interning millions
+   * of `tN` into the permanent arena dominated main.yac ANF RSS. */
+  let fresh(c) = [str_cat("t", int_to_str(c)), c + 1] in
 
   /* atomize a sub-expression: returns [bindings, atom, counter].
    * If ast is already atomic, bindings is empty; else it binds a fresh temp. */
@@ -43,7 +50,7 @@ let anf_expr(ast, counter) =
     else if k == "qvar" then [[], expr, c]
     else if k == "fun" then
       /* closure: [fun, [params], body] or [fun, params, body, 1] for rest */
-      let br = anf_expr(nth(expr, 2), c) in
+      let br = go(nth(expr, 2), c) in
       let tup = fresh(nth(br, 2)) in
       let fbody = [nth(br, 0), nth(br, 1)] in
       let restf = if len(expr) > 3 then nth(expr, 3) else 0 in
@@ -54,130 +61,142 @@ let anf_expr(ast, counter) =
     else
       /* non-atomic: the normalized expression's tail is already an atom
        * (its last binding produced the value), so use it directly. */
-      let r = anf_expr(expr, c) in
+      let r = go(expr, c) in
       [nth(r, 0), nth(r, 1), nth(r, 2)] in
 
-  let k = nth(ast, 0) in
-  if k == "int" then [[], ast, counter]
-  else if k == "float" then [[], ast, counter]
-  else if k == "str" then [[], ast, counter]
-  else if k == "bool" then [[], ast, counter]
-  else if k == "unit" then [[], ast, counter]
-  else if k == "var" then [[], ast, counter]
-  else if k == "qvar" then [[], ast, counter]
-  else if k == "fun" then
-    /* fun (params) -> body. Fourth field 1 means the last param is rest. */
-    let br = anf_expr(nth(ast, 2), counter) in
-    let tup = fresh(nth(br, 2)) in
-    let fbody = [nth(br, 0), nth(br, 1)] in
-    let restf = if len(ast) > 3 then nth(ast, 3) else 0 in
-    let fb =
-      if restf == 0 then ["letfun", nth(tup, 0), nth(ast, 1), fbody]
-      else ["letfun", nth(tup, 0), nth(ast, 1), fbody, 1] in
-    [[fb], ["var", nth(tup, 0)], nth(tup, 1)]
-  else if k == "list" then
-    /* desugar [e1,...,en] to cons(e1, cons(... cons(en, []))) */
-    let items = nth(ast, 1) in
-    let n = len(items) in
-    let build(i, c) =
-      if i >= n then
-        let tup = fresh(c) in
-        [[["let", nth(tup, 0), ["nil"]]], ["var", nth(tup, 0)], nth(tup, 1)]
-      else
-        let ir = anf_atom(nth(items, i), c) in
-        let tr = build(i + 1, nth(ir, 2)) in
-        let tup = fresh(nth(tr, 2)) in
-        let binds = append(append(nth(ir, 0), nth(tr, 0)),
-                           [["letcall", nth(tup, 0), ["var", "cons"],
-                             [nth(ir, 1), nth(tr, 1)]]]) in
-        [binds, ["var", nth(tup, 0)], nth(tup, 1)] in
-    build(0, counter)
-  else if k == "callcc" then
-    let ar = anf_atom(nth(ast, 1), counter) in
-    let kn = fresh(nth(ar, 2)) in
-    let rn = fresh(nth(kn, 1)) in
-    let body = [[], ["var", nth(kn, 0)]] in
-    [append(nth(ar, 0),
-            [["letcallcc", nth(kn, 0), nth(rn, 0), nth(ar, 1), body]]),
-     ["var", nth(rn, 0)], nth(rn, 1)]
-  else if k == "throw" then
-    let ka = anf_atom(nth(ast, 1), counter) in
-    let va = anf_atom(nth(ast, 2), nth(ka, 2)) in
-    let tup = fresh(nth(va, 2)) in
-    [append(append(nth(ka, 0), nth(va, 0)),
-            [["letthrow", nth(tup, 0), nth(ka, 1), nth(va, 1)]]),
-     ["var", nth(tup, 0)], nth(tup, 1)]
-  else if k == "not" then
-    /* not x  →  if x then false else true */
-    anf_expr(["if", nth(ast, 1), ["bool", "false"], ["bool", "true"]], counter)
-  else if k == "binop" then
-    /* op lhs rhs -> temp = lhs op rhs */
-    let la = anf_atom(nth(ast, 2), counter) in
-    let ra = anf_atom(nth(ast, 3), nth(la, 2)) in
-    let tup = fresh(nth(ra, 2)) in
-    let bindings = append(append(nth(la, 0), nth(ra, 0)),
-                          [["letbin", nth(tup, 0), nth(ast, 1),
-                            nth(la, 1), nth(ra, 1)]]) in
-    [bindings, ["var", nth(tup, 0)], nth(tup, 1)]
-  else if k == "call" then
-    /* call fn args -> temp = fn(arg...). Atomize fn and each arg. */
-    let fa = anf_atom(nth(ast, 1), counter) in
-    let args = nth(ast, 2) in
-    let argloop = fun (i, c, accb, acca) ->
-      if i >= len(args) then [accb, reverse(acca), c]
-      else
-        let aa = anf_atom(nth(args, i), c) in
-        argloop(i + 1, nth(aa, 2), append(nth(aa, 0), accb),
-                cons(nth(aa, 1), acca)) in
-    let arr = argloop(0, nth(fa, 2), [], []) in
-    let tup = fresh(nth(arr, 2)) in
-    let bindings = append(append(nth(fa, 0), nth(arr, 0)),
-                          [["letcall", nth(tup, 0), nth(fa, 1), nth(arr, 1)]]) in
-    [bindings, ["var", nth(tup, 0)], nth(tup, 1)]
-  else if k == "if" then
-    /* if cond then a else b  ->  cond atomized, branches normalized.
-     * Each branch is stored as [branchBindings, branchTail]. */
-    let ca = anf_atom(nth(ast, 1), counter) in
-    let tr = anf_expr(nth(ast, 2), nth(ca, 2)) in
-    let er = anf_expr(nth(ast, 3), nth(tr, 2)) in
-    let tup = fresh(nth(er, 2)) in
-    let bindings = append(nth(ca, 0),
-                          [["letif", nth(tup, 0), nth(ca, 1),
-                            [nth(tr, 0), nth(tr, 1)],
-                            [nth(er, 0), nth(er, 1)]]]) in
-    [bindings, ["var", nth(tup, 0)], nth(tup, 1)]
-  else if k == "let" then
-    /* let name = bound in body */
-    let name = nth(ast, 1) in
-    let bound_ast = nth(ast, 2) in
-    /* if bound is a function literal, bind it under its own name so
-     * recursion resolves by name */
-    if nth(bound_ast, 0) == "fun" then
-      let params = nth(bound_ast, 1) in
-      let bodyr = anf_expr(nth(bound_ast, 2), counter) in
-      let fbody = [nth(bodyr, 0), nth(bodyr, 1)] in
-      let restf = if len(bound_ast) > 3 then nth(bound_ast, 3) else 0 in
-      let fbind =
-        if restf == 0 then ["letfun", name, params, fbody]
-        else ["letfun", name, params, fbody, 1] in
-      let body2 = anf_expr(nth(ast, 3), nth(bodyr, 2)) in
-      [append([fbind], nth(body2, 0)), nth(body2, 1), nth(body2, 2)]
-    else if nth(bound_ast, 0) == "callcc" then
-      let ar = anf_atom(nth(bound_ast, 1), counter) in
-      let bodyr = anf_expr(nth(ast, 3), nth(ar, 2)) in
-      let tup = fresh(nth(bodyr, 2)) in
+  let anf_go(ast, counter) =
+    let k = nth(ast, 0) in
+    if k == "int" then [[], ast, counter]
+    else if k == "float" then [[], ast, counter]
+    else if k == "str" then [[], ast, counter]
+    else if k == "bool" then [[], ast, counter]
+    else if k == "unit" then [[], ast, counter]
+    else if k == "var" then [[], ast, counter]
+    else if k == "qvar" then [[], ast, counter]
+    else if k == "fun" then
+      /* fun (params) -> body. Fourth field 1 means the last param is rest. */
+      let br = go(nth(ast, 2), counter) in
+      let tup = fresh(nth(br, 2)) in
+      let fbody = [nth(br, 0), nth(br, 1)] in
+      let restf = if len(ast) > 3 then nth(ast, 3) else 0 in
+      let fb =
+        if restf == 0 then ["letfun", nth(tup, 0), nth(ast, 1), fbody]
+        else ["letfun", nth(tup, 0), nth(ast, 1), fbody, 1] in
+      [[fb], ["var", nth(tup, 0)], nth(tup, 1)]
+    else if k == "list" then
+      /* desugar [e1,...,en] to cons(e1, cons(... cons(en, []))) */
+      let items = nth(ast, 1) in
+      let n = len(items) in
+      let build(i, c) =
+        if i >= n then
+          let tup = fresh(c) in
+          [[["let", nth(tup, 0), ["nil"]]], ["var", nth(tup, 0)], nth(tup, 1)]
+        else
+          let ir = anf_atom(nth(items, i), c) in
+          let tr = build(i + 1, nth(ir, 2)) in
+          let tup = fresh(nth(tr, 2)) in
+          let binds = append(append(nth(ir, 0), nth(tr, 0)),
+                             [["letcall", nth(tup, 0), ["var", "cons"],
+                               [nth(ir, 1), nth(tr, 1)]]]) in
+          [binds, ["var", nth(tup, 0)], nth(tup, 1)] in
+      build(0, counter)
+    else if k == "callcc" then
+      let ar = anf_atom(nth(ast, 1), counter) in
+      let kn = fresh(nth(ar, 2)) in
+      let rn = fresh(nth(kn, 1)) in
+      let body = [[], ["var", nth(kn, 0)]] in
       [append(nth(ar, 0),
-              [["letcallcc", name, nth(tup, 0), nth(ar, 1),
-                [nth(bodyr, 0), nth(bodyr, 1)]]]),
+              [["letcallcc", nth(kn, 0), nth(rn, 0), nth(ar, 1), body]]),
+       ["var", nth(rn, 0)], nth(rn, 1)]
+    else if k == "throw" then
+      let ka = anf_atom(nth(ast, 1), counter) in
+      let va = anf_atom(nth(ast, 2), nth(ka, 2)) in
+      let tup = fresh(nth(va, 2)) in
+      [append(append(nth(ka, 0), nth(va, 0)),
+              [["letthrow", nth(tup, 0), nth(ka, 1), nth(va, 1)]]),
        ["var", nth(tup, 0)], nth(tup, 1)]
-    else
-      let br = anf_atom(nth(ast, 2), counter) in
-      let bbindings = nth(br, 0) in
-      let batom = nth(br, 1) in
-      let bodyr = anf_expr(nth(ast, 3), nth(br, 2)) in
-      let bbindings2 = append(bbindings, [["let", name, batom]]) in
-      [append(bbindings2, nth(bodyr, 0)), nth(bodyr, 1), nth(bodyr, 2)]
-  else [["error", "anf"], ["unit"], counter]
+    else if k == "not" then
+      /* not x  →  if x then false else true */
+      go(["if", nth(ast, 1), ["bool", "false"], ["bool", "true"]], counter)
+    else if k == "binop" then
+      /* op lhs rhs -> temp = lhs op rhs */
+      let la = anf_atom(nth(ast, 2), counter) in
+      let ra = anf_atom(nth(ast, 3), nth(la, 2)) in
+      let tup = fresh(nth(ra, 2)) in
+      let bindings = append(append(nth(la, 0), nth(ra, 0)),
+                            [["letbin", nth(tup, 0), nth(ast, 1),
+                              nth(la, 1), nth(ra, 1)]]) in
+      [bindings, ["var", nth(tup, 0)], nth(tup, 1)]
+    else if k == "call" then
+      /* call fn args -> temp = fn(arg...). Atomize fn and each arg. */
+      let fa = anf_atom(nth(ast, 1), counter) in
+      let args = nth(ast, 2) in
+      let nargs = len(args) in
+      let argloop(i, c, accb, acca) =
+        if i >= nargs then [accb, reverse(acca), c]
+        else
+          let aa = anf_atom(nth(args, i), c) in
+          argloop(i + 1, nth(aa, 2), append(nth(aa, 0), accb),
+                  cons(nth(aa, 1), acca)) in
+      let arr = argloop(0, nth(fa, 2), [], []) in
+      let tup = fresh(nth(arr, 2)) in
+      let bindings = append(append(nth(fa, 0), nth(arr, 0)),
+                            [["letcall", nth(tup, 0), nth(fa, 1), nth(arr, 1)]]) in
+      [bindings, ["var", nth(tup, 0)], nth(tup, 1)]
+    else if k == "if" then
+      /* if cond then a else b  ->  cond atomized, branches normalized.
+       * Each branch is stored as [branchBindings, branchTail]. */
+      let ca = anf_atom(nth(ast, 1), counter) in
+      let tr = go(nth(ast, 2), nth(ca, 2)) in
+      let er = go(nth(ast, 3), nth(tr, 2)) in
+      let tup = fresh(nth(er, 2)) in
+      let bindings = append(nth(ca, 0),
+                            [["letif", nth(tup, 0), nth(ca, 1),
+                              [nth(tr, 0), nth(tr, 1)],
+                              [nth(er, 0), nth(er, 1)]]]) in
+      [bindings, ["var", nth(tup, 0)], nth(tup, 1)]
+    else if k == "let" then
+      /* let name = bound in body */
+      let name = nth(ast, 1) in
+      let bound_ast = nth(ast, 2) in
+      /* if bound is a function literal, bind it under its own name so
+       * recursion resolves by name */
+      if nth(bound_ast, 0) == "fun" then
+        let params = nth(bound_ast, 1) in
+        let bodyr = go(nth(bound_ast, 2), counter) in
+        let fbody = [nth(bodyr, 0), nth(bodyr, 1)] in
+        let restf = if len(bound_ast) > 3 then nth(bound_ast, 3) else 0 in
+        let fbind =
+          if restf == 0 then ["letfun", name, params, fbody]
+          else ["letfun", name, params, fbody, 1] in
+        let body2 = go(nth(ast, 3), nth(bodyr, 2)) in
+        [append([fbind], nth(body2, 0)), nth(body2, 1), nth(body2, 2)]
+      else if nth(bound_ast, 0) == "callcc" then
+        let ar = anf_atom(nth(bound_ast, 1), counter) in
+        let bodyr = go(nth(ast, 3), nth(ar, 2)) in
+        let tup = fresh(nth(bodyr, 2)) in
+        [append(nth(ar, 0),
+                [["letcallcc", name, nth(tup, 0), nth(ar, 1),
+                  [nth(bodyr, 0), nth(bodyr, 1)]]]),
+         ["var", nth(tup, 0)], nth(tup, 1)]
+      else
+        let br = anf_atom(nth(ast, 2), counter) in
+        let bbindings = nth(br, 0) in
+        let batom = nth(br, 1) in
+        let bodyr = go(nth(ast, 3), nth(br, 2)) in
+        let bbindings2 = append(bbindings, [["let", name, batom]]) in
+        [append(bbindings2, nth(bodyr, 0)), nth(bodyr, 1), nth(bodyr, 2)]
+    else [["error", "anf"], ["unit"], counter] in
+  let _ = box_set(go_b, anf_go) in
+  anf_go
+
+let anf_expr(ast, counter) =
+  let s = box_get(anf_sess) in
+  if s != 0 then s(ast, counter)
+  else
+    let g = mk_anf(0) in
+    let _ = box_set(anf_sess, g) in
+    g(ast, counter)
 
 let ast_is_hdr(e) =
   let k = nth(e, 0) in
@@ -191,6 +210,11 @@ let anf_top(item) =
   [nth(r, 0), nth(r, 1)]
 
 let anf_all(i, prog, acc, n) =
+  /* Reset then prime session so every top form reuses the same helpers. */
+  let _ = if i == 0 then
+            let g = mk_anf(0) in
+            box_set(anf_sess, g)
+          else 0 in
   if i >= n then acc
   else
     let e = nth(prog, i) in

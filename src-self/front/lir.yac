@@ -1114,10 +1114,12 @@ let rest_is_tail(self, info) =
   else false
 
 let tco_name_ok(self) =
-  /* parse_expr / rec_go rebuild nested parser closures; tcall would
-   * reshuffle slots under a live go_b and corrupt the session. */
+  /* parse/anf boxed-go sessions: tcall would reshuffle slots under a live
+   * go_b and corrupt the shared helpers. */
   if self == "parse_expr" then false
   else if self == "rec_go" then false
+  else if self == "anf_go" then false
+  else if self == "anf_expr" then false
   else true
 
 /* Tail self-call -> tcall: emit_x86_tloop shuffles the args into slots 1..n
