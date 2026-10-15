@@ -32,10 +32,14 @@ let anf_sess = box_new()
 
 let mk_anf(_) =
   let go_b = box_new() in
-  let go(ast, c) = (box_get(go_b))(ast, c) in
+  /* dst=0 → fresh tN for the result bind; dst="_" → discard name (no
+   * int_to_str), used for lang.js `let _ = e in ...`. */
+  let go(ast, c) = (box_get(go_b))(ast, c, 0) in
+  let go_dst(ast, c, dst) = (box_get(go_b))(ast, c, dst) in
   /* Fresh temps are unique per counter — do not intern. Interning millions
    * of `tN` into the permanent arena dominated main.yac ANF RSS. */
   let fresh(c) = [str_cat("t", int_to_str(c)), c + 1] in
+  let res_name(c, dst) = if dst == 0 then fresh(c) else [dst, c] in
 
   /* atomize a sub-expression: returns [bindings, atom, counter].
    * If ast is already atomic, bindings is empty; else it binds a fresh temp. */
@@ -64,7 +68,7 @@ let mk_anf(_) =
       let r = go(expr, c) in
       [nth(r, 0), nth(r, 1), nth(r, 2)] in
 
-  let anf_go(ast, counter) =
+  let anf_go(ast, counter, dst) =
     let k = nth(ast, 0) in
     if k == "int" then [[], ast, counter]
     else if k == "float" then [[], ast, counter]
@@ -76,7 +80,7 @@ let mk_anf(_) =
     else if k == "fun" then
       /* fun (params) -> body. Fourth field 1 means the last param is rest. */
       let br = go(nth(ast, 2), counter) in
-      let tup = fresh(nth(br, 2)) in
+      let tup = res_name(nth(br, 2), dst) in
       let fbody = [nth(br, 0), nth(br, 1)] in
       let restf = if len(ast) > 3 then nth(ast, 3) else 0 in
       let fb =
@@ -124,7 +128,7 @@ let mk_anf(_) =
     else if k == "callcc" then
       let ar = anf_atom(nth(ast, 1), counter) in
       let kn = fresh(nth(ar, 2)) in
-      let rn = fresh(nth(kn, 1)) in
+      let rn = res_name(nth(kn, 1), dst) in
       let body = [[], ["var", nth(kn, 0)]] in
       [append(nth(ar, 0),
               [["letcallcc", nth(kn, 0), nth(rn, 0), nth(ar, 1), body]]),
@@ -132,18 +136,18 @@ let mk_anf(_) =
     else if k == "throw" then
       let ka = anf_atom(nth(ast, 1), counter) in
       let va = anf_atom(nth(ast, 2), nth(ka, 2)) in
-      let tup = fresh(nth(va, 2)) in
+      let tup = res_name(nth(va, 2), dst) in
       [append(append(nth(ka, 0), nth(va, 0)),
               [["letthrow", nth(tup, 0), nth(ka, 1), nth(va, 1)]]),
        ["var", nth(tup, 0)], nth(tup, 1)]
     else if k == "not" then
       /* not x  →  if x then false else true */
-      go(["if", nth(ast, 1), ["bool", "false"], ["bool", "true"]], counter)
+      go_dst(["if", nth(ast, 1), ["bool", "false"], ["bool", "true"]], counter, dst)
     else if k == "binop" then
       /* op lhs rhs -> temp = lhs op rhs */
       let la = anf_atom(nth(ast, 2), counter) in
       let ra = anf_atom(nth(ast, 3), nth(la, 2)) in
-      let tup = fresh(nth(ra, 2)) in
+      let tup = res_name(nth(ra, 2), dst) in
       let bindings = append(append(nth(la, 0), nth(ra, 0)),
                             [["letbin", nth(tup, 0), nth(ast, 1),
                               nth(la, 1), nth(ra, 1)]]) in
@@ -160,7 +164,7 @@ let mk_anf(_) =
           argloop(i + 1, nth(aa, 2), append(nth(aa, 0), accb),
                   cons(nth(aa, 1), acca)) in
       let arr = argloop(0, nth(fa, 2), [], []) in
-      let tup = fresh(nth(arr, 2)) in
+      let tup = res_name(nth(arr, 2), dst) in
       let bindings = append(append(nth(fa, 0), nth(arr, 0)),
                             [["letcall", nth(tup, 0), nth(fa, 1), nth(arr, 1)]]) in
       [bindings, ["var", nth(tup, 0)], nth(tup, 1)]
@@ -170,7 +174,7 @@ let mk_anf(_) =
       let ca = anf_atom(nth(ast, 1), counter) in
       let tr = go(nth(ast, 2), nth(ca, 2)) in
       let er = go(nth(ast, 3), nth(tr, 2)) in
-      let tup = fresh(nth(er, 2)) in
+      let tup = res_name(nth(er, 2), dst) in
       let bindings = append(nth(ca, 0),
                             [["letif", nth(tup, 0), nth(ca, 1),
                               [nth(tr, 0), nth(tr, 1)],
@@ -180,16 +184,17 @@ let mk_anf(_) =
       /* Flatten `let a = e1 in let b = e2 in ... in body` without one go
        * frame per arm (main.yac from lang.js: ~4e5 lets, depth ~600).
        * Acc is binds in reverse; list_rev_onto keeps O(1) cons per bind.
+       * `let _ = e` normalizes e with dst="_" (effect binds, no tN).
        * fun/callcc break the chain (same special binders as before). */
       let list_rev_onto(xs, acc) =
         if xs == [] then acc
         else list_rev_onto(tail(xs), cons(nth(xs, 0), acc)) in
-      /* Prefixed binds (reversed) ++ body binds; shares body's cons spine. */
+      /* rev is already reversed prefix; one walk onto body spine (share). */
       let finish(rev, body_binds, atom, c) =
-        [append(reverse(rev), body_binds), atom, c] in
+        [list_rev_onto(rev, body_binds), atom, c] in
       let loop(e, c, rev) =
         if nth(e, 0) != "let" then
-          let r = go(e, c) in
+          let r = go_dst(e, c, dst) in
           finish(rev, nth(r, 0), nth(r, 1), nth(r, 2))
         else
           let name = nth(e, 1) in
@@ -203,11 +208,11 @@ let mk_anf(_) =
             let fbind =
               if restf == 0 then ["letfun", name, params, fbody]
               else ["letfun", name, params, fbody, 1] in
-            let body2 = go(nth(e, 3), nth(bodyr, 2)) in
+            let body2 = go_dst(nth(e, 3), nth(bodyr, 2), dst) in
             finish(cons(fbind, rev), nth(body2, 0), nth(body2, 1), nth(body2, 2))
           else if bk == "callcc" then
             let ar = anf_atom(nth(bound, 1), c) in
-            let bodyr = go(nth(e, 3), nth(ar, 2)) in
+            let bodyr = go_dst(nth(e, 3), nth(ar, 2), dst) in
             let tup = fresh(nth(bodyr, 2)) in
             let rev1 = list_rev_onto(nth(ar, 0), rev) in
             let rev2 = cons(
@@ -215,6 +220,9 @@ let mk_anf(_) =
                           [nth(bodyr, 0), nth(bodyr, 1)]],
                          rev1) in
             [reverse(rev2), ["var", nth(tup, 0)], nth(tup, 1)]
+          else if name == "_" then
+            let r = go_dst(bound, c, "_") in
+            loop(nth(e, 3), nth(r, 2), list_rev_onto(nth(r, 0), rev))
           else
             let br = anf_atom(bound, c) in
             let rev1 = list_rev_onto(nth(br, 0), rev) in
@@ -227,11 +235,11 @@ let mk_anf(_) =
 
 let anf_expr(ast, counter) =
   let s = box_get(anf_sess) in
-  if s != 0 then s(ast, counter)
+  if s != 0 then s(ast, counter, 0)
   else
     let g = mk_anf(0) in
     let _ = box_set(anf_sess, g) in
-    g(ast, counter)
+    g(ast, counter, 0)
 
 let ast_is_hdr(e) =
   let k = nth(e, 0) in
