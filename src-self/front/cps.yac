@@ -11,7 +11,7 @@
  */
 
 package front.cps
-export cps_all, cps_expr, cps_maybe_opt, cps_opt_all, cps_atoi
+export cps_all, cps_expr, cps_maybe_opt, cps_opt_all, cps_opt_one, cps_atoi
 import lib.map {intern}
 
 let cps_newk(st) =
@@ -140,17 +140,20 @@ let cps_eta_cont(v) =
       else if nth(hd, 1) == p then 0
       else hd
 
+/* Flat helper (s/n as args): a nested capturing `rec` was miscompiled as
+ * tcall-without-object under the package path, so fold saw pointer junk. */
+let cps_atoi_go(s, n, i, acc, sign) =
+  if i >= n then acc * sign
+  else
+    let c = str_ref(s, i) in
+    if i == 0 then
+      if c == 45 then cps_atoi_go(s, n, 1, 0, 0 - 1)
+      else cps_atoi_go(s, n, i + 1, acc * 10 + (c - 48), sign)
+    else cps_atoi_go(s, n, i + 1, acc * 10 + (c - 48), sign)
+
 let cps_atoi(s) =
   let n = str_len(s) in
-  let rec(i, acc, sign) =
-    if i >= n then acc * sign
-    else
-      let c = str_ref(s, i) in
-      if i == 0 then
-        if c == 45 then rec(1, 0, 0 - 1)
-        else rec(i + 1, acc * 10 + (c - 48), sign)
-      else rec(i + 1, acc * 10 + (c - 48), sign) in
-  if n == 0 then 0 else rec(0, 0, 1)
+  if n == 0 then 0 else cps_atoi_go(s, n, 0, 0, 1)
 
 let cps_fold_bin(op, a, b) =
   if nth(a, 0) != "int" then 0
@@ -203,11 +206,18 @@ let cps_opt_cexp(C, go) =
     ["if", cps_opt_cval(nth(C, 1), go), go("cexp", nth(C, 2)), go("cexp", nth(C, 3))]
   else C
 
-let cps_opt_dispatch(op, a) =
-  if op == "cval" then cps_opt_cval(a, cps_opt_dispatch)
-  else cps_opt_cexp(a, cps_opt_dispatch)
+/* Boxed go: HO self-pass of cps_opt_dispatch AVs inside the yc bundle
+ * (same class as uncps_dispatch / parse_expr). */
+let cps_opt_go_b = box_new()
+let cps_opt_go(op, a) = (box_get(cps_opt_go_b))(op, a)
 
-let cps_opt_one(C) = cps_opt_dispatch("cexp", C)
+let cps_opt_dispatch(op, a) =
+  if op == "cval" then cps_opt_cval(a, cps_opt_go)
+  else cps_opt_cexp(a, cps_opt_go)
+
+let cps_opt_one(C) =
+  let _ = box_set(cps_opt_go_b, cps_opt_dispatch) in
+  cps_opt_go("cexp", C)
 
 let cps_opt_all(cps_list) =
   let acc = list_new() in

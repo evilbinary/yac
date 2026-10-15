@@ -664,10 +664,17 @@ let kernel_let_names(_) =
 let host_fun_names(_) = host_names(0)
 
 let report_unbound_ex(src, ast, extra, owner) =
+  let t0 = time_ms() in
   let sc0 = pair_locals(box_get(imap_box), 0,
                         append(kernel_fun_names(0), kernel_let_names(0))) in
   let sc1 = pair_locals(box_get(malias_box), 0, sc0) in
-  let nm = ub_prog(rewrite_imports(ast, 0, [], owner), 0, append(extra, sc1)) in
+  let _ = log_i("prof", "ub.scope", time_ms() - t0) in
+  let t1 = time_ms() in
+  let ast2 = rewrite_imports(ast, 0, [], owner) in
+  let _ = log_i("prof", "ub.rewrite", time_ms() - t1) in
+  let t2 = time_ms() in
+  let nm = ub_prog(ast2, 0, append(extra, sc1)) in
+  let _ = log_i("prof", "ub.walk", time_ms() - t2) in
   if nm == "" then 0
   else
     /* Re-lex only for small sources: main.yac (~9MB) pays another full lex
@@ -1010,24 +1017,48 @@ let make_pipeline(t) =
    mk_pass("lower", pass_lower),
    mk_pass("pack", pass_pack)]
 
-/* --dump-lex: token stream (kind, text, line) before parsing. */
+/* --dump-lex: summarize token count. Full print of megabyte units is
+ * unusable and would dominate --prof-out with print/str time. */
 let dump_lex(src) =
-  let _ = print(tokenize(src)) in 0
+  let t0 = time_ms() in
+  let t = tokenize(src) in
+  let _ = log_i("prof", "lex", time_ms() - t0) in
+  let _ = print(str_cat("tokens=", int_to_str(len(t)))) in 0
 
 let dump_ast(src) =
-  let ast = pass_parse(pass_lex(src)) in
+  let t0 = time_ms() in
+  let toks = pass_lex(src) in
+  let _ = log_i("prof", "lex", time_ms() - t0) in
+  let t1 = time_ms() in
+  let ast = pass_parse(toks) in
+  let _ = log_i("prof", "parse", time_ms() - t1) in
   if prog_has_err(ast, 0) then
     let _ = report_syntax(ast) in 1
   else
-    let _ = print(ast) in 0
+    let _ = print(str_cat("forms=", int_to_str(len(ast)))) in 0
 
 let dump_anf(src) =
-  let ast = pass_parse(pass_lex(src)) in
-  if prog_has_err(ast, 0) then
+  let t0 = time_ms() in
+  let toks = pass_lex(src) in
+  let _ = log_i("prof", "lex", time_ms() - t0) in
+  let t1 = time_ms() in
+  let ast = pass_parse(toks) in
+  let _ = log_i("prof", "parse", time_ms() - t1) in
+  let t1b = time_ms() in
+  let bad = prog_has_err(ast, 0) in
+  let _ = log_i("prof", "ast_err", time_ms() - t1b) in
+  if bad then
     let _ = report_syntax(ast) in 1
-  else if report_unbound(src, ast) != 0 then 1
   else
-    let _ = print(pass_anf(ast)) in 0
+    let t2 = time_ms() in
+    let ub = report_unbound(src, ast) in
+    let _ = log_i("prof", "unbound", time_ms() - t2) in
+    if ub != 0 then 1
+    else
+      let t3 = time_ms() in
+      let a = pass_anf(ast) in
+      let _ = log_i("prof", "anf", time_ms() - t3) in
+      let _ = print(str_cat("anf_items=", int_to_str(len(a)))) in 0
 
 let lir_slice_list(l, i, n, acc) =
   if i >= n then reverse(acc)

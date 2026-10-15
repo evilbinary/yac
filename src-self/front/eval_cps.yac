@@ -237,6 +237,38 @@ let ce_jump_call(C, env) =
     else
       let _ = ce_fail("cannot apply a non-function value") in [0, 0]
 
+/* Nested HO trampoline (flat top-level): must not re-enter ce_run; uses
+ * ce_jump_call so prims in the callee body are not re-applied as HO. */
+let ce_ho_run(code, env) =
+  if ce_bad(0) then ["err", box_get(ce_eb)]
+  else
+    let ck = nth(code, 0) in
+    if ck == "halt" then ["ok", ce_atom(nth(code, 1), env)]
+    else if ck == "let" then
+      let v = ce_atom(nth(code, 2), env) in
+      if ce_bad(0) then ["err", box_get(ce_eb)]
+      else ce_ho_run(nth(code, 3), ce_let_env(env, nth(code, 1), v))
+    else if ck == "if" then
+      let cnd = ce_atom(nth(code, 1), env) in
+      if ce_bad(0) then ["err", box_get(ce_eb)]
+      else if cnd then ce_ho_run(nth(code, 2), env)
+      else ce_ho_run(nth(code, 3), env)
+    else if ck == "throw" then
+      let kexp = nth(code, 1) in
+      if nth(kexp, 0) == "halt" then ["ok", ce_atom(nth(code, 2), env)]
+      else
+        let k2 = ce_atom(kexp, env) in
+        let v2 = ce_atom(nth(code, 2), env) in
+        if ce_bad(0) then ["err", box_get(ce_eb)]
+        else
+          let j = ce_apply_cont(k2, v2) in
+          ce_ho_run(nth(j, 0), nth(j, 1))
+    else if ck == "call" then
+      let j = ce_jump_call(code, env) in
+      if ce_bad(0) then ["err", box_get(ce_eb)]
+      else ce_ho_run(nth(j, 0), nth(j, 1))
+    else ["err", "CPS eval: bad CPS node"]
+
 let ce_call_value(hd, args) =
   if ce_tag(hd) != "cfun" then ce_fail("cannot apply a non-function value")
   else
@@ -249,36 +281,7 @@ let ce_call_value(hd, args) =
       let k = ["ccont", rn, ["halt", ["var", rn]], kf] in
       let nf = ce_frame(nth(hd, 3)) in
       let _ = ce_bind_params(nf, ps, append(args, [k]), 0, np) in
-      let rec(code, env) =
-        if ce_bad(0) then ["err", box_get(ce_eb)]
-        else
-          let ck = nth(code, 0) in
-          if ck == "halt" then ["ok", ce_atom(nth(code, 1), env)]
-          else if ck == "let" then
-            let v = ce_atom(nth(code, 2), env) in
-            if ce_bad(0) then ["err", box_get(ce_eb)]
-            else rec(nth(code, 3), ce_let_env(env, nth(code, 1), v))
-          else if ck == "if" then
-            let cnd = ce_atom(nth(code, 1), env) in
-            if ce_bad(0) then ["err", box_get(ce_eb)]
-            else if cnd then rec(nth(code, 2), env)
-            else rec(nth(code, 3), env)
-          else if ck == "throw" then
-            let kexp = nth(code, 1) in
-            if nth(kexp, 0) == "halt" then ["ok", ce_atom(nth(code, 2), env)]
-            else
-              let k2 = ce_atom(kexp, env) in
-              let v2 = ce_atom(nth(code, 2), env) in
-              if ce_bad(0) then ["err", box_get(ce_eb)]
-              else
-                let j = ce_apply_cont(k2, v2) in
-                rec(nth(j, 0), nth(j, 1))
-          else if ck == "call" then
-            let j = ce_jump_call(code, env) in
-            if ce_bad(0) then ["err", box_get(ce_eb)]
-            else rec(nth(j, 0), nth(j, 1))
-          else ["err", "CPS eval: bad CPS node"] in
-      let r = rec(nth(hd, 2), nf) in
+      let r = ce_ho_run(nth(hd, 2), nf) in
       if nth(r, 0) == "err" then
         let _ = ce_fail(nth(r, 1)) in 0
       else nth(r, 1)
@@ -345,47 +348,47 @@ let ce_do_call(C, env) =
     else
       let _ = ce_fail("cannot apply a non-function value") in [0, 0]
 
-let ce_run(code0, env0) =
-  let rec(code, env) =
-    if ce_bad(0) then ["err", box_get(ce_eb)]
-    else
-      let ck = nth(code, 0) in
-      if ck == "halt" then ["ok", ce_atom(nth(code, 1), env)]
-      else if ck == "let" then
+/* Flat trampoline (no nested capturing rec): package-compiled nested
+ * `rec` was AVing on the simplest halt path. */
+let ce_run(code, env) =
+  if ce_bad(0) then ["err", box_get(ce_eb)]
+  else
+    let ck = nth(code, 0) in
+    if ck == "halt" then ["ok", ce_atom(nth(code, 1), env)]
+    else if ck == "let" then
+      let v = ce_atom(nth(code, 2), env) in
+      if ce_bad(0) then ["err", box_get(ce_eb)]
+      else ce_run(nth(code, 3), ce_let_env(env, nth(code, 1), v))
+    else if ck == "if" then
+      let cnd = ce_atom(nth(code, 1), env) in
+      if ce_bad(0) then ["err", box_get(ce_eb)]
+      else if cnd then ce_run(nth(code, 2), env)
+      else ce_run(nth(code, 3), env)
+    else if ck == "throw" then
+      let kexp = nth(code, 1) in
+      if nth(kexp, 0) == "halt" then ["ok", ce_atom(nth(code, 2), env)]
+      else
+        let k = ce_atom(kexp, env) in
         let v = ce_atom(nth(code, 2), env) in
         if ce_bad(0) then ["err", box_get(ce_eb)]
-        else rec(nth(code, 3), ce_let_env(env, nth(code, 1), v))
-      else if ck == "if" then
-        let cnd = ce_atom(nth(code, 1), env) in
-        if ce_bad(0) then ["err", box_get(ce_eb)]
-        else if cnd then rec(nth(code, 2), env)
-        else rec(nth(code, 3), env)
-      else if ck == "throw" then
-        let kexp = nth(code, 1) in
-        if nth(kexp, 0) == "halt" then ["ok", ce_atom(nth(code, 2), env)]
         else
-          let k = ce_atom(kexp, env) in
-          let v = ce_atom(nth(code, 2), env) in
-          if ce_bad(0) then ["err", box_get(ce_eb)]
-          else
-            let j = ce_apply_cont(k, v) in
-            rec(nth(j, 0), nth(j, 1))
-      else if ck == "call" then
-        let j = ce_do_call(code, env) in
-        if ce_bad(0) then ["err", box_get(ce_eb)]
-        else rec(nth(j, 0), nth(j, 1))
-      else ["err", "CPS eval: bad CPS node"] in
-  rec(code0, env0)
+          let j = ce_apply_cont(k, v) in
+          ce_run(nth(j, 0), nth(j, 1))
+    else if ck == "call" then
+      let j = ce_do_call(code, env) in
+      if ce_bad(0) then ["err", box_get(ce_eb)]
+      else ce_run(nth(j, 0), nth(j, 1))
+    else ["err", "CPS eval: bad CPS node"]
+
+let eval_cps_go(xs, n, i, last, env) =
+  if ce_bad(0) then ["err", box_get(ce_eb)]
+  else if i >= n then ["ok", last]
+  else
+    let r = ce_run(nth(xs, i), env) in
+    if nth(r, 0) == "err" then r
+    else eval_cps_go(xs, n, i + 1, nth(r, 1), env)
 
 let eval_cps_all(xs) =
   let _ = box_set(ce_eb, 0) in
   let env = ce_frame(0) in
-  let n = len(xs) in
-  let rec(i, last) =
-    if ce_bad(0) then ["err", box_get(ce_eb)]
-    else if i >= n then ["ok", last]
-    else
-      let r = ce_run(nth(xs, i), env) in
-      if nth(r, 0) == "err" then r
-      else rec(i + 1, nth(r, 1)) in
-  rec(0, 0)
+  eval_cps_go(xs, len(xs), 0, 0, env)

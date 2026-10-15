@@ -23,7 +23,9 @@ let is_space(c) = c == 32 or c == 9 or c == 10 or c == 13
 let is_opchar(c) = c == 43 or c == 45 or c == 42 or c == 47 or c == 37 or
                    c == 61 or c == 60 or c == 62 or c == 33
 
-/* Keywords are 2..7 chars; gensyms like `_v_obj20979` bail out cheaply. */
+/* Keywords are 2..7 chars; gensyms like `_v_obj20979` bail out cheaply.
+ * Tried a small fmap (--prof-out is_kw ~4%): hash+fmap_get_h was not
+ * cheaper than the length-gated string chain, so keep the chain. */
 let is_kw(w) =
   let n = str_len(w) in
   if n < 2 then false
@@ -51,62 +53,77 @@ let slen(s) = str_len(s)
 let sat(s, i) = str_ref(s, i)
 let at_end(s, i) = i >= str_len(s)
 
-/* skip spaces; returns new pos */
+/* skip spaces; returns new pos.
+ * str_ref inlined: sat()/is_space() were ~3% excl on --prof-out bundle. */
 let skip_sp(s, i, line, n) =
   if i >= n then [i, line]
   else
-    let c = sat(s, i) in
+    let c = str_ref(s, i) in
     if c == 10 then skip_sp(s, i + 1, line + 1, n)
     else if c == 9 or c == 32 or c == 13 then skip_sp(s, i + 1, line, n)
     else [i, line]
 
 /* skip -- line comment */
 let skip_line_cm(s, i) =
-  if at_end(s, i) or sat(s, i) == 10 then i else skip_line_cm(s, i + 1)
+  if at_end(s, i) or str_ref(s, i) == 10 then i else skip_line_cm(s, i + 1)
 
 /* Nested slash-star comments. d is remaining opens (1 after the outer
- * slash-star). slash-star-dot is a path glob, not another opener. */
-let skip_block_cm(s, i, line, d) =
-  if at_end(s, i) then 0
-  else if sat(s, i) == 47 then
-    if at_end(s, i + 1) then 0
-    else if sat(s, i + 1) == 42 then
-      if at_end(s, i + 2) then 0
-      else if sat(s, i + 2) == 46 then skip_block_cm(s, i + 1, line, d)
-      else skip_block_cm(s, i + 2, line, d + 1)
-    else skip_block_cm(s, i + 1, line, d)
-  else if sat(s, i) == 42 then
-    if at_end(s, i + 1) then 0
-    else if sat(s, i + 1) == 47 then
-      if d <= 1 then i + 2
-      else skip_block_cm(s, i + 2, line, d - 1)
-    else skip_block_cm(s, i + 1, line, d)
-  else if sat(s, i) == 10 then skip_block_cm(s, i + 1, line + 1, d)
-  else skip_block_cm(s, i + 1, line, d)
+ * slash-star). slash-star-dot is a path glob, not another opener.
+ * One str_ref per step (--prof-out: skip_block_cm ~3% excl via sat*). */
+let skip_block_cm(s, i, line, d, n) =
+  if i >= n then 0
+  else
+    let c = str_ref(s, i) in
+    if c == 47 then
+      if i + 1 >= n then 0
+      else if str_ref(s, i + 1) == 42 then
+        if i + 2 >= n then 0
+        else if str_ref(s, i + 2) == 46 then skip_block_cm(s, i + 1, line, d, n)
+        else skip_block_cm(s, i + 2, line, d + 1, n)
+      else skip_block_cm(s, i + 1, line, d, n)
+    else if c == 42 then
+      if i + 1 >= n then 0
+      else if str_ref(s, i + 1) == 47 then
+        if d <= 1 then i + 2
+        else skip_block_cm(s, i + 2, line, d - 1, n)
+      else skip_block_cm(s, i + 1, line, d, n)
+    else if c == 10 then skip_block_cm(s, i + 1, line + 1, d, n)
+    else skip_block_cm(s, i + 1, line, d, n)
 
 /* skip double-star comments (slash-star-star ... star-star-slash); pos 0 if open */
-let skip_starstar_cm(s, i, line) =
-  if at_end(s, i) then 0
-  else if sat(s, i) == 42 then
-    if at_end(s, i + 1) then 0
-    else if sat(s, i + 1) == 42 then
-      if at_end(s, i + 2) then 0
-      else if sat(s, i + 2) == 47 then i + 3
-      else skip_starstar_cm(s, i + 1, line)
-    else skip_starstar_cm(s, i + 1, line)
-  else if sat(s, i) == 10 then skip_starstar_cm(s, i + 1, line + 1)
-  else skip_starstar_cm(s, i + 1, line)
+let skip_starstar_cm(s, i, line, n) =
+  if i >= n then 0
+  else
+    let c = str_ref(s, i) in
+    if c == 42 then
+      if i + 1 >= n then 0
+      else if str_ref(s, i + 1) == 42 then
+        if i + 2 >= n then 0
+        else if str_ref(s, i + 2) == 47 then i + 3
+        else skip_starstar_cm(s, i + 1, line, n)
+      else skip_starstar_cm(s, i + 1, line, n)
+    else if c == 10 then skip_starstar_cm(s, i + 1, line + 1, n)
+    else skip_starstar_cm(s, i + 1, line, n)
 
-/* read a run of alnum chars (specialized; avoids HO capture of is_alnum) */
+/* Read alnum run. Char class inlined: is_alnum+sat was ~13% excl combined
+ * on --prof-out dump-ast of yc_bundle (per-char nested calls). */
 let read_alnum(s, i, n) =
   if i >= n then i
-  else if is_alnum(sat(s, i)) then read_alnum(s, i + 1, n)
-  else i
+  else
+    let c = str_ref(s, i) in
+    if (c >= 48 and c <= 57) or (c >= 65 and c <= 90) or
+       (c >= 97 and c <= 122) or c == 95 then
+      read_alnum(s, i + 1, n)
+    else i
 
 let read_opchars(s, i, n) =
   if i >= n then i
-  else if is_opchar(sat(s, i)) then read_opchars(s, i + 1, n)
-  else i
+  else
+    let c = str_ref(s, i) in
+    if c == 43 or c == 45 or c == 42 or c == 47 or c == 37 or
+       c == 61 or c == 60 or c == 62 or c == 33 then
+      read_opchars(s, i + 1, n)
+    else i
 
 /* --- token constructors --- */
 let mk_tok(kind, text, line) = [kind, text, line]
@@ -169,12 +186,14 @@ let scan_ident(s, i, line, n) =
 let is_exp(c) = c == 101 or c == 69  /* 'e' or 'E' */
 let read_digits(s, i) =
   if at_end(s, i) then i
-  else if is_digit(sat(s, i)) then read_digits(s, i + 1)
-  else i
+  else
+    let c = str_ref(s, i) in
+    if c >= 48 and c <= 57 then read_digits(s, i + 1) else i
 let read_num_body(s, i) =
   if at_end(s, i) then i
-  else if is_digit(sat(s, i)) or sat(s, i) == 46 then read_num_body(s, i + 1)
-  else i
+  else
+    let c = str_ref(s, i) in
+    if (c >= 48 and c <= 57) or c == 46 then read_num_body(s, i + 1) else i
 let scan_num(s, i, line) =
   let e = read_num_body(s, i) in
   /* yac's and/or are not short-circuit, so guard each sat() with if */
@@ -241,8 +260,8 @@ let lex(s, i, line, acc, n) =
   if i >= n then
     let _ = list_push(acc, mk_tok("eof", "", line)) in acc
   else
-    let c = sat(s, i) in
-    if is_space(c) then
+    let c = str_ref(s, i) in
+    if c == 32 or c == 9 or c == 10 or c == 13 then
       let sp = skip_sp(s, i, line, n) in
       lex(s, nth(sp, 0), nth(sp, 1), acc, n)
     else if c == 45 then
@@ -250,7 +269,7 @@ let lex(s, i, line, acc, n) =
         let r = scan_op(s, i, line, n) in
         let _ = list_push(acc, nth(r, 0)) in
         lex(s, nth(r, 1), line, acc, n)
-      else if sat(s, i + 1) == 45 then
+      else if str_ref(s, i + 1) == 45 then
         lex(s, skip_line_cm(s, i + 2), line, acc, n)
       else
         let r = scan_op(s, i, line, n) in
@@ -261,15 +280,15 @@ let lex(s, i, line, acc, n) =
         let r = scan_op(s, i, line, n) in
         let _ = list_push(acc, nth(r, 0)) in
         lex(s, nth(r, 1), line, acc, n)
-      else if sat(s, i + 1) == 42 then
+      else if str_ref(s, i + 1) == 42 then
         let starstar =
           if i + 2 >= n then false
-          else if sat(s, i + 2) != 42 then false
+          else if str_ref(s, i + 2) != 42 then false
           else if i + 3 >= n then true
-          else sat(s, i + 3) != 47 in
+          else str_ref(s, i + 3) != 47 in
         let e =
-          if starstar then skip_starstar_cm(s, i + 3, line)
-          else skip_block_cm(s, i + 2, line, 1) in
+          if starstar then skip_starstar_cm(s, i + 3, line, n)
+          else skip_block_cm(s, i + 2, line, 1, n) in
         if e == 0 then
           let _ = list_push(acc, mk_tok("eof", "unterminated-comment", line)) in acc
         else lex(s, e, line, acc, n)
@@ -277,11 +296,11 @@ let lex(s, i, line, acc, n) =
         let r = scan_op(s, i, line, n) in
         let _ = list_push(acc, nth(r, 0)) in
         lex(s, nth(r, 1), line, acc, n)
-    else if is_alpha(c) then
+    else if (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95 then
       let r = scan_ident(s, i, line, n) in
       let _ = list_push(acc, nth(r, 0)) in
       lex(s, nth(r, 1), line, acc, n)
-    else if is_digit(c) then
+    else if c >= 48 and c <= 57 then
       let r = scan_num(s, i, line) in
       let _ = list_push(acc, nth(r, 0)) in
       lex(s, nth(r, 1), line, acc, n)
@@ -292,11 +311,13 @@ let lex(s, i, line, acc, n) =
       else
         let _ = list_push(acc, nth(r, 0)) in
         lex(s, nth(r, 1), line, acc, n)
-    else if is_opchar(c) then
+    else if c == 43 or c == 45 or c == 42 or c == 47 or c == 37 or
+            c == 61 or c == 60 or c == 62 or c == 33 then
       let r = scan_op(s, i, line, n) in
       let _ = list_push(acc, nth(r, 0)) in
       lex(s, nth(r, 1), line, acc, n)
-    else if is_punct(c) then
+    else if c == 40 or c == 41 or c == 91 or c == 93 or c == 123 or
+            c == 125 or c == 44 or c == 59 or c == 46 then
       let txt = intern(str_slice(s, i, 1)) in
       let _ = list_push(acc, mk_tok(punct_kind(c), txt, line)) in
       lex(s, i + 1, line, acc, n)

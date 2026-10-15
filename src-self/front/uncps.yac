@@ -4,7 +4,7 @@
  */
 
 package front.uncps
-export uncps_all, uncps_is_err
+export uncps_all, uncps_is_err, uncps_item
 import lib.map {intern}
 
 let uncps_take(xs, n, i, acc) =
@@ -187,21 +187,28 @@ let uncps_call(C, pack, go) =
     else uncps_call_tail(head, args, pack, go)
   else uncps_call_tail(head, args, pack, go)
 
+/* Boxed go (same cliff as parse_expr / anf_go): a direct HO self-pass of
+ * uncps_dispatch is TCO'd into a slot reshuffle in the yc bundle and AVs. */
+let uncps_go_b = box_new()
+let uncps_go(op, a, pack) = (box_get(uncps_go_b))(op, a, pack)
+
 let uncps_dispatch(op, a, pack) =
   let u = nth(pack, 1) in
   if box_get(u) != 0 then ["error", box_get(u)]
-  else if op == "atom" then uncps_atom(a, pack, uncps_dispatch)
-  else if op == "app" then uncps_app(a, pack, uncps_dispatch)
+  else if op == "atom" then uncps_atom(a, pack, uncps_go)
+  else if op == "app" then uncps_app(a, pack, uncps_go)
   else if nth(a, 0) == "halt" then
-    let at = uncps_dispatch("atom", nth(a, 1), pack) in
+    let at = uncps_go("atom", nth(a, 1), pack) in
     if uncps_is_err(at) then at else [[], at]
-  else if nth(a, 0) == "let" then uncps_let(a, pack, uncps_dispatch)
-  else if nth(a, 0) == "throw" then uncps_throw(a, pack, uncps_dispatch)
-  else if nth(a, 0) == "if" then uncps_if(a, pack, uncps_dispatch)
-  else if nth(a, 0) == "call" then uncps_call(a, pack, uncps_dispatch)
+  else if nth(a, 0) == "let" then uncps_let(a, pack, uncps_go)
+  else if nth(a, 0) == "throw" then uncps_throw(a, pack, uncps_go)
+  else if nth(a, 0) == "if" then uncps_if(a, pack, uncps_go)
+  else if nth(a, 0) == "call" then uncps_call(a, pack, uncps_go)
   else uncps_fail(u, "cannot un-CPS: bad CPS node")
 
-let uncps_item(C, u, st) = uncps_dispatch("cexp", C, [[], u, st])
+let uncps_item(C, u, st) =
+  let _ = box_set(uncps_go_b, uncps_dispatch) in
+  uncps_go("cexp", C, [[], u, st])
 
 let uncps_all(cps_list) =
   let u = box_new() in

@@ -1,7 +1,7 @@
 /* anf.yac — normalize AST to A-Normal Form (explicit evaluation order).
  *
  * Input: AST from parser.yac. Output: ANF as [bindings, tailExpr]:
- *   bindings: list of statements (kept in order):
+ *   bindings: cons list of statements (kept in order):
  *     ["let",   temp, atom]                     -- temp = atom
  *     ["letcall", temp, fnAtom, [argAtoms]]     -- temp = fn(arg...)
  *     ["letbin",  temp, op, aAtom, bAtom]       -- temp = a op b
@@ -12,18 +12,18 @@
  *     ["var",name] ["fun",[params],bodyBindings]
  *   tailExpr: the atom that is the expression's value.
  *
- * Every non-atomic computation is bound to a fresh temp, making evaluation
- * order explicit. Fresh names use a counter threaded through the calls.
+ * Bindings stay cons so nested `let` can append(small, large) in O(1) via
+ * tail sharing. LIR converts each body to listbuf once (nth O(1) walk).
+ * Ordinary let-chains are walked iteratively (reverse-cons, then one
+ * reverse + append) so lang.js's deep `let _ = e in ...` does not recurse
+ * through go per arm, while still tail-sharing the final body binds.
  *
- * Architecture: yac has no mutual recursion across top-level lets, so helpers
- * live inside mk_anf. Internal recursion goes through boxed `go` — re-entering
- * top-level anf_expr per subexpr rebuilt anf_atom every time (same cliff as
- * parse_expr on main.yac).
+ * Architecture: helpers live inside mk_anf; internal recursion uses boxed
+ * `go` so nested lets reuse closures (same cliff as parse_expr).
  */
 
 package front.anf
 export anf_all, anf_expr, reverse
-import lib.map {intern}
 
 let reverse(xs) = list_rev(xs)
 
@@ -84,22 +84,43 @@ let mk_anf(_) =
         else ["letfun", nth(tup, 0), nth(ast, 1), fbody, 1] in
       [[fb], ["var", nth(tup, 0)], nth(tup, 1)]
     else if k == "list" then
-      /* desugar [e1,...,en] to cons(e1, cons(... cons(en, []))) */
+      /* desugar [e1,...,en] to cons(e1, cons(... cons(en, []))).
+       * Old recursive append(append(ir, tr), letcall) was O(n²) on the
+       * growing tail (--prof-out: build ~5.5% excl on yc_bundle; main.yac
+       * JS arrays make this the ANF cliff). Emit into a listbuf then
+       * one O(n) cons spine. */
       let items = nth(ast, 1) in
       let n = len(items) in
-      let build(i, c) =
-        if i >= n then
-          let tup = fresh(c) in
-          [[["let", nth(tup, 0), ["nil"]]], ["var", nth(tup, 0)], nth(tup, 1)]
+      let buf = list_new() in
+      let flush(xs) =
+        if xs == [] then 0
+        else
+          let _ = list_push(buf, nth(xs, 0)) in
+          flush(tail(xs)) in
+      let atoms = list_new() in
+      let atomize(i, c) =
+        if i >= n then c
         else
           let ir = anf_atom(nth(items, i), c) in
-          let tr = build(i + 1, nth(ir, 2)) in
-          let tup = fresh(nth(tr, 2)) in
-          let binds = append(append(nth(ir, 0), nth(tr, 0)),
-                             [["letcall", nth(tup, 0), ["var", "cons"],
-                               [nth(ir, 1), nth(tr, 1)]]]) in
-          [binds, ["var", nth(tup, 0)], nth(tup, 1)] in
-      build(0, counter)
+          let _ = flush(nth(ir, 0)) in
+          let _ = list_push(atoms, nth(ir, 1)) in
+          atomize(i + 1, nth(ir, 2)) in
+      let c1 = atomize(0, counter) in
+      let nilt = fresh(c1) in
+      let _ = list_push(buf, ["let", nth(nilt, 0), ["nil"]]) in
+      let wrap(i, c, acc) =
+        if i < 0 then [acc, c]
+        else
+          let tup = fresh(c) in
+          let _ = list_push(buf,
+                    ["letcall", nth(tup, 0), ["var", "cons"],
+                     [nth(atoms, i), acc]]) in
+          wrap(i - 1, nth(tup, 1), ["var", nth(tup, 0)]) in
+      let wr = wrap(n - 1, nth(nilt, 1), ["var", nth(nilt, 0)]) in
+      let to_cons(j, acc) =
+        if j < 0 then acc
+        else to_cons(j - 1, cons(nth(buf, j), acc)) in
+      [to_cons(len(buf) - 1, []), nth(wr, 0), nth(wr, 1)]
     else if k == "callcc" then
       let ar = anf_atom(nth(ast, 1), counter) in
       let kn = fresh(nth(ar, 2)) in
@@ -156,36 +177,50 @@ let mk_anf(_) =
                               [nth(er, 0), nth(er, 1)]]]) in
       [bindings, ["var", nth(tup, 0)], nth(tup, 1)]
     else if k == "let" then
-      /* let name = bound in body */
-      let name = nth(ast, 1) in
-      let bound_ast = nth(ast, 2) in
-      /* if bound is a function literal, bind it under its own name so
-       * recursion resolves by name */
-      if nth(bound_ast, 0) == "fun" then
-        let params = nth(bound_ast, 1) in
-        let bodyr = go(nth(bound_ast, 2), counter) in
-        let fbody = [nth(bodyr, 0), nth(bodyr, 1)] in
-        let restf = if len(bound_ast) > 3 then nth(bound_ast, 3) else 0 in
-        let fbind =
-          if restf == 0 then ["letfun", name, params, fbody]
-          else ["letfun", name, params, fbody, 1] in
-        let body2 = go(nth(ast, 3), nth(bodyr, 2)) in
-        [append([fbind], nth(body2, 0)), nth(body2, 1), nth(body2, 2)]
-      else if nth(bound_ast, 0) == "callcc" then
-        let ar = anf_atom(nth(bound_ast, 1), counter) in
-        let bodyr = go(nth(ast, 3), nth(ar, 2)) in
-        let tup = fresh(nth(bodyr, 2)) in
-        [append(nth(ar, 0),
-                [["letcallcc", name, nth(tup, 0), nth(ar, 1),
-                  [nth(bodyr, 0), nth(bodyr, 1)]]]),
-         ["var", nth(tup, 0)], nth(tup, 1)]
-      else
-        let br = anf_atom(nth(ast, 2), counter) in
-        let bbindings = nth(br, 0) in
-        let batom = nth(br, 1) in
-        let bodyr = go(nth(ast, 3), nth(br, 2)) in
-        let bbindings2 = append(bbindings, [["let", name, batom]]) in
-        [append(bbindings2, nth(bodyr, 0)), nth(bodyr, 1), nth(bodyr, 2)]
+      /* Flatten `let a = e1 in let b = e2 in ... in body` without one go
+       * frame per arm (main.yac from lang.js: ~4e5 lets, depth ~600).
+       * Acc is binds in reverse; list_rev_onto keeps O(1) cons per bind.
+       * fun/callcc break the chain (same special binders as before). */
+      let list_rev_onto(xs, acc) =
+        if xs == [] then acc
+        else list_rev_onto(tail(xs), cons(nth(xs, 0), acc)) in
+      /* Prefixed binds (reversed) ++ body binds; shares body's cons spine. */
+      let finish(rev, body_binds, atom, c) =
+        [append(reverse(rev), body_binds), atom, c] in
+      let loop(e, c, rev) =
+        if nth(e, 0) != "let" then
+          let r = go(e, c) in
+          finish(rev, nth(r, 0), nth(r, 1), nth(r, 2))
+        else
+          let name = nth(e, 1) in
+          let bound = nth(e, 2) in
+          let bk = nth(bound, 0) in
+          if bk == "fun" then
+            let params = nth(bound, 1) in
+            let bodyr = go(nth(bound, 2), c) in
+            let fbody = [nth(bodyr, 0), nth(bodyr, 1)] in
+            let restf = if len(bound) > 3 then nth(bound, 3) else 0 in
+            let fbind =
+              if restf == 0 then ["letfun", name, params, fbody]
+              else ["letfun", name, params, fbody, 1] in
+            let body2 = go(nth(e, 3), nth(bodyr, 2)) in
+            finish(cons(fbind, rev), nth(body2, 0), nth(body2, 1), nth(body2, 2))
+          else if bk == "callcc" then
+            let ar = anf_atom(nth(bound, 1), c) in
+            let bodyr = go(nth(e, 3), nth(ar, 2)) in
+            let tup = fresh(nth(bodyr, 2)) in
+            let rev1 = list_rev_onto(nth(ar, 0), rev) in
+            let rev2 = cons(
+                         ["letcallcc", name, nth(tup, 0), nth(ar, 1),
+                          [nth(bodyr, 0), nth(bodyr, 1)]],
+                         rev1) in
+            [reverse(rev2), ["var", nth(tup, 0)], nth(tup, 1)]
+          else
+            let br = anf_atom(bound, c) in
+            let rev1 = list_rev_onto(nth(br, 0), rev) in
+            let rev2 = cons(["let", name, nth(br, 1)], rev1) in
+            loop(nth(e, 3), nth(br, 2), rev2) in
+      loop(ast, counter, [])
     else [["error", "anf"], ["unit"], counter] in
   let _ = box_set(go_b, anf_go) in
   anf_go
