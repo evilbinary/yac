@@ -52,31 +52,32 @@ $(BUILD)/%.o: src/%.c $(wildcard src/*.h) | $(BUILD)
 $(YC_BUNDLE): $(YC_SRCS) | $(YC_BUILD)
 	cat $(YC_SRCS) > $@
 
-# Native yc concatenates every positional .yac; L4 C yac still takes one file,
-# so bootstrap keeps a cat bundle. After yc_a exists, it compiles that bundle.
-# Two native passes: pass 1 updates emit in the compiler; pass 2 re-emits
-# runtime (win_clock / time_str) with that emit. One pass leaves [00:00:00].
-$(YC_A): $(BIN) $(YC_BUNDLE)
+# Native rebuilds compile src-self/yc.yac via --pkg (per-package units). The
+# cat bundle miscompiles dump-uncps / cps --opt HO dispatch; L4 C yac still
+# needs one file, so the first bootstrap keeps $(YC_BUNDLE).
+# Two native passes: pass 1 updates emit; pass 2 re-emits runtime
+# (win_clock / time_str). One pass leaves [00:00:00].
+$(YC_A): $(BIN) $(YC_SRCS) $(YC_BUNDLE)
 	@if [ -x $@ ]; then \
-		echo "native rebuild pass 1 (emit): $@ compiling bundle"; \
-		$@ --pkg src-self $(YC_BUNDLE) -o $@.new && chmod +x $@.new && \
-		echo "native rebuild pass 2 (runtime): $@.new compiling bundle"; \
-		$@.new --pkg src-self $(YC_BUNDLE) -o $@.new2 && chmod +x $@.new2 && \
+		echo "native rebuild pass 1 (emit): $@ compiling src-self/yc.yac"; \
+		$@ --pkg src-self src-self/yc.yac -o $@.new && chmod +x $@.new && \
+		echo "native rebuild pass 2 (runtime): $@.new compiling src-self/yc.yac"; \
+		$@.new --pkg src-self src-self/yc.yac -o $@.new2 && chmod +x $@.new2 && \
 		mv -f $@.new2 $@ && rm -f $@.new; \
 	elif [ -f $(YC_BIN) ]; then \
-		echo "native rebuild via $(YC_BIN) pass 1 (emit): compiling bundle"; \
-		./$(YC_BIN) --pkg src-self $(YC_BUNDLE) -o $@.new && chmod +x $@.new && \
-		echo "native rebuild via $(YC_BIN) pass 2 (runtime): $@.new compiling bundle"; \
-		$@.new --pkg src-self $(YC_BUNDLE) -o $@.new2 && chmod +x $@.new2 && \
+		echo "native rebuild via $(YC_BIN) pass 1 (emit): compiling src-self/yc.yac"; \
+		./$(YC_BIN) --pkg src-self src-self/yc.yac -o $@.new && chmod +x $@.new && \
+		echo "native rebuild via $(YC_BIN) pass 2 (runtime): $@.new compiling src-self/yc.yac"; \
+		$@.new --pkg src-self src-self/yc.yac -o $@.new2 && chmod +x $@.new2 && \
 		mv -f $@.new2 $@ && rm -f $@.new; \
 	else \
 		echo "L4: ./yac compiling bundle with C GC (slow; not the native <3s path)"; \
 		./$(BIN) --pkg src-self $(YC_BUNDLE) -o $@ && chmod +x $@; \
 	fi
 
-# L5: native yc_a compiles the same bundle. yc_a and yc_b need not match.
-$(YC_B): $(YC_A) $(YC_BUNDLE)
-	$(YC_A) --pkg src-self $(YC_BUNDLE) -o $@
+# L5: native yc_a compiles yc.yac. yc_a and yc_b need not match.
+$(YC_B): $(YC_A) $(YC_SRCS)
+	$(YC_A) --pkg src-self src-self/yc.yac -o $@
 	chmod +x $@
 
 # Same bits as yc_a, next to ./yac. `make yc` builds this file (not a phony).
