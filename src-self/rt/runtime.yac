@@ -1,4 +1,4 @@
-/* runtime.yac — arch-independent runtime as LIR (same emit_insn as user code).
+/* runtime.yac ? arch-independent runtime as LIR (same emit_insn as user code).
  *
  * Kernel: kind / mref / mset / obj_sti / obj_st_int / tag / alloc
  * plus ordinary control LIR. cons still goes through emit (yac_alloc).
@@ -13,7 +13,7 @@
  *
  * Insn lists are thunks (rt_*_ins(_)) so big cons literals are not built
  * inside yc's _start. A 33-element literal in that huge frame is mis-emitted
- * (yc_a bytes_to_str → SIGSEGV); the same literal in a small function is fine.
+ * (yc_a bytes_to_str ? SIGSEGV); the same literal in a small function is fine.
  *
  * runtime_funs is the kernel. Extra LIR procs (e.g. num.yac lets) are attached
  * with runtime_add; backend chooses what to hang.
@@ -41,7 +41,7 @@ let rt_w_set(w) = box_set(rt_w_box, w)
 let rt_w(_) = box_get(rt_w_box)
 let rt_field(k) = k * rt_w(0)
 
-/* Target pointer width in bits (32 / 64 / …). 32 means a LIR word is 4 bytes,
+/* Target pointer width in bits (32 / 64 / ?). 32 means a LIR word is 4 bytes,
  * so an 8-byte f64 in memory needs the arch's $f64ld/$f64st. */
 let rt_pw_box =
   let b = box_new() in
@@ -1281,29 +1281,109 @@ let rt_print_ins(_) =
      ["label", "pr_nl"]],
     append(rt_nl_ins(0), [["label", "pr_done"], ["ret", 1]]))
 
-/* Mark: bitmap O(1) if G+64 set, else walk gc_head. Recurse by kind. */
+/* Mark: iterative, single proc ? no native recursion, no extra kernel entry.
+ * yac_gc_mark(v) pushes v raw on an mmap worklist at G+56 (header: +0 cap
+ * bytes, +8 top bytes, slots at +16; grown by doubling), then drains: pop one
+ * raw value, run the same validation fast paths the recursive mark had (nil,
+ * tagged int, non-heap alignment, bitmap bounds/quick check or gc_head walk,
+ * already-marked), and for a freshly marked object push its children raw by
+ * kind. The old code recursed via fcall on the cons car: translated 96KB
+ * single-line JS ASTs nest thousands of lets deep and blew the C stack
+ * (0xC0000005 in gc_collect at exit). The worklist bounds depth by memory,
+ * not stack. Kind map: 2=cons(car+24,cdr+32) 4=bytes(+40) 5=listbuf(+64,+32)
+ * 3/6/7 leaves; any other kind walks fields like a closure (unchanged). */
 let rt_gc_mark_ins(_) =
-  [["$local", 24, 1],
+  [["$local", 28, 1],
+   ["$gbase", 4],
+   ["mov_imm", 8, 0],
+   ["mov", 10, 1],               /* push sites take the value in r10 */
+   ["jmp", "mp_entry"],
+   /* --- shared push: capacity + grow + put; tail falls into the drain --- */
+   ["label", "mp_entry"],
+   ["$ld64", 11, 4, 56],
+   ["$jcc", "==", 11, 8, "mp_init", "mp_cap"],
+   ["label", "mp_init"],
+   ["mov_imm", 15, 2097152 + 16],
+   ["mov_imm", 21, 3],
+   ["mov_imm", 22, 34],
+   ["mov_imm", 23, 0 - 1],
+   ["$syscall", 25, "mmap", [8, 15, 21, 22, 23, 8]],
+   ["$jcc", "==", 25, 8, "mk_ret", "mp_bok"],
+   ["label", "mp_bok"],
+   ["$jcc", "<", 25, 8, "mk_ret", "mp_bok2"],
+   ["label", "mp_bok2"],
+   ["mov_imm", 15, 2097152],
+   ["$st64", 25, 0, 15],
+   ["mov_imm", 15, 0],
+   ["$st64", 25, 8, 15],
+   ["$st64", 4, 56, 25],
+   ["mov", 11, 25],
+   ["jmp", "mp_cap"],
+   ["label", "mp_cap"],
+   ["$ld64", 12, 11, 8],
+   ["$addi", 13, 12, 8],
+   ["$ld64", 14, 11, 0],
+   ["$jcc", ">=u", 14, 13, "mp_put", "mp_grow"],
+   ["label", "mp_grow"],
+   ["$add", 14, 14, 14],
+   ["$addi", 15, 14, 16],
+   ["mov_imm", 21, 3],
+   ["mov_imm", 22, 34],
+   ["mov_imm", 23, 0 - 1],
+   ["$syscall", 25, "mmap", [8, 15, 21, 22, 23, 8]],
+   ["$jcc", "==", 25, 8, "mk_loop", "mp_gok"],
+   ["label", "mp_gok"],
+   ["$jcc", "<", 25, 8, "mk_loop", "mp_gok2"],
+   ["label", "mp_gok2"],
+   ["$ld64", 12, 11, 8],
+   ["$addi", 17, 11, 16],
+   ["$addi", 18, 25, 16],
+   ["$memcpy", 18, 17, 12],
+   ["$st64", 25, 0, 14],
+   ["$st64", 25, 8, 12],
+   ["$st64", 4, 56, 25],
+   ["$ld64", 16, 11, 0],
+   ["$addi", 16, 16, 16],
+   ["$syscall", 24, "munmap", [11, 16]],
+   ["mov", 11, 25],
+   ["label", "mp_put"],
+   ["$st64", 11, 8, 13],
+   ["$add", 14, 11, 12],
+   ["$addi", 14, 14, 16],
+   ["$st64", 14, 0, 10],
+   ["jmp", "mk_loop"],
+   /* --- drain: pop raw value, validate, mark, push children --- */
+   ["label", "mk_loop"],
+   ["$ld64", 10, 4, 56],
+   ["$jcc", "==", 10, 8, "mk_ret", "mk_top"],
+   ["label", "mk_top"],
+   ["$ld64", 12, 10, 8],
+   ["$jcc", "==", 12, 8, "mk_ret", "mk_pop"],
+   ["label", "mk_pop"],
+   ["$addi", 12, 12, 0 - 8],
+   ["$st64", 10, 8, 12],
+   ["$add", 1, 10, 12],
+   ["$addi", 1, 1, 16],
+   ["$ld64", 1, 1, 0],
    ["mov_imm", 8, 0],
    ["$and", 2, 1, 1],
-   ["$jcc", "==", 2, 8, "mk_ret", "mk_nil"],
+   ["$jcc", "==", 2, 8, "mk_loop", "mk_nil"],
    ["label", "mk_nil"],
    ["mov_imm", 9, 1],
-   ["$jcc", "==", 1, 9, "mk_ret", "mk_ut"],
+   ["$jcc", "==", 1, 9, "mk_loop", "mk_ut"],
    ["label", "mk_ut"],
    ["$and", 2, 1, 0 - 2],
    ["$and", 3, 2, 7],
-   ["$jcc", "==", 3, 8, "mk_bm", "mk_ret"],
+   ["$jcc", "==", 3, 8, "mk_bm", "mk_loop"],
    ["label", "mk_bm"],
-   ["$gbase", 4],
    ["$ld64", 18, 4, 64],
    ["$jcc", "==", 18, 8, "mk_find", "mk_rg"],
    ["label", "mk_rg"],
    ["$ld64", 15, 4, 80],
-   ["$jcc", "<", 2, 15, "mk_ret", "mk_hi"],
+   ["$jcc", "<", 2, 15, "mk_loop", "mk_hi"],
    ["label", "mk_hi"],
    ["$ld64", 16, 4, 72],
-   ["$jcc", ">=u", 2, 16, "mk_ret", "mk_ix"],
+   ["$jcc", ">=u", 2, 16, "mk_loop", "mk_ix"],
    ["label", "mk_ix"],
    ["$sub", 17, 2, 15],
    ["$shr", 17, 17, 3],
@@ -1311,14 +1391,14 @@ let rt_gc_mark_ins(_) =
    ["$and", 20, 17, 7],
    ["$add", 19, 18, 19],
    ["$bt", 11, 19, 20],
-   ["$jcc", "==", 11, 8, "mk_ret", "mk_bp"],
+   ["$jcc", "==", 11, 8, "mk_loop", "mk_bp"],
    ["label", "mk_bp"],
    ["mov", 5, 2],
    ["jmp", "mk_hit"],
    ["label", "mk_find"],
    ["$ld64", 5, 4, 0],
    ["label", "mk_fl"],
-   ["$jcc", "==", 5, 8, "mk_ret", "mk_fc"],
+   ["$jcc", "==", 5, 8, "mk_loop", "mk_fc"],
    ["label", "mk_fc"],
    ["$jcc", "==", 5, 2, "mk_hit", "mk_fn"],
    ["label", "mk_fn"],
@@ -1326,7 +1406,7 @@ let rt_gc_mark_ins(_) =
    ["jmp", "mk_fl"],
    ["label", "mk_hit"],
    ["$ld64", 6, 5, 8],
-   ["$jcc", "==", 6, 8, "mk_new", "mk_ret"],
+   ["$jcc", "==", 6, 8, "mk_new", "mk_loop"],
    ["label", "mk_new"],
    ["mov_imm", 9, 1],
    ["$st64", 5, 8, 9],
@@ -1338,40 +1418,137 @@ let rt_gc_mark_ins(_) =
    ["$jcc", "==", 7, 9, "mk_lbuf", "mk_k3"],
    ["label", "mk_k3"],
    ["mov_imm", 9, 3],
-   ["$jcc", "==", 7, 9, "mk_ret", "mk_k4"],
+   ["$jcc", "==", 7, 9, "mk_loop", "mk_k4"],
    ["label", "mk_k4"],
    ["mov_imm", 9, 4],
    ["$jcc", "==", 7, 9, "mk_byt", "mk_k6"],
    ["label", "mk_k6"],
    ["mov_imm", 9, 6],
-   ["$jcc", "==", 7, 9, "mk_ret", "mk_k7"],
+   ["$jcc", "==", 7, 9, "mk_loop", "mk_k7"],
    ["label", "mk_k7"],
    ["mov_imm", 9, 7],
-   ["$jcc", "==", 7, 9, "mk_ret", "mk_clo"],
+   ["$jcc", "==", 7, 9, "mk_loop", "mk_clo"],
    ["label", "mk_cons"],
+   ["$ld64", 10, 5, 32],
+   /* private push (cons cdr); tail returns to the car push */
+   ["$ld64", 11, 4, 56],
+   ["$ld64", 12, 11, 8],
+   ["$addi", 13, 12, 8],
+   ["$ld64", 14, 11, 0],
+   ["$jcc", ">=u", 14, 13, "mka_put", "mka_grow"],
+   ["label", "mka_grow"],
+   ["$add", 14, 14, 14],
+   ["$addi", 15, 14, 16],
+   ["mov_imm", 21, 3],
+   ["mov_imm", 22, 34],
+   ["mov_imm", 23, 0 - 1],
+   ["$syscall", 25, "mmap", [8, 15, 21, 22, 23, 8]],
+   ["$jcc", "==", 25, 8, "mk_loop", "mka_gok"],
+   ["label", "mka_gok"],
+   ["$jcc", "<", 25, 8, "mk_loop", "mka_gok2"],
+   ["label", "mka_gok2"],
+   ["$ld64", 12, 11, 8],
+   ["$addi", 17, 11, 16],
+   ["$addi", 18, 25, 16],
+   ["$memcpy", 18, 17, 12],
+   ["$st64", 25, 0, 14],
+   ["$st64", 25, 8, 12],
+   ["$st64", 4, 56, 25],
+   ["$ld64", 16, 11, 0],
+   ["$addi", 16, 16, 16],
+   ["$syscall", 24, "munmap", [11, 16]],
+   ["mov", 11, 25],
+   ["label", "mka_put"],
+   ["$st64", 11, 8, 13],
+   ["$add", 14, 11, 12],
+   ["$addi", 14, 14, 16],
+   ["$st64", 14, 0, 10],
    ["$ld64", 10, 5, 24],
-   ["fcall", 12, "yac_gc_mark", [10]],
-   ["$ld64", 10, 5, 32],
-   ["tcall", 12, "yac_gc_mark", [10]],
+   ["jmp", "mp_entry"],
    ["label", "mk_lbuf"],
-   ["$ld64", 10, 5, 64],
-   ["fcall", 12, "yac_gc_mark", [10]],
    ["$ld64", 10, 5, 32],
-   ["tcall", 12, "yac_gc_mark", [10]],
+   /* private push (lbuf +32); tail returns to the +64 push */
+   ["$ld64", 11, 4, 56],
+   ["$ld64", 12, 11, 8],
+   ["$addi", 13, 12, 8],
+   ["$ld64", 14, 11, 0],
+   ["$jcc", ">=u", 14, 13, "mpb_put", "mpb_grow"],
+   ["label", "mpb_grow"],
+   ["$add", 14, 14, 14],
+   ["$addi", 15, 14, 16],
+   ["mov_imm", 21, 3],
+   ["mov_imm", 22, 34],
+   ["mov_imm", 23, 0 - 1],
+   ["$syscall", 25, "mmap", [8, 15, 21, 22, 23, 8]],
+   ["$jcc", "==", 25, 8, "mk_loop", "mpb_gok"],
+   ["label", "mpb_gok"],
+   ["$jcc", "<", 25, 8, "mk_loop", "mpb_gok2"],
+   ["label", "mpb_gok2"],
+   ["$ld64", 12, 11, 8],
+   ["$addi", 17, 11, 16],
+   ["$addi", 18, 25, 16],
+   ["$memcpy", 18, 17, 12],
+   ["$st64", 25, 0, 14],
+   ["$st64", 25, 8, 12],
+   ["$st64", 4, 56, 25],
+   ["$ld64", 16, 11, 0],
+   ["$addi", 16, 16, 16],
+   ["$syscall", 24, "munmap", [11, 16]],
+   ["mov", 11, 25],
+   ["label", "mpb_put"],
+   ["$st64", 11, 8, 13],
+   ["$add", 14, 11, 12],
+   ["$addi", 14, 14, 16],
+   ["$st64", 14, 0, 10],
+   ["$ld64", 10, 5, 64],
+   ["jmp", "mp_entry"],
    ["label", "mk_byt"],
    ["$ld64", 10, 5, 40],
-   ["tcall", 12, "yac_gc_mark", [10]],
+   ["jmp", "mp_entry"],
    ["label", "mk_clo"],
-   ["$ld64", 13, 5, 24],
-   ["$addi", 14, 5, 32],
+   ["$ld64", 2, 5, 24],
+   ["$addi", 3, 5, 32],
    ["label", "mk_cl"],
-   ["$jcc", "==", 13, 8, "mk_ret", "mk_cm"],
+   ["$jcc", "==", 2, 8, "mk_loop", "mk_cm"],
    ["label", "mk_cm"],
-   ["$ld64", 10, 14, 0],
-   ["fcall", 12, "yac_gc_mark", [10]],
-   ["$addi", 14, 14, 8],
+   ["$ld64", 10, 3, 0],
+   /* private push (closure field); tail continues the field walk */
+   ["$ld64", 11, 4, 56],
+   ["$ld64", 12, 11, 8],
+   ["$addi", 13, 12, 8],
+   ["$ld64", 14, 11, 0],
+   ["$jcc", ">=u", 14, 13, "mpc_put", "mpc_grow"],
+   ["label", "mpc_grow"],
+   ["$add", 14, 14, 14],
+   ["$addi", 15, 14, 16],
+   ["mov_imm", 21, 3],
+   ["mov_imm", 22, 34],
+   ["mov_imm", 23, 0 - 1],
+   ["$syscall", 25, "mmap", [8, 15, 21, 22, 23, 8]],
+   ["$jcc", "==", 25, 8, "mk_cln", "mpc_gok"],
+   ["label", "mpc_gok"],
+   ["$jcc", "<", 25, 8, "mk_cln", "mpc_gok2"],
+   ["label", "mpc_gok2"],
+   ["$ld64", 12, 11, 8],
+   ["$addi", 17, 11, 16],
+   ["$addi", 18, 25, 16],
+   ["$memcpy", 18, 17, 12],
+   ["$st64", 25, 0, 14],
+   ["$st64", 25, 8, 12],
+   ["$st64", 4, 56, 25],
+   ["$ld64", 16, 11, 0],
+   ["$addi", 16, 16, 16],
+   ["$syscall", 24, "munmap", [11, 16]],
+   ["mov", 11, 25],
+   ["label", "mpc_put"],
+   ["$st64", 11, 8, 13],
+   ["$add", 14, 11, 12],
+   ["$addi", 14, 14, 16],
+   ["$st64", 14, 0, 10],
+   ["label", "mk_cln"],
+   ["$addi", 3, 3, 8],
    ["mov_imm", 9, 0 - 1],
-   ["$add", 13, 13, 9],
+   ["$add", 2, 2, 9],
    ["jmp", "mk_cl"],
    ["label", "mk_ret"],
    ["mov_imm", 16, 0],
@@ -1388,6 +1565,7 @@ let rt_gc_collect_ins(_) =
    ["mov", 5, 8],
    ["mov", 14, 8],
    ["mov", 13, 8],
+   ["mov", 28, 8],              /* live bytes, summed in the sweep */
    ["$ld64", 3, 1, 0],
    ["label", "gc_cl"],
    ["$jcc", "==", 3, 8, "gc_bm0", "gc_clg"],
@@ -1594,6 +1772,7 @@ let rt_gc_collect_ins(_) =
    ["jmp", "gc_sc"],
    ["label", "gc_sw0"],
    ["mov", 6, 8],
+   ["mov", 28, 8],              /* reset live accumulator (smap walk clobbers slot 28) */
    ["$ld64", 3, 1, 0],
    ["label", "gc_sw"],
    ["$jcc", "==", 3, 8, "gc_done", "gc_swg"],
@@ -1602,6 +1781,8 @@ let rt_gc_collect_ins(_) =
    ["$ld64", 9, 3, 8],
    ["$jcc", "==", 9, 8, "gc_dead", "gc_live"],
    ["label", "gc_live"],
+   ["$ld64", 29, 3, 0 - 8],     /* size at obj-8 (class body) */
+   ["$add", 28, 28, 29],
    ["mov", 6, 3],
    ["mov", 3, 7],
    ["jmp", "gc_sw"],
@@ -1619,6 +1800,22 @@ let rt_gc_collect_ins(_) =
    ["mov", 3, 7],
    ["jmp", "gc_sw"],
    ["label", "gc_done"],
+   /* Adaptive next-GC threshold: alloc re-triggers yac_gc when bytes-allocated-
+    * since-last-GC (G+40) reaches ctrl+152, defaulting to 16MiB+1 while that
+    * slot is 0. With the old fixed 16MiB the compiler re-scanned its whole
+    * (hundreds of MB) heap every 16MiB of fresh allocation: quadratic time and
+    * runaway RSS. Store max(16MiB+1, 2*live) so GC cost amortizes to linear. */
+   ["$add", 28, 28, 28],
+   ["mov_imm", 29, 16777216 + 1],
+   ["$jcc", ">=u", 28, 29, "gc_ths", "gc_thm"],
+   ["label", "gc_thm"],
+   ["mov", 28, 29],
+   ["label", "gc_ths"],
+   ["$ld64", 29, 1, 32],
+   ["$jcc", "==", 29, 8, "gc_out", "gc_thw"],
+   ["label", "gc_thw"],
+   ["$st64", 29, 152, 28],
+   ["label", "gc_out"],
    ["ret", 8]]
 
 let rt_gc_ins(_) =
@@ -2115,7 +2312,7 @@ let rt_free_dead_ins(_) =
    ["$ld64", 5, 3, 24],
    ["$jcc", "==", 5, 8, "fd_tmp", "fd_ret"],
    ["label", "fd_tmp"],
-   ["$jcc", "==", 4, 8, "fd_die", "fd_bin"],
+   ["$jcc", "==", 4, 8, "fd_die", "fd_ret"],
    ["label", "fd_die"],
    ["fcall", 9, "yac_purge", [3]],
    ["fcall", 9, "yac_aunlink", [3]],
@@ -2179,7 +2376,14 @@ let rt_alloc_ins(_) =
    ["$ld64", 3, 2, 40],
    ["$add", 3, 3, 15],
    ["$st64", 2, 40, 3],
+   ["$ld64", 4, 2, 32],
+   ["$jcc", "==", 4, 8, "al_dth", "al_thr"],
+   ["label", "al_thr"],
+   ["$ld64", 4, 4, 152],
+   ["$jcc", "==", 4, 8, "al_dth", "al_chk"],
+   ["label", "al_dth"],
    ["mov_imm", 4, 16777216 + 1],
+   ["label", "al_chk"],
    ["$jcc", ">=u", 3, 4, "al_gc", "al_nogc"],
    ["label", "al_gc"],
    ["fcall", 9, "yac_gc", []],
@@ -2680,7 +2884,7 @@ let rt_bytes_to_str_ins(_) =
    ["ret", 5]]
 
 /* read 1 byte at a time so a pipe of several lines is not one blob.
- * EOF → 0; empty line (`\n`) → "". */
+ * EOF ? 0; empty line (`\n`) ? "". */
 let rt_read_line_ins(_) =
   [["$local", 20, 0],
    ["mov_imm", 6, 4129],
@@ -2803,7 +3007,7 @@ let rt_host_sym_ins(_) =
  * The value list is published at run time by yac_gval_pub, which a
  * non-immediate `gset` store calls on x86_64 (emit_x86_64.yac:1373); arm64 /
  * riscv64 do NOT call it yet (FLAT_ABI.md 8.2 #13). The retired gvst / gfnst
- * insn spellings named here before were deleted in the §6 opcode sweep. */
+ * insn spellings named here before were deleted in the ?6 opcode sweep. */
 let rt_gval_pub_ins(_) =
   [["$local", 24, 2],
    ["$gbase", 3],
@@ -3168,7 +3372,7 @@ let rt_funs_rename_prof(funs, enter, leave, i, out) =
       else list_push(out, f) in
     rt_funs_rename_prof(funs, enter, leave, i + 1, out)
 
-/* Last-put-wins gname whose source name is src (package profile → profile/…). */
+/* Last-put-wins gname whose source name is src (package profile ? profile/?). */
 let rt_gname_by_src(funs, src, i, acc) =
   if i >= len(funs) then acc
   else

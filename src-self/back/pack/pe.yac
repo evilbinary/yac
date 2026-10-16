@@ -129,6 +129,7 @@ let pe_is_k32(n) =
   else if n == "CloseHandle" then true
   else if n == "SetFilePointer" then true
   else if n == "ExitProcess" then true
+  else if n == "TerminateProcess" then true
   else if n == "GetCommandLineA" then true
   else if n == "GetEnvironmentVariableA" then true
   else if n == "GetComputerNameA" then true

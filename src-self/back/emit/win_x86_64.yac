@@ -207,8 +207,9 @@ let win_syscall(st, insn) =
     win_done(st, dst, win_k32_call(b, patches, "VirtualFree"))
   else if name == "exit" then
     let _ = emit_load_rax_slot(b, nth(args, 0)) in
-    let _ = mov_rcx_rax(b) in
-    emit_st4(st, b, nth(st, 1), nth(st, 2), win_k32_call(b, patches, "ExitProcess"))
+    let _ = mov_rdx_rax(b) in
+    let _ = mov_r64_imm(b, 1, 0 - 1) in
+    emit_st4(st, b, nth(st, 1), nth(st, 2), win_k32_call(b, patches, "TerminateProcess"))
   else if name == "close" then
     let _ = emit_load_rax_slot(b, nth(args, 0)) in
     let _ = mov_rcx_rax(b) in
@@ -463,15 +464,17 @@ let win_entry(b, patches) =
 
 let win_exit(st, patches) =
   let b = nth(st, 0) in
-  let _ = mov_rcx_rax(b) in
-  emit_st4(st, b, nth(st, 1), nth(st, 2), win_k32_call(b, patches, "ExitProcess"))
+  let _ = mov_rdx_rax(b) in
+  let _ = mov_r64_imm(b, 1, 0 - 1) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), win_k32_call(b, patches, "TerminateProcess"))
 
 let win_num_syscall(st, insn) =
   let b = nth(st, 0) in
   let patches = nth(st, 3) in
   let _ = emit_load_rax_slot(b, nth(nth(insn, 3), 0)) in
-  let _ = mov_rcx_rax(b) in
-  emit_st4(st, b, nth(st, 1), nth(st, 2), win_k32_call(b, patches, "ExitProcess"))
+  let _ = mov_rdx_rax(b) in
+  let _ = mov_r64_imm(b, 1, 0 - 1) in
+  emit_st4(st, b, nth(st, 1), nth(st, 2), win_k32_call(b, patches, "TerminateProcess"))
 
 let win_write1(st, insn) =
   let b = nth(st, 0) in
