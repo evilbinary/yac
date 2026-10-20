@@ -3255,7 +3255,9 @@ let js_emit_expr(e, ctx, st) =
        let canon = if cname == "Map" or cname == "WeakMap" then "Map" else "Set" in
        js_cat(["(let _o = _js_obj(_js_proto(\"", js_esc(canon), "\")) in (let _ = fmap_put(nth(_o, 1), \"$data\", list_new()) in (let _ = fmap_put(nth(_o, 1), \"size\", 0) in (let _ = fmap_put(nth(_o, 1), \"$kind\", \"", js_esc(canon), "\") in _o))))"]))
     else if cname != "" and js_in(funcs, cname) then
-    js_cat(["(let _o = _js_obj(_js_proto(\"", js_esc(cname), "\")) in (let _s = box_get(_js_this) in (let _ = box_set(_js_this, _o) in (let _ = ", js_emit_invoke(js_emit_expr(c, ctx, st), c, args, ctx, st), " in (let _ = box_set(_js_this, _s) in _o)))))"])
+    /* JS semantics: a constructor returning an object yields that object
+     * instead of the fresh `this` (Howler's stub ctors rely on this). */
+    js_cat(["(let _o = _js_obj(_js_proto(\"", js_esc(cname), "\")) in (let _s = box_get(_js_this) in (let _ = box_set(_js_this, _o) in (let _r = ", js_emit_invoke(js_emit_expr(c, ctx, st), c, args, ctx, st), " in (let _ = box_set(_js_this, _s) in (if kind(_r) == 2 and len(_r) > 0 and nth(_r, 0) == \"$o\" then _r else _o))))))"])
     else
       /* `new` of a value (class expression / `a.Ctor`). Emit the callee here —
        * going through js_expr_box re-enters this function and can segfault. */
@@ -3264,7 +3266,7 @@ let js_emit_expr(e, ctx, st) =
       let pn = js_fresh(st, "np") in
       let on = js_fresh(st, "no") in
       let inv = js_emit_invoke(js_cat(["_js_ctor_fn(", cn, ")"]), ["raw", ""], args, ctx, st) in
-      js_cat(["(let ", cn, " = ", cv, " in (let ", pn, " = _js_ctor_proto(", cn, ") in (let ", on, " = _js_obj(", pn, ") in (let _s = box_get(_js_this) in (let _ = box_set(_js_this, ", on, ") in (let _ = ", inv, " in (let _ = box_set(_js_this, _s) in ", on, ")))))))"])
+      js_cat(["(let ", cn, " = ", cv, " in (let ", pn, " = _js_ctor_proto(", cn, ") in (let ", on, " = _js_obj(", pn, ") in (let _s = box_get(_js_this) in (let _ = box_set(_js_this, ", on, ") in (let _r = ", inv, " in (let _ = box_set(_js_this, _s) in (if kind(_r) == 2 and len(_r) > 0 and nth(_r, 0) == \"$o\" then _r else ", on, "))))))))"])
   else if tag == "assign" then
     /* Target is a box (id), fmap slot (mem) or list slot (idx). Compound ops
      * read the target, apply the base operator, then store. */
