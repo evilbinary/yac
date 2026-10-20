@@ -1743,7 +1743,7 @@ let x86_cop_f64print(st, insn) =
   let win = emit_host_win(0) in
   let _ = emit_x86_c_align(b) in
   let _ =
-    if win then sub_rsp_imm32(b, 104)
+    if win then sub_rsp_imm32(b, 112)
     else sub_rsp_imm32(b, 64) in
   let _ =
     if win then

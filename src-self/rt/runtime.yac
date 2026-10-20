@@ -1617,6 +1617,9 @@ let rt_gc_collect_ins(_) =
    ["label", "gc_bok"],
    ["$st64", 1, 64, 13],
    ["$st64", 1, 88, 18],
+   /* win mmap inline clobbered r8; the frame walk and sweep below use it as
+      the zero register (and ret 8 hands it to the allocator). Restore it. */
+   ["mov_imm", 8, 0],
    ["jmp", "gc_fill"],
    ["label", "gc_reuse"],
    ["$memset", 13, 18],
@@ -2338,6 +2341,9 @@ let rt_free_dead_ins(_) =
    ["$st64", 1, 0, 12],
    ["$st64", 10, 0, 1],
    ["label", "fd_ret"],
+   /* win munmap inline clobbers r8; the collector's sweep keeps using r8 as
+      the zero register after each fcall to us. Restore it before returning. */
+   ["mov_imm", 8, 0],
    ["ret", 8]]
 
 let rt_perm_on_ins(_) =
@@ -2387,6 +2393,9 @@ let rt_alloc_ins(_) =
    ["$jcc", ">=u", 3, 4, "al_gc", "al_nogc"],
    ["label", "al_gc"],
    ["fcall", 9, "yac_gc", []],
+   /* win syscall inline (VirtualFree/Alloc) clobbers r8, which Linux syscalls
+      preserve; the zero-reg contract below depends on it. Restore it. */
+   ["mov_imm", 8, 0],
    ["$st64", 2, 40, 8],
    ["label", "al_nogc"],
    ["fcall", 16, "yac_aclass", [15]],

@@ -4,7 +4,7 @@
 package back.emit.win_x86_64
 export win_begin, win_cc_marshal, win_ccall_patch, win_clock, win_entry, win_exit, win_finish, win_num_syscall, win_syscall, win_write1
 import back.emit.emit {apply_i32, apply_patch, cimport_id, cimport_win_need, emit_patch_cimport, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_st4, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box}
-import back.emit.linux_x86_64 {emit_load_rax_slot, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_untag}
+import back.emit.linux_x86_64 {emit_load_rax_slot, emit_store_rax_slot, emit_x86_c_align, emit_x86_c_unalign, emit_x86_c_untag}
 import back.encode.encode_x64 {add_rbx_imm8, add_rdi_imm32, add_rsi_imm8, add_rsp_imm32, call_rel32, cld, cmp_ecx_imm8, cmp_rax_imm8, cmp_rbx_imm32, dec_rcx, dec_rdi, div_rbx, div_rcx, imul_rax_rdi, inc_r8, inc_rbx, inc_rdi, inc_rsi, jcc_rel32, jmp_rel32, lea_r9_rsp_disp8, lea_rax_rsp_disp32, lea_rax_rsp_disp8, lea_rbx_rip, lea_rcx_rbx_disp8, lea_rcx_rip, lea_rcx_rsp_disp32, lea_rdi_rsp_disp32, lea_rdi_rsp_disp8, lea_rdx_rbx_disp32, lea_rdx_rsp_disp32, lea_rdx_rsp_disp8, lea_rsi_rip, mov_eax_mem_rsp_disp32, mov_eax_mem_rsp_disp8, mov_mem_rbx_rax, mov_mem_rdi_al, mov_mem_rdi_cl, mov_mem_rdi_imm8, mov_mem_rsi_r8_rax, mov_mem_rsi_r8_rdi, mov_mem_rsp_disp32_rax, mov_mem_rsp_disp8_al, mov_mem_rsp_disp8_imm32, mov_mem_rsp_disp8_rax, mov_r64_imm, mov_r64_imm64, mov_r64_r64, mov_r8_rax, mov_r9_rax, mov_rax_mem_rbx, mov_rax_mem_rsp_disp32, mov_rax_r8, mov_rax_rbx, mov_rax_rcx, mov_rax_rdi, mov_rax_rdx, mov_rax_rsi, mov_rbx_rax, mov_rbx_rcx, mov_rbx_rdx, mov_rcx_imm, mov_rcx_mem_rsi, mov_rcx_mem_rsp_disp32, mov_rcx_rax, mov_rdi_rax, mov_rdx_rax, mov_rdx_rbx, mov_rsi_rax, movzx_eax_mem_rsi, movzx_ecx_mem_rbx, pop_r64, push_r64, rep_movsb, rep_stosb, ret, sar_rax_1, shl_rax_1, stosb0, sub_rax_rbx, sub_rsp_imm32, test_eax_eax, test_ecx_ecx, test_rax_rax, test_rcx_rcx, xor_r8_r8, xor_rax_rax, xor_rdx_rdx}
 import back.pack.pe {pe_is_crt, pe_is_k32}
 
@@ -41,10 +41,13 @@ let win_cc_marshal(b, args) =
     put(4)
 
 let win_k32_call(b, patches, name) =
-  let _ = sub_rsp_imm32(b, 40) in
+  /* x64 ABI: RSP must be 16-aligned at the CALL. Host hooks (AV, sandboxes)
+     use aligned SSE ops on their frames and fault on a misaligned caller. */
+  let _ = emit_x86_c_align(b) in
+  let _ = sub_rsp_imm32(b, 32) in
   let pos = bytes_len(b) in
   let _ = call_rel32(b, 0) in
-  let _ = add_rsp_imm32(b, 40) in
+  let _ = emit_x86_c_unalign(b) in
   emit_patch_cimport(patches, pos + 1, name)
 
 let win_nil_on_fail(b) =
@@ -55,7 +58,7 @@ let win_nil_on_fail(b) =
   apply_patch(b, j + 2, bytes_len(b))
 
 let win_stk3(b, a, c, e) =
-  let _ = sub_rsp_imm32(b, 56) in
+  let _ = sub_rsp_imm32(b, 64) in
   let _ = mov_r64_imm(b, 0, a) in
   let _ = mov_mem_rsp_disp8_rax(b, 32) in
   let _ = mov_r64_imm(b, 0, c) in
@@ -156,6 +159,7 @@ let win_stdio_rw(st, insn, k32name) =
   let _ = mov_rdx_rax(b) in
   let _ = mov_rax_rsi(b) in
   let _ = mov_r8_rax(b) in
+  let _ = emit_x86_c_align(b) in
   let _ = sub_rsp_imm32(b, 48) in
   let _ = mov_r64_imm(b, 0, 0) in
   let _ = mov_mem_rsp_disp8_rax(b, 32) in
@@ -165,6 +169,7 @@ let win_stdio_rw(st, insn, k32name) =
   let _ = call_rel32(b, 0) in
   let _ = mov_eax_mem_rsp_disp8(b, 40) in
   let _ = add_rsp_imm32(b, 48) in
+  let _ = emit_x86_c_unalign(b) in
   win_done(st, dst, emit_patch_cimport(ps0, pos + 1, k32name))
 
 let win_syscall(st, insn) =
@@ -224,10 +229,12 @@ let win_syscall(st, insn) =
     let _ = mov_r64_imm64(b, 2, 1073741824) in
     let _ = mov_r64_imm(b, 8, 0) in
     let _ = mov_r64_imm(b, 9, 0) in
+    let _ = emit_x86_c_align(b) in
     let _ = win_stk3(b, 2, 128, 0) in
     let ow = bytes_len(b) in
     let _ = call_rel32(b, 0) in
-    let _ = add_rsp_imm32(b, 56) in
+    let _ = add_rsp_imm32(b, 64) in
+    let _ = emit_x86_c_unalign(b) in
     let jend = bytes_len(b) in
     let _ = jmp_rel32(b, 0) in
     let rd = bytes_len(b) in
@@ -235,10 +242,12 @@ let win_syscall(st, insn) =
     let _ = mov_r64_imm64(b, 2, 2147483648) in
     let _ = mov_r64_imm(b, 8, 1) in
     let _ = mov_r64_imm(b, 9, 0) in
+    let _ = emit_x86_c_align(b) in
     let _ = win_stk3(b, 3, 128, 0) in
     let or_ = bytes_len(b) in
     let _ = call_rel32(b, 0) in
-    let _ = add_rsp_imm32(b, 56) in
+    let _ = add_rsp_imm32(b, 64) in
+    let _ = emit_x86_c_unalign(b) in
     let _ = apply_patch(b, jend + 1, bytes_len(b)) in
     win_done(st, dst,
       emit_patch_cimport(emit_patch_cimport(patches, ow + 1, "CreateFileA"),
@@ -274,7 +283,8 @@ let win_unimp_stub(b, extra) =
 let win_uname_stub(b, extra) =
   let _ = box_set(pe_uname_off_box, bytes_len(b)) in
   let _ = push_r64(b, 3) in
-  let _ = sub_rsp_imm32(b, 40) in
+  let _ = emit_x86_c_align(b) in
+  let _ = sub_rsp_imm32(b, 48) in
   let _ = mov_rbx_rcx(b) in
   let l1 = bytes_len(b) in
   let _ = lea_rcx_rip(b, 0) in
@@ -295,7 +305,8 @@ let win_uname_stub(b, extra) =
   let c3 = bytes_len(b) in
   let _ = call_rel32(b, 0) in
   let _ = mov_r64_imm(b, 0, 0) in
-  let _ = add_rsp_imm32(b, 40) in
+  let _ = add_rsp_imm32(b, 48) in
+  let _ = emit_x86_c_unalign(b) in
   let _ = pop_r64(b, 3) in
   let _ = ret(b) in
   let s_os = bytes_len(b) in
@@ -313,7 +324,8 @@ let win_dlopen_stub(b, extra) =
   let _ = box_set(pe_dlopen_off_box, bytes_len(b)) in
   let _ = push_r64(b, 3) in
   let _ = push_r64(b, 7) in
-  let _ = sub_rsp_imm32(b, 40) in
+  let _ = emit_x86_c_align(b) in
+  let _ = sub_rsp_imm32(b, 48) in
   let ll = bytes_len(b) in
   let _ = call_rel32(b, 0) in
   let _ = mov_rdi_rax(b) in
@@ -343,7 +355,8 @@ let win_dlopen_stub(b, extra) =
   let _ = apply_patch(b, jend, done) in
   let _ = apply_patch(b, jnzf + 2, find) in
   let _ = mov_rax_rdi(b) in
-  let _ = add_rsp_imm32(b, 40) in
+  let _ = add_rsp_imm32(b, 48) in
+  let _ = emit_x86_c_unalign(b) in
   let _ = pop_r64(b, 7) in
   let _ = pop_r64(b, 3) in
   let _ = ret(b) in
@@ -362,7 +375,8 @@ let win_dlsym_stub(b, extra) =
   let _ = push_r64(b, 3) in
   let _ = push_r64(b, 7) in
   let _ = push_r64(b, 6) in
-  let _ = sub_rsp_imm32(b, 40) in
+  let _ = emit_x86_c_align(b) in
+  let _ = sub_rsp_imm32(b, 48) in
   let _ = mov_rbx_rdx(b) in
   let _ = test_rcx_rcx(b) in
   let jnz = bytes_len(b) in
@@ -417,7 +431,8 @@ let win_dlsym_stub(b, extra) =
   let _ = apply_patch(b, jgot + 2, found) in
   let _ = apply_patch(b, jgot2 + 2, found) in
   let _ = apply_patch(b, jnzs + 2, slp) in
-  let _ = add_rsp_imm32(b, 40) in
+  let _ = add_rsp_imm32(b, 48) in
+  let _ = emit_x86_c_unalign(b) in
   let _ = pop_r64(b, 6) in
   let _ = pop_r64(b, 7) in
   let _ = pop_r64(b, 3) in
@@ -481,6 +496,7 @@ let win_write1(st, insn) =
   let patches = nth(st, 3) in
   let _ = emit_load_rax_slot(b, nth(insn, 1)) in
   let _ = sar_rax_1(b) in
+  let _ = emit_x86_c_align(b) in
   let _ = sub_rsp_imm32(b, 64) in
   let _ = mov_mem_rsp_disp8_al(b, 56) in
   let _ = mov_r64_imm(b, 1, 0 - 11) in
@@ -495,6 +511,7 @@ let win_write1(st, insn) =
   let g2 = bytes_len(b) in
   let _ = call_rel32(b, 0) in
   let _ = add_rsp_imm32(b, 64) in
+  let _ = emit_x86_c_unalign(b) in
   emit_st4(st, b, nth(st, 1), nth(st, 2),
     emit_patch_cimport(emit_patch_cimport(patches, g1 + 1, "GetStdHandle"),
                        g2 + 1, "WriteFile"))
@@ -504,7 +521,8 @@ let win_clock_wall(st, insn) =
   let b = nth(st, 0) in
   let patches = nth(st, 3) in
   let _ = push_r64(b, 3) in
-  let _ = sub_rsp_imm32(b, 48) in
+  let _ = emit_x86_c_align(b) in
+  let _ = sub_rsp_imm32(b, 56) in
   let _ = lea_rcx_rsp_disp32(b, 32) in
   let c1 = bytes_len(b) in
   let _ = call_rel32(b, 0) in
@@ -521,8 +539,9 @@ let win_clock_wall(st, insn) =
   let _ = imul_rax_rdi(b) in
   let _ = shl_rax_1(b) in
   let _ = emit_store_rax_slot(b, nth(insn, 2)) in
-  let _ = add_rsp_imm32(b, 48) in
+  let _ = add_rsp_imm32(b, 56) in
   let _ = pop_r64(b, 3) in
+  let _ = emit_x86_c_unalign(b) in
   emit_st4(st, b, nth(st, 1), nth(st, 2),
     emit_patch_cimport(patches, c1 + 1, "GetSystemTimeAsFileTime"))
 
@@ -531,7 +550,8 @@ let win_clock_mono(st, insn) =
   let b = nth(st, 0) in
   let patches = nth(st, 3) in
   let _ = push_r64(b, 3) in
-  let _ = sub_rsp_imm32(b, 48) in
+  let _ = emit_x86_c_align(b) in
+  let _ = sub_rsp_imm32(b, 56) in
   let _ = lea_rcx_rsp_disp32(b, 32) in
   let c1 = bytes_len(b) in
   let _ = call_rel32(b, 0) in
@@ -564,8 +584,9 @@ let win_clock_mono(st, insn) =
   let _ = emit_store_rax_slot(b, nth(insn, 2)) in
   let done = bytes_len(b) in
   let _ = apply_patch(b, jmpd + 1, done) in
-  let _ = add_rsp_imm32(b, 48) in
+  let _ = add_rsp_imm32(b, 56) in
   let _ = pop_r64(b, 3) in
+  let _ = emit_x86_c_unalign(b) in
   emit_st4(st, b, nth(st, 1), nth(st, 2),
     emit_patch_cimport(
       emit_patch_cimport(patches, c1 + 1, "QueryPerformanceFrequency"),
@@ -592,6 +613,7 @@ let win_system_stub(b, extra) =
   let _ = push_r64(b, 3) in
   let _ = push_r64(b, 7) in
   let _ = push_r64(b, 6) in
+  let _ = emit_x86_c_align(b) in
   let _ = sub_rsp_imm32(b, 256) in
   let _ = mov_rbx_rcx(b) in
   let _ = mov_r64_imm(b, 1, 0) in
@@ -687,6 +709,7 @@ let win_system_stub(b, extra) =
   let done = bytes_len(b) in
   let _ = apply_patch(b, jok, done) in
   let _ = add_rsp_imm32(b, 256) in
+  let _ = emit_x86_c_unalign(b) in
   let _ = pop_r64(b, 6) in
   let _ = pop_r64(b, 7) in
   let _ = pop_r64(b, 3) in
