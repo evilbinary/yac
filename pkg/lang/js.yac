@@ -39,6 +39,7 @@
 
 package lang.js
 import data.fmap { fmap_new, fmap_get, fmap_put }
+import lang.browser { js_browser_stub }
 export js_to_yac, js_dump_src
 
 /* ---- character classes ------------------------------------------------ */
@@ -1976,6 +1977,11 @@ let js_var(vars, nm) =
   else
     let _ = js_note_global(nm) in
     js_mangle(nm)
+
+/* Browser-host stubs live in lang.browser (pkg/lang/browser.yac): the name
+ * table (js_browser_stub) and the singleton objects themselves. Programs that
+ * reference a stub name emit an import of exactly the names they use and bind
+ * their global boxes to the imported singletons (see hglob below). */
 
 let js_str_lit(e) = nth(e, 0) == "str"
 
@@ -4005,8 +4011,29 @@ let js_to_yac(src) =
   let e = box_get(err) in
   if e != "" then js_flat(js_cat(["error: ", e]), 64)
   else
+    let stub_names =
+      let xs = box_get(js_globals) in
+      let rec(i, acc) =
+        if i >= len(xs) then acc
+        else
+          let v = js_browser_stub(nth(xs, i)) in
+          if v == "" then rec(i + 1, acc)
+          else if js_in(acc, v) then rec(i + 1, acc)
+          else rec(i + 1, cons(v, acc)) in
+      rec(0, []) in
+    let has_browser = stub_names != [] in
+    let hb =
+      if has_browser then
+        let rec(i, acc) =
+          if i >= len(stub_names) then acc
+          else
+            let nm2 = nth(stub_names, i) in
+            let acc2 = if i == 0 then nm2 else str_cat(acc, str_cat(", ", nm2)) in
+            rec(i + 1, acc2) in
+        str_cat("import lang.browser { ", str_cat(rec(0, ""), "}\n"))
+      else "" in
     let h0 = "let _js_exc = box_new()\nlet _js_pq = box_new()\nlet _js_pd = box_new()\nlet _ = box_set(_js_pq, list_new())\nlet _ = box_set(_js_pd, 0)\nlet _js_apply(f, xs) =\n  let n = len(xs) in\n  if n == 0 then f(0)\n  else if n == 1 then f(nth(xs, 0))\n  else if n == 2 then f(nth(xs, 0), nth(xs, 1))\n  else if n == 3 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2))\n  else if n == 4 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3))\n  else if n == 5 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4))\n  else if n == 6 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5))\n  else if n == 7 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), nth(xs, 6))\n  else f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), nth(xs, 6), nth(xs, 7))\n" in
-    let h1 = if box_get(ufmap) == 1 or box_get(uobj) == 1 then "import data.fmap { fmap_new, fmap_get, fmap_put }\n" else "" in
+    let h1 = if box_get(ufmap) == 1 or box_get(uobj) == 1 or has_browser then "import data.fmap { fmap_new, fmap_get, fmap_put }\n" else "" in
     let h2 = if box_get(umath) == 1 then "import num.math { abs, min, max, pow, sqrt, pi, e, sin, cos, exp, log, log2, powf }\n" else "" in
     let h6 = if box_get(ustrpkg) == 1 then "import text.str { split, starts_with, ends_with, join, trim, find, contains }\n" else "" in
     let h8 =
@@ -4048,11 +4075,13 @@ let js_to_yac(src) =
       let rec(i, acc) =
         if i >= n then acc
         else
-          let m = js_mangle(nth(xs, i)) in
-          rec(i + 1, js_cat([acc, "let ", m, " = box_new()\nlet _ = box_set(", m, ", 0)\n"])) in
+          let nm = nth(xs, i) in
+          let m = js_mangle(nm) in
+          let v = js_browser_stub(nm) in
+          rec(i + 1, js_cat([acc, "let ", m, " = box_new()\nlet _ = box_set(", m, ", ", if v == "" then "0" else v, ")\n"])) in
       rec(0, "") in
     /* main.js ~12× source; +1MB slack for headers / small files. */
-    js_flat(js_cat([h0, h1, h2, h6, himp, h10, hjsrt, h8, hglob, hinst, hp, body, "\n"]), str_len(src) * 12 + 1048576)
+    js_flat(js_cat([h0, h1, h2, h6, himp, h10, hjsrt, hb, h8, hglob, hinst, hp, body, "\n"]), str_len(src) * 12 + 1048576)
 
 /* A statement that owns a nested statement list. Its pieces are printed on
  * their own; emitting the container again would rebuild the whole body. */
