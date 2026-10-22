@@ -13,7 +13,7 @@ import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
 import front.lir {imap_box}
 import back.pack.target {mk_target, target_arch, target_format, target_live, target_shared, target_text_off, target_vaddr}
 import back.pack.elf {elf_pic_set, elf_relocs_reset}
-import back.emit.emit {emit_arch_set, emit_resolve_loop, emit_unres, emit_unres_set}
+import back.emit.emit {emit_arch_set, emit_resolve_loop, emit_unres, emit_unres_set, to_buf}
 import back.emit.emit_x86_64 {emit_program_x86_64}
 import back.emit.emit_arm64 {a64_resolve_loop, emit_program_arm64}
 import back.emit.emit_riscv64 {emit_program_riscv64, rv_resolve_loop}
@@ -64,7 +64,11 @@ let insn_name_ref(ins) =
   else if k == "gset" then gname_of(nth(ins, 1))
   else 0
 
-let drop_unreachable(funs) =
+let drop_unreachable(funs0) =
+  /* One listbuf conversion up front: every loop here (and the emit loops that
+   * follow) indexes procs by position, and nth on a cons list is O(i) -> O(n^2)
+   * on the JS translator's proc count. */
+  let funs = to_buf(funs0) in
   let seen = fmap_new(0) in
   let _ = fmap_init_n(seen, 4096) in
   let tab = fmap_new(0) in

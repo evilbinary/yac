@@ -9,7 +9,7 @@
  */
 
 package back.emit.emit
-export asm_dump_get, asm_dump_set, asm_dump_procs, asm_dump_cells, relocs_get, relocs_set, relocs_reset, relocs_add, relocs_n, cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_funs_loop, emit_op_dispatch, emit_reg, emit_op_get, emit_insn_disp, emit_ctx_set, emit_ctx_get, emit_rt_ops, emit_rt_argn, emit_rt_call, no_skip, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, icall_args, apply_i32, apply_patch, apply_u64, apply_u64_rel, cabi_should, cabi_skip, cimport_buf, cimport_id, cimport_index, cimport_reset, cimport_set, cimport_win_need, clos_bytes, emit_arch, emit_cplt_a64, emit_cplt_rv, emit_glob_data, emit_ids_new, emit_jsess, emit_jsess_set, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_patch_rel, emit_patch_strlit, emit_is_pe, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, fun_is_raw, fun_selfabi, is_yac_proc_name, tcall_tab_set, tcall_raw_of, prof_hook_fix, host_id, host_names, extsym_add, extsym_bind_add, extsym_bind_list, extsym_names, extsym_names_set, extsym_bind_set, extsym_find, extsym_n, extsym_reset, emit_jit_blob, emit_jit_blob_set, funsz_get, funsz_set, gref_alloc, gref_count, gref_names, gref_reset, gref_base, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_get, yjit_layout_set, reverse, host_unstub_procs, host_slot_bake, gref22, gref22_reset
+export asm_dump_get, asm_dump_set, asm_dump_procs, asm_dump_cells, relocs_get, relocs_set, relocs_reset, relocs_add, relocs_n, cimport_names, cimport_got, cimport_n, cimport_jit_bind, cimport_jit_bind_got, emit_unres, emit_unres_set, emit_arch_set, emit_resolve_loop, emit_funs_loop, emit_op_dispatch, emit_reg, emit_op_get, emit_insn_disp, emit_ctx_set, emit_ctx_get, emit_rt_ops, emit_rt_argn, emit_rt_call, no_skip, emit_host_win, emit_abi_win, emit_abi_win_set, emit_cplt, emit_fmt, emit_fmt_set, icall_args, apply_i32, apply_patch, apply_u64, apply_u64_rel, cabi_should, cabi_skip, cimport_buf, cimport_id, cimport_index, cimport_reset, cimport_set, cimport_win_need, clos_bytes, emit_arch, emit_cplt_a64, emit_cplt_rv, emit_glob_data, emit_ids_new, emit_jsess, emit_jsess_set, emit_jsess_skip, emit_map_get, emit_patch_cimport, emit_patch_clos, emit_patch_jmpf, emit_patch_pe_dlopen, emit_patch_pe_dlsym, emit_patch_pe_system, emit_patch_pe_uname, emit_patch_pe_unimp, emit_patch_rel, emit_patch_strlit, emit_is_pe, emit_self, emit_self_set, emit_st4, emit_tco_get, emit_tco_set, fun_is_raw, fun_selfabi, is_yac_proc_name, tcall_tab_set, tcall_raw_of, prof_hook_fix, host_id, host_names, extsym_add, extsym_bind_add, extsym_bind_list, extsym_names, extsym_names_set, extsym_bind_set, extsym_find, extsym_n, extsym_reset, emit_jit_blob, emit_jit_blob_set, funsz_get, funsz_set, gref_alloc, gref_count, gref_names, gref_reset, gref_base, is_arith, is_frame_op, is_raw_op, label_has, label_put, lookup_name, patches_extend, pe_dlopen_off_box, pe_dlsym_off_box, pe_mods_off_box, pe_system_off_box, pe_uname_off_box, pe_unimp_off_box, smap_emit_table, smap_note, smap_reset, smap_set_nslots, strlit_bytes, strlit_off, strlit_pool_reset, tco_lab, yjit_layout_get, yjit_layout_set, reverse, to_buf, cons_append_all, host_unstub_procs, host_slot_bake, gref22, gref22_reset
 import back.pack.elf {elf_note_abs64}
 import rt.runtime {yac_cimport_host_sym, rt_w}
 import back.pack.pe {pe_iat_off, pe_iat_qwords}
@@ -20,6 +20,30 @@ import back.encode.encode_x64 {jmp_mem_rip}
 import lib.log {log, log_i, log_fatal}
 
 let reverse(xs) = list_rev(xs)
+
+/* cons -> listbuf, once. `nth` on a cons list is O(i), so a loop that walks
+ * `funs` by index (emit_funs_loop / emit_ids_bind / drop_unreachable) is O(n^2)
+ * on the JS translator's proc count. Convert before the loops start. `to_buf`
+ * always returns a NEW listbuf, so a caller may append to it (the host-unimpl
+ * stubs) without touching the caller's list. */
+let cons_append_all(dst, xs) =
+  if is_int(xs) then dst
+  else if xs == [] then dst
+  else
+    let _ = list_push(dst, nth(xs, 0)) in
+    cons_append_all(dst, tail(xs))
+
+let buf_append_all(dst, src, i, n) =
+  if i >= n then dst
+  else
+    let _ = list_push(dst, nth(src, i)) in
+    buf_append_all(dst, src, i + 1, n)
+
+let to_buf(xs) =
+  if is_int(xs) then list_new()
+  else if xs == [] then list_new()
+  else if kind(xs) == 5 then buf_append_all(list_new(), xs, 0, len(xs))
+  else cons_append_all(list_new(), xs)
 
 /* 0-cap closures are 32 bytes. Cons cdr / BYTES cap live at +32, which is
  * the next object's size/next (heap dump: next=6, size=0x3c/0x2000). */
@@ -191,20 +215,26 @@ let apply_u64_rel(b, bytePos, val) =
   let _ = apply_u64(b, bytePos, val) in
   elf_note_abs64(bytePos)
 
-/* Local labels: cons list of [name, pos]. */
-let lookup_name_at(table, name, i) =
-  if i < 0 then 0
-  else if nth(nth(table, i), 0) == name then nth(nth(table, i), 1)
-  else lookup_name_at(table, name, i - 1)
+/* Local labels: cons list of [name, pos], newest at the front.
+ * Walk with tail(): the old len()-1 / nth(...) form is O(n^2) per lookup
+ * because nth on a cons list walks from the head (a proc with tens of
+ * thousands of labels -- the JS translator's giant body -- spent minutes in
+ * label lookups alone). Front-to-back is the same precedence as before. */
+let lookup_name_at(table, name) =
+  if table == [] then 0
+  else
+    let e = nth(table, 0) in
+    if nth(e, 0) == name then nth(e, 1)
+    else lookup_name_at(tail(table), name)
 
-let lookup_name(table, name) = lookup_name_at(table, name, len(table) - 1)
+let lookup_name(table, name) = lookup_name_at(table, name)
 
-let label_has_at(labels, name, i) =
-  if i < 0 then false
-  else if nth(nth(labels, i), 0) == name then true
-  else label_has_at(labels, name, i - 1)
+let label_has_at(labels, name) =
+  if labels == [] then false
+  else if nth(nth(labels, 0), 0) == name then true
+  else label_has_at(tail(labels), name)
 
-let label_has(labels, name) = label_has_at(labels, name, len(labels) - 1)
+let label_has(labels, name) = label_has_at(labels, name)
 
 let label_put(labels, name, pos) = cons([name, pos], labels)
 

@@ -1803,13 +1803,17 @@ let rt_gc_collect_ins(_) =
    ["mov", 3, 7],
    ["jmp", "gc_sw"],
    ["label", "gc_done"],
+   /* Dead arenas were only marked during the sweep; drop their freelist nodes
+    * and munmap them now, once per collection. */
+   ["fcall", 10, "yac_purge_dead", []],
+   ["mov_imm", 8, 0],
    /* Adaptive next-GC threshold: alloc re-triggers yac_gc when bytes-allocated-
     * since-last-GC (G+40) reaches ctrl+152, defaulting to 16MiB+1 while that
     * slot is 0. With the old fixed 16MiB the compiler re-scanned its whole
     * (hundreds of MB) heap every 16MiB of fresh allocation: quadratic time and
     * runaway RSS. Store max(16MiB+1, 2*live) so GC cost amortizes to linear. */
    ["$add", 28, 28, 28],
-   ["mov_imm", 29, 16777216 + 1],
+   ["mov_imm", 29, 268435456 + 1],
    ["$jcc", ">=u", 28, 29, "gc_ths", "gc_thm"],
    ["label", "gc_thm"],
    ["mov", 28, 29],
@@ -2115,11 +2119,14 @@ let rt_argv_ins(_) =
  *   +104  perm bump cur    +112 perm bump end
  *   +120  perm arena list  +128 perm mode (1 while intern runs)
  *   +136  temp bump arena  +144 perm bump arena
+ *   +152  next-GC threshold  +160 dead-arena list (purged at GC end)
  * Arena header, then objects: +0 next, +8 mmap size, +16 live, +24 flags
- * (0 temp, 1 perm). Each object is [arena][size][body]; yac_alloc returns body.
- * Temp bodies <= 64K go on a size-class bin. An arena whose live count hits 0
- * is munmap'd (bins pointing into it are dropped). Bigger bodies are their
- * own mmap and return to the OS when they die. Perm is intern only. */
+ * (0 temp, 1 perm, 2 temp dead). Each object is [arena][size][body];
+ * yac_alloc returns body. Temp bodies <= 64K go on a size-class bin. An arena
+ * whose live count hits 0 is marked flags=2 and chained on +160; the collector
+ * drops its bin nodes and munmaps it once at the end (yac_purge_dead). A dead
+ * arena reuses +16 as the dead-list link. Bigger bodies are their own mmap
+ * and return to the OS when they die. Perm is intern only. */
 let rt_ctrl_ins(_) =
   [["$local", 10, 0],
    ["$gbase", 2],
@@ -2233,46 +2240,80 @@ let rt_amap_ins(_) =
    ["label", "am_ret"],
    ["ret", 3]]
 
-/* Unlink every freelist node whose arena is `base`. */
-let rt_purge_ins(_) =
-  [["$local", 12, 1],
+/* Collection-end cleanup: drop the bin nodes of every dead arena, then unlink
+ * and unmap the arenas themselves. yac_free_dead used to purge per dying arena,
+ * which rescanned all 12 freelists for each one (arena count x list length:
+ * quadratic once the heap is mostly garbage; main.js burned most of its LIR
+ * phase here). One pass over the bins is enough because a dead arena can only
+ * get nodes binned during this same sweep. */
+let rt_purge_dead_ins(_) =
+  [["$local", 18, 0],
    ["fcall", 2, "yac_ctrl", []],
    ["mov_imm", 8, 0],
+   ["$jcc", "==", 2, 8, "pd_ret", "pd_hd"],
+   ["label", "pd_hd"],
+   ["$ld64", 14, 2, 160],
+   ["$jcc", "==", 14, 8, "pd_ret", "pd_skip"],
+   ["label", "pd_skip"],
    ["mov_imm", 3, 0],
    ["mov_imm", 4, 12],
-   ["label", "pu_l"],
-   ["$jcc", "<", 3, 4, "pu_b", "pu_d"],
-   ["label", "pu_b"],
+   ["label", "pd_l"],
+   ["$jcc", "<", 3, 4, "pd_b", "pd_un"],
+   ["label", "pd_b"],
    ["$add", 5, 3, 3],
    ["$add", 5, 5, 5],
    ["$add", 5, 5, 5],
    ["$add", 6, 2, 5],
    ["mov", 7, 8],
    ["$ld64", 9, 6, 0],
-   ["label", "pu_w"],
-   ["$jcc", "==", 9, 8, "pu_n", "pu_c"],
-   ["label", "pu_c"],
+   ["label", "pd_w"],
+   ["$jcc", "==", 9, 8, "pd_n", "pd_c"],
+   ["label", "pd_c"],
    ["$ld64", 10, 9, 0],
    ["$ld64", 11, 9, 0 - 16],
-   ["$jcc", "==", 11, 1, "pu_dr", "pu_kp"],
-   ["label", "pu_dr"],
-   ["$jcc", "==", 7, 8, "pu_d0", "pu_d1"],
-   ["label", "pu_d0"],
+   ["$ld64", 12, 11, 24],
+   ["mov_imm", 13, 2],
+   ["$jcc", "==", 12, 13, "pd_rm", "pd_kp"],
+   ["label", "pd_rm"],
+   ["$jcc", "==", 7, 8, "pd_d0", "pd_d1"],
+   ["label", "pd_d0"],
    ["$st64", 6, 0, 10],
    ["mov", 9, 10],
-   ["jmp", "pu_w"],
-   ["label", "pu_d1"],
+   ["jmp", "pd_w"],
+   ["label", "pd_d1"],
    ["$st64", 7, 0, 10],
    ["mov", 9, 10],
-   ["jmp", "pu_w"],
-   ["label", "pu_kp"],
+   ["jmp", "pd_w"],
+   ["label", "pd_kp"],
    ["mov", 7, 9],
    ["mov", 9, 10],
-   ["jmp", "pu_w"],
-   ["label", "pu_n"],
+   ["jmp", "pd_w"],
+   ["label", "pd_n"],
    ["$addi", 3, 3, 1],
-   ["jmp", "pu_l"],
-   ["label", "pu_d"],
+   ["jmp", "pd_l"],
+   ["label", "pd_un"],
+   ["$st64", 2, 160, 8],
+   ["label", "pd_ul"],
+   ["$jcc", "==", 14, 8, "pd_ret", "pd_uc"],
+   ["label", "pd_uc"],
+   ["$ld64", 15, 14, 16],
+   ["fcall", 17, "yac_aunlink", [14]],
+   ["mov_imm", 8, 0],
+   ["fcall", 16, "yac_ctrl", []],
+   ["$ld64", 17, 16, 136],
+   ["$jcc", "==", 17, 14, "pd_clr", "pd_mm"],
+   ["label", "pd_clr"],
+   ["$gbase", 17],
+   ["$st64", 17, 96, 8],
+   ["$st64", 17, 104, 8],
+   ["$st64", 16, 136, 8],
+   ["label", "pd_mm"],
+   ["$ld64", 17, 14, 8],
+   ["$syscall", 16, "munmap", [14, 17]],
+   ["mov_imm", 8, 0],
+   ["mov", 14, 15],
+   ["jmp", "pd_ul"],
+   ["label", "pd_ret"],
    ["ret", 8]]
 
 let rt_aunlink_ins(_) =
@@ -2301,8 +2342,15 @@ let rt_aunlink_ins(_) =
    ["label", "ul_d"],
    ["ret", 6]]
 
-/* Sweep one dead object. Temp arena with no live objects is munmap'd.
- * Perm objects are dropped in place (intern never expects them back). */
+/* Sweep one dead object. Temp arena with no live objects is marked dead and
+ * chained for yac_purge_dead at collection end (bins + munmap once).
+ * Perm objects are dropped in place (intern never expects them back).
+ * If the arena still has live objects, a small dead object goes back on its
+ * size-class bin (fd_bin) so the next alloc reuses it. Only <64KiB bodies are
+ * binned; bigger ones are their own mmap and die with their arena (fd_die).
+ * Never send the arena-alive case straight to fd_ret: that leaks every dead
+ * object in a partially-live arena and the heap then grows with total
+ * allocation instead of live size (main.js: 640MB live, 17GB private). */
 let rt_free_dead_ins(_) =
   [["$local", 14, 1],
    ["mov_imm", 8, 0],
@@ -2315,21 +2363,17 @@ let rt_free_dead_ins(_) =
    ["$ld64", 5, 3, 24],
    ["$jcc", "==", 5, 8, "fd_tmp", "fd_ret"],
    ["label", "fd_tmp"],
-   ["$jcc", "==", 4, 8, "fd_die", "fd_ret"],
+   ["$jcc", "==", 4, 8, "fd_die", "fd_bin"],
    ["label", "fd_die"],
-   ["fcall", 9, "yac_purge", [3]],
-   ["fcall", 9, "yac_aunlink", [3]],
+   /* Defer: mark dead (flags=2), reuse +16 (live is 0 and never read again) as
+    * the ctrl+160 link. Doing purge/munmap here cost arena-count x freelist
+    * length per collection. */
    ["fcall", 7, "yac_ctrl", []],
-   ["$ld64", 9, 7, 136],
-   ["$jcc", "==", 9, 3, "fd_clr", "fd_unmap"],
-   ["label", "fd_clr"],
-   ["$gbase", 2],
-   ["$st64", 2, 96, 8],
-   ["$st64", 2, 104, 8],
-   ["$st64", 7, 136, 8],
-   ["label", "fd_unmap"],
-   ["$ld64", 6, 3, 8],
-   ["$syscall", 9, "munmap", [3, 6]],
+   ["mov_imm", 9, 2],
+   ["$st64", 3, 24, 9],
+   ["$ld64", 9, 7, 160],
+   ["$st64", 3, 16, 9],
+   ["$st64", 7, 160, 3],
    ["jmp", "fd_ret"],
    ["label", "fd_bin"],
    ["$ld64", 6, 1, 0 - 8],
@@ -2388,7 +2432,7 @@ let rt_alloc_ins(_) =
    ["$ld64", 4, 4, 152],
    ["$jcc", "==", 4, 8, "al_dth", "al_chk"],
    ["label", "al_dth"],
-   ["mov_imm", 4, 16777216 + 1],
+   ["mov_imm", 4, 268435456 + 1],
    ["label", "al_chk"],
    ["$jcc", ">=u", 3, 4, "al_gc", "al_nogc"],
    ["label", "al_gc"],
@@ -3311,7 +3355,7 @@ let runtime_funs(_) =
    ["$proc", "yac_aclass", 1, 0, rt_aclass_ins(0), "yac_aclass"],
    ["$proc", "yac_abin", 1, 0, rt_abin_ins(0), "yac_abin"],
    ["$proc", "yac_amap", 2, 0, rt_amap_ins(0), "yac_amap"],
-   ["$proc", "yac_purge", 1, 0, rt_purge_ins(0), "yac_purge"],
+   ["$proc", "yac_purge_dead", 0, 0, rt_purge_dead_ins(0), "yac_purge_dead"],
    ["$proc", "yac_aunlink", 1, 0, rt_aunlink_ins(0), "yac_aunlink"],
    ["$proc", "yac_free_dead", 1, 0, rt_free_dead_ins(0), "yac_free_dead"],
    ["$proc", "yac_perm_on", 0, 0, rt_perm_on_ins(0), "yac_perm_on"],

@@ -16,7 +16,7 @@
 package front.lir
 export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, sigma_new, sigma_kind, toplevel_seed, top_dup_scan, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, st_no, ub_prog, lir_tlv_set
 import lib.map
-import lib.log {log_fatal}
+import lib.log {log, log_fatal, log_i}
 
 let reverse(xs) = list_rev(xs)
 
@@ -894,57 +894,71 @@ let free_vars(fnbody, params, funs, env) =
     let args_vars(args, j, a, sh) =
       if j >= len(args) then a
       else args_vars(args, j + 1, atom_vars(nth(args, j), a, sh), sh) in
-    let binds = binds_as_buf(nth(anf, 0)) in
-    let tail = nth(anf, 1) in
-    let nb = len(binds) in
-    let step(i, a, sh) =
-      if i >= nb then [atom_vars(tail, a, sh), sh]
+    let binds0 = nth(anf, 0) in
+    let tail_atom = nth(anf, 1) in
+    /* One bind -> [acc, shadow]. Split out so both the cons walk and the
+     * listbuf walk below share it. */
+    let one(b, a, sh) =
+      let k = nth(b, 0) in
+      if k == "let" then
+        let atm = nth(b, 2) in
+        let a2 = if nth(atm, 0) == "var" then a else atom_vars(atm, a, sh) in
+        [a2, sh_put(sh, nth(b, 1))]
+      else if k == "letbin" then
+        [atom_vars(nth(b, 4), atom_vars(nth(b, 3), a, sh), sh),
+         sh_put(sh, nth(b, 1))]
+      else if k == "letcall" then
+        let fn = nth(b, 2) in
+        let a2 =
+          if nth(fn, 0) == "qvar" then a
+          else if nth(fn, 0) == "var" then
+            if is_prim_name(nth(fn, 1)) then a
+            else atom_vars(fn, a, sh)
+          else atom_vars(fn, a, sh) in
+        [args_vars(nth(b, 3), 0, a2, sh), sh_put(sh, nth(b, 1))]
+      else if k == "letif" then
+        let a2 = atom_vars(nth(b, 2), a, sh) in
+        let r1 = fv(nth(b, 3), a2, sh) in
+        let r2 = fv(nth(b, 4), nth(r1, 0), nth(r1, 1)) in
+        [nth(r2, 0), sh_put(nth(r2, 1), nth(b, 1))]
+      else if k == "letfun" then
+        let sh2 = sh_enter(sh) in
+        let _ = sh_put(sh2, nth(b, 1)) in
+        let p = nth(b, 2) in
+        let addp(j) =
+          if j >= len(p) then 0
+          else let _ = sh_put(sh2, nth(p, j)) in addp(j + 1) in
+        let _ = addp(0) in
+        let rr = fv(nth(b, 3), a, sh2) in
+        [nth(rr, 0), sh_put(sh, nth(b, 1))]
+      else if k == "letthrow" then
+        [atom_vars(nth(b, 3), atom_vars(nth(b, 2), a, sh), sh),
+         sh_put(sh, nth(b, 1))]
+      else if k == "letcallcc" then
+        let a2 = atom_vars(nth(b, 3), a, sh) in
+        let sh2 = sh_put(sh, nth(b, 1)) in
+        let rr = fv(nth(b, 4), a2, sh2) in
+        [nth(rr, 0), sh_put(nth(rr, 1), nth(b, 2))]
+      else [a, sh] in
+    /* Walk the bind spine with tail(), NOT binds_as_buf: ANF nested bodies
+     * tail-share one spine ("Bindings stay cons so nested let can append
+     * (small, large) in O(1)", front/anf.yac), so converting each lambda's
+     * suffix re-walked almost the whole program per nesting level -- O(n^2)
+     * and 155s on the 21MB JS guest. Sequential access is all this loop
+     * needs, and the cons walk is O(1) per bind. `kind == 5` covers bodies
+     * that already arrive buffered (the top-level item after lir_expr_i). */
+    let stepc(xs, a, sh) =
+      if xs == [] then [atom_vars(tail_atom, a, sh), sh]
       else
-        let b = nth(binds, i) in
-        let k = nth(b, 0) in
-        let r =
-          if k == "let" then
-            let atm = nth(b, 2) in
-            let a2 = if nth(atm, 0) == "var" then a else atom_vars(atm, a, sh) in
-            [a2, sh_put(sh, nth(b, 1))]
-          else if k == "letbin" then
-            [atom_vars(nth(b, 4), atom_vars(nth(b, 3), a, sh), sh),
-             sh_put(sh, nth(b, 1))]
-          else if k == "letcall" then
-            let fn = nth(b, 2) in
-            let a2 =
-              if nth(fn, 0) == "qvar" then a
-              else if nth(fn, 0) == "var" then
-                if is_prim_name(nth(fn, 1)) then a
-                else atom_vars(fn, a, sh)
-              else atom_vars(fn, a, sh) in
-            [args_vars(nth(b, 3), 0, a2, sh), sh_put(sh, nth(b, 1))]
-          else if k == "letif" then
-            let a2 = atom_vars(nth(b, 2), a, sh) in
-            let r1 = fv(nth(b, 3), a2, sh) in
-            let r2 = fv(nth(b, 4), nth(r1, 0), nth(r1, 1)) in
-            [nth(r2, 0), sh_put(nth(r2, 1), nth(b, 1))]
-          else if k == "letfun" then
-            let sh2 = sh_enter(sh) in
-            let _ = sh_put(sh2, nth(b, 1)) in
-            let p = nth(b, 2) in
-            let addp(j) =
-              if j >= len(p) then 0
-              else let _ = sh_put(sh2, nth(p, j)) in addp(j + 1) in
-            let _ = addp(0) in
-            let rr = fv(nth(b, 3), a, sh2) in
-            [nth(rr, 0), sh_put(sh, nth(b, 1))]
-          else if k == "letthrow" then
-            [atom_vars(nth(b, 3), atom_vars(nth(b, 2), a, sh), sh),
-             sh_put(sh, nth(b, 1))]
-          else if k == "letcallcc" then
-            let a2 = atom_vars(nth(b, 3), a, sh) in
-            let sh2 = sh_put(sh, nth(b, 1)) in
-            let rr = fv(nth(b, 4), a2, sh2) in
-            [nth(rr, 0), sh_put(nth(rr, 1), nth(b, 2))]
-          else [a, sh] in
-        step(i + 1, nth(r, 0), nth(r, 1)) in
-    step(0, acc, shdw) in
+        let r = one(nth(xs, 0), a, sh) in
+        stepc(tail(xs), nth(r, 0), nth(r, 1)) in
+    let stepb(i, nb, a, sh) =
+      if i >= nb then [atom_vars(tail_atom, a, sh), sh]
+      else
+        let r = one(nth(binds0, i), a, sh) in
+        stepb(i + 1, nb, nth(r, 0), nth(r, 1)) in
+    if kind(binds0) == 5 then stepb(0, len(binds0), acc, shdw)
+    else stepc(binds0, acc, shdw) in
   reverse(fv_acc_list(nth(fv(fnbody, fv_acc_new(0), sh_from_list(params)), 0)))
 
 /* ---- Γ ⊢ atom ---- */
