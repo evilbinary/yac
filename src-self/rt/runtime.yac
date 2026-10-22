@@ -1811,7 +1811,10 @@ let rt_gc_collect_ins(_) =
     * since-last-GC (G+40) reaches ctrl+152, defaulting to 16MiB+1 while that
     * slot is 0. With the old fixed 16MiB the compiler re-scanned its whole
     * (hundreds of MB) heap every 16MiB of fresh allocation: quadratic time and
-    * runaway RSS. Store max(16MiB+1, 2*live) so GC cost amortizes to linear. */
+    * runaway RSS. Store max(16MiB+1, 4*live) so GC cost amortizes to linear.
+    * Total GC time ~ allocated/(k*scan_rate), so k is the speed/memory knob:
+    * 2 -> 4 halves the collection count (main_full.yac LIR allocated ~20GB). */
+   ["$add", 28, 28, 28],
    ["$add", 28, 28, 28],
    ["mov_imm", 29, 268435456 + 1],
    ["$jcc", ">=u", 28, 29, "gc_ths", "gc_thm"],
