@@ -1386,6 +1386,11 @@ let emit_funs_loop(funs, entry, T, op_insn, op_resolve, op_skip) =
        * the whole program's LIR, the single biggest live block -- shrinks as
        * the emit walks forward. `fun_is_raw`/`fun_selfabi` info is already
        * captured in the tcall table before the loop. */
+      /* This proc's LIR body is dead once it is emitted: drop the reference so
+       * the peak (which happens while LATER procs still allocate) -- normally
+       * the whole program's LIR, the single biggest live block -- shrinks as
+       * the emit walks forward. `fun_is_raw`/`fun_selfabi` info is already
+       * captured in the tcall table before the loop. */
       let _ = list_set(f, 4, 0) in
       emit_fun(i + 1, s2, cons([name, fstart], fo)) in
   let r = emit_fun(0, [out, 0, [], list_new(), ids], []) in
