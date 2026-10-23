@@ -1452,16 +1452,20 @@ let lower_of(lir, t) =
   if lir == 0 then 0
   else
     let _ = gc_collect() in
-    /* Freeing the LIR after emit is too late: the peak is inside emit itself,
-     * so emit_funs_loop releases each proc body as it consumes it instead. */
-    run_pass(nth(make_pipeline(t), 4), lir)
+    let t0 = time_ms() in
+    let r = run_pass(nth(make_pipeline(t), 4), lir) in
+    let _ = log_i("prof", "lower", time_ms() - t0) in
+    r
 
 let pack_of(code, t) =
   if code == 0 then 0
   else
     let _ = gc_collect() in
     let _ = dump_now("lower") in
-    run_pass(nth(make_pipeline(t), 5), code)
+    let t0 = time_ms() in
+    let r = run_pass(nth(make_pipeline(t), 5), code) in
+    let _ = log_i("prof", "pack", time_ms() - t0) in
+    r
 
 let compile_env_of(env, src, t) =
   let _ = emit_jsess_set(0) in

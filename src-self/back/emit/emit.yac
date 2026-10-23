@@ -1369,20 +1369,9 @@ let emit_funs_loop(funs, entry, T, op_insn, op_resolve, op_skip) =
         emit_fun(i + 1, st, fo)
       else
         let _ = list_push(offs, fstart) in
-        /* The LIR body is dead as soon as its last insn is emitted, and the
-         * insn graph is the bulk of the LIR live set (11.3M cons / 518MB on
-         * main.js' 21MB ANF). Null each slot as it is consumed so the GC can
-         * reclaim the insn cells -- and the string literals hanging off them --
-         * WHILE emit is still running: the peak is inside this loop, so waiting
-         * for lower to return (release_progs) frees nothing in time.
-         * list_set is a no-op on a non-listbuf body (the host stubs are built
-         * from cons literals), so the kind check is only a fast path. */
         let run(j, s) =
           if j >= len(insns) then s
-          else
-            let s1 = (op_insn)(s, nth(insns, j), is_entry, fun_is_raw(f)) in
-            let _ = if kind(insns) == 5 then list_set(insns, j, 0) else 0 in
-            run(j + 1, s1) in
+          else run(j + 1, (op_insn)(s, nth(insns, j), is_entry, fun_is_raw(f))) in
         let s1 = run(0, st0) in
         let kept = (op_resolve)(nth(s1, 0), nth(s1, 2), nth(s1, 3)) in
         let _ = patches_extend(nth(st, 3), kept) in

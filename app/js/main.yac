@@ -32,6 +32,7 @@
 import yc.compiler
 import lang.js
 import fs.io
+import lib.log {log_i, log_set_hush}
 import text.str {trim, starts_with, ends_with}
 import os.env {get}
 
@@ -187,7 +188,10 @@ let js_compile_file(path, out0) =
   let src = read_or_0(path) in
   if src == 0 then print(str_cat("error: cannot read ", path))
   else
+    let _ = log_set_hush(false) in
+    let t0 = time_ms() in
     let y = js_to_yac(src) in
+    let _ = log_i("prof", "js2yac", time_ms() - t0) in
     if js_is_error(y) then print(y)
     else
       let out = if out0 == 0 then js_default_out(path) else out0 in
