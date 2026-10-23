@@ -195,7 +195,7 @@ prop: $(BIN)
 # resolved to back.backend/back.jit/... source instead of the G+136 host slots),
 # so the guest carries the compiler and needs no `yc` at run time.
 js: $(YC_A)
-	$(YC_A) --pkg src-self,pkg --link yc.compiler=embed app/js/main.yac -o app/js/js$(EXEEXT)
+	$(YC_A) --pkg src-self,pkg,app --link yc.compiler=embed app/js/main.yac -o app/js/js$(EXEEXT)
 	chmod +x app/js/js$(EXEEXT)
 
 $(BUILD)/genyac: tools/genyac.c | $(BUILD)
