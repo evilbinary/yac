@@ -39,8 +39,20 @@
 
 package lang.js
 import data.fmap { fmap_new, fmap_get, fmap_put }
-import lang.browser { js_browser_stub }
-export js_to_yac, js_dump_src
+export js_to_yac, js_dump_src, js_stub_register
+
+/* Browser-host stub lookup is INJECTED (js_stub_register) by the app that
+ * embeds lang.js — the transpiler itself carries no dependency on any host
+ * package. Unregistered means no JS global is stubbed: emitted programs bind
+ * those globals to 0 (the "not a function" guard reports them at run time). */
+let js_stub_fn_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let js_stub_register(f) = box_set(js_stub_fn_box, f)
+let js_browser_stub(nm) =
+  let f = box_get(js_stub_fn_box) in
+  if f == 0 then "" else f(nm)
 
 /* ---- character classes ------------------------------------------------ */
 
@@ -1978,10 +1990,10 @@ let js_var(vars, nm) =
     let _ = js_note_global(nm) in
     js_mangle(nm)
 
-/* Browser-host stubs live in lang.browser (pkg/lang/browser.yac): the name
- * table (js_browser_stub) and the singleton objects themselves. Programs that
- * reference a stub name emit an import of exactly the names they use and bind
- * their global boxes to the imported singletons (see hglob below). */
+/* Browser-host stubs live in js.browser (app/js/browser.yac): the singleton
+ * objects themselves; the name table is injected via js_stub_register. Programs
+ * that reference a stub name emit an import of exactly the names they use and
+ * bind their global boxes to the imported singletons (see hglob below). */
 
 let js_str_lit(e) = nth(e, 0) == "str"
 
@@ -4113,7 +4125,7 @@ let js_to_yac(src) =
             let nm2 = nth(stub_names, i) in
             let acc2 = if i == 0 then nm2 else str_cat(acc, str_cat(", ", nm2)) in
             rec(i + 1, acc2) in
-        str_cat("import lang.browser { ", str_cat(rec(0, ""), "}\n"))
+        str_cat("import js.browser { ", str_cat(rec(0, ""), "}\n"))
       else "" in
     let h0 = "let _js_exc = box_new()\nlet _js_pq = box_new()\nlet _js_pd = box_new()\nlet _ = box_set(_js_pq, list_new())\nlet _ = box_set(_js_pd, 0)\nlet _js_chk(f, t) =\n  let _ = if kind(f) == 6 then 0\n    else print(str_cat(\"dbg: bad callee \", str_cat(t, str_cat(\" kind=\", str_cat(int_to_str(kind(f)), str_cat(\" v=\", int_to_str(f))))))) in\n  f\nlet _js_apply(f0, xs) =\n  let f = _js_chk(f0, \"apply\") in\n  let n = len(xs) in\n  if n == 0 then f(0)\n  else if n == 1 then f(nth(xs, 0))\n  else if n == 2 then f(nth(xs, 0), nth(xs, 1))\n  else if n == 3 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2))\n  else if n == 4 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3))\n  else if n == 5 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4))\n  else if n == 6 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5))\n  else if n == 7 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), nth(xs, 6))\n  else f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), nth(xs, 6), nth(xs, 7))\n" in
     let h1 = if box_get(ufmap) == 1 or box_get(uobj) == 1 or has_browser then "import data.fmap { fmap_new, fmap_get, fmap_put }\n" else "" in

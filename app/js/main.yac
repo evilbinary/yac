@@ -30,11 +30,17 @@
  */
 
 import yc.compiler
-import lang.js
+import lang.js { js_to_yac, js_dump_src, js_stub_register }
+import js.browser { js_browser_stub }
+import back.backend { pkg_set }
 import fs.io
 import lib.log {log_i, log_set_hush}
 import text.str {trim, starts_with, ends_with}
 import os.env {get}
+
+/* 浏览器 stub 的名字表在本包（js.browser），注入给 lang.js 查询；
+ * lang.js 自身不依赖任何宿主包。 */
+let _ = js_stub_register(js_browser_stub)
 
 /* ---- 小工具 ---------------------------------------------------------- */
 
@@ -215,6 +221,7 @@ let js_help(_) =
   let _ = print("  --dump FILE                按语句打印翻译出的 yac") in
   let _ = print("  --eval JS                  执行内联 JS") in
   let _ = print("  --repl                     进入 REPL（无参数时默认）") in
+  let _ = print("  --pkg DIR[,DIR]            包根（内嵌编译解析 import 用；默认 app）") in
   let _ = print("  --help, -h                 本帮助") in
   let _ = print("  --version, -V              版本") in
   let _ = print("") in
@@ -298,35 +305,40 @@ let js_join_from(i, acc) =
   else if acc == "" then js_join_from(i + 1, argv(i))
   else js_join_from(i + 1, str_cat(acc, str_cat(" ", argv(i))))
 
-/* 命令行解析：--flag 形式。返回 [mode, file, out, eval]。
- * mode ∈ "" | repl | run | compile | dump | eval | help | version。 */
-let js_scan(i, mode, file, out, ev) =
-  if i >= argc() then [mode, file, out, ev]
+/* 命令行解析：--flag 形式。返回 [mode, file, out, eval, pkged]。
+ * mode ∈ "" | repl | run | compile | dump | eval | help | version。
+ * --pkg 直接喂给 guest 侧 pkg_set：内嵌编译器（源码链接）用它解析生成
+ * 程序的 import（js.browser 在 app/ 下，默认根是 app）。 */
+let js_scan(i, mode, file, out, ev, pkged) =
+  if i >= argc() then [mode, file, out, ev, pkged]
   else
     let a = argv(i) in
-    if a == "--help" or a == "-h" then js_scan(i + 1, "help", file, out, ev)
-    else if a == "--version" or a == "-V" then js_scan(i + 1, "version", file, out, ev)
-    else if a == "--repl" then js_scan(i + 1, if mode == "" then "repl" else mode, file, out, ev)
+    if a == "--help" or a == "-h" then js_scan(i + 1, "help", file, out, ev, pkged)
+    else if a == "--version" or a == "-V" then js_scan(i + 1, "version", file, out, ev, pkged)
+    else if a == "--repl" then js_scan(i + 1, if mode == "" then "repl" else mode, file, out, ev, pkged)
+    else if a == "--pkg" then
+      (let _ = pkg_set(argv(i + 1)) in js_scan(i + 2, mode, file, out, ev, 1))
     else if a == "--run" then
-      js_scan(i + 2, if mode == "" then "run" else mode, argv(i + 1), out, ev)
+      js_scan(i + 2, if mode == "" then "run" else mode, argv(i + 1), out, ev, pkged)
     else if a == "--compile" then
-      js_scan(i + 2, if mode == "" then "compile" else mode, argv(i + 1), out, ev)
+      js_scan(i + 2, if mode == "" then "compile" else mode, argv(i + 1), out, ev, pkged)
     else if a == "--dump" then
-      js_scan(i + 2, if mode == "" then "dump" else mode, argv(i + 1), out, ev)
+      js_scan(i + 2, if mode == "" then "dump" else mode, argv(i + 1), out, ev, pkged)
     else if a == "--dump-yac" then
-      js_scan(i + 2, if mode == "" then "dump-yac" else mode, argv(i + 1), out, ev)
+      js_scan(i + 2, if mode == "" then "dump-yac" else mode, argv(i + 1), out, ev, pkged)
     else if a == "--eval" then
-      js_scan(argc(), if mode == "" then "eval" else mode, file, out, js_join_from(i + 1, ""))
+      js_scan(argc(), if mode == "" then "eval" else mode, file, out, js_join_from(i + 1, ""), pkged)
     else if a == "--out" or a == "-o" then
-      js_scan(i + 2, mode, file, argv(i + 1), ev)
-    else js_scan(i + 1, mode, file, out, ev)
+      js_scan(i + 2, mode, file, argv(i + 1), ev, pkged)
+    else js_scan(i + 1, mode, file, out, ev, pkged)
 
 let js_cli(_) =
-  let p = js_scan(1, "", 0, 0, "") in
+  let p = js_scan(1, "", 0, 0, "", 0) in
   let mode = nth(p, 0) in
   let file = nth(p, 1) in
   let out = nth(p, 2) in
   let ev = nth(p, 3) in
+  let _ = if nth(p, 4) == 0 then pkg_set("app") else 0 in
   if mode == "help" then js_help(0)
   else if mode == "version" then js_version(0)
   else if mode == "run" then

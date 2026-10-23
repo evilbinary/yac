@@ -17,7 +17,7 @@
  *   - XHR send is a no-op, so network loads stay pending silently;
  *   - timers/rAF never fire (no scheduler in the js runtime yet). */
 
-package lang.browser
+package js.browser
 export _js_st_win0, _js_st_doc0, _js_st_nav0, _js_st_loc0, _js_st_perf0,
   _js_st_store0, _js_st_xhrC, _js_st_ctxC, _js_st_audioC, _js_st_noop,
   _js_st_false, _js_st_empty, _js_st_id, js_browser_stub
