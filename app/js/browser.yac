@@ -109,6 +109,9 @@ let _ = fmap_put(nth(_js_st_elem0, 1), "cssRules", [])
 let _ = fmap_put(nth(_js_st_elem0, 1), "documentElement", _js_st_elem0)
 let _ = fmap_put(nth(_js_st_elem0, 1), "body", _js_st_elem0)
 let _ = fmap_put(nth(_js_st_elem0, 1), "head", _js_st_elem0)
+/* `document.styleSheets[0].sheet.insertRule(...)`: the fake sheet is the
+ * element itself, so `.sheet` chains back to the insertRule member above. */
+let _ = fmap_put(nth(_js_st_elem0, 1), "sheet", _js_st_elem0)
 
 let _js_st_doc0 = ["$o", fmap_new(0)]
 let _ = fmap_put(nth(_js_st_doc0, 1), "createElement", fun(...a) -> _js_st_elem0)
