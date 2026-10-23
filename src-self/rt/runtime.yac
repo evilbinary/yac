@@ -3175,14 +3175,16 @@ let rt_host_unimpl_ins(_) =
  * used to do call [target+16] blindly; for a GC object that word is its small
  * kind (cons 2 / str 3 / BYTES 4 / listbuf 5 / float 7), so `let a =
  * compile("1"); a()` jumped to address 4 and died with SIGSEGV and no message.
- * Prints a line and returns int 0 so the session survives. */
+ * Prints a line and returns int 0 so the session survives. Params are 1-based
+ * (reg1 = the bad callee); reg0 maps to rdi and holds stale junk from the last
+ * call -- printing it made every site report a different heap pointer. */
 let rt_not_fn_ins(_) =
   [["local", 12, 1],
    ["strlit", 8, "error: not a function: "],
    ["mov_imm", 9, 0],
    ["fcall", 10, "print", [8, 9]],
    ["mov_imm", 9, 2],
-   ["fcall", 10, "print", [0, 9]],
+   ["fcall", 10, "print", [1, 9]],
    ["mov_imm", 8, 0],
    ["ret", 8]]
 

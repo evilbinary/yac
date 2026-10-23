@@ -1445,8 +1445,8 @@ let lir_of(src, t) =
     let _ = log_i("prof", "lir.fv_ms", nth(pf, 0) / 1000000) in
     let _ = log_i("prof", "lir.fv_calls", nth(pf, 1)) in
     let _ = log_i("prof", "lir.prep_ms", nth(pf, 2) / 1000000) in
-    let _ = log_i("prof", "lir.fv_vars", nth(pf, 4)) in
-    let _ = log_i("prof", "lir.fv_nest", nth(pf, 5)) in
+    let _ = log_i("prof", "lir.fv_maxsh", nth(pf, 4)) in
+    let _ = log_i("prof", "lir.fv_maxmemo", nth(pf, 5)) in
     let _ = dump_now("lir") in
     lir
 

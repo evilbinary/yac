@@ -35,18 +35,16 @@ let pkg_prefix_box =
   b
 
 /* Lightweight cost split for the LIR phase: [free_vars ns, free_vars calls,
- * letfun_prep ns, prep calls]. Logged by backend as prof lir.fv_ms /
- * lir.fv_calls / lir.prep_ms (only printed under -v). Reset per unit in
- * lir_of; two time_ns per letfun, so the overhead stays in the noise. */
+ * letfun_prep ns, prep calls, max shadow size, max memo size]. Logged by
+ * backend as prof lir.fv_ms / lir.fv_calls / lir.prep_ms / lir.fv_maxsh /
+ * lir.fv_maxmemo (only printed under -v). Reset per unit in lir_of; two
+ * time_ns per letfun, so the overhead stays in the noise. */
 let lir_perf_zero(_) =
   let a = list_new() in
-  let _ = list_push(a, 0) in
-  let _ = list_push(a, 0) in
-  let _ = list_push(a, 0) in
-  let _ = list_push(a, 0) in
-  let _ = list_push(a, 0) in
-  let _ = list_push(a, 0) in
-  a
+  let loop(i) =
+    if i >= 6 then a
+    else let _ = list_push(a, 0) in loop(i + 1) in
+  loop(0)
 
 let lir_perf_box =
   let b = box_new() in
@@ -283,34 +281,115 @@ let sset_put(m, k) =
 let sset_has(m, k) =
   if fmap_get(m, k) == 0 then false else true
 
-let sh_new(_) = [fmap_new64(0), 1]
-/* Shadow set = name -> MINIMUM binding depth seen so far. "Bound here" is
- * `min <= current depth`. That is exactly what the old per-name depth chain
- * answered (any occurrence with depth <= dcur), but O(1) instead of a
- * cons chain whose nth() scan was O(len^2) for names rebound many times
- * (main.js: 6.07M var refs spent 95s here). */
-let sh_put_d(map, k, d) =
-  let old = fmap_get(map, k) in
-  if old == 0 then fmap_put(map, k, d)
-  else if d < old then fmap_put(map, k, d)
+/* Shadow set = [name -> MINIMUM binding depth seen so far, depth, stamp,
+ * cache]. "Bound here" is `min <= current depth`: exactly what the old
+ * per-name depth chain answered (any occurrence with depth <= dcur).
+ *
+ * The per-lambda fmap reaches ~350k entries on the 21MB JS guest (prof
+ * lir.fv_maxsh) and every bind/ref pays a probe into it; at that size a
+ * get+put costs ~5us, which is why free_vars dominated LIR. The cache below
+ * is a direct-mapped accelerator over the same map: it answers most probes
+ * (scratch names like _v are rebound thousands of times at one depth, and a
+ * temp is referenced right after its bind) without touching the big table.
+ * Every value it holds is the map's true min depth, or -1 for "known absent
+ * from this call's map", so a hit is exact; slots are stamped per free_vars
+ * call, so no clearing is needed. */
+let fv_c_n = 8192
+let fv_c_mask = 8191
+
+let fv_c_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let fv_c_stamp_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let fv_c_fill(a, i) =
+  if i >= fv_c_n then a
+  else let _ = list_push(a, 0) in fv_c_fill(a, i + 1)
+
+let fv_c_new(_) =
+  [fv_c_fill(list_new(), 0), fv_c_fill(list_new(), 0),
+   fv_c_fill(list_new(), 0)]
+
+let fv_c_get_c(_) =
+  let c = fv_c_new(0) in
+  let _ = box_set(fv_c_box, c) in
+  c
+
+let fv_c_stamp_new(_) =
+  let s = box_get(fv_c_stamp_box) + 1 in
+  let _ = box_set(fv_c_stamp_box, s) in
+  s
+
+let fv_c_get(c, s, k, h) =
+  let i = band(h, fv_c_mask) in
+  if nth(nth(c, 2), i) == s then
+    if nth(nth(c, 0), i) == k then nth(nth(c, 1), i) else 0
   else 0
+
+let fv_c_put(c, s, k, h, d) =
+  let i = band(h, fv_c_mask) in
+  let _ = list_set(nth(c, 0), i, k) in
+  let _ = list_set(nth(c, 1), i, d) in
+  list_set(nth(c, 2), i, s)
+
+let sh_new(_) =
+  let c0 = box_get(fv_c_box) in
+  let c = if c0 == 0 then fv_c_get_c(0) else c0 in
+  [fmap_new64(0), 1, fv_c_stamp_new(0), c]
+
+let sh_put_d4(map, c, s, k, h, d) =
+  let cv = fv_c_get(c, s, k, h) in
+  if cv != 0 then
+    if cv < 0 then
+      let _ = fmap_put_h(map, k, d, h) in
+      fv_c_put(c, s, k, h, d)
+    else if cv <= d then 0
+    else
+      let _ = fmap_put_h(map, k, d, h) in
+      fv_c_put(c, s, k, h, d)
+  else
+    let old = fmap_get_h(map, k, h) in
+    let m = if old == 0 then d else if d < old then d else old in
+    let _ = if m != old then fmap_put_h(map, k, m, h) else 0 in
+    fv_c_put(c, s, k, h, m)
+
 let sh_from_list(xs) =
   let sh = sh_new(0) in
   let n = len(xs) in
   let loop(i) =
     if i >= n then sh
     else
-      let _ = sh_put_d(nth(sh, 0), nth(xs, i), nth(sh, 1)) in
+      let _ = sh_put_d4(nth(sh, 0), nth(sh, 3), nth(sh, 2),
+                        nth(xs, i), hash_str(nth(xs, i)), nth(sh, 1)) in
       loop(i + 1) in
   loop(0)
-let sh_put(sh, k) =
-  let _ = sh_put_d(nth(sh, 0), k, nth(sh, 1)) in sh
-let sh_has(sh, k) =
-  let d = fmap_get(nth(sh, 0), k) in
-  if d == 0 then false else d <= nth(sh, 1)
-let sh_enter(sh) = [nth(sh, 0), nth(sh, 1) + 1]
 
-let fv_acc_new(_) = [[], sset_new(0)]
+let sh_put(sh, k) =
+  let _ = sh_put_d4(nth(sh, 0), nth(sh, 3), nth(sh, 2), k, hash_str(k),
+                    nth(sh, 1)) in
+  sh
+
+/* Min depth for k in this shadow, 0 when unbound. Caches the answer. */
+let sh_get(sh, k, h) =
+  let c = nth(sh, 3) in
+  let s = nth(sh, 2) in
+  let cv = fv_c_get(c, s, k, h) in
+  if cv != 0 then
+    if cv < 0 then 0 else cv
+  else
+    let old = fmap_get_h(nth(sh, 0), k, h) in
+    let _ = fv_c_put(c, s, k, h, if old == 0 then 0 - 1 else old) in
+    old
+
+let sh_enter(sh) = [nth(sh, 0), nth(sh, 1) + 1, nth(sh, 2), nth(sh, 3)]
+
+/* [captured names, seen-set, free-path memo (name -> 1 capture / 2 skip)] */
+let fv_acc_new(_) = [[], sset_new(0), fmap_new64(0)]
 let fv_acc_list(a) = nth(a, 0)
 let fv_acc_add_h(a, k, h) =
   let m = nth(a, 1) in
@@ -869,44 +948,51 @@ let ub_prog(p, i, sc) =
  * top-level entry also claims may still be a VISIBLE ENCLOSING LOCAL, and
  * then it must be captured: the top-level table only says the name exists
  * somewhere, never that this occurrence refers to it. Γ wins. */
+/* Free-path classification for name nm, which the shadow set did NOT bind.
+ * 1 = capture (a true local of an enclosing lambda / a real free variable),
+ * 0 = a known package-level symbol or bare kernel global -> never capture.
+ * Depends only on Σ and the enclosing Γ, never on the shadow set, so a
+ * free_vars call can memoise it per name: the translated JS refs the same
+ * handful of globals (nth/str_cat/...) millions of times and each miss cost
+ * five hash lookups (main.js: 95-134s in LIR). */
+let fv_free_decide(nm, h, funs, env) =
+  let g = resolve_call_h(funs, nm, h) in
+  let hg = if g == nm then h else hash_str(g) in
+  if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hg) != 0
+     or sigma_export_kind_h(funs, g, hg) != 0 then
+    if env_rec_h(env, nm, h) != 0 then 1 else 0
+  else
+    let se = sigma_ent_h(funs, g, hg) in
+    if se == 0 then
+      if fmap_get_h(sigma_globals(funs), nm, h) != 0 then 0 else 1
+    else if nth(se, 1) == 0 then 0
+    else 1
+
 let free_vars(fnbody, params, funs, env) =
   let fv(anf, acc, shdw) =
     let atom_vars(atom, a, sh) =
       let k = nth(atom, 0) in
       if k == "var" then
-        let _ = lir_perf_add(4, 1) in
         let nm = nth(atom, 1) in
         let h = hash_str(nm) in
-        let ch = fmap_get_h(nth(sh, 0), nm, h) in
+        let ch = sh_get(sh, nm, h) in
         if ch == 0 then
-          /* resolve_call only matters for the free-reference path; a locally
-           * shadowed name used to pay its 69-string prim scan for nothing. */
-          let g = resolve_call_h(funs, nm, h) in
-          let hg = if g == nm then h else hash_str(g) in
-          /* Known package-level symbol: this unit's top-level (Σ field 3 tlv),
-           * a linked proc (pmap), or a cross-package top-level value/function
-           * (Σ field 4 exports). If it is ALSO visible in the enclosing Γ it is
-           * a true local of an outer lambda and must be captured (FLAT_ABI.md 1:
-           * ncap counts true locals only). */
-          if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hg) != 0
-             or sigma_export_kind_h(funs, g, hg) != 0 then
-            if env_rec_h(env, nm, h) != 0 then fv_acc_add_h(a, nm, h) else a
+          let memo = nth(a, 2) in
+          let mv = fmap_get_h(memo, nm, h) in
+          if mv == 1 then fv_acc_add_h(a, nm, h)
+          else if mv == 2 then a
           else
-            let se = sigma_ent_h(funs, g, hg) in
-            if se == 0 then
-              /* bare kernel/rt.* name (Σ field 5 globals): a global, not a
-               * local -> never capture. Anything else absent from Σ is a real
-               * free variable. */
-              if fmap_get_h(sigma_globals(funs), nm, h) != 0 then a
-              else fv_acc_add_h(a, nm, h)
-            else if nth(se, 1) == 0 then a
-            else fv_acc_add_h(a, nm, h)
+            let d = fv_free_decide(nm, h, funs, env) in
+            if d == 1 then
+              let _ = fmap_put_h(memo, nm, 1, h) in
+              fv_acc_add_h(a, nm, h)
+            else
+              let _ = fmap_put_h(memo, nm, 2, h) in
+              a
         else if ch <= nth(sh, 1) then a
         else fv_acc_add_h(a, nm, h)
       else if k == "qvar" then a
-      else if k == "fun" then
-        let _ = lir_perf_add(5, 1) in
-        nth(fv(nth(atom, 2), a, sh), 0)
+      else if k == "fun" then nth(fv(nth(atom, 2), a, sh), 0)
       else a in
     let args_vars(args, j, a, sh) =
       if j >= len(args) then a
@@ -939,7 +1025,6 @@ let free_vars(fnbody, params, funs, env) =
         let r2 = fv(nth(b, 4), nth(r1, 0), nth(r1, 1)) in
         [nth(r2, 0), sh_put(nth(r2, 1), nth(b, 1))]
       else if k == "letfun" then
-        let _ = lir_perf_add(5, 1) in
         let sh2 = sh_enter(sh) in
         let _ = sh_put(sh2, nth(b, 1)) in
         let p = nth(b, 2) in
@@ -977,7 +1062,15 @@ let free_vars(fnbody, params, funs, env) =
         stepb(i + 1, nb, nth(r, 0), nth(r, 1)) in
     if kind(binds0) == 5 then stepb(0, len(binds0), acc, shdw)
     else stepc(binds0, acc, shdw) in
-  reverse(fv_acc_list(nth(fv(fnbody, fv_acc_new(0), sh_from_list(params)), 0)))
+  let r = fv(fnbody, fv_acc_new(0), sh_from_list(params)) in
+  /* prof: largest shadow / memo table seen by any single lambda (sizes drive
+   * the hash-probe cost; see map.yac fmap layout notes). */
+  let msh = nth(nth(nth(r, 1), 0), 1) in
+  let memo = nth(nth(nth(r, 0), 2), 1) in
+  let pf = lir_perf(0) in
+  let _ = if msh > nth(pf, 4) then list_set(pf, 4, msh) else 0 in
+  let _ = if memo > nth(pf, 5) then list_set(pf, 5, memo) else 0 in
+  reverse(fv_acc_list(nth(r, 0)))
 
 /* ---- Γ ⊢ atom ---- */
 /* st = [I, Γ, ctr, Σ, uid]. Returns [I, s, Γ, ctr, Σ, uid]. */
