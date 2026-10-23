@@ -486,10 +486,49 @@ let prof_fix_funs(funs, enter, leave, i, out) =
       else list_push(out, f) in
     prof_fix_funs(funs, enter, leave, i + 1, out)
 
+let fun_named(funs, nm, i) =
+  if i >= len(funs) then false
+  else if intern(nth(nth(funs, i), 1)) == intern(nm) then true
+  else fun_named(funs, nm, i + 1)
+
+/* No hook anywhere: drop the kernel's `fcall prof_*_go` instead of letting the
+ * patch fall back to fid 0 (emit_map_get's historical silent-0 for "pro*"
+ * names). That fallback called the image's FIRST proc from every proc exit --
+ * with the caller's r13 clobbered: the "earlyret" SIGSEGV (mov 0x20(%rax),
+ * rax=0). Only when the names really are absent: a hook defined as a plain
+ * letfun (no $proc marker) is resolved by name and must keep its call. */
+let prof_drop_insns(insns, i, out) =
+  if i >= len(insns) then out
+  else
+    let ins = nth(insns, i) in
+    let keep =
+      if nth(ins, 0) == "fcall" then
+        let c = intern(nth(ins, 2)) in
+        if c == intern("prof_enter_go") or c == intern("prof_leave_go") then false
+        else true
+      else true in
+    let _ = if keep then list_push(out, ins) else 0 in
+    prof_drop_insns(insns, i + 1, out)
+
+let prof_drop_funs(funs, i, out) =
+  if i >= len(funs) then out
+  else
+    let f = nth(funs, i) in
+    let nm = intern(nth(f, 1)) in
+    let _ =
+      if nm == intern("yac_prof_enter") or nm == intern("yac_prof_leave") then
+        list_push(out, [nth(f, 0), nth(f, 1), nth(f, 2), nth(f, 3),
+          prof_drop_insns(nth(f, 4), 0, list_new()), nth(f, 5)])
+      else list_push(out, f) in
+    prof_drop_funs(funs, i + 1, out)
+
 let prof_hook_fix(funs) =
   let enter = prof_marked_hook(funs, "prof_enter_go", 0) in
   let leave = prof_marked_hook(funs, "prof_leave_go", 0) in
-  if enter == 0 and leave == 0 then funs
+  if enter == 0 and leave == 0 then
+    if fun_named(funs, "prof_enter_go", 0) or fun_named(funs, "prof_leave_go", 0)
+    then funs
+    else prof_drop_funs(funs, 0, list_new())
   else prof_fix_funs(funs, enter, leave, 0, list_new())
 
 /* C ABI stubs: skip kernel, pkg-qualified (slash), and libc names. */

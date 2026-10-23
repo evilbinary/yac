@@ -3391,15 +3391,7 @@ let runtime_funs(_) =
    ["$proc", "yac_f64_from_str", 1, 0, rt_f64_from_str_ins(0), "yac_f64_from_str"],
    ["$proc", "yac_f64_binop", 3, 0, rt_f64_binop_ins(0), "yac_f64_binop"],
    ["$proc", "yac_f64_rel", 3, 0, rt_f64_rel_ins(0), "yac_f64_rel"],
-   ["$proc", "yac_f64_print", 1, 0, rt_f64_print_ins(0), "yac_f64_print"],
-   /* The profiler hooks every proc calls by bare name. Without these the patch
-    * resolves to fid 0 (emit_map_get's historical silent-0 for "pro*"), so each
-    * proc's exit called the FIRST proc in the image -- for a program entry that
-    * means re-entering the program with the caller's r13 clobbered (SIGSEGV at
-    * `mov 0x20(%rax)` with rax=0, seen as the earlyret crash). Last-put-wins:
-    * a package profile.yac definition replaces these. */
-   ["$proc", "prof_enter_go", 1, 0, rt_prof_go_enter_ins(0), "prof_enter_go"],
-   ["$proc", "prof_leave_go", 0, 0, rt_prof_go_leave_ins(0), "prof_leave_go"]]
+   ["$proc", "yac_f64_print", 1, 0, rt_f64_print_ins(0), "yac_f64_print"]]
 
 /* Rewrite the profiler's hook call inside one insn list.
  *
