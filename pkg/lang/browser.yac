@@ -23,6 +23,12 @@ export _js_st_win0, _js_st_doc0, _js_st_nav0, _js_st_loc0, _js_st_perf0,
   _js_st_false, _js_st_empty, _js_st_id, js_browser_stub
 import data.fmap { fmap_new, fmap_put }
 
+/* TEMP diagnostics: name the callee before the runtime rejects it. */
+let _jb_ck(f, t) =
+  let _ = if kind(f) == 6 then 0
+    else print(str_cat("dbg: bad jb callee ", str_cat(t, str_cat(" kind=", str_cat(int_to_str(kind(f)), str_cat(" v=", int_to_str(f))))))) in
+  f
+
 /* Name table: JS global identifier -> stub singleton exported above.
  * Returns "" for names that are not stubbed (lang.js keeps box(0) for those).
  * lang.js calls this while emitting a program to decide which names to import
@@ -96,6 +102,10 @@ let _ = fmap_put(nth(_js_st_elem0, 1), "src", "")
 let _ = fmap_put(nth(_js_st_elem0, 1), "parentNode", 0)
 let _ = fmap_put(nth(_js_st_elem0, 1), "children", [])
 let _ = fmap_put(nth(_js_st_elem0, 1), "childNodes", [])
+/* Inline stylesheet members: `document.styleSheets[0].insertRule(...)`. */
+let _ = fmap_put(nth(_js_st_elem0, 1), "insertRule", _js_st_noop)
+let _ = fmap_put(nth(_js_st_elem0, 1), "deleteRule", _js_st_noop)
+let _ = fmap_put(nth(_js_st_elem0, 1), "cssRules", [])
 let _ = fmap_put(nth(_js_st_elem0, 1), "documentElement", _js_st_elem0)
 let _ = fmap_put(nth(_js_st_elem0, 1), "body", _js_st_elem0)
 let _ = fmap_put(nth(_js_st_elem0, 1), "head", _js_st_elem0)
@@ -118,6 +128,8 @@ let _ = fmap_put(nth(_js_st_doc0, 1), "hidden", false)
 let _ = fmap_put(nth(_js_st_doc0, 1), "visibilityState", "visible")
 let _ = fmap_put(nth(_js_st_doc0, 1), "readyState", "complete")
 let _ = fmap_put(nth(_js_st_doc0, 1), "cookie", "")
+/* One fake inline sheet so `document.styleSheets[0].insertRule` works. */
+let _ = fmap_put(nth(_js_st_doc0, 1), "styleSheets", [_js_st_elem0])
 
 let _js_st_nav0 = ["$o", fmap_new(0)]
 let _ = fmap_put(nth(_js_st_nav0, 1), "userAgent", "Mozilla/5.0 (yac)")
@@ -186,7 +198,7 @@ let _ = fmap_put(nth(_js_st_ctx0, 1), "createStereoPanner", fun(...a) -> _js_st_
 let _ = fmap_put(nth(_js_st_ctx0, 1), "createWaveShaper", fun(...a) -> _js_st_node0)
 /* decodeAudioData(buf, ok, err) -> ok(node): let the graph build run. */
 let _ = fmap_put(nth(_js_st_ctx0, 1), "decodeAudioData",
-  fun(...a) -> (if len(a) > 1 and nth(a, 1) != 0 then (nth(a, 1))(nth(a, 0)) else 0))
+  fun(...a) -> (if len(a) > 1 and nth(a, 1) != 0 then (_jb_ck(nth(a, 1), "decodeAudioData"))(nth(a, 0)) else 0))
 let _ = fmap_put(nth(_js_st_ctx0, 1), "resume", _js_st_noop)
 let _ = fmap_put(nth(_js_st_ctx0, 1), "suspend", _js_st_noop)
 let _ = fmap_put(nth(_js_st_ctx0, 1), "close", _js_st_noop)

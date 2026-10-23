@@ -1811,10 +1811,12 @@ let rt_gc_collect_ins(_) =
     * since-last-GC (G+40) reaches ctrl+152, defaulting to 256MiB+1 while that
     * slot is 0. With the old fixed 16MiB the compiler re-scanned its whole
     * (hundreds of MB) heap every 16MiB of fresh allocation: quadratic time and
-    * runaway RSS. Store max(256MiB+1, 2*live) so GC cost amortizes to linear.
-    * Measured on main_full.yac: 4*live did not speed up LIR (289s -> 293s) but
-    * raised the peak to 8.2GB, so 2 is the better speed/memory point. */
-   ["$add", 28, 28, 28],
+    * runaway RSS.
+    * Threshold is `live` (1x), so the heap settles at live + garbage <= 2*live.
+    * 4*live only bought ~4s on LIR but peaked at 8.2GB and 2*live peaked at
+    * 4.7-5.3GB on main_full.yac, i.e. GC is cheap here and the multiplier is
+    * the whole memory ceiling; 1x halves the garbage allowance for a few
+    * seconds of extra marking. */
    ["mov_imm", 29, 268435456 + 1],
    ["$jcc", ">=u", 28, 29, "gc_ths", "gc_thm"],
    ["label", "gc_thm"],

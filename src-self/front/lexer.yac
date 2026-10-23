@@ -13,7 +13,7 @@
  */
 
 package front.lexer
-export tokenize, token_kind, token_text, token_line, tok_ident_line
+export tokenize, token_kind, token_text, token_line, tok_ident_line, kind_name, tok_shift
 import lib.map {intern}
 
 let is_digit(c) = c >= 48 and c <= 57
@@ -125,8 +125,44 @@ let read_opchars(s, i, n) =
       read_opchars(s, i + 1, n)
     else i
 
-/* --- token constructors --- */
-let mk_tok(kind, text, line) = [kind, text, line]
+/* --- token constructors ---
+ * A token is ONE cons: cons(kind_code * 2^24 + line, text). It used to be a
+ * 3-element list [kind, text, line] = 3 conses (144B); main.js lexes 6.5M
+ * tokens, so the triple alone was ~1.3GB of the parse-phase live set and made
+ * the lex+parse burst (3.6GB) the process peak. Kind and line are ints, so
+ * both fit in the car; the text stays the cdr (use token_text/tail, not nth).
+ * Kind codes are fixed here and mirrored by kind_name below. */
+let tok_shift = 16777216
+
+let mk_tok(kind, text, line) = cons(kind * tok_shift + line, text)
+
+/* code -> kind string. Static literals, same values as before the packing, so
+ * every parser comparison (`kk(j) == "kw"`) is unchanged. Ordered by frequency:
+ * ident/op/punct/num dominate. */
+let kind_name(c) =
+  if c == 1 then "ident"
+  else if c == 0 then "op"
+  else if c == 6 then "punct"
+  else if c == 3 then "num"
+  else if c == 4 then "str"
+  else if c == 9 then "semi"
+  else if c == 8 then "comma"
+  else if c == 2 then "kw"
+  else if c == 10 then "lparen"
+  else if c == 11 then "rparen"
+  else if c == 7 then "dot"
+  else if c == 14 then "lbrace"
+  else if c == 15 then "rbrace"
+  else if c == 12 then "lbrk"
+  else if c == 13 then "rbrk"
+  else if c == 5 then "eof"
+  else "punct"
+
+let token_line(t) =
+  let e = nth(t, 0) in
+  e - e / tok_shift * tok_shift
+let token_kind(t) = kind_name(nth(t, 0) / tok_shift)
+let token_text(t) = tail(t)
 
 /* C lexer: longest valid operator, not a run of op chars (`=-` is `=` then `-`).
  * Texts are interned here so tokenize can skip a second full token pass. */
@@ -136,42 +172,42 @@ let scan_op(s, i, line, n) =
   let c1 = if has1 then sat(s, i + 1) else 0 in
   if c == 61 then
     if has1 then
-      if c1 == 61 then [mk_tok("op", intern("=="), line), i + 2]
-      else if c1 == 62 then [mk_tok("op", intern("->"), line), i + 2]
-      else [mk_tok("op", intern("="), line), i + 1]
-    else [mk_tok("op", intern("="), line), i + 1]
+      if c1 == 61 then [mk_tok(0, intern("=="), line), i + 2]
+      else if c1 == 62 then [mk_tok(0, intern("->"), line), i + 2]
+      else [mk_tok(0, intern("="), line), i + 1]
+    else [mk_tok(0, intern("="), line), i + 1]
   else if c == 33 then
     if has1 then
-      if c1 == 61 then [mk_tok("op", intern("!="), line), i + 2]
-      else [mk_tok("op", intern("!"), line), i + 1]
-    else [mk_tok("op", intern("!"), line), i + 1]
+      if c1 == 61 then [mk_tok(0, intern("!="), line), i + 2]
+      else [mk_tok(0, intern("!"), line), i + 1]
+    else [mk_tok(0, intern("!"), line), i + 1]
   else if c == 60 then
     if has1 then
-      if c1 == 61 then [mk_tok("op", intern("<="), line), i + 2]
-      else [mk_tok("op", intern("<"), line), i + 1]
-    else [mk_tok("op", intern("<"), line), i + 1]
+      if c1 == 61 then [mk_tok(0, intern("<="), line), i + 2]
+      else [mk_tok(0, intern("<"), line), i + 1]
+    else [mk_tok(0, intern("<"), line), i + 1]
   else if c == 62 then
     if has1 then
-      if c1 == 61 then [mk_tok("op", intern(">="), line), i + 2]
-      else [mk_tok("op", intern(">"), line), i + 1]
-    else [mk_tok("op", intern(">"), line), i + 1]
+      if c1 == 61 then [mk_tok(0, intern(">="), line), i + 2]
+      else [mk_tok(0, intern(">"), line), i + 1]
+    else [mk_tok(0, intern(">"), line), i + 1]
   else if c == 45 then
     if has1 then
-      if c1 == 62 then [mk_tok("op", intern("->"), line), i + 2]
-      else [mk_tok("op", intern("-"), line), i + 1]
-    else [mk_tok("op", intern("-"), line), i + 1]
-  else if c == 43 then [mk_tok("op", intern("+"), line), i + 1]
-  else if c == 42 then [mk_tok("op", intern("*"), line), i + 1]
-  else if c == 47 then [mk_tok("op", intern("/"), line), i + 1]
-  else if c == 37 then [mk_tok("op", intern("%"), line), i + 1]
-  else [mk_tok("op", intern(str_slice(s, i, 1)), line), i + 1]
+      if c1 == 62 then [mk_tok(0, intern("->"), line), i + 2]
+      else [mk_tok(0, intern("-"), line), i + 1]
+    else [mk_tok(0, intern("-"), line), i + 1]
+  else if c == 43 then [mk_tok(0, intern("+"), line), i + 1]
+  else if c == 42 then [mk_tok(0, intern("*"), line), i + 1]
+  else if c == 47 then [mk_tok(0, intern("/"), line), i + 1]
+  else if c == 37 then [mk_tok(0, intern("%"), line), i + 1]
+  else [mk_tok(0, intern(str_slice(s, i, 1)), line), i + 1]
 
 /* scan an identifier or keyword starting at pos */
 let scan_ident(s, i, line, n) =
   let e = read_alnum(s, i, n) in
   let w0 = str_slice(s, i, e - i) in
   let kw = is_kw(w0) in
-  let k = if kw then "kw" else "ident" in
+  let k = if kw then 2 else 1 in
   /* Long gensyms are nearly unique — skip intern (permanent arena + fmap). */
   let w =
     if kw then intern(w0)
@@ -211,7 +247,7 @@ let scan_num(s, i, line) =
     else e
   in
   let txt = str_slice(s, i, m - i) in
-  [mk_tok("num", txt, line), m]
+  [mk_tok(3, txt, line), m]
 
 /* scan a string literal starting after the opening quote at pos; returns
  * [tok, nextpos] or [null, 0] on unterminated */
@@ -221,7 +257,7 @@ let scan_str(s, i, line, acc, buf) =
     let c = sat(s, i) in
     if c == 34 then
       let out = bytes_to_str(buf) in
-      [mk_tok("str", out, line), i + 1]
+      [mk_tok(4, out, line), i + 1]
     else if c == 92 then
       if at_end(s, i + 1) then [["error", "lex", 0], 0]
       else
@@ -240,16 +276,16 @@ let scan_str(s, i, line, acc, buf) =
 
 /* classify a delimiter char */
 let punct_kind(c) =
-  if c == 40 then "lparen"
-  else if c == 41 then "rparen"
-  else if c == 91 then "lbrk"
-  else if c == 93 then "rbrk"
-  else if c == 123 then "lbrace"
-  else if c == 125 then "rbrace"
-  else if c == 44 then "comma"
-  else if c == 59 then "semi"
-  else if c == 46 then "dot"
-  else "punct"
+  if c == 40 then 10
+  else if c == 41 then 11
+  else if c == 91 then 12
+  else if c == 93 then 13
+  else if c == 123 then 14
+  else if c == 125 then 15
+  else if c == 44 then 8
+  else if c == 59 then 9
+  else if c == 46 then 7
+  else 6
 
 let is_punct(c) = c == 40 or c == 41 or c == 91 or c == 93 or c == 123 or
                   c == 125 or c == 44 or c == 59 or c == 46
@@ -258,7 +294,7 @@ let is_punct(c) = c == 40 or c == 41 or c == 91 or c == 93 or c == 123 or
  * again, i.e. up to ~8 str_ref per source character. */
 let lex(s, i, line, acc, n) =
   if i >= n then
-    let _ = list_push(acc, mk_tok("eof", "", line)) in acc
+    let _ = list_push(acc, mk_tok(5, "", line)) in acc
   else
     let c = str_ref(s, i) in
     if c == 32 or c == 9 or c == 10 or c == 13 then
@@ -290,7 +326,7 @@ let lex(s, i, line, acc, n) =
           if starstar then skip_starstar_cm(s, i + 3, line, n)
           else skip_block_cm(s, i + 2, line, 1, n) in
         if e == 0 then
-          let _ = list_push(acc, mk_tok("eof", "unterminated-comment", line)) in acc
+          let _ = list_push(acc, mk_tok(5, "unterminated-comment", line)) in acc
         else lex(s, e, line, acc, n)
       else
         let r = scan_op(s, i, line, n) in
@@ -307,7 +343,7 @@ let lex(s, i, line, acc, n) =
     else if c == 34 then
       let r = scan_str(s, i + 1, line, 0, bytes_new()) in
       if nth(nth(r, 0), 0) == "error" then
-        let _ = list_push(acc, mk_tok("eof", "unterminated-string", line)) in acc
+        let _ = list_push(acc, mk_tok(5, "unterminated-string", line)) in acc
       else
         let _ = list_push(acc, nth(r, 0)) in
         lex(s, nth(r, 1), line, acc, n)
@@ -323,7 +359,7 @@ let lex(s, i, line, acc, n) =
       lex(s, i + 1, line, acc, n)
     else
       let txt = intern(str_slice(s, i, 1)) in
-      let _ = list_push(acc, mk_tok("punct", txt, line)) in
+      let _ = list_push(acc, mk_tok(6, txt, line)) in
       lex(s, i + 1, line, acc, n)
 
 /* Seed intern table with compiler literals (pooled in native yc) so
@@ -407,10 +443,6 @@ let tokenize(src) =
   let _ = intern_seed(0) in
   let acc = list_new() in
   lex(src, 0, 1, acc, str_len(src))
-
-let token_kind(t) = nth(t, 0)
-let token_text(t) = nth(t, 1)
-let token_line(t) = nth(t, 2)
 
 /* Line of first token whose text is name. Token walk (TCO), not a byte
  * rec() — that was apply + 0x180 frames and SIGSEGV on a megabyte bundle. */

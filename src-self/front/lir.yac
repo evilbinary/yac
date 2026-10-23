@@ -14,7 +14,7 @@
  */
 
 package front.lir
-export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, sigma_new, sigma_kind, toplevel_seed, top_dup_scan, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, st_no, ub_prog, lir_tlv_set
+export lir_all, lir_expr, start_proc, tco_prog, imap_load, imap_load_merge, imap_reset, pkg_prefix_set, pkg_prefix_get, pkg_qn, env_new, sigma_of_rt, sigma_host_seed, sigma_list, sigma_new, sigma_kind, toplevel_seed, top_dup_scan, is_prim_name, import_alias, import_locals, in_list, imap_box, malias_box, env_slot, insn_extend, insn_push, st_no, ub_prog, lir_tlv_set, lir_perf, lir_perf_reset
 import lib.map
 import lib.log {log, log_fatal, log_i}
 
@@ -33,6 +33,30 @@ let pkg_prefix_box =
   let b = box_new() in
   let _ = box_set(b, "") in
   b
+
+/* Lightweight cost split for the LIR phase: [free_vars ns, free_vars calls,
+ * letfun_prep ns, prep calls]. Logged by backend as prof lir.fv_ms /
+ * lir.fv_calls / lir.prep_ms (only printed under -v). Reset per unit in
+ * lir_of; two time_ns per letfun, so the overhead stays in the noise. */
+let lir_perf_zero(_) =
+  let a = list_new() in
+  let _ = list_push(a, 0) in
+  let _ = list_push(a, 0) in
+  let _ = list_push(a, 0) in
+  let _ = list_push(a, 0) in
+  a
+
+let lir_perf_box =
+  let b = box_new() in
+  let _ = box_set(b, lir_perf_zero(0)) in
+  b
+
+let lir_perf_reset(_) = box_set(lir_perf_box, lir_perf_zero(0))
+let lir_perf(_) = box_get(lir_perf_box)
+
+let lir_perf_add(i, v) =
+  let a = box_get(lir_perf_box) in
+  list_set(a, i, nth(a, i) + v)
 
 let pkg_is_rt(p) =
   if str_len(p) < 3 then false
@@ -318,8 +342,18 @@ let sigma_export_get(fs, qn) =
   let e = fmap_get(sigma_exports(fs), intern(qn)) in
   if e == 0 then 0 else e
 
+/* Hash-taking variant: hot paths already hashed the name (intern would hash
+ * it again, and fmap_get hashes a second time on top of that). */
+let sigma_export_get_h(fs, qn, h) =
+  let e = fmap_get_h(sigma_exports(fs), qn, h) in
+  if e == 0 then 0 else e
+
 let sigma_export_kind(fs, qn) =
   let e = sigma_export_get(fs, qn) in
+  if e == 0 then 0 else nth(e, 0)
+
+let sigma_export_kind_h(fs, qn, h) =
+  let e = sigma_export_get_h(fs, qn, h) in
   if e == 0 then 0 else nth(e, 0)
 
 let sigma_global_p(fs, nm) = fmap_get(sigma_globals(fs), intern(nm)) != 0
@@ -607,92 +641,62 @@ let in_list(name, lst) =
   else if nth(lst, 0) == name then true
   else in_list(name, tail(lst))
 
-let is_prim_name(w) =
-  if w == "cons" then true
-  else if w == "len" then true
-  else if w == "nth" then true
-  else if w == "tail" then true
-  else if w == "append" then true
-  else if w == "print" then true
-  else if w == "map" then true
-  else if w == "filter" then true
-  else if w == "foldl" then true
-  else if w == "foldr" then true
-  else if w == "drop" then true
-  else if w == "head" then true
-  else if w == "str_len" then true
-  else if w == "str_hash" then true
-  else if w == "ident_hash" then true
-  else if w == "str_cat" then true
-  else if w == "str_ref" then true
-  else if w == "str_slice" then true
-  else if w == "str_chr" then true
-  else if w == "int_to_str" then true
-  else if w == "time_ms" then true
-  else if w == "time_ns" then true
-  else if w == "time_str" then true
-  else if w == "argc" then true
-  else if w == "argv" then true
-  else if w == "bytes_new" then true
-  else if w == "bytes_len" then true
-  else if w == "bytes_grow" then true
-  else if w == "bytes_append" then true
-  else if w == "bytes_extend" then true
-  else if w == "bytes_cat_str" then true
-  else if w == "bytes_ref" then true
-  else if w == "bytes_put" then true
-  else if w == "mem_ref" then true
-  else if w == "mem_put" then true
-  else if w == "bytes_to_str" then true
-  else if w == "list_new" then true
-  else if w == "list_push" then true
-  else if w == "list_set" then true
-  else if w == "list_rev" then true
-  else if w == "box_new" then true
-  else if w == "box_get" then true
-  else if w == "box_set" then true
-  else if w == "yac_prof_cell" then true
-  else if w == "read_file" then true
-  else if w == "write_file" then true
-  else if w == "system" then true
-  else if w == "read_line" then true
-  else if w == "jit_run" then true
-  else if w == "popen" then true
-  else if w == "exit" then true
-  else if w == "band" then true
-  else if w == "bor" then true
-  else if w == "bxor" then true
-  else if w == "bnot" then true
-  else if w == "bshl" then true
-  else if w == "bshr" then true
-  else if w == "gc_collect" then true
-  else if w == "yac_perm_on" then true
-  else if w == "yac_perm_off" then true
-  else if w == "yac_heap_stats" then true
-  else if w == "is_int" then true
-  else if w == "kind" then true
-  else if w == "iadd" then true
-  else if w == "isub" then true
-  else if w == "imul" then true
-  else if w == "idiv" then true
-  else if w == "irem" then true
-  else if w == "ccall" then true
-  else false
+/* Primitive (flat yac_*) names, indexed once. The old 69-way `w == "..."`
+ * chain ran yac_str_eq -- a byte loop over both strings -- for every
+ * candidate, and free_vars asks this once per variable reference. */
+let prim_names_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
 
-let resolve_call(fs, nm) =
-  if is_prim_name(nm) then nm
+let prim_names_fill(m, xs) =
+  if xs == [] then m
+  else
+    let _ = fmap_put(m, nth(xs, 0), 1) in
+    prim_names_fill(m, tail(xs))
+
+let prim_names_init(_) =
+  let m = fmap_new(0) in
+  let _ = fmap_init_n(m, 128) in
+  let m2 = prim_names_fill(m,
+    ["cons", "len", "nth", "tail", "append", "print", "map", "filter",
+     "foldl", "foldr", "drop", "head", "str_len", "str_hash", "ident_hash",
+     "str_cat", "str_ref", "str_slice", "str_chr", "int_to_str", "time_ms",
+     "time_ns", "time_str", "argc", "argv", "bytes_new", "bytes_len",
+     "bytes_grow", "bytes_append", "bytes_extend", "bytes_cat_str",
+     "bytes_ref", "bytes_put", "mem_ref", "mem_put", "bytes_to_str",
+     "list_new", "list_push", "list_set", "list_rev", "box_new", "box_get",
+     "box_set", "yac_prof_cell", "read_file", "write_file", "system",
+     "read_line", "jit_run", "popen", "exit", "band", "bor", "bxor", "bnot",
+     "bshl", "bshr", "gc_collect", "yac_perm_on", "yac_perm_off",
+     "yac_heap_stats", "is_int", "kind", "iadd", "isub", "imul", "idiv",
+     "irem", "ccall"]) in
+  let _ = box_set(prim_names_box, m2) in
+  m2
+
+let is_prim_name_h(w, h) =
+  let m0 = box_get(prim_names_box) in
+  let m = if m0 == 0 then prim_names_init(0) else m0 in
+  fmap_get_h(m, w, h) != 0
+
+let is_prim_name(w) = is_prim_name_h(w, hash_str(w))
+
+let resolve_call_h(fs, nm, h) =
+  if is_prim_name_h(nm, h) then nm
   else
     let m = imap_find(box_get(imap_box), nm, 0) in
     if m != 0 then m
     else if name_has_slash(nm, 0) then nm
     /* kernel / rt.* procs are registered bare in Sigma (Σ field 5 `globals`):
      * keep the bare name so a per-package source-link does not qualify it. */
-    else if sigma_global_p(fs, nm) then nm
+    else if fmap_get_h(sigma_globals(fs), nm, h) != 0 then nm
     else
       let p = box_get(pkg_prefix_box) in
       if p == "" then nm
       else if pkg_is_rt(p) then nm
       else pkg_qn(p, nm)
+
+let resolve_call(fs, nm) = resolve_call_h(fs, nm, hash_str(nm))
 
 /* ---- unbound-variable check (set-based scopes) ----
  * File scope is a growing fmap `m` (kernel + host + import names and every
@@ -866,23 +870,26 @@ let free_vars(fnbody, params, funs, env) =
         let nm = nth(atom, 1) in
         let h = hash_str(nm) in
         let ch = fmap_get_h(nth(sh, 0), nm, h) in
-        let g = resolve_call(funs, nm) in
         if ch == 0 then
+          /* resolve_call only matters for the free-reference path; a locally
+           * shadowed name used to pay its 69-string prim scan for nothing. */
+          let g = resolve_call_h(funs, nm, h) in
+          let hg = if g == nm then h else hash_str(g) in
           /* Known package-level symbol: this unit's top-level (Σ field 3 tlv),
            * a linked proc (pmap), or a cross-package top-level value/function
            * (Σ field 4 exports). If it is ALSO visible in the enclosing Γ it is
            * a true local of an outer lambda and must be captured (FLAT_ABI.md 1:
            * ncap counts true locals only). */
-          if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hash_str(g)) != 0
-             or sigma_export_kind(funs, g) != 0 then
+          if sigma_kind_h(funs, nm, h) != 0 or sigma_kind_h(funs, g, hg) != 0
+             or sigma_export_kind_h(funs, g, hg) != 0 then
             if env_rec_h(env, nm, h) != 0 then fv_acc_add_h(a, nm, h) else a
           else
-            let se = sigma_ent_h(funs, g, hash_str(g)) in
+            let se = sigma_ent_h(funs, g, hg) in
             if se == 0 then
               /* bare kernel/rt.* name (Σ field 5 globals): a global, not a
                * local -> never capture. Anything else absent from Σ is a real
                * free variable. */
-              if sigma_global_p(funs, nm) then a
+              if fmap_get_h(sigma_globals(funs), nm, h) != 0 then a
               else fv_acc_add_h(a, nm, h)
             else if nth(se, 1) == 0 then a
             else fv_acc_add_h(a, nm, h)
@@ -1683,6 +1690,7 @@ let bind_params(ps, nparams, ncap, j, e) =
         env_bind(e, nth(ps, j), j + 1, 0))
 
 let lir_letfun_prep(b, s) =
+  let t0 = time_ns() in
   let env = nth(s, 1) in
   let name = nth(b, 1) in
   let params = nth(b, 2) in
@@ -1700,7 +1708,10 @@ let lir_letfun_prep(b, s) =
       str_cat(base, str_cat("#", int_to_str(uid)))
     else base in
   let gname = intern(gname0) in
+  let tf = time_ns() in
   let fvs_raw = free_vars(body, params, nth(s, 3), env) in
+  let _ = lir_perf_add(0, time_ns() - tf) in
+  let _ = lir_perf_add(1, 1) in
   let is_rec = in_list(name, fvs_raw) in
   let fvs = if is_rec then fv_skip(fvs_raw, name) else fvs_raw in
   let ncap = len(fvs) in
@@ -1724,6 +1735,8 @@ let lir_letfun_prep(b, s) =
   let is_top = sigma_kind(nth(s, 3), name) == 1 in
   let saved_tlv = box_get(lir_tlv_box) in
   let _ = box_set(lir_tlv_box, 0) in
+  let _ = lir_perf_add(2, time_ns() - t0) in
+  let _ = lir_perf_add(3, 1) in
   [body, st5, name, ncap, nparams, gname, fvs, false, 0, is_top, saved_tlv != 0, rest]
 
 let cap_list(n, j, acc) =

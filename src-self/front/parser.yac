@@ -27,6 +27,7 @@
 
 package front.parser
 export parse_program, prog_has_err, prog_find_err, report_syntax, syntax_msg
+import front.lexer {kind_name, tok_shift}
 
 let reverse(xs) = list_rev(xs)
 let is_err(a) = nth(a, 0) == "error"
@@ -108,17 +109,24 @@ let prog_find_err(p, i) =
     let e = ast_find_err(nth(p, i)) in
     if e == 0 then prog_find_err(p, i + 1) else e
 
+/* Tokens are one cons: cons(kind_code * 2^24 + line, text) — see lexer.yac
+ * mk_tok. Never read a token with nth(t, 1): the cdr is the text string, not
+ * a list, so use tail(t). */
+let tok_enc_line(t) =
+  let e = nth(t, 0) in
+  e - e / tok_shift * tok_shift
+
 let tok_line(toks, j) =
   if len(toks) == 0 then 1
   else if j < 0 then 1
-  else if j >= len(toks) then nth(nth(toks, len(toks) - 1), 2)
-  else nth(nth(toks, j), 2)
+  else if j >= len(toks) then tok_enc_line(nth(toks, len(toks) - 1))
+  else tok_enc_line(nth(toks, j))
 
 let tok_near(toks, j) =
   if j >= len(toks) then "eof"
   else
-    let t = nth(nth(toks, j), 1) in
-    if t == "" then nth(nth(toks, j), 0) else t
+    let t = tail(nth(toks, j)) in
+    if t == "" then kind_name(nth(nth(toks, j), 0) / tok_shift) else t
 
 /* Top-level so parse_expr stays ncap=0. AST: ["error", msg, line, near]. */
 let parse_err(toks, j) =
@@ -147,9 +155,10 @@ let report_syntax(ast) =
   else print(syntax_msg(e))
 
 let tok_k(toks, i) =
-  if i >= len(toks) then "eof" else nth(nth(toks, i), 0)
+  if i >= len(toks) then "eof"
+  else kind_name(nth(nth(toks, i), 0) / tok_shift)
 let tok_t(toks, i) =
-  if i >= len(toks) then "" else nth(nth(toks, i), 1)
+  if i >= len(toks) then "" else tail(nth(toks, i))
 let tok_is_kw(toks, i, w) =
   if tok_k(toks, i) == "kw" then tok_t(toks, i) == w else false
 
@@ -214,9 +223,10 @@ let mk_parse(toks) =
   let ntoks = len(toks) in
   /* kk/tt used to go through tk_at (extra nested call). --prof-out bundle
    * showed kk ~4% excl and tk_at ~1.5% on parse; flatten the peek. */
-  let tk_at(j) = if j >= ntoks then ["eof", "", 0] else nth(toks, j) in
-  let kk(j) = if j >= ntoks then "eof" else nth(nth(toks, j), 0) in
-  let tt(j) = if j >= ntoks then "" else nth(nth(toks, j), 1) in
+  let kk(j) =
+    if j >= ntoks then "eof"
+    else kind_name(nth(nth(toks, j), 0) / tok_shift) in
+  let tt(j) = if j >= ntoks then "" else tail(nth(toks, j)) in
   let is_punct(j) =
     let k = kk(j) in
     if k == "lparen" then true
@@ -407,7 +417,7 @@ let mk_parse(toks) =
   /* ---- application: head followed by ( args ), chainable: f(a)(b) ---- */
   let parse_app(j, head) =
     if kk(j) == "lparen" then
-      if nth(nth(toks, j), 2) != nth(nth(toks, j - 1), 2) then [head, j]
+      if tok_enc_line(nth(toks, j)) != tok_enc_line(nth(toks, j - 1)) then [head, j]
       else
         let r = parse_arglist(j + 1, list_new()) in
         if not nth(r, 0) then
@@ -416,7 +426,7 @@ let mk_parse(toks) =
     else
       let k = kk(j) in
       let juxta(_) =
-        if nth(nth(toks, j), 2) != nth(nth(toks, j - 1), 2) then [head, j]
+        if tok_enc_line(nth(toks, j)) != tok_enc_line(nth(toks, j - 1)) then [head, j]
         else
           let r = go(j, 0) in
           if is_err(nth(r, 0)) then [head, j]
@@ -538,6 +548,16 @@ let parse_program(toks, i, acc0) =
   let ntoks = len(toks) in
   let _ = box_set(parse_sess, 0) in
   let _ = box_set(parse_err_flag, 0) in
+  /* Release the token objects of a form once the top level has moved past it.
+   * A token is one cons (kind/line packed + text), and main.js lexes 6.5M of
+   * them; without this the token vector is the larger half of the parse-phase
+   * live set. parse helpers only read indices >= the current form start, and
+   * the AST keeps copied text, never the token object itself, so this is safe. */
+  let clear_toks(lo, hi) =
+    let clr(k) =
+      if k >= hi then 0
+      else let _ = list_set(toks, k, 0) in clr(k + 1) in
+    clr(lo) in
   let loop(i, acc) =
     if i >= ntoks then acc
     else if tok_k(toks, i) == "eof" then acc
@@ -547,14 +567,18 @@ let parse_program(toks, i, acc0) =
         let _ = list_push(acc, nth(parse_err(toks, i + 1), 0)) in acc
       else
         let _ = list_push(acc, ["package", nth(d, 0)]) in
-        loop(hdr_semi(toks, nth(d, 1)), acc)
+        let nx = hdr_semi(toks, nth(d, 1)) in
+        let _ = clear_toks(i, nx) in
+        loop(nx, acc)
     else if tok_is_kw(toks, i, "export") then
       let ids = parse_idlist(toks, i + 1, []) in
       if nth(ids, 0) == [] then
         let _ = list_push(acc, nth(parse_err(toks, i + 1), 0)) in acc
       else
         let _ = list_push(acc, ["export", nth(ids, 0)]) in
-        loop(hdr_semi(toks, nth(ids, 1)), acc)
+        let nx = hdr_semi(toks, nth(ids, 1)) in
+        let _ = clear_toks(i, nx) in
+        loop(nx, acc)
     else if tok_is_kw(toks, i, "import") then
       let d = parse_dotted(toks, i + 1, "") in
       if nth(d, 0) == "" then
@@ -567,20 +591,28 @@ let parse_program(toks, i, acc0) =
             let _ = list_push(acc, nth(parse_err_msg(toks, nth(ids, 1), "expected '}'"), 0)) in acc
           else
             let _ = list_push(acc, ["import", nth(d, 0), nth(ids, 0), 0]) in
-            loop(hdr_semi(toks, nth(ids, 1) + 1), acc)
+            let nx = hdr_semi(toks, nth(ids, 1) + 1) in
+            let _ = clear_toks(i, nx) in
+            loop(nx, acc)
         else if tok_k(toks, j) == "ident" then
           if tok_t(toks, j) == "as" then
             if tok_k(toks, j + 1) != "ident" then
               let _ = list_push(acc, nth(parse_err(toks, j + 1), 0)) in acc
             else
               let _ = list_push(acc, ["import", nth(d, 0), 0, tok_t(toks, j + 1)]) in
-              loop(hdr_semi(toks, j + 2), acc)
+              let nx = hdr_semi(toks, j + 2) in
+              let _ = clear_toks(i, nx) in
+              loop(nx, acc)
           else
             let _ = list_push(acc, ["import", nth(d, 0)]) in
-            loop(hdr_semi(toks, j), acc)
+            let nx = hdr_semi(toks, j) in
+            let _ = clear_toks(i, nx) in
+            loop(nx, acc)
         else
           let _ = list_push(acc, ["import", nth(d, 0)]) in
-          loop(hdr_semi(toks, j), acc)
+          let nx = hdr_semi(toks, j) in
+          let _ = clear_toks(i, nx) in
+          loop(nx, acc)
     else
       let r = parse_expr(toks, i, 0) in
       if is_err(nth(r, 0)) then
@@ -591,5 +623,6 @@ let parse_program(toks, i, acc0) =
                    if tok_k(toks, rawj) == "semi" then rawj + 1 else rawj
                  else rawj in
         let _ = list_push(acc, nth(r, 0)) in
+        let _ = clear_toks(i, j2) in
         loop(j2, acc) in
   loop(i, acc)

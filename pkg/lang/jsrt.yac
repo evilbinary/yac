@@ -18,6 +18,12 @@ import text.str {find}
 import data.fmap { fmap_get }
 import num.math { ftoi }
 
+/* TEMP diagnostics: name the callback before the runtime rejects it. */
+let _js_ck(f, t) =
+  let _ = if kind(f) == 6 then 0
+    else print(str_cat("dbg: bad callee ", str_cat(t, str_cat(" kind=", str_cat(int_to_str(kind(f)), str_cat(" v=", int_to_str(f))))))) in
+  f
+
 /* Float -> decimal string (up to 6 fractional digits, trailing zeros trimmed).
  * Fractional digits are produced one at a time to keep integers small
  * (`ftoi` is unreliable for large values). */
@@ -142,7 +148,7 @@ let _js_arr_index(a, x) =
 let _js_arr_map(a, f) =
   let r = list_new() in
   let n = len(a) in
-  let rec(i) = if i >= n then r else (let _ = list_push(r, f(nth(a, i))) in rec(i + 1)) in
+  let rec(i) = if i >= n then r else (let _ = list_push(r, (_js_ck(f, "arr.map"))(nth(a, i))) in rec(i + 1)) in
   rec(0)
 
 let _js_arr_filter(a, f) =
@@ -152,18 +158,18 @@ let _js_arr_filter(a, f) =
     if i >= n then r
     else
       let v = nth(a, i) in
-      let _ = if f(v) then list_push(r, v) else 0 in
+      let _ = if (_js_ck(f, "arr.filter"))(v) then list_push(r, v) else 0 in
       rec(i + 1) in
   rec(0)
 
 let _js_arr_each(a, f) =
   let n = len(a) in
-  let rec(i) = if i >= n then 0 else (let _ = f(nth(a, i)) in rec(i + 1)) in
+  let rec(i) = if i >= n then 0 else (let _ = (_js_ck(f, "arr.each"))(nth(a, i)) in rec(i + 1)) in
   rec(0)
 
 let _js_arr_reduce(a, f, init) =
   let n = len(a) in
-  let rec(i, acc) = if i >= n then acc else rec(i + 1, f(acc, nth(a, i))) in
+  let rec(i, acc) = if i >= n then acc else rec(i + 1, (_js_ck(f, "arr.reduce"))(acc, nth(a, i))) in
   rec(0, init)
 
 let _js_arr_join(a, sep) =
@@ -198,7 +204,7 @@ let _js_arr_sort(a, f) =
         else
           let x = nth(a, i) in
           let y = nth(a, i + 1) in
-          let _ = if f(x, y) > 0 then (let _ = list_set(a, i, y) in list_set(a, i + 1, x)) else 0 in
+          let _ = if (_js_ck(f, "arr.sort"))(x, y) > 0 then (let _ = list_set(a, i, y) in list_set(a, i + 1, x)) else 0 in
           inr(i + 1) in
       let _ = inr(0) in
       go(pass + 1) in
@@ -219,14 +225,14 @@ let _js_arr_find(a, f) =
     if i >= n then 0
     else
       let v = nth(a, i) in
-      if _js_truth(f(v)) then v else rec(i + 1) in
+      if _js_truth((_js_ck(f, "arr.find"))(v)) then v else rec(i + 1) in
   rec(0)
 
 let _js_arr_findindex(a, f) =
   let n = len(a) in
   let rec(i) =
     if i >= n then 0 - 1
-    else if _js_truth(f(nth(a, i))) then i
+    else if _js_truth((_js_ck(f, "arr.findIndex"))(nth(a, i))) then i
     else rec(i + 1) in
   rec(0)
 

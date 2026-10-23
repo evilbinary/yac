@@ -13,6 +13,12 @@ import data.fmap { fmap_new, fmap_get, fmap_put }
 import num.math { ftoi, log, exp, powf, abs, pow, sqrt, sin, cos, log2, sign }
 import lang.jsrt { _js_iter, _js_str }
 
+/* TEMP diagnostics: name the callee before the runtime rejects it. */
+let _jl_ck(f, t) =
+  let _ = if kind(f) == 6 then 0
+    else print(str_cat("dbg: bad jl callee ", str_cat(t, str_cat(" kind=", str_cat(int_to_str(kind(f)), str_cat(" v=", int_to_str(f))))))) in
+  f
+
 /* Decimal integer parse: optional leading '-', then digits (stops at the first
  * non-digit, like parseInt without a radix). */
 let js_parse_int(s) =
@@ -305,7 +311,7 @@ let js_array_from(x, f) =
     if i >= n then r
     else
       let v = nth(it, i) in
-      let _ = list_push(r, (if f == 0 then v else f(v))) in
+      let _ = list_push(r, (if f == 0 then v else (_jl_ck(f, "array.from"))(v))) in
       rec(i + 1) in
   rec(0)
 
@@ -466,7 +472,7 @@ let js_map(self, op, args) =
       (let _ = rec(0) in r))))
   else if op == "forEach" then
     (let f = nth(args, 0) in (let n = len(d) in
-     (let rec(i) = (if i >= n then 0 else (let e = nth(d, i) in (let _ = f(nth(e, 1), nth(e, 0)) in rec(i + 1)))) in
+     (let rec(i) = (if i >= n then 0 else (let e = nth(d, i) in (let _ = (_jl_ck(f, "map.forEach"))(nth(e, 1), nth(e, 0)) in rec(i + 1)))) in
       (let _ = rec(0) in 0))))
   else 0
 
@@ -488,7 +494,7 @@ let js_set(self, op, args) =
        (let _ = rec(0) in (let _ = fmap_put(nth(self, 1), "$data", nd) in (let _ = fmap_put(nth(self, 1), "size", len(nd)) in (len(nd) != n))))))))
   else if op == "forEach" then
     (let f = nth(args, 0) in (let n = len(d) in
-     (let rec(i) = (if i >= n then 0 else (let _ = f(nth(d, i)) in rec(i + 1))) in
+     (let rec(i) = (if i >= n then 0 else (let _ = (_jl_ck(f, "set.forEach"))(nth(d, i)) in rec(i + 1))) in
       (let _ = rec(0) in 0))))
   else 0
 
@@ -767,13 +773,13 @@ let js_promise_step(mode, q, d, p, f, r, np, v) =
     if pst == 1 then
       if f == 0 then js_promise_step(3, q, d, np, 0, 0, 0, box_get(nth(p, 2)))
       else
-        let v2 = f(box_get(nth(p, 2))) in
+        let v2 = (_jl_ck(f, "promise.then"))(box_get(nth(p, 2))) in
         if kind(v2) == 2 and len(v2) > 0 and nth(v2, 0) == "$p" then
           js_promise_step(2, q, d, v2, fun(x) -> js_promise_step(3, q, d, np, 0, 0, 0, x), fun(e) -> js_promise_step(4, q, d, np, 0, 0, 0, e), 0, 0)
         else js_promise_step(3, q, d, np, 0, 0, 0, v2)
     else if r == 0 then js_promise_step(4, q, d, np, 0, 0, 0, box_get(nth(p, 2)))
     else
-      let v2 = r(box_get(nth(p, 2))) in
+      let v2 = (_jl_ck(r, "promise.catch"))(box_get(nth(p, 2))) in
       if kind(v2) == 2 and len(v2) > 0 and nth(v2, 0) == "$p" then
         js_promise_step(2, q, d, v2, fun(x) -> js_promise_step(3, q, d, np, 0, 0, 0, x), fun(e) -> js_promise_step(4, q, d, np, 0, 0, 0, e), 0, 0)
       else js_promise_step(3, q, d, np, 0, 0, 0, v2)
@@ -813,7 +819,7 @@ let js_promise_resolve(q, d, p, v) = js_promise_step(3, q, d, p, 0, 0, 0, v)
  * argument of the function that builds them. */
 let js_promise_go(q, d, exec, p) =
   let _ = box_set(d, box_get(d) + 1) in
-  let _ = exec(fun(v) -> js_promise_resolve(q, d, p, v), fun(e) -> js_promise_reject(q, d, p, e)) in
+  let _ = (_jl_ck(exec, "promise.exec"))(fun(v) -> js_promise_resolve(q, d, p, v), fun(e) -> js_promise_reject(q, d, p, e)) in
   let _ = box_set(d, box_get(d) - 1) in
   let _ = if box_get(d) == 0 then js_promise_flush(q) else 0 in
   p
