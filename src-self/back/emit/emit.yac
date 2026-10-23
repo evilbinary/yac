@@ -1346,11 +1346,16 @@ let emit_funs_loop(funs, entry, T, op_insn, op_resolve, op_skip) =
   let out = bytes_new() in
   let ids = emit_ids_new(funs) in
   let offs = list_new() in
-  let emit_fun(i, st, fo) =
-    if i >= nfun then [st, fo]
-    else
-      let _ =
-        if i == 0 or ((i % 20) == 0) then log_i("emit", "fun", i) else 0 in
+    let emit_fun(i, st, fo) =
+      if i >= nfun then [st, fo]
+      else
+        /* Sweep periodically: a proc's LIR body is dropped right after it is
+         * emitted, but the GC only runs on allocation, and emit itself barely
+         * allocates -- without this the peak (all the LIR + emit's own tables)
+         * is reached at the very end of the loop. */
+        let _ = if band(i, 255) == 0 then gc_collect() else 0 in
+        let _ =
+          if i == 0 or ((i % 20) == 0) then log_i("emit", "fun", i) else 0 in
       let f = nth(funs, i) in
       let name = nth(f, 1) in
       let is_entry = name == entry in
@@ -1372,11 +1377,17 @@ let emit_funs_loop(funs, entry, T, op_insn, op_resolve, op_skip) =
         let run(j, s) =
           if j >= len(insns) then s
           else run(j + 1, (op_insn)(s, nth(insns, j), is_entry, fun_is_raw(f))) in
-        let s1 = run(0, st0) in
-        let kept = (op_resolve)(nth(s1, 0), nth(s1, 2), nth(s1, 3)) in
-        let _ = patches_extend(nth(st, 3), kept) in
-        let s2 = [nth(s1, 0), bytes_len(nth(s1, 0)), [], nth(st, 3), nth(st, 4)] in
-        emit_fun(i + 1, s2, cons([name, fstart], fo)) in
+      let s1 = run(0, st0) in
+      let kept = (op_resolve)(nth(s1, 0), nth(s1, 2), nth(s1, 3)) in
+      let _ = patches_extend(nth(st, 3), kept) in
+      let s2 = [nth(s1, 0), bytes_len(nth(s1, 0)), [], nth(st, 3), nth(st, 4)] in
+      /* This proc's LIR body is dead once it is emitted: drop the reference so
+       * the peak (which happens while LATER procs still allocate) -- normally
+       * the whole program's LIR, the single biggest live block -- shrinks as
+       * the emit walks forward. `fun_is_raw`/`fun_selfabi` info is already
+       * captured in the tcall table before the loop. */
+      let _ = list_set(f, 4, 0) in
+      emit_fun(i + 1, s2, cons([name, fstart], fo)) in
   let r = emit_fun(0, [out, 0, [], list_new(), ids], []) in
   [nth(r, 0), nth(r, 1), offs]
 
