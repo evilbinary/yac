@@ -44,6 +44,8 @@ let lir_perf_zero(_) =
   let _ = list_push(a, 0) in
   let _ = list_push(a, 0) in
   let _ = list_push(a, 0) in
+  let _ = list_push(a, 0) in
+  let _ = list_push(a, 0) in
   a
 
 let lir_perf_box =
@@ -282,25 +284,30 @@ let sset_has(m, k) =
   if fmap_get(m, k) == 0 then false else true
 
 let sh_new(_) = [fmap_new64(0), 1]
+/* Shadow set = name -> MINIMUM binding depth seen so far. "Bound here" is
+ * `min <= current depth`. That is exactly what the old per-name depth chain
+ * answered (any occurrence with depth <= dcur), but O(1) instead of a
+ * cons chain whose nth() scan was O(len^2) for names rebound many times
+ * (main.js: 6.07M var refs spent 95s here). */
+let sh_put_d(map, k, d) =
+  let old = fmap_get(map, k) in
+  if old == 0 then fmap_put(map, k, d)
+  else if d < old then fmap_put(map, k, d)
+  else 0
 let sh_from_list(xs) =
   let sh = sh_new(0) in
   let n = len(xs) in
   let loop(i) =
     if i >= n then sh
     else
-      let _ = fmap_push(nth(sh, 0), nth(xs, i), nth(sh, 1)) in
+      let _ = sh_put_d(nth(sh, 0), nth(xs, i), nth(sh, 1)) in
       loop(i + 1) in
   loop(0)
 let sh_put(sh, k) =
-  let _ = fmap_push(nth(sh, 0), k, nth(sh, 1)) in sh
-let sh_has_at(ch, j, n, dcur) =
-  if j >= n then false
-  else if nth(ch, j) > dcur then sh_has_at(ch, j + 1, n, dcur)
-  else true
-let sh_has_chain(ch, dcur) = sh_has_at(ch, 0, len(ch), dcur)
+  let _ = sh_put_d(nth(sh, 0), k, nth(sh, 1)) in sh
 let sh_has(sh, k) =
-  let ch = fmap_get(nth(sh, 0), k) in
-  if ch == 0 then false else sh_has_chain(ch, nth(sh, 1))
+  let d = fmap_get(nth(sh, 0), k) in
+  if d == 0 then false else d <= nth(sh, 1)
 let sh_enter(sh) = [nth(sh, 0), nth(sh, 1) + 1]
 
 let fv_acc_new(_) = [[], sset_new(0)]
@@ -867,6 +874,7 @@ let free_vars(fnbody, params, funs, env) =
     let atom_vars(atom, a, sh) =
       let k = nth(atom, 0) in
       if k == "var" then
+        let _ = lir_perf_add(4, 1) in
         let nm = nth(atom, 1) in
         let h = hash_str(nm) in
         let ch = fmap_get_h(nth(sh, 0), nm, h) in
@@ -893,10 +901,12 @@ let free_vars(fnbody, params, funs, env) =
               else fv_acc_add_h(a, nm, h)
             else if nth(se, 1) == 0 then a
             else fv_acc_add_h(a, nm, h)
-        else if sh_has_chain(ch, nth(sh, 1)) then a
+        else if ch <= nth(sh, 1) then a
         else fv_acc_add_h(a, nm, h)
       else if k == "qvar" then a
-      else if k == "fun" then nth(fv(nth(atom, 2), a, sh), 0)
+      else if k == "fun" then
+        let _ = lir_perf_add(5, 1) in
+        nth(fv(nth(atom, 2), a, sh), 0)
       else a in
     let args_vars(args, j, a, sh) =
       if j >= len(args) then a
@@ -929,6 +939,7 @@ let free_vars(fnbody, params, funs, env) =
         let r2 = fv(nth(b, 4), nth(r1, 0), nth(r1, 1)) in
         [nth(r2, 0), sh_put(nth(r2, 1), nth(b, 1))]
       else if k == "letfun" then
+        let _ = lir_perf_add(5, 1) in
         let sh2 = sh_enter(sh) in
         let _ = sh_put(sh2, nth(b, 1)) in
         let p = nth(b, 2) in
