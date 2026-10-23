@@ -350,18 +350,22 @@ let pass_lir_eval(anf_list, bind_name, quiet) =
   let fs0 = sigma_host_seed(
               toplevel_seed(anf_list, 0,
                             sigma_of_rt(nth(rt, 0), nth(rt, 1)), 0)) in
+  /* BEFORE lir_all: it consumes the ANF and clears the per-item slots (anf_all
+   * list_set), so a later anf_letfun_p scan sees zeros and every REPL function
+   * definition fell back to `gval` -- the session then stored 0 and the next
+   * line's call hit the not-a-function guard. */
+  let is_fun =
+    if bind_name == "" then false
+    else anf_letfun_p(anf_list, bind_name, 0) in
   let _ = lir_tlv_set(1) in
   let st = lir_all(0, anf_list,
-             [env_new(0), 1, fs0, 0, list_new(), 0],
-             len(anf_list)) in
+            [env_new(0), 1, fs0, 0, list_new(), 0],
+            len(anf_list)) in
   let pslot =
     if bind_name == "" then nth(st, 5)
     else
       let s = env_slot(nth(st, 0), bind_name) in
       if s == 0 then nth(st, 5) else s in
-  let is_fun =
-    if bind_name == "" then false
-    else anf_letfun_p(anf_list, bind_name, 0) in
   /* Run package top-level inits before this line's body, exactly like the AOT
    * (pass_lir) and yjit (pass_lir_yjit) entries. Without this a package's
    * top-level VALUE cells (e.g. a `let b = box_new() ...` singleton) were

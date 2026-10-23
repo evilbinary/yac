@@ -1070,23 +1070,21 @@ let x86_cop_gvar(st, insn) =
   let goff = gref_base(0) + bshl(gref_alloc(nth(insn, 2)), 5) in
   let _ = mov_rax_imm64(b, 0) in
   let gpat = bytes_len(b) - 8 in
-  if emit_jit_blob(0) then
-    let ps1 = cons([22, gpat, goff], patches) in
-    let _ = or_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, ps1)
-  else
-    let nm = nth(insn, 2) in
-    let fid = emit_map_get(nth(st, 4), nm) in
-    let _ =
-      if fid == 0 then
-        log_fatal(str_cat("emit: gvar: no such procedure '", str_cat(nm, "'")))
-      else 0 in
-    let ps1 = cons([22, gpat, goff], patches) in
-    let ps2 = cons([23, fid, goff], ps1) in
-    let _ = or_rax_1(b) in
-    let _ = emit_store_rax_slot(b, nth(insn, 1)) in
-    emit_st4(st, b, cur, labels, ps2)
+  /* tag 23 (bake the proc's entry into the stub cell) is required in BLOB mode
+   * too: a REPL `let f(x) = ...` line stores this stub through yac_jslot_set so
+   * the NEXT line can call it. Skipping 23 left the entry at 0, the session
+   * echoed `f = 0`, and the next line died in the not-a-function guard. */
+  let nm = nth(insn, 2) in
+  let fid = emit_map_get(nth(st, 4), nm) in
+  let _ =
+    if fid == 0 then
+      log_fatal(str_cat("emit: gvar: no such procedure '", str_cat(nm, "'")))
+    else 0 in
+  let ps1 = cons([22, gpat, goff], patches) in
+  let ps2 = cons([23, fid, goff], ps1) in
+  let _ = or_rax_1(b) in
+  let _ = emit_store_rax_slot(b, nth(insn, 1)) in
+  emit_st4(st, b, cur, labels, ps2)
 let x86_cop_gval(st, insn) =
   let b = nth(st, 0) in
   let cur = nth(st, 1) in
