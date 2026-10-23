@@ -8,7 +8,7 @@
 
 /* vreg s 的 home。现在 = 自己（emit 映 [rbp-8*(s+1)] / FP 帧）。 */
 package back.lower
-export lower_expr, drop_unreachable, alloc_prog, lower_program, emit_apply_unres, release_progs
+export lower_expr, drop_unreachable, alloc_prog, lower_program, emit_apply_unres
 import lib.map {fmap_get, fmap_init_n, fmap_new, fmap_put, intern}
 import front.lir {imap_box}
 import back.pack.target {mk_target, target_arch, target_format, target_live, target_shared, target_text_off, target_vaddr}
@@ -143,17 +143,6 @@ let alloc_prog_for(prog, keep_all) =
   else ["prog", drop_unreachable(nth(prog, 1)), nth(prog, 2)]
 
 let alloc_prog(prog) = alloc_prog_for(prog, false)
-
-/* After emit the LIR is dead: the image is bytes. Null the progs entries so the
- * proc/insn graph (619MB on main.js' 21MB ANF) becomes collectable before pack
- * instead of staying "live" through the peak. emit builds its own list (append
- * + host stubs) over the same proc objects, so by the time lower_of returns
- * nothing else references these slots. */
-let release_progs(ps, i) =
-  if i >= len(ps) then 0
-  else
-    let _ = list_set(ps, i, 0) in
-    release_progs(ps, i + 1)
 
 /* off = extra TEXT VA (REPL append dest). AOT / first map: 0. */
 let emit_apply_unres(off) =

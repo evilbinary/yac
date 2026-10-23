@@ -1452,13 +1452,9 @@ let lower_of(lir, t) =
   if lir == 0 then 0
   else
     let _ = gc_collect() in
-    let code = run_pass(nth(make_pipeline(t), 4), lir) in
-    /* emit is done with the proc/insn graph; drop it before pack so the peak
-     * only holds the image, not the whole LIR as well. */
-    let _ =
-      let ps = nth(lir, 1) in
-      if kind(ps) == 5 then release_progs(ps, 0) else 0 in
-    code
+    /* Freeing the LIR after emit is too late: the peak is inside emit itself,
+     * so emit_funs_loop releases each proc body as it consumes it instead. */
+    run_pass(nth(make_pipeline(t), 4), lir)
 
 let pack_of(code, t) =
   if code == 0 then 0
