@@ -437,6 +437,27 @@ let _ = check("fn_call_fn", "function f(x){ console.log(x); } f.call(this, 3);",
 let _ = check("fn_call_this", "function f(){ console.log(this.n); } f.call({n: 9});", "9")
 let _ = check("fn_call_local", "let f = function(x){ return x + 1; }; console.log(f.call(this, 4));", "5")
 let _ = check("fn_call_param", "function g(f){ console.log(f.call(null, 6)); } g(function(n){ return n + 1; });", "7")
+
+/* Function.prototype.apply / generic member path on closures (2026-10-23):
+ * static `f.apply` used to consult the statics table (0), the generic `call`
+ * did not bind `this`, and `bind`'s rest closure miscompiled. */
+let _ = check("fn_apply", "function add(a, b){ return a + b; } console.log(add.apply(null, [20, 22]));", "42")
+let _ = check("fn_apply_noargs", "function f(){ return 7; } console.log(f.apply(null));", "7")
+let _ = check("fn_apply_method", "let o = {v: 3, get(){ return this.v; }}; console.log(o.get.apply(o));", "3")
+let _ = check("fn_bind", "function add(a, b){ return a + b; } let g = add.bind(null, 10); console.log(g(5)); console.log(g(6, 7));", "15\n16")
+let _ = check("fn_bind_method", "let o = {v: 4, get(){ return this.v * 2; }}; let h = o.get.bind(o); console.log(h());", "8")
+let _ = check("fn_bind_nopre", "function f(x){ return x + 1; } let g = f.bind(null); console.log(g(2));", "3")
+/* string members through the generic path (receiver type not statically known) */
+let _ = check("str_lower_dyn", "function low(s){ return s.toLowerCase(); } console.log(low('ABC'));", "abc")
+let _ = check("str_upper_dyn", "function up(s){ return s.toUpperCase(); } console.log(up('abc'));", "ABC")
+let _ = check("str_len_dyn", "function n(s){ return s.length; } console.log(n('abcd'));", "4")
+/* Object.prototype members (generic path: plain objects have no such keys) */
+let _ = check("obj_tostring", "let o = {a: 1}; console.log(o.toString());", "[object Object]")
+let _ = check("obj_hascall", "let o = {a: 1}; console.log(Object.prototype.hasOwnProperty.call(o, 'a')); console.log(Object.prototype.hasOwnProperty.call(o, 'b'));", "true\nfalse")
+/* calling a non-function reports the callee and keeps going (yac_not_fn prints
+ * its parameter register -- fixed 2026-10-23; it used to print stale rdi junk,
+ * which made every site report a different heap pointer) */
+let _ = check("notfn_msg", "let n = 5; console.log(n()); console.log('after');", "error: not a function: 5\n0\nafter")
 let _ = check("closure", "function make(){ let c = 0; return function(){ c = c + 1; return c; }; } let n = make(); console.log(n()); console.log(n());", "1\n2")
 let _ = check("adder", "function adder(x){ return function(y){ return x + y; }; } console.log(adder(5)(3));", "8")
 let _ = check("mapcb", "console.log([1,2,3].map(function(x){ return x * 2; })[1]);", "4")
