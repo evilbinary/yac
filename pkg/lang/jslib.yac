@@ -862,17 +862,18 @@ let js_await(p) =
 let js_install(this, proto) =
   let mp = proto("Map") in
   let sp = proto("Set") in
-  /* Methods receive one argument list, the same ABI as translated methods. */
-  let _ = fmap_put(nth(mp, 1), "set", fun(args) -> js_map(box_get(this), "set", args)) in
-  let _ = fmap_put(nth(mp, 1), "get", fun(args) -> js_map(box_get(this), "get", args)) in
-  let _ = fmap_put(nth(mp, 1), "has", fun(args) -> js_map(box_get(this), "has", args)) in
-  let _ = fmap_put(nth(mp, 1), "delete", fun(args) -> js_map(box_get(this), "delete", args)) in
-  let _ = fmap_put(nth(mp, 1), "keys", fun(args) -> js_map(box_get(this), "keys", args)) in
-  let _ = fmap_put(nth(mp, 1), "values", fun(args) -> js_map(box_get(this), "values", args)) in
-  let _ = fmap_put(nth(mp, 1), "entries", fun(args) -> js_map(box_get(this), "entries", args)) in
-  let _ = fmap_put(nth(mp, 1), "forEach", fun(args) -> js_map(box_get(this), "forEach", args)) in
-  let _ = fmap_put(nth(sp, 1), "add", fun(args) -> js_set(box_get(this), "add", args)) in
-  let _ = fmap_put(nth(sp, 1), "has", fun(args) -> js_set(box_get(this), "has", args)) in
-  let _ = fmap_put(nth(sp, 1), "delete", fun(args) -> js_set(box_get(this), "delete", args)) in
-  let _ = fmap_put(nth(sp, 1), "forEach", fun(args) -> js_set(box_get(this), "forEach", args)) in
+  /* Methods take POSITIONAL arguments (the ABI every closure uses now);
+ * the two-slot list keeps js_map/js_set on their single-list interface. */
+  let _ = fmap_put(nth(mp, 1), "set", fun(a0, a1) -> js_map(box_get(this), "set", [a0, a1])) in
+  let _ = fmap_put(nth(mp, 1), "get", fun(a0, a1) -> js_map(box_get(this), "get", [a0, a1])) in
+  let _ = fmap_put(nth(mp, 1), "has", fun(a0, a1) -> js_map(box_get(this), "has", [a0, a1])) in
+  let _ = fmap_put(nth(mp, 1), "delete", fun(a0, a1) -> js_map(box_get(this), "delete", [a0, a1])) in
+  let _ = fmap_put(nth(mp, 1), "keys", fun(a0, a1) -> js_map(box_get(this), "keys", [a0, a1])) in
+  let _ = fmap_put(nth(mp, 1), "values", fun(a0, a1) -> js_map(box_get(this), "values", [a0, a1])) in
+  let _ = fmap_put(nth(mp, 1), "entries", fun(a0, a1) -> js_map(box_get(this), "entries", [a0, a1])) in
+  let _ = fmap_put(nth(mp, 1), "forEach", fun(a0, a1) -> js_map(box_get(this), "forEach", [a0, a1])) in
+  let _ = fmap_put(nth(sp, 1), "add", fun(a0, a1) -> js_set(box_get(this), "add", [a0, a1])) in
+  let _ = fmap_put(nth(sp, 1), "has", fun(a0, a1) -> js_set(box_get(this), "has", [a0, a1])) in
+  let _ = fmap_put(nth(sp, 1), "delete", fun(a0, a1) -> js_set(box_get(this), "delete", [a0, a1])) in
+  let _ = fmap_put(nth(sp, 1), "forEach", fun(a0, a1) -> js_set(box_get(this), "forEach", [a0, a1])) in
   0
