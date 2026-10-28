@@ -1,0 +1,60 @@
+/* js.dom — DOM bridge internals for app/js/browser.yac.
+ *
+ * Kept in its own package on purpose: every top-level value here is read
+ * only by this package, so it needs no cross-package cell (the compiler
+ * currently loses the static home of package-level values that sit after
+ * a top-level function: see the note in front/lir.yac toplevel_seed).
+ */
+package js.dom
+import data.fmap { fmap_new, fmap_get, fmap_put }
+import gui.yui { yui_bridge_open, yui_bridge_boot, yui_bridge_create, yui_bridge_del, yui_bridge_put_text, yui_bridge_pump }
+export _dom_ok, _dom_ensure, _dom_seqnext, _dom_strval, _dom_pump, _dom_attach, _dom_detach, _dom_drop, _dom_node, _dom_document
+
+/* ---- yui DOM bridge (v1, id-addressed) -----------------------------------
+ * DOM elements become real yui layers in app/native/libyui_yac.so. A node is
+ * a "$o" carrying:
+ *   $id    the yui layer id (minted here, carried in the create JSON)
+ *   $tag   tag name
+ *   $kids  child list
+ * Creation is DEFERRED to appendChild (the JSON fragment is built there, with
+ * the child's id), textContent is an accessor that syncs through
+ * yui_yac_set_text, and every mutation pumps one frame so the window paints
+ * incrementally. If the .so is missing, every bridge call degrades to the old
+ * no-op stubs. ---- */
+let _dom_lib = box_new()
+let _ = box_set(_dom_lib, 0)
+let _dom_root = box_new()
+let _ = box_set(_dom_root, 0)
+let _dom_rootnode = box_new()
+let _ = box_set(_dom_rootnode, 0)
+let _dom_seq = box_new()
+let _ = box_set(_dom_seq, 0)
+let _dom_tried = box_new()
+let _ = box_set(_dom_tried, 0)
+
+let _dom_ok(_) = box_get(_dom_lib) != 0
+
+let _dom_ensure(_) =
+  if box_get(_dom_tried) != 0 then box_get(_dom_root)
+  else
+    let _ = box_set(_dom_tried, 1) in
+    let lib = yui_bridge_open("app/native/libyui_yac.so") in
+    let _ = print(str_cat("DBG lib=", int_to_str(lib))) in
+    let _ = box_set(_dom_lib, lib) in
+    if lib == 0 then 0
+    else
+      let r = yui_bridge_boot("app/js/yac-app.json", "") in
+      let _ = print(str_cat("DBG boot=", int_to_str(r))) in
+      let _ = box_set(_dom_root, r) in
+      r
+
+let _dom_seqnext(_) =
+  let n = box_get(_dom_seq) + 1 in
+  let _ = box_set(_dom_seq, n) in
+  str_cat("n", int_to_str(n))
+
+let _dom_strval(v) = if is_int(v) then int_to_str(v) else if kind(v) == 3 then v else ""
+
+let _dom_pump(_) =
+  let r = _dom_ensure(0) in
+  if r != 0 then yui_bridge_pump(0) else 0
