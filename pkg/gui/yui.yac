@@ -1,7 +1,11 @@
-/* yui.yac — ccall bindings for libyui_yac. JSON onClick: yac_click. */
+/* yui.yac — ccall bindings for the yui glue (glue/yui_glue.c, built from
+ * E:\workspace\yui). Symbols are yui_*; objects cross as int handles. */
 
 package gui.yui
-export yui_open, yui_init, yui_tick, yui_set_text, yui_click_is, yui_shutdown, yui_game_boot, yui_key, yui_game_vel, yui_game_get, yui_game_pos, yui_game_spawn, yui_game_box, yui_game_hit, yui_game_cull, yui_game_burst, yui_rand
+import data.fmap { fmap_new, fmap_get, fmap_put }
+export yui_open, yui_init, yui_tick, yui_set_text, yui_click_is, yui_shutdown, yui_game_boot, yui_key, yui_game_vel, yui_game_get, yui_game_pos, yui_game_spawn, yui_game_box, yui_game_hit, yui_game_cull, yui_game_burst, yui_rand,
+  yui_sym2, yui_bridge_open, yui_bridge_boot, yui_bridge_create, yui_bridge_del,
+  yui_bridge_put_text, yui_bridge_put_bg, yui_bridge_pump, yui_bridge_should_quit
 
 /* ASCII prefix. */
 let yui_has(s, p) =
@@ -59,51 +63,97 @@ let yui_open(path) =
 /* Named symbol after a successful yui_open (dlsym 0 / PE stub). */
 let yui_sym(name) = ccall("dlsym", 0, name)
 
-/* yui_yac_init(json_path, assets). */
-let yui_init(json, assets) = ccall(yui_sym("yui_yac_init"), json, assets)
+/* yui_init(json_path, assets). */
+let yui_init(json, assets) = ccall(yui_sym("yui_init"), json, assets)
 
 /* Pump one frame. Nonzero = quit. */
-let yui_tick(_) = ccall(yui_sym("yui_yac_tick"))
+let yui_tick(_) = ccall(yui_sym("yui_pump"))
 
 /* Set widget text. */
-let yui_set_text(id, text) = ccall(yui_sym("yui_yac_set_text"), id, text)
+let yui_set_text(id, text) = ccall(yui_sym("yui_put_text"), id, text)
 
 /* Nonzero if id was clicked. */
-let yui_click_is(id) = ccall(yui_sym("yui_yac_click_is"), id)
+let yui_click_is(id) = ccall(yui_sym("yui_click_is"), id)
 
 /* Tear down. */
-let yui_shutdown(_) = ccall(yui_sym("yui_yac_shutdown"))
+let yui_shutdown(_) = ccall(yui_sym("yui_quit"))
 
 /* Load a game scene JSON. */
-let yui_game_boot(path) = ccall(yui_sym("yui_yac_game_boot"), path)
+let yui_game_boot(path) = ccall(yui_sym("yui_boot"), path)
 
 /* Key down? */
-let yui_key(name) = ccall(yui_sym("yui_yac_game_key"), name)
+let yui_key(name) = ccall(yui_sym("yui_key"), name)
 
 /* Set velocity. */
-let yui_game_vel(id, vx, vy) = ccall(yui_sym("yui_yac_game_vel"), id, vx, vy)
+let yui_game_vel(id, vx, vy) = ccall(yui_sym("yui_game_vel"), id, vx, vy)
 
 /* Field which of entity id. */
-let yui_game_get(id, which) = ccall(yui_sym("yui_yac_game_get"), id, which)
+let yui_game_get(id, which) = ccall(yui_sym("yui_game_get"), id, which)
 
 /* Set position. */
-let yui_game_pos(id, x, y) = ccall(yui_sym("yui_yac_game_pos"), id, x, y)
+let yui_game_pos(id, x, y) = ccall(yui_sym("yui_game_pos"), id, x, y)
 
 /* Spawn entity. */
 let yui_game_spawn(id, tag, x, y, rgb) =
-  ccall(yui_sym("yui_yac_game_spawn"), id, tag, x, y, rgb)
+  ccall(yui_sym("yui_game_spawn"), id, tag, x, y, rgb)
 
 /* Hit box. */
-let yui_game_box(id, w, h) = ccall(yui_sym("yui_yac_game_box"), id, w, h)
+let yui_game_box(id, w, h) = ccall(yui_sym("yui_game_box"), id, w, h)
 
 /* Overlap with tag. */
-let yui_game_hit(id, tag) = ccall(yui_sym("yui_yac_game_hit"), id, tag)
+let yui_game_hit(id, tag) = ccall(yui_sym("yui_game_hit"), id, tag)
 
 /* Drop tagged ents past ymax. */
-let yui_game_cull(tag, ymax) = ccall(yui_sym("yui_yac_game_cull"), tag, ymax)
+let yui_game_cull(tag, ymax) = ccall(yui_sym("yui_game_cull"), tag, ymax)
 
 /* Burst at x,y. */
-let yui_game_burst(x, y, rgb) = ccall(yui_sym("yui_yac_game_burst"), x, y, rgb)
+let yui_game_burst(x, y, rgb) = ccall(yui_sym("yui_game_burst"), x, y, rgb)
 
 /* Random 0..n-1. */
-let yui_rand(n) = ccall(yui_sym("yui_yac_rand"), n)
+let yui_rand(n) = ccall(yui_sym("yui_rand"), n)
+
+/* ---- DOM bridge (app/native/yui_yac.c: yui_dom_*) ------------------------
+ * DOM elements become real yui layers addressed by ID STRINGS (ccall cannot
+ * return pointers or strings, so ids are minted by browser.yac and carried in
+ * the JSON fragment). If native/libyui_yac.so is missing every call degrades
+ * to a no-op and the stubs keep working. ---- */
+let yui_h = box_new()          /* dlopen handle */
+let _ = box_set(yui_h, 0)
+let yui_symc = box_new()       /* sym cache: name -> fn ptr */
+let _ = box_set(yui_symc, 0)
+
+let yui_sym2(name) =
+  let m = box_get(yui_symc) in
+  let m2 = if m == 0 then fmap_new(0) else m in
+  let _ = if m == 0 then box_set(yui_symc, m2) else 0 in
+  let hit = fmap_get(m2, name) in
+  if hit != 0 then hit
+  else
+    let p = yui_sym(name) in
+    let _ = if p != 0 then fmap_put(m2, name, p) else 0 in
+    p
+
+let yui_bridge_open(path) =
+  if box_get(yui_h) != 0 then box_get(yui_h)
+  else
+    let h = yui_open(path) in
+    let _ = box_set(yui_h, h) in
+    h
+
+let yui_bridge_sym(name) = yui_sym2(name)
+
+/* Boot the window from a "type":"main" JSON app file. */
+let yui_bridge_boot(json_path, assets) = ccall(yui_sym2("yui_yac_init"), json_path, assets)
+
+/* Create a layer under parent_id from a JSON fragment that already carries
+ * the child's "id". Returns 0 on success. */
+let yui_bridge_create(parent_id, json) = ccall(yui_sym2("yui_dom_create"), parent_id, json)
+
+let yui_bridge_del(parent_id, child_id) = ccall(yui_sym2("yui_dom_remove"), parent_id, child_id)
+
+/* Existing yui_yac_set_text(id, text) — addressed by id. */
+let yui_bridge_put_text(id, text) = ccall(yui_sym2("yui_yac_set_text"), id, text)
+let yui_bridge_put_bg(id, hex) = ccall(yui_sym2("yui_dom_set_bg"), id, hex)
+
+let yui_bridge_pump(_) = ccall(yui_sym2("yui_yac_tick"))
+let yui_bridge_should_quit(_) = ccall(yui_sym2("yui_yac_should_quit"))

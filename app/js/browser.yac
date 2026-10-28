@@ -21,7 +21,8 @@ package js.browser
 export _js_st_win0, _js_st_doc0, _js_st_nav0, _js_st_loc0, _js_st_perf0,
   _js_st_store0, _js_st_xhrC, _js_st_ctxC, _js_st_audioC, _js_st_noop,
   _js_st_false, _js_st_empty, _js_st_id, js_browser_stub
-import data.fmap { fmap_new, fmap_put }
+import data.fmap { fmap_new, fmap_get, fmap_put }
+import gui.yui { yui_bridge_open, yui_bridge_boot, yui_bridge_create, yui_bridge_del, yui_bridge_put_text, yui_bridge_pump }
 
 /* TEMP diagnostics: name the callee before the runtime rejects it. */
 let _jb_ck(f, t) =
@@ -56,7 +57,108 @@ let _js_st_false(...a) = false
 let _js_st_empty(...a) = ""
 let _js_st_id(x) = x
 
-/* Universal AudioNode: chainable members point back at itself. */
+/* ---- yui DOM bridge (v1, id-addressed) -----------------------------------
+ * DOM elements become real yui layers in app/native/libyui_yac.so. A node is
+ * a "$o" carrying:
+ *   $id    the yui layer id (minted here, carried in the create JSON)
+ *   $tag   tag name
+ *   $kids  child list
+ * Creation is DEFERRED to appendChild (the JSON fragment is built there, with
+ * the child's id), textContent is an accessor that syncs through
+ * yui_yac_set_text, and every mutation pumps one frame so the window paints
+ * incrementally. If the .so is missing, every bridge call degrades to the old
+ * no-op stubs. ---- */
+let _dom_lib = box_new()
+let _ = box_set(_dom_lib, 0)
+let _dom_root = box_new()
+let _ = box_set(_dom_root, 0)
+let _dom_rootnode = box_new()
+let _ = box_set(_dom_rootnode, 0)
+let _dom_seq = box_new()
+let _ = box_set(_dom_seq, 0)
+let _dom_tried = box_new()
+let _ = box_set(_dom_tried, 0)
+
+let _dom_ok(_) = box_get(_dom_lib) != 0
+
+let _dom_ensure(_) =
+  if box_get(_dom_tried) != 0 then box_get(_dom_root)
+  else
+    let _ = box_set(_dom_tried, 1) in
+    let lib = yui_bridge_open("app/native/libyui_yac.so") in
+    let _ = box_set(_dom_lib, lib) in
+    if lib == 0 then 0
+    else
+      let r = yui_bridge_boot("app/js/yac-app.json", "") in
+      let _ = box_set(_dom_root, r) in
+      r
+
+let _dom_seqnext(_) =
+  let n = box_get(_dom_seq) + 1 in
+  let _ = box_set(_dom_seq, n) in
+  str_cat("n", int_to_str(n))
+
+let _dom_strval(v) = if is_int(v) then int_to_str(v) else if kind(v) == 3 then v else ""
+
+let _dom_pump(_) =
+  let r = _dom_ensure(0) in
+  if r != 0 then yui_bridge_pump(0) else 0
+
+let _dom_node(tag, id) =
+  let o = ["$o", fmap_new(0)] in
+  let _ = fmap_put(nth(o, 1), "$dom", 1) in
+  let _ = fmap_put(nth(o, 1), "$id", id) in
+  let _ = fmap_put(nth(o, 1), "$tag", tag) in
+  let _ = fmap_put(nth(o, 1), "$kids", list_new()) in
+  let _ = fmap_put(nth(o, 1), "$parent", 0) in
+  let _ = fmap_put(nth(o, 1), "appendChild", fun(c) ->
+    (let kids = fmap_get(nth(o, 1), "$kids") in
+     (let _ = list_push(kids, c) in
+      (let _ = fmap_put(nth(c, 1), "$parent", o) in
+       (let pid = fmap_get(nth(o, 1), "$id") in
+        (let cid = fmap_get(nth(c, 1), "$id") in
+         (let _ = if pid != 0 and cid != 0 and _dom_ok(0) then
+            (let j = str_cat("{\"type\":\"View\",\"id\":\"", str_cat(cid, "\"}")) in
+             (let _ = yui_bridge_create(pid, j) in _dom_pump(0)))
+          else 0 in
+         c))))))) in
+  let _ = fmap_put(nth(o, 1), "removeChild", fun(c) ->
+    (let kids = fmap_get(nth(o, 1), "$kids") in
+     (let nd = list_new() in
+      (let n = len(kids) in
+       (let rec(i) = if i >= n then 0 else (let _ = if nth(kids, i) != c then list_push(nd, nth(kids, i)) else 0 in rec(i + 1)) in
+        (let _ = rec(0) in
+         (let _ = fmap_put(nth(o, 1), "$kids", nd) in
+          (let pid = fmap_get(nth(o, 1), "$id") in
+           (let cid = fmap_get(nth(c, 1), "$id") in
+            (let _ = if pid != 0 and cid != 0 and _dom_ok(0) then yui_bridge_del(pid, cid) else 0 in
+             (let _ = _dom_pump(0) in 0))))))))))) in
+  let _ = fmap_put(nth(o, 1), "setAttribute", fun(k, v) -> (let _ = fmap_put(nth(o, 1), k, v) in 0)) in
+  let _ = fmap_put(nth(o, 1), "getAttribute", fun(k) -> fmap_get(nth(o, 1), k)) in
+  let _ = fmap_put(nth(o, 1), "addEventListener", _js_st_noop) in
+  let _ = fmap_put(nth(o, 1), "removeEventListener", _js_st_noop) in
+  /* textContent / innerText: accessor so assignment syncs to yui. */
+  let _ = fmap_put(nth(o, 1), "textContent", ["$acc",
+    fun(_) -> fmap_get(nth(o, 1), "$text"),
+    fun(v) -> (let _ = fmap_put(nth(o, 1), "$text", v) in
+               (let id = fmap_get(nth(o, 1), "$id") in
+                (let _ = if id != 0 and _dom_ok(0) then yui_bridge_put_text(id, _dom_strval(v)) else 0 in
+                 (let _ = _dom_pump(0) in 0))))]) in
+  let _ = fmap_put(nth(o, 1), "innerText", fmap_get(nth(o, 1), "textContent")) in
+  o
+
+/* The document itself: boot the window on first touch and hand out the
+ * scene's root layer (id "app" in app/js/yac-app.json) as a node. */
+let _dom_document(_) =
+  let _ = _dom_ensure(0) in
+  let r = box_get(_dom_rootnode) in
+  if r != 0 then r
+  else
+    let n = _dom_node("#document", "app") in
+    let _ = box_set(_dom_rootnode, n) in
+    n
+
+/* Universal AudioNode/* Universal AudioNode: chainable members point back at itself. */
 let _js_st_node0 = ["$o", fmap_new(0)]
 let _ = fmap_put(nth(_js_st_node0, 1), "connect", _js_st_noop)
 let _ = fmap_put(nth(_js_st_node0, 1), "start", _js_st_noop)
@@ -114,20 +216,20 @@ let _ = fmap_put(nth(_js_st_elem0, 1), "head", _js_st_elem0)
 let _ = fmap_put(nth(_js_st_elem0, 1), "sheet", _js_st_elem0)
 
 let _js_st_doc0 = ["$o", fmap_new(0)]
-let _ = fmap_put(nth(_js_st_doc0, 1), "createElement", fun(...a) -> _js_st_elem0)
-let _ = fmap_put(nth(_js_st_doc0, 1), "createElementNS", fun(...a) -> _js_st_elem0)
+let _ = fmap_put(nth(_js_st_doc0, 1), "createElement", fun(tag) -> _dom_node(tag, _dom_seqnext(0)))
+let _ = fmap_put(nth(_js_st_doc0, 1), "createElementNS", fun(tag) -> _dom_node(tag, _dom_seqnext(0)))
 let _ = fmap_put(nth(_js_st_doc0, 1), "appendChild", _js_st_noop)
-let _ = fmap_put(nth(_js_st_doc0, 1), "createTextNode", fun(...a) -> _js_st_elem0)
-let _ = fmap_put(nth(_js_st_doc0, 1), "createEvent", fun(...a) -> _js_st_elem0)
-let _ = fmap_put(nth(_js_st_doc0, 1), "getElementById", fun(...a) -> _js_st_elem0)
+let _ = fmap_put(nth(_js_st_doc0, 1), "createTextNode", fun(txt) -> (let n = _dom_node("#text", _dom_seqnext(0)) in (let _ = fmap_put(nth(n, 1), "$text", txt) in n)))
+let _ = fmap_put(nth(_js_st_doc0, 1), "createEvent", fun(...) -> _dom_node("#event", _dom_seqnext(0)))
+let _ = fmap_put(nth(_js_st_doc0, 1), "getElementById", fun(id) -> _dom_document(0))
 let _ = fmap_put(nth(_js_st_doc0, 1), "getElementsByTagName", fun(...a) -> [])
-let _ = fmap_put(nth(_js_st_doc0, 1), "querySelector", fun(...a) -> _js_st_elem0)
+let _ = fmap_put(nth(_js_st_doc0, 1), "querySelector", fun(sel) -> _dom_document(0))
 let _ = fmap_put(nth(_js_st_doc0, 1), "querySelectorAll", fun(...a) -> [])
 let _ = fmap_put(nth(_js_st_doc0, 1), "addEventListener", _js_st_noop)
 let _ = fmap_put(nth(_js_st_doc0, 1), "removeEventListener", _js_st_noop)
-let _ = fmap_put(nth(_js_st_doc0, 1), "documentElement", _js_st_elem0)
-let _ = fmap_put(nth(_js_st_doc0, 1), "body", _js_st_elem0)
-let _ = fmap_put(nth(_js_st_doc0, 1), "head", _js_st_elem0)
+let _ = fmap_put(nth(_js_st_doc0, 1), "documentElement", ["$acc", fun(_) -> _dom_document(0), fun(v) -> 0])
+let _ = fmap_put(nth(_js_st_doc0, 1), "body", ["$acc", fun(_) -> _dom_document(0), fun(v) -> 0])
+let _ = fmap_put(nth(_js_st_doc0, 1), "head", ["$acc", fun(_) -> _dom_document(0), fun(v) -> 0])
 let _ = fmap_put(nth(_js_st_doc0, 1), "hidden", false)
 let _ = fmap_put(nth(_js_st_doc0, 1), "visibilityState", "visible")
 let _ = fmap_put(nth(_js_st_doc0, 1), "readyState", "complete")

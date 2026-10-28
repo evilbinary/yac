@@ -9,6 +9,8 @@
 #include "layer.h"
 #include "backend.h"
 #include "game/game.h"
+#include "layer_update.h"
+#include "theme_manager.h"
 
 static char g_click[YUI_LAYER_ID_MAX];
 static int g_have_click;
@@ -241,4 +243,68 @@ void yui_yac_shutdown(void) {
     yui_shutdown();
     g_have_click = 0;
     g_click[0] = '\0';
+}
+
+/* ---- DOM bridge: dynamic layers addressed by id (yui_dom_*) --------------
+ * The browser.yac DOM stubs create real yui layers so a translated web app
+ * renders in a yui window. Ids are minted by the caller (browser.yac keeps a
+ * counter); the JSON fragment carries the same id. */
+int yui_dom_create(const char* parent_id, const char* id, const char* json) {
+    Layer* root = yui_get_root();
+    Layer* parent;
+    Layer* nl;
+    if (!root || !parent_id || !id || !json) {
+        return -1;
+    }
+    parent = parent_id[0] == '\0' ? root : find_layer_by_id(root, parent_id);
+    if (!parent) {
+        return -2;
+    }
+    nl = parse_layer_from_string(json, parent);
+    if (!nl) {
+        return -3;
+    }
+    nl->visible = IN_VISIBLE;
+    {
+        Layer** nc = realloc(parent->children, sizeof(Layer*) * (parent->child_count + 1));
+        if (!nc) {
+            layer_lifecycle_before_destroy(nl);
+            destroy_layer(nl);
+            return -4;
+        }
+        parent->children = nc;
+        parent->children[parent->child_count] = nl;
+        parent->child_count++;
+    }
+    layout_layer(parent);
+    load_all_fonts(nl);
+    theme_manager_apply_to_tree(nl);
+    return 0;
+}
+
+int yui_dom_remove(const char* parent_id, const char* child_id) {
+    Layer* root = yui_get_root();
+    Layer* parent;
+    if (!root || !parent_id) {
+        return -1;
+    }
+    parent = find_layer_by_id(root, parent_id);
+    if (!parent) {
+        return -2;
+    }
+    return yui_remove_child(parent, child_id);
+}
+
+int yui_dom_set_bg(const char* id, const char* hex) {
+    Layer* root = yui_get_root();
+    Layer* l;
+    if (!root || !id) {
+        return -1;
+    }
+    l = find_layer_by_id(root, id);
+    if (!l) {
+        return -2;
+    }
+    yui_set_bg_color(l, hex ? hex : "#000000");
+    return 0;
 }
