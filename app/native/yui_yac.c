@@ -16,6 +16,16 @@
 #include "render.h"
 #include "theme_manager.h"
 #include "log.h"
+#include "focus.h"
+#include "perf/perf.h"
+#include "cJSON.h"
+#include "layer_properties.h"
+
+/* defined in the DOM bridge below; used by yui_yac_render_json above it */
+int yui_dom_create(const char* parent_id, const char* json);
+
+extern int yui_last_key_code;
+extern int yui_last_key_type;
 
 static char g_click[YUI_LAYER_ID_MAX];
 static int g_have_click;
@@ -343,6 +353,145 @@ int yui_yac_theme_apply(void) {
         return -1;
     }
     theme_manager_apply_to_tree(root);
+    return 0;
+}
+
+/* ---- parity with lib/jsmodule-mquickjs (yui_stdlib.c register table) -----
+ * These are the entries the doc does not list (it is behind the code):
+ * exit, gc, keyCode, the focus family, getProperty, renderFromJson's append
+ * flag, getWindowSize, readFile, listDir, resizeRoot, call, dump, spawn,
+ * screenshot, the perf family and setEvent. */
+int yui_yac_exit(void) {
+    backend_request_quit(0);
+    return 0;
+}
+
+int yui_yac_key_code(void) {
+    return yui_last_key_code;
+}
+
+int yui_yac_focus(const char* id) {
+    Layer* layer = yac_layer(id);
+    if (!layer) {
+        return -1;
+    }
+    return focus_set(layer);
+}
+
+int yui_yac_focus_move(int dir) {
+    Layer* root = yui_get_root();
+    if (!root) {
+        return -1;
+    }
+    return focus_move(root, (FocusDirection)dir);
+}
+
+int yui_yac_focus_clear(void) {
+    focus_clear();
+    return 0;
+}
+
+const char* yui_yac_focus_get(void) {
+    Layer* layer = focus_get();
+    return layer ? layer->id : "";
+}
+
+/* JSON text of one layer property; static buffer because ccall cannot own it. */
+const char* yui_yac_get_property(const char* id, const char* key) {
+    static char buf[2048];
+    Layer* layer = yac_layer(id);
+    cJSON* value;
+    char* text;
+    buf[0] = '\0';
+    if (!layer || !key || !key[0]) {
+        return buf;
+    }
+    value = layer_get_property_as_json(layer, key);
+    if (!value) {
+        return buf;
+    }
+    text = cJSON_PrintUnformatted(value);
+    if (text) {
+        snprintf(buf, sizeof(buf), "%s", text);
+        free(text);
+    }
+    cJSON_Delete(value);
+    return buf;
+}
+
+/* YUI.renderFromJson(layer_id, json, append): mquickjs defaults append to 0,
+ * i.e. REPLACE, and falls back to the root when the id is unknown. */
+int yui_yac_render_json(const char* id, const char* json, int append) {
+    Layer* root = yui_get_root();
+    Layer* parent;
+    if (!root || !json) {
+        return -1;
+    }
+    if (!id || !id[0]) {
+        parent = root;
+    } else {
+        parent = find_layer_by_id(root, id);
+        if (!parent) {
+            parent = root;
+        }
+    }
+    if (!append) {
+        yui_remove_all_children(parent);
+    }
+    return yui_dom_create(parent == root ? "" : parent->id, json);
+}
+
+/* (width << 16) | height -- ccall cannot return a struct. */
+int yui_yac_window_size(void) {
+    int w = 0;
+    int h = 0;
+    backend_get_windowsize(&w, &h);
+    return (w << 16) | (h & 0xffff);
+}
+
+int yui_yac_spawn(const char* cmd) {
+    return cmd ? backend_spawn(cmd) : -1;
+}
+
+int yui_yac_screenshot(const char* path) {
+    return path ? backend_screenshot(path) : -1;
+}
+
+int yui_yac_perf(int on) {
+    perf_enable(on);
+    return on != 0;
+}
+
+int yui_yac_perf_reset(void) {
+    perf_reset();
+    return 0;
+}
+
+int yui_yac_perf_overlay(int on) {
+    Layer* root = yui_get_root();
+    if (!root) {
+        return -1;
+    }
+    perf_set_overlay(on);
+    perf_draw_overlay(root);
+    return on != 0;
+}
+
+int yui_yac_perf_topn(int n) {
+    perf_set_top_n(n);
+    return n;
+}
+
+int yui_yac_perf_watch(const char* id) {
+    return id ? perf_watch(id) : -1;
+}
+
+int yui_yac_perf_unwatch(const char* id) {
+    return id ? perf_unwatch(id) : -1;
+}
+
+int yui_yac_perf_clear_watch(void) {
+    perf_clear_watch();
     return 0;
 }
 

@@ -9,7 +9,11 @@ export yui_open, yui_init, yui_tick, yui_set_text, yui_click_is, yui_shutdown, y
   yui_render_from_json, yui_set_bg, yui_get_text, yui_hide, yui_show, yui_update,
   yui_resize, yui_inspect_enable, yui_inspect_disable, yui_inspect_bounds,
   yui_inspect_info, yui_inspect_layer, yui_log, yui_theme_load,
-  yui_theme_set_current, yui_theme_unload, yui_theme_apply_to_tree, yui_should_quit
+  yui_theme_set_current, yui_theme_unload, yui_theme_apply_to_tree, yui_should_quit,
+  yui_exit, yui_key_code, yui_focus, yui_focus_move, yui_focus_clear, yui_focus_get,
+  yui_get_property, yui_render_json, yui_window_size, yui_spawn, yui_screenshot,
+  yui_perf_enable, yui_perf_disable, yui_perf_reset, yui_perf_overlay,
+  yui_perf_topn, yui_perf_watch, yui_perf_unwatch, yui_perf_clear_watch
 
 /* ASCII prefix. */
 let yui_has(s, p) =
@@ -228,6 +232,41 @@ let yui_theme_load(path) = yui_c1("yui_yac_theme_load", path)
 let yui_theme_set_current(name) = yui_c1("yui_yac_theme_current", name)
 let yui_theme_unload(name) = yui_c1("yui_yac_theme_unload", name)
 let yui_theme_apply_to_tree(_) = yui_c0("yui_yac_theme_apply")
+
+/* ---- parity with lib/jsmodule-mquickjs (the doc is behind the code) ------
+ * Registered there but missing from docs/yui-js-api.md: exit, keyCode,
+ * focus/focusMove/focusClear/focusGet, getProperty, renderFromJson's append
+ * flag, getWindowSize, spawn, screenshot, perf.*. readFile/listDir/resizeRoot
+ * and call/dump are engine/fs helpers -- use pkg/fs and yui_resize instead. */
+let yui_exit(_) = yui_c0("yui_yac_exit")
+let yui_key_code(_) = yui_c0("yui_yac_key_code")
+
+let yui_focus(id) = yui_c1("yui_yac_focus", id)
+let yui_focus_move(dir) = yui_c1("yui_yac_focus_move", dir)
+let yui_focus_clear(_) = yui_c0("yui_yac_focus_clear")
+let yui_focus_get(_) = yui_c0("yui_yac_focus_get")
+
+/* JSON text of a layer property (host char*, 0-length string when absent). */
+let yui_get_property(id, key) = yui_c2("yui_yac_get_property", id, key)
+
+/* YUI.renderFromJson(layer_id, json, append?) -- append defaults to 0, i.e.
+ * REPLACE, and an empty/unknown layer_id means the root (mquickjs behaviour). */
+let yui_render_json(id, json, append) = yui_c3("yui_yac_render_json", id, json, append)
+
+/* (width << 16) | height */
+let yui_window_size(_) = yui_c0("yui_yac_window_size")
+
+let yui_spawn(cmd) = yui_c1("yui_yac_spawn", cmd)
+let yui_screenshot(path) = yui_c1("yui_yac_screenshot", path)
+
+let yui_perf_enable(_) = yui_c1("yui_yac_perf", 1)
+let yui_perf_disable(_) = yui_c1("yui_yac_perf", 0)
+let yui_perf_reset(_) = yui_c0("yui_yac_perf_reset")
+let yui_perf_overlay(on) = yui_c1("yui_yac_perf_overlay", on)
+let yui_perf_topn(n) = yui_c1("yui_yac_perf_topn", n)
+let yui_perf_watch(id) = yui_c1("yui_yac_perf_watch", id)
+let yui_perf_unwatch(id) = yui_c1("yui_yac_perf_unwatch", id)
+let yui_perf_clear_watch(_) = yui_c0("yui_yac_perf_clear_watch")
 
 /* YUI window lifecycle: yui_tick/yui_init are above (same C entry points).
  * There is no should_quit export in the .so -- quitting is reported by

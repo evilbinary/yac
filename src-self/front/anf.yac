@@ -37,8 +37,12 @@ let mk_anf(_) =
   let go(ast, c) = (box_get(go_b))(ast, c, 0) in
   let go_dst(ast, c, dst) = (box_get(go_b))(ast, c, dst) in
   /* Fresh temps are unique per counter — do not intern. Interning millions
-   * of `tN` into the permanent arena dominated main.yac ANF RSS. */
-  let fresh(c) = [str_cat("t", int_to_str(c)), c + 1] in
+   * of `tN` into the permanent arena dominated main.yac ANF RSS.
+   * The `$` prefix is not writable in source (lexer.yac's is_alpha allows only
+   * A-Z a-z _), so a temp can never collide with a user variable: naming one
+   * `t1` used to rebind the same slot and silently produce garbage values
+   * (2026-10-29, yui theme API test). */
+  let fresh(c) = [str_cat("$t", int_to_str(c)), c + 1] in
   let res_name(c, dst) = if dst == 0 then fresh(c) else [dst, c] in
 
   /* atomize a sub-expression: returns [bindings, atom, counter].
