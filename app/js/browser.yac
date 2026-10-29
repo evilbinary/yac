@@ -305,6 +305,23 @@ let _dom_seqnext(_) =
 
 let _dom_strval(v) = if is_int(v) then int_to_str(v) else if kind(v) == 3 then v else ""
 
+/* JSON escaping for the fragment we build by hand (quotes/backslashes only --
+ * the text here comes from textContent, so newlines/tabs are rare). */
+let _dom_json_esc(s) =
+  let n = str_len(s) in
+  let q = str_chr(34) in
+  let bs = str_chr(92) in
+  let rec(i, acc) =
+    if i >= n then acc
+    else
+      let ch = str_slice(s, i, 1) in
+      let e =
+        if ch == q then str_cat(bs, ch)
+        else if ch == bs then str_cat(bs, bs)
+        else ch in
+      rec(i + 1, str_cat(acc, e)) in
+  rec(0, "")
+
 /* `r` here is boot's RETURN CODE, which is 0 on success -- testing it meant no
  * frame was ever pumped and the window stayed blank (2026-10-29). Gate on the
  * library handle instead. */
@@ -320,11 +337,24 @@ let _dom_attach(p, c) =
   else if pid == 0 or cid == 0 then 0
   else
     (let q = str_chr(34) in
-     (let parts = ["{", q, "type", q, ":", q, "View", q, ",", q, "id", q, ":", q, cid, q, "}"] in
-      (let n = len(parts) in
-       (let rec(i, acc) = if i >= n then acc else rec(i + 1, str_cat(acc, nth(parts, i))) in
-        (let j = rec(0, "") in
-         (let _ = yui_bridge_create(pid, j) in _dom_pump(0)))))))
+     (let txt = _dom_json_esc(_dom_strval(fmap_get(nth(c, 1), "$text"))) in
+      /* A layer with rect 0x0 is culled, so text nodes carry an explicit
+       * "size": yui does not measure a Label on create. Width is estimated
+       * from the character count (~0.6em per glyph). */
+      (let wpx = str_len(txt) * 11 + 16 in
+       (let parts =
+          if txt != "" then
+            ["{", q, "type", q, ":", q, "Label", q, ",", q, "id", q, ":", q, cid, q, ",",
+             q, "text", q, ":", q, txt, q, ",",
+             q, "size", q, ":", "[", int_to_str(wpx), ",", "28", "]", ",",
+             q, "style", q, ":", "{", q, "color", q, ":", q, "#222222", q, ",",
+             q, "fontSize", q, ":", "18", "}", "}"]
+          else ["{", q, "type", q, ":", q, "View", q, ",", q, "id", q, ":", q, cid, q, "}"] in
+        (let n = len(parts) in
+         (let rec(i, acc) = if i >= n then acc else rec(i + 1, str_cat(acc, nth(parts, i))) in
+          (let j = rec(0, "") in
+           (let r = yui_bridge_create(pid, j) in
+            (let _ = _dom_pump(0) in r)))))))))
 
 let _dom_detach(p, c) =
   let pid = fmap_get(nth(p, 1), "$id") in

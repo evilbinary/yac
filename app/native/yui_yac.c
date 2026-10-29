@@ -453,6 +453,26 @@ int yui_yac_spawn(const char* cmd) {
     return cmd ? backend_spawn(cmd) : -1;
 }
 
+static void yac_mark_all(Layer* layer) {
+    int i;
+    if (!layer) {
+        return;
+    }
+    mark_layer_dirty(layer, DIRTY_ALL);
+    for (i = 0; i < layer->child_count; i++) {
+        yac_mark_all(layer->children[i]);
+    }
+}
+
+/* Screenshot that actually has content: backend_screenshot re-renders the tree
+ * with force=0, and DIRTY mode skips every layer whose flags the last tick
+ * already cleared, so the image came out as the clear colour only
+ * (2026-10-29). Marking the whole tree dirty first fixes that. */
+int yui_yac_shoot(const char* path) {
+    yac_mark_all(yui_get_root());
+    return backend_screenshot(path);
+}
+
 int yui_yac_screenshot(const char* path) {
     return path ? backend_screenshot(path) : -1;
 }
@@ -488,6 +508,44 @@ int yui_yac_perf_watch(const char* id) {
 
 int yui_yac_perf_unwatch(const char* id) {
     return id ? perf_unwatch(id) : -1;
+}
+
+/* Diagnostics: dump one layer's layout state (temporary). */
+extern Layer* g_ui_root;
+
+/* Diagnostics: what the last frame did. which 0=draw 1=visit 2=skip 3=root_dirty. */
+int yui_yac_render_stats(int which) {
+    int visit = 0;
+    int skip = 0;
+    int draw = 0;
+    int aref = 0;
+    unsigned rdirty = 0;
+    render_last_stats(&visit, &skip, &draw, &rdirty, &aref);
+    if (which == 0) return draw;
+    if (which == 1) return visit;
+    if (which == 2) return skip;
+    return (int)rdirty;
+}
+
+
+int yui_yac_debug_layer(const char* id) {
+    printf("[dbg] roots: boot=%p backend=%p same=%d\n",
+           (void*)yui_get_root(), (void*)g_ui_root, g_ui_root == yui_get_root());
+    Layer* layer = yac_layer(id);
+    if (!layer) {
+        printf("[dbg] layer '%s' not found\n", id ? id : "");
+        return -1;
+    }
+    printf("[dbg] %s type=%d rect=%d,%d %dx%d vis=%d text='%s' font=%p\n",
+           layer->id, (int)layer->type, layer->rect.x, layer->rect.y,
+           layer->rect.w, layer->rect.h, (int)layer->visible,
+           layer_get_text(layer),
+           (void*)(layer->font ? layer->font->default_font : NULL));
+    if (layer->font) {
+        printf("[dbg]   fontpath=%s size=%d\n", layer->font->path, layer->font->size);
+    }
+    fflush(stdout);
+    return layer->child_count;
 }
 
 int yui_yac_perf_clear_watch(void) {
@@ -533,7 +591,10 @@ int yui_dom_create(const char* parent_id, const char* json) {
     if (!nl) {
         return -3;
     }
-    nl->visible = IN_VISIBLE;
+    /* VisibleType is VISIBLE=0, IN_VISIBLE=1 -- this used to be IN_VISIBLE,
+     * so every DOM-created layer stayed invisible and nothing painted at all
+     * (2026-10-29: domtest showed an empty white window). */
+    nl->visible = VISIBLE;
     {
         Layer** nc = realloc(parent->children, sizeof(Layer*) * (parent->child_count + 1));
         if (!nc) {
@@ -548,6 +609,11 @@ int yui_dom_create(const char* parent_id, const char* json) {
     layout_layer(parent);
     load_all_fonts(nl);
     theme_manager_apply_to_tree(nl);
+    /* DIRTY mode skips any subtree whose dirty_flags is DIRTY_NONE once the
+     * first frame has been rendered -- a layer added later would never paint
+     * (2026-10-29). */
+    mark_layer_dirty(nl, DIRTY_ALL);
+    mark_layer_dirty(parent, DIRTY_ALL);
     return 0;
 }
 
