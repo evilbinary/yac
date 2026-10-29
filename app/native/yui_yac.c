@@ -20,6 +20,7 @@
 #include "perf/perf.h"
 #include "cJSON.h"
 #include "layer_properties.h"
+#include "component_registry.h"
 
 /* defined in the DOM bridge below; used by yui_yac_render_json above it */
 int yui_dom_create(const char* parent_id, const char* json);
@@ -513,6 +514,36 @@ int yui_yac_perf_unwatch(const char* id) {
 /* Diagnostics: dump one layer's layout state (temporary). */
 extern Layer* g_ui_root;
 
+/* Diagnostics: walk the live tree from the root. */
+static void yac_dump_layer(Layer* layer, int depth) {
+    int i;
+    if (!layer) {
+        return;
+    }
+    printf("[tree] %*s%s type=%d %d,%d %dx%d vis=%d render=%p comp=%p text='%s'\n",
+           depth * 2, "", layer->id, (int)layer->type, layer->rect.x, layer->rect.y,
+           layer->rect.w, layer->rect.h, (int)layer->visible,
+           (void*)layer->render, (void*)layer->component, layer_get_text(layer));
+    for (i = 0; i < layer->child_count; i++) {
+        yac_dump_layer(layer->children[i], depth + 1);
+    }
+}
+
+int yui_yac_debug_dump(void) {
+    Layer* root = yui_get_root();
+    if (!root) {
+        printf("[tree] no root\n");
+        fflush(stdout);
+        return -1;
+    }
+    printf("[tree] roots boot=%p backend=%p same=%d\n",
+           (void*)root, (void*)g_ui_root, g_ui_root == root);
+    yac_dump_layer(root, 0);
+    fflush(stdout);
+    return 0;
+}
+
+
 /* Diagnostics: what the last frame did. which 0=draw 1=visit 2=skip 3=root_dirty. */
 int yui_yac_render_stats(int which) {
     int visit = 0;
@@ -536,10 +567,11 @@ int yui_yac_debug_layer(const char* id) {
         printf("[dbg] layer '%s' not found\n", id ? id : "");
         return -1;
     }
-    printf("[dbg] %s type=%d rect=%d,%d %dx%d vis=%d text='%s' font=%p\n",
+    printf("[dbg] types=%d\n", yui_type_count());
+    printf("[dbg] %s type=%d rect=%d,%d %dx%d vis=%d render=%p component=%p text='%s' font=%p\n",
            layer->id, (int)layer->type, layer->rect.x, layer->rect.y,
            layer->rect.w, layer->rect.h, (int)layer->visible,
-           layer_get_text(layer),
+           (void*)layer->render, (void*)layer->component, layer_get_text(layer),
            (void*)(layer->font ? layer->font->default_font : NULL));
     if (layer->font) {
         printf("[dbg]   fontpath=%s size=%d\n", layer->font->path, layer->font->size);

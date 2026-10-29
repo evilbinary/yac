@@ -22,7 +22,7 @@ export _js_st_win0, _js_st_doc0, _js_st_nav0, _js_st_loc0, _js_st_perf0,
   _js_st_store0, _js_st_xhrC, _js_st_ctxC, _js_st_audioC, _js_st_noop,
   _js_st_false, _js_st_empty, _js_st_id, _js_st_spin, js_browser_stub
 import data.fmap { fmap_new, fmap_get, fmap_put }
-import gui.yui { yui_bridge_open, yui_bridge_boot, yui_bridge_create, yui_bridge_del, yui_bridge_put_text, yui_bridge_pump }
+import gui.yui { yui_bridge_open, yui_bridge_boot, yui_bridge_create, yui_bridge_del, yui_bridge_put_text, yui_bridge_pump , yui_sym2 }
 import os.env { get as env_get }
 
 /* TEMP diagnostics: name the callee before the runtime rejects it. */
