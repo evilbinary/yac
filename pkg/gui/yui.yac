@@ -8,7 +8,8 @@ export yui_open, yui_init, yui_tick, yui_set_text, yui_click_is, yui_shutdown, y
   yui_bridge_put_text, yui_bridge_put_bg, yui_bridge_pump, yui_bridge_should_quit,
   yui_render_from_json, yui_set_bg, yui_get_text, yui_hide, yui_show, yui_update,
   yui_resize, yui_inspect_enable, yui_inspect_disable, yui_inspect_bounds,
-  yui_inspect_info, yui_should_quit
+  yui_inspect_info, yui_inspect_layer, yui_log, yui_theme_load,
+  yui_theme_set_current, yui_theme_unload, yui_theme_apply_to_tree, yui_should_quit
 
 /* ASCII prefix. */
 let yui_has(s, p) =
@@ -120,6 +121,12 @@ let yui_c2(name, a, b) =
 let yui_c3(name, a, b, c) =
   let p = yui_sym2(name) in
   if p == 0 then yui_missing(name) else ccall(p, a, b, c)
+let yui_c4(name, a, b, c, d) =
+  let p = yui_sym2(name) in
+  if p == 0 then yui_missing(name) else ccall(p, a, b, c, d)
+let yui_c5(name, a, b, c, d, e) =
+  let p = yui_sym2(name) in
+  if p == 0 then yui_missing(name) else ccall(p, a, b, c, d, e)
 
 /* yui_init(json_path, assets): boot the window, 0 = ok. */
 let yui_init(json, assets) = yui_c2("yui_yac_init", json, assets)
@@ -136,39 +143,43 @@ let yui_click_is(id) = yui_c1("yui_yac_click_is", id)
 /* Tear down. */
 let yui_shutdown(_) = yui_c0("yui_yac_shutdown")
 
+/* ---- game API (yui_yac_game_*) -----------------------------------------
+ * These used to go through yui_sym (dlsym on the main module), which finds
+ * nothing on Windows: the call went to address 0. They also named symbols
+ * that no longer exist (yui_boot / yui_rand). */
+
 /* Load a game scene JSON. */
-let yui_game_boot(path) = ccall(yui_sym("yui_boot"), path)
+let yui_game_boot(path) = yui_c1("yui_yac_game_boot", path)
 
 /* Key down? */
-let yui_key(name) = ccall(yui_sym("yui_key"), name)
+let yui_key(name) = yui_c1("yui_yac_game_key", name)
 
 /* Set velocity. */
-let yui_game_vel(id, vx, vy) = ccall(yui_sym("yui_game_vel"), id, vx, vy)
+let yui_game_vel(id, vx, vy) = yui_c3("yui_yac_game_vel", id, vx, vy)
 
 /* Field which of entity id. */
-let yui_game_get(id, which) = ccall(yui_sym("yui_game_get"), id, which)
+let yui_game_get(id, which) = yui_c2("yui_yac_game_get", id, which)
 
 /* Set position. */
-let yui_game_pos(id, x, y) = ccall(yui_sym("yui_game_pos"), id, x, y)
+let yui_game_pos(id, x, y) = yui_c3("yui_yac_game_pos", id, x, y)
 
 /* Spawn entity. */
-let yui_game_spawn(id, tag, x, y, rgb) =
-  ccall(yui_sym("yui_game_spawn"), id, tag, x, y, rgb)
+let yui_game_spawn(id, tag, x, y, rgb) = yui_c5("yui_yac_game_spawn", id, tag, x, y, rgb)
 
 /* Hit box. */
-let yui_game_box(id, w, h) = ccall(yui_sym("yui_game_box"), id, w, h)
+let yui_game_box(id, w, h) = yui_c3("yui_yac_game_box", id, w, h)
 
 /* Overlap with tag. */
-let yui_game_hit(id, tag) = ccall(yui_sym("yui_game_hit"), id, tag)
+let yui_game_hit(id, tag) = yui_c2("yui_yac_game_hit", id, tag)
 
 /* Drop tagged ents past ymax. */
-let yui_game_cull(tag, ymax) = ccall(yui_sym("yui_game_cull"), tag, ymax)
+let yui_game_cull(tag, ymax) = yui_c2("yui_yac_game_cull", tag, ymax)
 
 /* Burst at x,y. */
-let yui_game_burst(x, y, rgb) = ccall(yui_sym("yui_game_burst"), x, y, rgb)
+let yui_game_burst(x, y, rgb) = yui_c3("yui_yac_game_burst", x, y, rgb)
 
 /* Random 0..n-1. */
-let yui_rand(n) = ccall(yui_sym("yui_rand"), n)
+let yui_rand(n) = yui_c1("yui_yac_rand", n)
 
 /* ---- DOM bridge (app/native/yui_yac.c: yui_dom_*) ------------------------
  * DOM elements become real yui layers addressed by ID STRINGS (ccall cannot
@@ -207,6 +218,16 @@ let yui_inspect_enable(_) = yui_c1("yui_yac_inspect", 1)
 let yui_inspect_disable(_) = yui_c1("yui_yac_inspect", 0)
 let yui_inspect_bounds(show) = yui_c1("yui_yac_inspect_bounds", show)
 let yui_inspect_info(show) = yui_c1("yui_yac_inspect_info", show)
+let yui_inspect_layer(id, enabled) = yui_c2("yui_yac_inspect_layer", id, enabled)
+
+/* YUI.log(msg): yui_log is variadic, the glue passes ("%s", msg). */
+let yui_log(msg) = yui_c1("yui_yac_log", msg)
+
+/* ---- theme API (theme_manager_*, id/layer addressed in the glue) ---- */
+let yui_theme_load(path) = yui_c1("yui_yac_theme_load", path)
+let yui_theme_set_current(name) = yui_c1("yui_yac_theme_current", name)
+let yui_theme_unload(name) = yui_c1("yui_yac_theme_unload", name)
+let yui_theme_apply_to_tree(_) = yui_c0("yui_yac_theme_apply")
 
 /* YUI window lifecycle: yui_tick/yui_init are above (same C entry points).
  * There is no should_quit export in the .so -- quitting is reported by

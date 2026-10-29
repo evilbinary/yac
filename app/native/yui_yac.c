@@ -15,6 +15,7 @@
 #include "layout.h"
 #include "render.h"
 #include "theme_manager.h"
+#include "log.h"
 
 static char g_click[YUI_LAYER_ID_MAX];
 static int g_have_click;
@@ -295,6 +296,54 @@ int yui_yac_inspect_bounds(int show) {
 int yui_yac_inspect_info(int show) {
     yui_inspect_show_info = show != 0;
     return yui_inspect_show_info;
+}
+
+/* YUI.inspect.setLayer(layerId, enabled): per-layer flag (Layer.inspect_enabled). */
+int yui_yac_inspect_layer(const char* id, int enabled) {
+    Layer* layer = yac_layer(id);
+    if (!layer) {
+        return -1;
+    }
+    layer->inspect_enabled = enabled != 0;
+    return layer->inspect_enabled;
+}
+
+/* YUI.log(msg): yui_log is variadic, so pass a format and the message. */
+int yui_yac_log(const char* msg) {
+    yui_log(YUI_LOG_INFO, "yac", "%s", msg ? msg : "");
+    return 0;
+}
+
+/* YUI.themeLoad / themeSetCurrent / themeUnload / themeApplyToTree. */
+int yui_yac_theme_load(const char* path) {
+    if (!path || !path[0]) {
+        return -1;
+    }
+    return theme_manager_load_theme(path) ? 0 : -1;
+}
+
+int yui_yac_theme_current(const char* name) {
+    if (!name) {
+        return -1;
+    }
+    return theme_manager_set_current(name);
+}
+
+int yui_yac_theme_unload(const char* name) {
+    if (!name) {
+        return -1;
+    }
+    theme_manager_unload_theme(name);
+    return 0;
+}
+
+int yui_yac_theme_apply(void) {
+    Layer* root = yui_get_root();
+    if (!root) {
+        return -1;
+    }
+    theme_manager_apply_to_tree(root);
+    return 0;
 }
 
 int yui_yac_click_is(const char* id) {
