@@ -5,7 +5,10 @@ package gui.yui
 import data.fmap { fmap_new, fmap_get, fmap_put }
 export yui_open, yui_init, yui_tick, yui_set_text, yui_click_is, yui_shutdown, yui_game_boot, yui_key, yui_game_vel, yui_game_get, yui_game_pos, yui_game_spawn, yui_game_box, yui_game_hit, yui_game_cull, yui_game_burst, yui_rand,
   yui_sym2, yui_bridge_open, yui_bridge_boot, yui_bridge_create, yui_bridge_del,
-  yui_bridge_put_text, yui_bridge_put_bg, yui_bridge_pump, yui_bridge_should_quit
+  yui_bridge_put_text, yui_bridge_put_bg, yui_bridge_pump, yui_bridge_should_quit,
+  yui_render_from_json, yui_set_bg, yui_get_text, yui_hide, yui_show, yui_update,
+  yui_resize, yui_inspect_enable, yui_inspect_disable, yui_inspect_bounds,
+  yui_inspect_info, yui_should_quit
 
 /* ASCII prefix. */
 let yui_has(s, p) =
@@ -63,20 +66,75 @@ let yui_open(path) =
 /* Named symbol after a successful yui_open (dlsym 0 / PE stub). */
 let yui_sym(name) = ccall("dlsym", 0, name)
 
-/* yui_init(json_path, assets). */
-let yui_init(json, assets) = ccall(yui_sym("yui_init"), json, assets)
+let yui_h = box_new()          /* dlopen handle */
+let _ = box_set(yui_h, 0)
+let yui_symc = box_new()       /* sym cache: name -> fn ptr */
+let _ = box_set(yui_symc, 0)
 
-/* Pump one frame. Nonzero = quit. */
-let yui_tick(_) = ccall(yui_sym("yui_pump"))
+/* dlsym on the handle we dlopen'd. `yui_sym` uses handle 0 (the main module),
+ * which never has these symbols -- the call then went to address 0 and the
+ * program died with a null call (2026-10-28). */
+let yui_sym2(name) =
+  /* Lazy open: a program that only calls yui_init (the documented surface)
+   * never calls yui_bridge_open, and every symbol then looked "missing"
+   * (2026-10-29). The default path matches app/js. */
+  let _ = if box_get(yui_h) == 0 then box_set(yui_h, yui_open("app/native/libyui_yac.so")) else 0 in
+  let m = box_get(yui_symc) in
+  let m2 = if m == 0 then fmap_new(0) else m in
+  let _ = if m == 0 then box_set(yui_symc, m2) else 0 in
+  let hit = fmap_get(m2, name) in
+  if hit != 0 then hit
+  else
+    /* Windows has no dlsym: the PE host leaf ignores the handle, so look the
+     * symbol up in the module returned by LoadLibraryA. On a Linux build swap
+     * this for ccall("dlsym", box_get(yui_h), name). */
+    let p = ccall("GetProcAddress", box_get(yui_h), name) in
+    let _ = if p != 0 then fmap_put(m2, name, p) else 0 in
+    p
 
-/* Set widget text. */
-let yui_set_text(id, text) = ccall(yui_sym("yui_put_text"), id, text)
+let yui_bridge_open(path) =
+  if box_get(yui_h) != 0 then box_get(yui_h)
+  else
+    let h = yui_open(path) in
+    let _ = box_set(yui_h, h) in
+    h
 
-/* Nonzero if id was clicked. */
-let yui_click_is(id) = ccall(yui_sym("yui_click_is"), id)
+let yui_bridge_sym(name) = yui_sym2(name)
+
+/* A symbol that failed to resolve must never be called: ccall(0, ...) jumps to
+ * address 0 and the process dies with rip=0 and no output at all. That is what
+ * `domtest` did when the .so exported only cJSON names (2026-10-28). */
+let yui_missing(name) =
+  let _ = print(str_cat("yui: symbol missing in libyui_yac.so: ", name)) in
+  -1
+
+let yui_c0(name) =
+  let p = yui_sym2(name) in
+  if p == 0 then yui_missing(name) else ccall(p)
+let yui_c1(name, a) =
+  let p = yui_sym2(name) in
+  if p == 0 then yui_missing(name) else ccall(p, a)
+let yui_c2(name, a, b) =
+  let p = yui_sym2(name) in
+  if p == 0 then yui_missing(name) else ccall(p, a, b)
+let yui_c3(name, a, b, c) =
+  let p = yui_sym2(name) in
+  if p == 0 then yui_missing(name) else ccall(p, a, b, c)
+
+/* yui_init(json_path, assets): boot the window, 0 = ok. */
+let yui_init(json, assets) = yui_c2("yui_yac_init", json, assets)
+
+/* Pump one frame (YUI.tick). */
+let yui_tick(_) = yui_c0("yui_yac_tick")
+
+/* Set widget text (YUI.setText). */
+let yui_set_text(id, text) = yui_c2("yui_yac_set_text", id, text)
+
+/* Nonzero if id was clicked since the last poll. */
+let yui_click_is(id) = yui_c1("yui_yac_click_is", id)
 
 /* Tear down. */
-let yui_shutdown(_) = ccall(yui_sym("yui_quit"))
+let yui_shutdown(_) = yui_c0("yui_yac_shutdown")
 
 /* Load a game scene JSON. */
 let yui_game_boot(path) = ccall(yui_sym("yui_boot"), path)
@@ -117,70 +175,51 @@ let yui_rand(n) = ccall(yui_sym("yui_rand"), n)
  * return pointers or strings, so ids are minted by browser.yac and carried in
  * the JSON fragment). If native/libyui_yac.so is missing every call degrades
  * to a no-op and the stubs keep working. ---- */
-let yui_h = box_new()          /* dlopen handle */
-let _ = box_set(yui_h, 0)
-let yui_symc = box_new()       /* sym cache: name -> fn ptr */
-let _ = box_set(yui_symc, 0)
 
-/* dlsym on the handle we dlopen'd. `yui_sym` uses handle 0 (the main module),
- * which never has these symbols -- the call then went to address 0 and the
- * program died with a null call (2026-10-28). */
-let yui_sym2(name) =
-  let m = box_get(yui_symc) in
-  let m2 = if m == 0 then fmap_new(0) else m in
-  let _ = if m == 0 then box_set(yui_symc, m2) else 0 in
-  let hit = fmap_get(m2, name) in
-  if hit != 0 then hit
-  else
-    /* Windows has no dlsym: the PE host leaf ignores the handle, so look the
-     * symbol up in the module returned by LoadLibraryA. On a Linux build swap
-     * this for ccall("dlsym", box_get(yui_h), name). */
-    let p = ccall("GetProcAddress", box_get(yui_h), name) in
-    let _ = if p != 0 then fmap_put(m2, name, p) else 0 in
-    p
+/* ---- YUI.* surface -------------------------------------------------------
+ * Mirrors yui/docs/yui-js-api.md and lib/jsmodule-quickjs, where the engine
+ * exposes YUI.setText/getText/setBgColor/hide/show/renderFromJson/update/
+ * resize/inspect.* and resolves an id to a Layer inside the binding. Here the
+ * id-addressed entry points are the yui_yac_* / yui_dom_* exports of
+ * app/native/yui_yac.c (the library's yui_set_text/yui_set_visible/yui_update
+ * take a Layer*, so they cannot be called from yac directly).
+ * ccall can only marshal numbers and C strings IN; anything that returns a
+ * string comes back as a host pointer (see yui_get_text). ---- */
 
-let yui_bridge_open(path) =
-  if box_get(yui_h) != 0 then box_get(yui_h)
-  else
-    let h = yui_open(path) in
-    let _ = box_set(yui_h, h) in
-    h
+/* YUI.renderFromJson(layerId, json): build children of layerId. 0 = ok. */
+let yui_render_from_json(layer_id, json) = yui_c2("yui_dom_create", layer_id, json)
 
-let yui_bridge_sym(name) = yui_sym2(name)
+/* YUI.setBgColor / YUI.getText. setText lives above (yui_set_text). getText
+ * returns a HOST char* (0 when the layer is missing), not a yac string. */
+let yui_set_bg(id, hex) = yui_c2("yui_dom_set_bg", id, hex)
+let yui_get_text(id) = yui_c1("yui_yac_get_text", id)
 
-/* A symbol that failed to resolve must never be called: ccall(0, ...) jumps to
- * address 0 and the process dies with rip=0 and no output at all. That is what
- * `domtest` did when the .so exported only cJSON names (2026-10-28). */
-let yui_missing(name) =
-  let _ = print(str_cat("yui: symbol missing in libyui_yac.so: ", name)) in
-  -1
+/* YUI.hide / YUI.show. */
+let yui_hide(id) = yui_c2("yui_yac_set_visible", id, 0)
+let yui_show(id) = yui_c2("yui_yac_set_visible", id, 1)
 
-/* Boot the window from a "type":"main" JSON app file. */
-let yui_bridge_boot(json_path, assets) =
-  let p = yui_sym2("yui_yac_init") in
-  if p == 0 then yui_missing("yui_yac_init") else ccall(p, json_path, assets)
+/* YUI.update(json): incremental update of the layer tree. */
+let yui_update(json) = yui_c1("yui_yac_update_json", json)
 
-/* Create a layer under parent_id from a JSON fragment that already carries
- * the child's "id". Returns 0 on success. */
-let yui_bridge_create(parent_id, json) =
-  let p = yui_sym2("yui_dom_create") in
-  if p == 0 then yui_missing("yui_dom_create") else ccall(p, parent_id, json)
+/* YUI resize + inspect toggles (they are ints, i.e. booleans here). */
+let yui_resize(w, h) = yui_c2("yui_yac_resize", w, h)
+let yui_inspect_enable(_) = yui_c1("yui_yac_inspect", 1)
+let yui_inspect_disable(_) = yui_c1("yui_yac_inspect", 0)
+let yui_inspect_bounds(show) = yui_c1("yui_yac_inspect_bounds", show)
+let yui_inspect_info(show) = yui_c1("yui_yac_inspect_info", show)
 
-let yui_bridge_del(parent_id, child_id) =
-  let p = yui_sym2("yui_dom_remove") in
-  if p == 0 then yui_missing("yui_dom_remove") else ccall(p, parent_id, child_id)
+/* YUI window lifecycle: yui_tick/yui_init are above (same C entry points).
+ * There is no should_quit export in the .so -- quitting is reported by
+ * yui_tick's RETURN VALUE (backend_should_quit inside yui_yac_tick). Kept as 0
+ * so a caller polling it never mistakes "not available" for "quit now". */
+let yui_should_quit(_) = 0
 
-/* Existing yui_yac_set_text(id, text) — addressed by id. */
-let yui_bridge_put_text(id, text) =
-  let p = yui_sym2("yui_yac_set_text") in
-  if p == 0 then yui_missing("yui_yac_set_text") else ccall(p, id, text)
-let yui_bridge_put_bg(id, hex) =
-  let p = yui_sym2("yui_dom_set_bg") in
-  if p == 0 then yui_missing("yui_dom_set_bg") else ccall(p, id, hex)
-
-let yui_bridge_pump(_) =
-  let p = yui_sym2("yui_yac_tick") in
-  if p == 0 then yui_missing("yui_yac_tick") else ccall(p)
-let yui_bridge_should_quit(_) =
-  let p = yui_sym2("yui_yac_should_quit") in
-  if p == 0 then -1 else ccall(p)
+/* ---- DOM bridge entry points (browser.yac) -------------------------------
+ * Same C functions, kept under the names the DOM stubs already use. */
+let yui_bridge_boot(json_path, assets) = yui_c2("yui_yac_init", json_path, assets)
+let yui_bridge_create(parent_id, json) = yui_render_from_json(parent_id, json)
+let yui_bridge_del(parent_id, child_id) = yui_c2("yui_dom_remove", parent_id, child_id)
+let yui_bridge_put_text(id, text) = yui_set_text(id, text)
+let yui_bridge_put_bg(id, hex) = yui_set_bg(id, hex)
+let yui_bridge_pump(_) = yui_tick(0)
+let yui_bridge_should_quit(_) = yui_should_quit(0)

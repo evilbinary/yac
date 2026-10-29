@@ -232,6 +232,71 @@ int yui_yac_set_text(const char* id, const char* text) {
     return 0;
 }
 
+/* ---- YUI.* parity with yui/docs/yui-js-api.md ---------------------------
+ * The mquickjs/QuickJS bindings expose YUI.setText/getText/setBgColor/hide/
+ * show/renderFromJson/update/resize/inspect.*; those engines resolve an id to
+ * a Layer inside the binding. A yac program reaches the same surface through
+ * pkg/gui/yui.yac, so the id-addressed entry points live here -- the library
+ * functions (yui_set_text, yui_set_visible, yui_update) take a Layer*. */
+extern int yui_inspect_mode_enabled;
+extern int yui_inspect_show_bounds;
+extern int yui_inspect_show_info;
+
+static Layer* yac_layer(const char* id) {
+    Layer* root = yui_get_root();
+    if (!root || !id || !id[0]) {
+        return NULL;
+    }
+    return find_layer_by_id(root, id);
+}
+
+const char* yui_yac_get_text(const char* id) {
+    Layer* layer = yac_layer(id);
+    const char* text;
+    if (!layer) {
+        return "";
+    }
+    text = layer_get_text(layer);
+    return text ? text : "";
+}
+
+int yui_yac_set_visible(const char* id, int visible) {
+    Layer* layer = yac_layer(id);
+    if (!layer) {
+        return -1;
+    }
+    layer_set_visible(layer, visible != 0);
+    return 0;
+}
+
+int yui_yac_update_json(const char* json) {
+    Layer* root = yui_get_root();
+    if (!root || !json) {
+        return -1;
+    }
+    return yui_update(root, json);
+}
+
+int yui_yac_resize(int width, int height) {
+    yui_resize(width, height);
+    return 0;
+}
+
+int yui_yac_inspect(int enabled) {
+    yui_inspect_mode_enabled = enabled != 0;
+    return yui_inspect_mode_enabled;
+}
+
+int yui_yac_inspect_bounds(int show) {
+    yui_inspect_show_bounds = show != 0;
+    return yui_inspect_show_bounds;
+}
+
+int yui_yac_inspect_info(int show) {
+    yui_inspect_show_info = show != 0;
+    return yui_inspect_show_info;
+}
+
 int yui_yac_click_is(const char* id) {
     if (!id || !g_have_click) {
         return 0;

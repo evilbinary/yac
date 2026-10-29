@@ -65,7 +65,7 @@ let _js_st_noop(...a) = 0
 let _js_st_false(...a) = false
 let _js_st_empty(...a) = ""
 let _js_st_id(x) = x
-let _js_st_spin(n) = (_dom_hook("spin"))(n)
+let _js_st_spin(n) = (let f = _dom_hook("spin") in f(n))
 
 /* Universal AudioNode: chainable members point back at itself. */
 let _js_st_node0 = ["$o", fmap_new(0)]
@@ -125,14 +125,14 @@ let _ = fmap_put(nth(_js_st_elem0, 1), "head", _js_st_elem0)
 let _ = fmap_put(nth(_js_st_elem0, 1), "sheet", _js_st_elem0)
 
 let _js_st_doc0 = ["$o", fmap_new(0)]
-let _ = fmap_put(nth(_js_st_doc0, 1), "createElement", fun(tag) -> (_dom_hook("createElement"))(tag))
-let _ = fmap_put(nth(_js_st_doc0, 1), "createElementNS", fun(tag) -> (_dom_hook("createElement"))(tag))
+let _ = fmap_put(nth(_js_st_doc0, 1), "createElement", fun(tag) -> (let f = _dom_hook("createElement") in f(tag)))
+let _ = fmap_put(nth(_js_st_doc0, 1), "createElementNS", fun(tag) -> (let f = _dom_hook("createElement") in f(tag)))
 let _ = fmap_put(nth(_js_st_doc0, 1), "appendChild", _js_st_noop)
-let _ = fmap_put(nth(_js_st_doc0, 1), "createTextNode", fun(txt) -> (_dom_hook("createText"))(txt))
-let _ = fmap_put(nth(_js_st_doc0, 1), "createEvent", fun(...a) -> (_dom_hook("createElement"))("#event"))
-let _ = fmap_put(nth(_js_st_doc0, 1), "getElementById", fun(id) -> (_dom_hook("document"))(id))
+let _ = fmap_put(nth(_js_st_doc0, 1), "createTextNode", fun(txt) -> (let f = _dom_hook("createText") in f(txt)))
+let _ = fmap_put(nth(_js_st_doc0, 1), "createEvent", fun(...a) -> (let f = _dom_hook("createElement") in f("#event")))
+let _ = fmap_put(nth(_js_st_doc0, 1), "getElementById", fun(id) -> (let f = _dom_hook("document") in f(id)))
 let _ = fmap_put(nth(_js_st_doc0, 1), "getElementsByTagName", fun(...a) -> [])
-let _ = fmap_put(nth(_js_st_doc0, 1), "querySelector", fun(sel) -> (_dom_hook("document"))(sel))
+let _ = fmap_put(nth(_js_st_doc0, 1), "querySelector", fun(sel) -> (let f = _dom_hook("document") in f(sel)))
 let _ = fmap_put(nth(_js_st_doc0, 1), "querySelectorAll", fun(...a) -> [])
 let _ = fmap_put(nth(_js_st_doc0, 1), "addEventListener", _js_st_noop)
 let _ = fmap_put(nth(_js_st_doc0, 1), "removeEventListener", _js_st_noop)
@@ -305,9 +305,12 @@ let _dom_seqnext(_) =
 
 let _dom_strval(v) = if is_int(v) then int_to_str(v) else if kind(v) == 3 then v else ""
 
+/* `r` here is boot's RETURN CODE, which is 0 on success -- testing it meant no
+ * frame was ever pumped and the window stayed blank (2026-10-29). Gate on the
+ * library handle instead. */
 let _dom_pump(_) =
-  let r = _dom_ensure(0) in
-  if r != 0 then yui_bridge_pump(0) else 0
+  let _ = _dom_ensure(0) in
+  if _dom_ok(0) then yui_bridge_pump(0) else 0
 
 /* Attach/detach a child in yui (ids come from the node objects). */
 let _dom_attach(p, c) =
@@ -317,8 +320,11 @@ let _dom_attach(p, c) =
   else if pid == 0 or cid == 0 then 0
   else
     (let q = str_chr(34) in
-     (let j = str_cat("{", q, "type", q, ":", q, "View", q, ",", q, "id", q, ":", q, cid, q, "}") in
-      (let _ = yui_bridge_create(pid, j) in _dom_pump(0))))
+     (let parts = ["{", q, "type", q, ":", q, "View", q, ",", q, "id", q, ":", q, cid, q, "}"] in
+      (let n = len(parts) in
+       (let rec(i, acc) = if i >= n then acc else rec(i + 1, str_cat(acc, nth(parts, i))) in
+        (let j = rec(0, "") in
+         (let _ = yui_bridge_create(pid, j) in _dom_pump(0)))))))
 
 let _dom_detach(p, c) =
   let pid = fmap_get(nth(p, 1), "$id") in
@@ -378,10 +384,19 @@ let _dom_document(_) =
 
 let _ = fmap_put(nth(_dom_hooks, 1), "createElement", fun(tag) -> _dom_node(tag, _dom_seqnext(0)))
 let _ = fmap_put(nth(_dom_hooks, 1), "createText", fun(txt) -> (let n = _dom_node("#text", _dom_seqnext(0)) in (let _ = fmap_put(nth(n, 1), "$text", txt) in n)))
+/* `n` is passed into the loop instead of being captured: a closure that
+ * captures a PARAMETER read it as 0 when invoked through a stored closure, so
+ * `yuiSpinFrames(180)` pumped nothing (2026-10-29). */
+/* No closure + no capture here: a `rec` created inside this proc (which is
+ * itself reached through a stored closure) either read the captured count as 0
+ * or crashed on the recursive call (2026-10-29). A plain top-level loop over
+ * an integer counter avoids both. */
+let _dom_spin_from(i, k) =
+  if i >= k then 0
+  else (let _ = _dom_pump(0) in _dom_spin_from(i + 1, k))
 let _dom_spin(n) =
   let _ = _dom_ensure(0) in
-  let rec(i) = if i >= n then 0 else (let _ = _dom_pump(0) in rec(i + 1)) in
-  rec(n)
+  _dom_spin_from(0, n)
 
 let _ = fmap_put(nth(_dom_hooks, 1), "spin", fun(n) -> _dom_spin(n))
 let _ = fmap_put(nth(_dom_hooks, 1), "document", fun(_) -> _dom_document(0))
