@@ -23,6 +23,7 @@ export _js_st_win0, _js_st_doc0, _js_st_nav0, _js_st_loc0, _js_st_perf0,
   _js_st_false, _js_st_empty, _js_st_id, _js_st_spin, js_browser_stub
 import data.fmap { fmap_new, fmap_get, fmap_put }
 import gui.yui { yui_bridge_open, yui_bridge_boot, yui_bridge_create, yui_bridge_del, yui_bridge_put_text, yui_bridge_pump }
+import os.env { get as env_get }
 
 /* TEMP diagnostics: name the callee before the runtime rejects it. */
 let _jb_ck(f, t) =
@@ -275,6 +276,14 @@ let _ = box_set(_dom_tried, 0)
 
 let _dom_ok(_) = box_get(_dom_lib) != 0
 
+/* Asset root for yui (fonts/themes). "" keeps yui's own default, which is
+ * `app/assets` relative to the cwd -- the yui checkout here lives in a sibling
+ * directory, so set YUI_ASSETS=../yui/app/assets instead of copying 17MB of
+ * fonts into app/. */
+let _dom_assets(_) =
+  let v = env_get("YUI_ASSETS") in
+  if v == 0 then "" else v
+
 let _dom_ensure(_) =
   if box_get(_dom_tried) != 0 then box_get(_dom_root)
   else
@@ -284,7 +293,7 @@ let _dom_ensure(_) =
     let _ = if lib == 0 then print("yui: dlopen app/native/libyui_yac.so failed (build: make -C app so)") else 0 in
     if lib == 0 then 0
     else
-      let r = yui_bridge_boot("app/js/yac-app.json", "") in
+      let r = yui_bridge_boot("app/js/yac-app.json", _dom_assets(0)) in
       let _ = if r != 0 then print(str_cat("yui: boot failed rc=", int_to_str(r))) else 0 in
       let _ = box_set(_dom_root, r) in
       r

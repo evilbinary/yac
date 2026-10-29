@@ -5,8 +5,11 @@
         1024,
         768
     ],
+    "assets": "../yui/app/assets",
+    "font": "Roboto-Regular.ttf",
     "style": {
-        "bgColor": "#FFFFFF"
+        "bgColor": "#FFFFFF",
+        "fontSize": 16
     },
     "layout": {
         "type": "vertical",

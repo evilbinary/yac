@@ -70,3 +70,7 @@ tmp_tests/y1t.yac
 *.lir
 app/js/examples/hello
 hello
+app/js/browser.yac
+main.js
+a.log
+cursor_yc.md
