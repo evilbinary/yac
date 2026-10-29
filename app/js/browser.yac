@@ -20,7 +20,7 @@
 package js.browser
 export _js_st_win0, _js_st_doc0, _js_st_nav0, _js_st_loc0, _js_st_perf0,
   _js_st_store0, _js_st_xhrC, _js_st_ctxC, _js_st_audioC, _js_st_noop,
-  _js_st_false, _js_st_empty, _js_st_id, js_browser_stub
+  _js_st_false, _js_st_empty, _js_st_id, _js_st_spin, js_browser_stub
 import data.fmap { fmap_new, fmap_get, fmap_put }
 import gui.yui { yui_bridge_open, yui_bridge_boot, yui_bridge_create, yui_bridge_del, yui_bridge_put_text, yui_bridge_pump }
 
@@ -49,6 +49,7 @@ let js_browser_stub(nm) =
     or nm == "alert" or nm == "getComputedStyle" or nm == "matchMedia" then "_js_st_noop"
   else if nm == "confirm" then "_js_st_false"
   else if nm == "prompt" then "_js_st_empty"
+  else if nm == "yuiSpinFrames" then "_js_st_spin"
   else if nm == "btoa" or nm == "atob" or nm == "escape" or nm == "unescape" then "_js_st_id"
   else ""
 
@@ -63,6 +64,7 @@ let _js_st_noop(...a) = 0
 let _js_st_false(...a) = false
 let _js_st_empty(...a) = ""
 let _js_st_id(x) = x
+let _js_st_spin(n) = (_dom_hook("spin"))(n)
 
 /* Universal AudioNode: chainable members point back at itself. */
 let _js_st_node0 = ["$o", fmap_new(0)]
@@ -278,12 +280,12 @@ let _dom_ensure(_) =
   else
     let _ = box_set(_dom_tried, 1) in
     let lib = yui_bridge_open("app/native/libyui_yac.so") in
-    let _ = print(str_cat("DBG lib=", int_to_str(lib))) in
     let _ = box_set(_dom_lib, lib) in
+    let _ = if lib == 0 then print("yui: dlopen app/native/libyui_yac.so failed (build: make -C app so)") else 0 in
     if lib == 0 then 0
     else
       let r = yui_bridge_boot("app/js/yac-app.json", "") in
-      let _ = print(str_cat("DBG boot=", int_to_str(r))) in
+      let _ = if r != 0 then print(str_cat("yui: boot failed rc=", int_to_str(r))) else 0 in
       let _ = box_set(_dom_root, r) in
       r
 
@@ -367,4 +369,10 @@ let _dom_document(_) =
 
 let _ = fmap_put(nth(_dom_hooks, 1), "createElement", fun(tag) -> _dom_node(tag, _dom_seqnext(0)))
 let _ = fmap_put(nth(_dom_hooks, 1), "createText", fun(txt) -> (let n = _dom_node("#text", _dom_seqnext(0)) in (let _ = fmap_put(nth(n, 1), "$text", txt) in n)))
+let _dom_spin(n) =
+  let _ = _dom_ensure(0) in
+  let rec(i) = if i >= n then 0 else (let _ = _dom_pump(0) in rec(i + 1)) in
+  rec(n)
+
+let _ = fmap_put(nth(_dom_hooks, 1), "spin", fun(n) -> _dom_spin(n))
 let _ = fmap_put(nth(_dom_hooks, 1), "document", fun(_) -> _dom_document(0))

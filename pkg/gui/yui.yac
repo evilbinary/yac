@@ -122,6 +122,9 @@ let _ = box_set(yui_h, 0)
 let yui_symc = box_new()       /* sym cache: name -> fn ptr */
 let _ = box_set(yui_symc, 0)
 
+/* dlsym on the handle we dlopen'd. `yui_sym` uses handle 0 (the main module),
+ * which never has these symbols -- the call then went to address 0 and the
+ * program died with a null call (2026-10-28). */
 let yui_sym2(name) =
   let m = box_get(yui_symc) in
   let m2 = if m == 0 then fmap_new(0) else m in
@@ -129,7 +132,10 @@ let yui_sym2(name) =
   let hit = fmap_get(m2, name) in
   if hit != 0 then hit
   else
-    let p = yui_sym(name) in
+    /* Windows has no dlsym: the PE host leaf ignores the handle, so look the
+     * symbol up in the module returned by LoadLibraryA. On a Linux build swap
+     * this for ccall("dlsym", box_get(yui_h), name). */
+    let p = ccall("GetProcAddress", box_get(yui_h), name) in
     let _ = if p != 0 then fmap_put(m2, name, p) else 0 in
     p
 
@@ -142,18 +148,39 @@ let yui_bridge_open(path) =
 
 let yui_bridge_sym(name) = yui_sym2(name)
 
+/* A symbol that failed to resolve must never be called: ccall(0, ...) jumps to
+ * address 0 and the process dies with rip=0 and no output at all. That is what
+ * `domtest` did when the .so exported only cJSON names (2026-10-28). */
+let yui_missing(name) =
+  let _ = print(str_cat("yui: symbol missing in libyui_yac.so: ", name)) in
+  -1
+
 /* Boot the window from a "type":"main" JSON app file. */
-let yui_bridge_boot(json_path, assets) = ccall(yui_sym2("yui_yac_init"), json_path, assets)
+let yui_bridge_boot(json_path, assets) =
+  let p = yui_sym2("yui_yac_init") in
+  if p == 0 then yui_missing("yui_yac_init") else ccall(p, json_path, assets)
 
 /* Create a layer under parent_id from a JSON fragment that already carries
  * the child's "id". Returns 0 on success. */
-let yui_bridge_create(parent_id, json) = ccall(yui_sym2("yui_dom_create"), parent_id, json)
+let yui_bridge_create(parent_id, json) =
+  let p = yui_sym2("yui_dom_create") in
+  if p == 0 then yui_missing("yui_dom_create") else ccall(p, parent_id, json)
 
-let yui_bridge_del(parent_id, child_id) = ccall(yui_sym2("yui_dom_remove"), parent_id, child_id)
+let yui_bridge_del(parent_id, child_id) =
+  let p = yui_sym2("yui_dom_remove") in
+  if p == 0 then yui_missing("yui_dom_remove") else ccall(p, parent_id, child_id)
 
 /* Existing yui_yac_set_text(id, text) — addressed by id. */
-let yui_bridge_put_text(id, text) = ccall(yui_sym2("yui_yac_set_text"), id, text)
-let yui_bridge_put_bg(id, hex) = ccall(yui_sym2("yui_dom_set_bg"), id, hex)
+let yui_bridge_put_text(id, text) =
+  let p = yui_sym2("yui_yac_set_text") in
+  if p == 0 then yui_missing("yui_yac_set_text") else ccall(p, id, text)
+let yui_bridge_put_bg(id, hex) =
+  let p = yui_sym2("yui_dom_set_bg") in
+  if p == 0 then yui_missing("yui_dom_set_bg") else ccall(p, id, hex)
 
-let yui_bridge_pump(_) = ccall(yui_sym2("yui_yac_tick"))
-let yui_bridge_should_quit(_) = ccall(yui_sym2("yui_yac_should_quit"))
+let yui_bridge_pump(_) =
+  let p = yui_sym2("yui_yac_tick") in
+  if p == 0 then yui_missing("yui_yac_tick") else ccall(p)
+let yui_bridge_should_quit(_) =
+  let p = yui_sym2("yui_yac_should_quit") in
+  if p == 0 then -1 else ccall(p)

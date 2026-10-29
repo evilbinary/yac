@@ -16,7 +16,8 @@ YC_PKG_SNAP ?= --pkg src-self,pkg,app/llm/snapshot
 YC_FLAGS ?=
 
 CC ?= gcc
-SDL_CFLAGS := $(shell pkg-config --cflags sdl2 SDL2_ttf SDL2_image)
+# Drop -Dmain=SDL_main: the glue is a shared library, not the SDL entry point.
+SDL_CFLAGS := $(shell pkg-config --cflags sdl2 SDL2_ttf SDL2_image 2>/dev/null | sed 's/-Dmain=SDL_main//')
 SDL_LIBS := $(shell pkg-config --libs sdl2 SDL2_ttf SDL2_image)
 
 # Prebuilt .a from ya is ASan-instrumented; the .so must match.
@@ -38,7 +39,8 @@ YUI_LIBS = \
 	$(YUI_LIBDIR)/libcjson.a \
 	$(YUI_LIBDIR)/libtsm.a \
 	$(YUI_LIBDIR)/libsocket.a \
-	$(SDL_LIBS) -lm -ldl -lpthread
+	$(SDL_LIBS) -lfreetype -lm -ldl -lpthread \
+	-ldwmapi -luser32 -lgdi32 -lcomdlg32 -lshell32 -lole32 -luuid -lwinmm
 
 .PHONY: all so apps nogui counter hello lantern llm llm-trigram llm-transformer llm-train llm-infer llm-snapshot llm-snapshot-train llm-snapshot-infer clean
 
@@ -49,9 +51,15 @@ nogui: llm
 
 so: $(SO)
 
+# --export-all-symbols is REQUIRED: libcjson.a carries dllexport attributes
+# (cJSON's CJSON_PUBLIC), and one explicit dllexport turns OFF ld's default
+# auto-export for the whole link. Without it the .so exported only the 78
+# cJSON_* names, GetProcAddress("yui_yac_init") returned 0, and the yac side
+# called address 0 -> SIGSEGV with rip=0 at yui init (2026-10-28, domtest).
 $(SO): native/yui_yac.c $(BOOT_C) $(YUI_LIBDIR)/libyui.a
 	mkdir -p native
-	$(CC) $(CFLAGS) -shared -o $@ native/yui_yac.c $(BOOT_C) $(YUI_LIBS)
+	$(CC) $(CFLAGS) -shared -o $@ native/yui_yac.c $(BOOT_C) $(YUI_LIBS) \
+		-Wl,--export-all-symbols
 
 apps: counter hello lantern llm
 

@@ -6,10 +6,14 @@
 
 #include "yui_boot.h"
 #include "event.h"
+#include <SDL2/SDL.h>
 #include "layer.h"
 #include "backend.h"
 #include "game/game.h"
 #include "layer_update.h"
+#include "layer_lifecycle.h"
+#include "layout.h"
+#include "render.h"
 #include "theme_manager.h"
 
 static char g_click[YUI_LAYER_ID_MAX];
@@ -31,6 +35,8 @@ static void* yac_on_click(void* data) {
 }
 
 int yui_yac_init(const char* json_path, const char* assets_dir) {
+    /* We live in a shared library, not the SDL_main entry point. */
+    SDL_SetMainReady();
     const char* assets = assets_dir;
     const char* af;
     g_have_click = 0;
@@ -249,11 +255,11 @@ void yui_yac_shutdown(void) {
  * The browser.yac DOM stubs create real yui layers so a translated web app
  * renders in a yui window. Ids are minted by the caller (browser.yac keeps a
  * counter); the JSON fragment carries the same id. */
-int yui_dom_create(const char* parent_id, const char* id, const char* json) {
+int yui_dom_create(const char* parent_id, const char* json) {
     Layer* root = yui_get_root();
     Layer* parent;
     Layer* nl;
-    if (!root || !parent_id || !id || !json) {
+    if (!root || !parent_id || !json) {
         return -1;
     }
     parent = parent_id[0] == '\0' ? root : find_layer_by_id(root, parent_id);
