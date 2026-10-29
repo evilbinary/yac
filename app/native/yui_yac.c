@@ -623,10 +623,10 @@ int yui_dom_create(const char* parent_id, const char* json) {
     if (!nl) {
         return -3;
     }
-    /* VisibleType is VISIBLE=0, IN_VISIBLE=1 -- this used to be IN_VISIBLE,
-     * so every DOM-created layer stayed invisible and nothing painted at all
-     * (2026-10-29: domtest showed an empty white window). */
-    nl->visible = VISIBLE;
+    /* Show it through the API so lifecycle/on_show and focus bookkeeping run
+     * (a raw `nl->visible = IN_VISIBLE` here once made every DOM layer
+     * invisible -- note VISIBLE is 0, IN_VISIBLE is 1). */
+    layer_set_visible(nl, VISIBLE);
     {
         Layer** nc = realloc(parent->children, sizeof(Layer*) * (parent->child_count + 1));
         if (!nc) {

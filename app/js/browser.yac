@@ -136,9 +136,9 @@ let _ = fmap_put(nth(_js_st_doc0, 1), "querySelector", fun(sel) -> (let f = _dom
 let _ = fmap_put(nth(_js_st_doc0, 1), "querySelectorAll", fun(...a) -> [])
 let _ = fmap_put(nth(_js_st_doc0, 1), "addEventListener", _js_st_noop)
 let _ = fmap_put(nth(_js_st_doc0, 1), "removeEventListener", _js_st_noop)
-let _ = fmap_put(nth(_js_st_doc0, 1), "documentElement", _js_st_elem0)
-let _ = fmap_put(nth(_js_st_doc0, 1), "body", _js_st_elem0)
-let _ = fmap_put(nth(_js_st_doc0, 1), "head", _js_st_elem0)
+/* body/head/documentElement must be REAL nodes: they are where translated apps
+ * mount (document.body.appendChild). The no-op element stub made appendChild
+ * return 0 -> "not a function: 0" (2026-10-29). */
 let _ = fmap_put(nth(_js_st_doc0, 1), "hidden", false)
 let _ = fmap_put(nth(_js_st_doc0, 1), "visibilityState", "visible")
 let _ = fmap_put(nth(_js_st_doc0, 1), "readyState", "complete")
@@ -430,3 +430,8 @@ let _dom_spin(n) =
 
 let _ = fmap_put(nth(_dom_hooks, 1), "spin", fun(n) -> _dom_spin(n))
 let _ = fmap_put(nth(_dom_hooks, 1), "document", fun(_) -> _dom_document(0))
+/* Mount points: translated apps call document.body.appendChild(...). They must
+ * resolve to the real node, so they are registered here (after _dom_document). */
+let _ = fmap_put(nth(_js_st_doc0, 1), "documentElement", ["$acc", fun(_) -> _dom_document(0), _js_st_noop])
+let _ = fmap_put(nth(_js_st_doc0, 1), "body", ["$acc", fun(_) -> _dom_document(0), _js_st_noop])
+let _ = fmap_put(nth(_js_st_doc0, 1), "head", ["$acc", fun(_) -> _dom_document(0), _js_st_noop])
