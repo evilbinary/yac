@@ -1808,16 +1808,22 @@ let rt_gc_collect_ins(_) =
    ["fcall", 10, "yac_purge_dead", []],
    ["mov_imm", 8, 0],
    /* Adaptive next-GC threshold: alloc re-triggers yac_gc when bytes-allocated-
-    * since-last-GC (G+40) reaches ctrl+152, defaulting to 256MiB+1 while that
+    * since-last-GC (G+40) reaches ctrl+152, defaulting to 1GiB+1 while that
     * slot is 0. With the old fixed 16MiB the compiler re-scanned its whole
     * (hundreds of MB) heap every 16MiB of fresh allocation: quadratic time and
     * runaway RSS.
+    *
+    * The FLOOR matters more than the multiplier: measured on a 6000-proc
+    * synthetic unit (2026-10-30), 256MiB floor = 68.6s compile / 0.9GB peak,
+    * 512MiB = 48.9s / 1.2GB, 1GiB = 36.2s / 2.0GB. Marking is NOT cheap
+    * (contradicting the note below): halving the floor nearly doubled the
+    * whole compile, because every phase allocates into the same heap.
     * Threshold is `live` (1x), so the heap settles at live + garbage <= 2*live.
     * 4*live only bought ~4s on LIR but peaked at 8.2GB and 2*live peaked at
     * 4.7-5.3GB on main_full.yac, i.e. GC is cheap here and the multiplier is
     * the whole memory ceiling; 1x halves the garbage allowance for a few
     * seconds of extra marking. */
-   ["mov_imm", 29, 268435456 + 1],
+   ["mov_imm", 29, 1073741824 + 1],
    ["$jcc", ">=u", 28, 29, "gc_ths", "gc_thm"],
    ["label", "gc_thm"],
    ["mov", 28, 29],

@@ -1380,6 +1380,12 @@ let no_skip(name, tag) =
   let _ = tag in
   0 - 1
 
+let emit_gc_ms =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let emit_gc_ms_get(_) = box_get(emit_gc_ms)
+
 let emit_funs_loop(funs, entry, T, op_insn, op_resolve, op_skip) =
   let nfun = len(funs) in
   let out = bytes_new() in
@@ -1391,8 +1397,16 @@ let emit_funs_loop(funs, entry, T, op_insn, op_resolve, op_skip) =
         /* Sweep periodically: a proc's LIR body is dropped right after it is
          * emitted, but the GC only runs on allocation, and emit itself barely
          * allocates -- without this the peak (all the LIR + emit's own tables)
-         * is reached at the very end of the loop. */
-        let _ = if band(i, 255) == 0 then gc_collect() else 0 in
+         * is reached at the very end of the loop.
+         * Every 256 was far too often: on main.js (33880 procs, ~2GB live) the
+         * 132 forced sweeps alone took 862s of the 1080s emit (2026-10-30).
+         * 2048 bounds the un-swept garbage to ~6% of the LIR. */
+        let _ = if band(i, 2047) == 0 then
+            (let g0 = time_ms() in
+             (let _ = gc_collect() in
+              (let _ = box_set(emit_gc_ms, box_get(emit_gc_ms) + (time_ms() - g0)) in
+               if band(i, 4095) == 0 then log_i("emit", "gc_ms", box_get(emit_gc_ms)) else 0)))
+          else 0 in
         let _ =
           if i == 0 or ((i % 20) == 0) then log_i("emit", "fun", i) else 0 in
       let f = nth(funs, i) in

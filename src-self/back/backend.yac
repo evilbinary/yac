@@ -857,7 +857,16 @@ let skip_local_imp(ast, local, i, acc) =
 
 let link_from_ast(ast) =
   let pkgs = ast_packages(ast, 0, []) in
-  let ast1 = skip_local_imp(ast, pkgs, 0, []) in
+  /* skip_local_imp returns reverse(acc), i.e. a CONS list. hoist_imports and
+   * ast_imports index with len()/nth(), which is O(n) on a cons list, so a
+   * 16k-definition unit spent seconds here (873ms -> 3863ms when the unit
+   * doubled). Convert to a listbuf once. */
+  let raw = skip_local_imp(ast, pkgs, 0, []) in
+  let ast1 = list_new() in
+  let cv(p) =
+    if p == [] then 0
+    else (let _ = list_push(ast1, nth(p, 0)) in cv(tail(p))) in
+  let _ = cv(raw) in
   let filled = rewrite_imports(ast1, 0, [], "") in
   let _ = box_set(link_need_box, ast_imports(ast1, 0, [], "")) in
   let _ = box_set(link_local_box, pkgs) in

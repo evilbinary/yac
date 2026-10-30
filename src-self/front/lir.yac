@@ -250,16 +250,19 @@ let tco_fun(f) =
   if len(nth(f, 4)) < 2 then f
   else tco_fun_at(f, tco_find(nth(f, 4), len(nth(f, 4)) - 1, 0, nth(f, 1)))
 
+/* `funs` is a CONS list (cons(entry, reverse(...))), and nth() on a cons list
+ * is O(i): indexing it in a loop made the whole TCO pass O(n^2) in the number
+ * of procs (16k-fn bench: 0.76s -> 10.5s, main.js: minutes). Walk it with
+ * head/tail instead. */
 let tco_prog(p) =
-  let funs = nth(p, 1) in
-  let n = len(funs) in
   let out = list_new() in
-  let loop(i) =
-    if i >= n then out
+  let loop(xs) =
+    if is_int(xs) then out
+    else if xs == [] then out
     else
-      let _ = list_push(out, tco_fun(nth(funs, i))) in
-      loop(i + 1) in
-  ["prog", loop(0), nth(p, 2)]
+      let _ = list_push(out, tco_fun(nth(xs, 0))) in
+      loop(tail(xs)) in
+  ["prog", loop(nth(p, 1)), nth(p, 2)]
 
 /* ---- Γ, Σ, FV ---- */
 
