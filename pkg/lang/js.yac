@@ -482,6 +482,21 @@ let st_strpkg(st) = nth(st, 8)
 let st_obj(st) = nth(st, 9)
 let st_jslib(st) = nth(st, 10)
 let st_truth(st) = nth(st, 11)
+/* 1 when the program contains try/catch/throw (so `_js_exc` guards are
+ * needed); 0 lets emission skip those guards entirely. */
+let st_uexc(st) = nth(st, 15)
+
+/* True when the AST contains try/catch/throw anywhere. */
+let js_has_exc(x) =
+  if is_int(x) then false
+  else if kind(x) == 3 then false
+  else
+    let h = nth(x, 0) in
+    if h == "try" or h == "throw" then true
+    else
+      let n = len(x) in
+      let go(i) = if i >= n then false else if js_has_exc(nth(x, i)) then true else go(i + 1) in
+      go(0)
 let st_prom(st) = nth(st, 12)
 let st_imp(st) = nth(st, 13)
 let st_rest(st) = nth(st, 14)
@@ -3570,7 +3585,8 @@ let js_emit_stmts(stmts, ctx, k, st) =
    * continue-code iterate. Status 1 / this loop's break-code stop. A code for
    * an outer label is left in the box so that label can see it. */
   let after_loop(sc, mine, nxt) =
-    let stop = js_cat(["(if box_get(_js_exc) != 0 then 0 else ", js_sc_step(sc, mine, nxt), ")"]) in
+    let step = js_sc_step(sc, mine, nxt) in
+    let stop = if box_get(st_uexc(st)) == 1 then js_cat(["(if box_get(_js_exc) != 0 then 0 else ", step, ")"]) else step in
     if retf == 0 then stop
     else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", stop, ")"]) in
   /* Emit a statement list so a `throw` (which only sets _js_exc) stops it.
@@ -3585,7 +3601,8 @@ let js_emit_stmts(stmts, ctx, k, st) =
       if i >= nsl then "0"
       else
         let s1 = (box_get(js_stmts_box))([nth(xs, i)], ctx2, "0", st) in
-        js_cat(["(if box_get(_js_exc) != 0 then 0 else (if ", jumped, " then 0 else (let _ = ", s1, " in ", rec(i + 1), ")))"]) in
+        let core = js_cat(["(if ", jumped, " then 0 else (let _ = ", s1, " in ", rec(i + 1), "))"]) in
+        if box_get(st_uexc(st)) == 1 then js_cat(["(if box_get(_js_exc) != 0 then 0 else ", core, ")"]) else core in
     rec(0) in
   /* Reuse an outer status box so a labelled break reaches that label.
    * `js_lab_here` is consumed by the loop the label sits on. */
@@ -3951,9 +3968,11 @@ let js_emit_stmts(stmts, ctx, k, st) =
          * box: both must stop the rest of the statement list, or the statement
          * after a throw/continue ran anyway. */
         let guard(cont) =
+          let core =
+            if brk2 == 0 then cont
+            else js_cat(["(if box_get(", brk2, ") != 0 then 0 else ", cont, ")"]) in
           let inner =
-            if brk2 == 0 then js_cat(["(if box_get(_js_exc) != 0 then 0 else ", cont, ")"])
-            else js_cat(["(if box_get(_js_exc) != 0 then 0 else (if box_get(", brk2, ") != 0 then 0 else ", cont, "))"]) in
+            if box_get(st_uexc(st)) == 1 then js_cat(["(if box_get(_js_exc) != 0 then 0 else ", core, ")"]) else core in
           if retf == 0 then inner
           else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", inner, ")"]) in
         /* ANY statement can throw (a call is an expression statement), so the
@@ -4103,7 +4122,9 @@ let js_to_yac(src) =
   let _ = box_set(uimp, list_new()) in
   let urest = box_new() in
   let _ = box_set(urest, list_new()) in
-  let st = [err, ns, ufmap, umath, ustr, ubool, utype, ulib, ustrpkg, uobj, ujslib, utruth, ubuiltin, uimp, urest] in
+  let uexc = box_new() in
+  let _ = box_set(uexc, 0) in
+  let st = [err, ns, ufmap, umath, ustr, ubool, utype, ulib, ustrpkg, uobj, ujslib, utruth, ubuiltin, uimp, urest, uexc] in
   let _ = box_set(js_stmts_parse_box, js_parse_stmts) in
   let _ = box_set(js_class_box, js_parse_classexpr) in
   let _ = box_set(js_stmts_box, js_emit_stmts) in
@@ -4120,6 +4141,7 @@ let js_to_yac(src) =
   let _ = box_set(js_mc, fmap_new(0)) in
   let toks = js_lex(src) in
   let r = js_parse_stmts(toks, 0, ["list", 0], st) in
+  let _ = box_set(uexc, (if js_has_exc(nth(r, 0)) then 1 else 0)) in
   let imps = box_get(uimp) in
   let ni = len(imps) in
   let ibind(i, acc) =
@@ -4398,7 +4420,9 @@ let js_dump_src(src) =
   let _ = box_set(uimp, list_new()) in
   let urest = box_new() in
   let _ = box_set(urest, list_new()) in
-  let st = [err, ns, ufmap, umath, ustr, ubool, utype, ulib, ustrpkg, uobj, ujslib, utruth, ubuiltin, uimp, urest] in
+  let uexc = box_new() in
+  let _ = box_set(uexc, 0) in
+  let st = [err, ns, ufmap, umath, ustr, ubool, utype, ulib, ustrpkg, uobj, ujslib, utruth, ubuiltin, uimp, urest, uexc] in
   let _ = box_set(js_stmts_parse_box, js_parse_stmts) in
   let _ = box_set(js_class_box, js_parse_classexpr) in
   let _ = box_set(js_stmts_box, js_emit_stmts) in

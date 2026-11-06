@@ -297,8 +297,8 @@ let sset_has(m, k) =
  * Every value it holds is the map's true min depth, or -1 for "known absent
  * from this call's map", so a hit is exact; slots are stamped per free_vars
  * call, so no clearing is needed. */
-let fv_c_n = 8192
-let fv_c_mask = 8191
+let fv_c_n = 131072
+let fv_c_mask = 131071
 
 let fv_c_box =
   let b = box_new() in
