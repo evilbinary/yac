@@ -644,6 +644,23 @@ static Value prim_bytes_append(Value *args, int nargs, PrimCtx *ctx) {
     return v_unit();
 }
 
+/* bytes_append_le(b, n, v) -> unit. Append the low n bytes of v little-endian. */
+static Value prim_bytes_append_le(Value *args, int nargs, PrimCtx *ctx) {
+    (void)nargs;
+    if (args[0].tag != V_BYTES || args[1].tag != V_INT || args[2].tag != V_INT) {
+        ctx->errored = true; strcpy(ctx->errmsg, "bytes-append-le: expected buffer, count, value");
+        return VALUE_NULL;
+    }
+    Bytes *b = args[0].u.bytes;
+    long n = args[1].u.i, v = args[2].u.i;
+    if (n < 1 || n > 8) { ctx->errored = true; strcpy(ctx->errmsg, "bytes-append-le: count out of range"); return VALUE_NULL; }
+    bytes_grow(b, b->len + 8);
+    uint64_t u = (uint64_t)v;
+    for (long i = 0; i < n; i++) b->data[b->len + i] = (unsigned char)(u >> (8 * i));
+    b->len += (int)n;
+    return v_unit();
+}
+
 /* bytes_extend(dst, src) -> unit. Append all bytes of src onto dst (memcpy). */
 static Value prim_bytes_extend(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
@@ -1346,6 +1363,7 @@ static const Prim PRIMS[] = {
     {"list_rev", 1, true, true, prim_reverse},
     {"bytes_put", 3, false, true, prim_bytes_put},
     {"bytes_append", 2, false, true, prim_bytes_append},
+    {"bytes_append_le", 3, false, true, prim_bytes_append_le},
     {"bytes_extend", 2, false, true, prim_bytes_extend},
     {"bytes_cat_str", 2, false, true, prim_bytes_cat_str},
     {"bytes_len", 1, true, false, prim_bytes_len},

@@ -736,6 +736,28 @@ let rt_bytes_append_ins(_) =
    ["obj_st_int", 1, rt_field(3), 5],
    ["ret", 1]]
 
+/* Append the low n bytes of v (little-endian) in one call. Encoding helpers
+ * used to append every byte separately: jcc/call/imm32 each cost 4-8 calls of
+ * bytes_append, and the 126MB image made that the emit bottleneck. The store
+ * is always a full qword, so the buffer is grown to len+8; the extra bytes are
+ * beyond len and get overwritten by the next append. */
+let rt_bytes_append_le_ins(_) =
+  [["local", 14, 3],
+   ["mref", 4, 1, rt_field(3)],
+   ["tag", 5, 4],
+   ["mov_imm", 6, 8 + 8],
+   ["add", 7, 5, 6],
+   ["fcall", 8, "yac_bytes_grow", [1, 7]],
+   ["mref", 9, 1, rt_field(5)],
+   ["mov_imm", 10, 32 + 32],
+   ["add", 11, 5, 10],
+   ["untag", 12, 3],
+   ["st64", 9, 11, 12],
+   ["add", 5, 5, 2],
+   ["obj_st_int", 1, rt_field(3), 5],
+   ["mov_imm", 12, 0 + 0],
+   ["ret", 12]]
+
 let rt_bytes_ref_ins(_) =
   [["local", 8, 2],
    ["mref", 3, 1, rt_field(5)],
@@ -3382,6 +3404,7 @@ let runtime_funs(_) =
    ["$proc", "yac_bytes_new", 0, 0, rt_bytes_new_ins(0), "yac_bytes_new"],
    ["$proc", "yac_bytes_grow", 2, 0, rt_bytes_grow_ins(0), "yac_bytes_grow"],
    ["$proc", "yac_bytes_append", 2, 0, rt_bytes_append_ins(0), "yac_bytes_append"],
+   ["$proc", "yac_bytes_append_le", 3, 0, rt_bytes_append_le_ins(0), "yac_bytes_append_le"],
    ["$proc", "yac_bytes_ref", 2, 0, rt_bytes_ref_ins(0), "yac_bytes_ref"],
    ["$proc", "yac_bytes_put", 3, 0, rt_bytes_put_ins(0), "yac_bytes_put"],
    ["$proc", "yac_mem_load", 3, 0, rt_mem_load_ins(0), "yac_mem_load"],
