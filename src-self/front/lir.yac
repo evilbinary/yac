@@ -92,6 +92,36 @@ let imap_find(xs, k, i) =
   else if nth(nth(xs, i), 0) == k then nth(nth(xs, i), 1)
   else imap_find(xs, k, i + 1)
 
+/* resolve_call_h looks up every unresolved name in the import map; the linear
+ * scan above was 117M steps on main.js. Cache an fmap keyed by the CURRENT
+ * list object: imap_box changes by cons (or a whole save/restore), so pointer
+ * identity is the invalidation. Walk head->tail and keep the first entry per
+ * name, matching the old newest-first scan. */
+let imap_cache_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let imap_map_build(xs) =
+  let m = fmap_new(0) in
+  let _ = fmap_init_n(m, 256) in
+  let go(p) =
+    if p == [] then 0
+    else
+      let e = nth(p, 0) in
+      let k = nth(e, 0) in
+      let _ = if fmap_get(m, k) != 0 then 0 else fmap_put(m, k, nth(e, 1)) in
+      go(tail(p)) in
+  let _ = go(xs) in
+  let _ = box_set(imap_cache_box, [xs, m]) in
+  m
+
+let imap_map_of(xs) =
+  let c = box_get(imap_cache_box) in
+  if c == 0 then imap_map_build(xs)
+  else if nth(c, 0) == xs then nth(c, 1)
+  else imap_map_build(xs)
+
 let malias_find(xs, k, i) =
   if i >= len(xs) then 0
   else if nth(nth(xs, i), 0) == k then nth(nth(xs, i), 1)
@@ -774,7 +804,7 @@ let is_prim_name(w) = is_prim_name_h(w, hash_str(w))
 let resolve_call_h(fs, nm, h) =
   if is_prim_name_h(nm, h) then nm
   else
-    let m = imap_find(box_get(imap_box), nm, 0) in
+    let m = fmap_get(imap_map_of(box_get(imap_box)), nm) in
     if m != 0 then m
     else if name_has_slash(nm, 0) then nm
     /* kernel / rt.* procs are registered bare in Sigma (Σ field 5 `globals`):

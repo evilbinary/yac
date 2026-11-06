@@ -73,18 +73,40 @@ let host_names_box =
                       "target_live", "host_arch", "host_format"]) in
   b
 
-let host_names_set(xs) = box_set(host_names_box, xs)
+/* Intern the 10 host names once. host_id used to call intern() for every
+ * candidate on every fcall (~6.2M intern calls on main.js). */
+let host_ids_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let host_names_set(xs) =
+  let _ = box_set(host_ids_box, 0) in
+  box_set(host_names_box, xs)
 
 let host_names(_) =
   let v = box_get(host_names_box) in
   if v == 0 then [] else v
 
-let host_id(name, i) =
-  if i >= len(host_names(0)) then 0 - 1
+let host_ids_fill(xs, i, acc) =
+  if i >= len(xs) then acc
   else
-    let n = intern(nth(host_names(0), i)) in
-    if n == name then i
-    else host_id(name, i + 1)
+    let _ = list_push(acc, intern(nth(xs, i))) in
+    host_ids_fill(xs, i + 1, acc)
+
+let host_ids(_) =
+  let v = box_get(host_ids_box) in
+  if v != 0 then v
+  else
+    let l = host_ids_fill(host_names(0), 0, list_new()) in
+    let _ = box_set(host_ids_box, l) in
+    l
+
+let host_id(name, i) =
+  let ids = host_ids(0) in
+  if i >= len(ids) then 0 - 1
+  else if nth(ids, i) == name then i
+  else host_id(name, i + 1)
 
 
 /* Argument list of the one dynamic call form, `icall dst clos [args]`.
@@ -249,20 +271,21 @@ let emit_id_scan(funs, name, i, n) =
   else
     let nm = nth(nth(funs, i), 1) in
     if is_int(nm) then emit_id_scan(funs, name, i + 1, n)
-    else if intern(nm) == name then i
+    else if nm == name then i
     else emit_id_scan(funs, name, i + 1, n)
 
-/* fmap_get miss is 0; fun id 0 is _start. Store i+1 so 0 is only a miss. */
+/* fmap_get miss is 0; fun id 0 is _start. Store i+1 so 0 is only a miss.
+ * Keys are compared by content (lib.map), so the LIR name does NOT need to be
+ * interned first -- doing that cost one global intern per call/closure. */
 let emit_map_get(m, k) =
-  let ik = intern(k) in
-  let e = fmap_get(m, ik) in
+  let e = fmap_get(m, k) in
   if e != 0 then e - 1
   else
     let h = box_get(emit_ids_hold) in
     if h == 0 then 0
     else if is_int(h) then 0
     else
-      let idx = emit_id_scan(nth(h, 0), intern(ik), 0, len(nth(h, 0))) in
+      let idx = emit_id_scan(nth(h, 0), k, 0, len(nth(h, 0))) in
       /* A miss here would silently bake offs[0] -- the FIRST proc's entry --
        * as the patch target: the wrong function, called with the wrong ABI,
        * and no trace of why. All procs are registered before any body is
@@ -273,7 +296,7 @@ let emit_map_get(m, k) =
       if idx < 0 then
         if str_len(k) >= 5 and str_ref(k, 0) == 112
            and str_ref(k, 1) == 114 and str_ref(k, 2) == 111 then 0
-        else if host_id(intern(k), 0) >= 0 then
+        else if host_id(k, 0) >= 0 then
           /* A host leaf (@name). Only the host arch's emitter bakes the G+136
            * host-slot table, so a CROSS target has nowhere to resolve it. Say
            * that instead of leaving the user with "unknown proc". */
@@ -283,7 +306,7 @@ let emit_map_get(m, k) =
       else idx
 
 let emit_map_put(m, k, v) =
-  let _ = fmap_put(m, intern(k), v) in
+  let _ = fmap_put(m, k, v) in
   m
 
 /* Fun id table: bind procs first, then helpers so reserved names win.
@@ -406,40 +429,38 @@ let is_yac_proc_name(nm) =
   n >= 4 and str_ref(nm, 0) == 121 and str_ref(nm, 1) == 97
     and str_ref(nm, 2) == 99 and str_ref(nm, 3) == 95
 
-/* Target-frame table for the emit in progress: [name, unmarked?] per proc.
- * Each backend publishes its `funs` here before emitting, because the tcall
- * emitter has only the target's NAME in hand. */
+/* Target-frame table for the emit in progress: interned name -> flag+1
+ * (1 = marked/self ABI, 2 = raw). A linear scan here was 80M steps on
+ * main.js (tcall_raw_of, ~84s under the profiler): 5014 tail calls each
+ * walked the whole 33k-proc table. The fmap keeps the old resolution order:
+ * iterate funs from the end so the LAST definition of a duplicate name wins
+ * (it was the first entry the reverse-order list lookup saw). */
 let tcall_tab_box =
   let b = box_new() in
-  let _ = box_set(b, list_new()) in
+  let _ = box_set(b, 0) in
   b
 
-let tcall_tab_go(funs, i, acc) =
-  if i < 0 then acc
+let tcall_tab_go(funs, i, m) =
+  if i < 0 then m
   else
     let f = nth(funs, i) in
-    let _ = list_push(acc, [nth(f, 1), if fun_selfabi(f) then 0 else 1]) in
-    tcall_tab_go(funs, i - 1, acc)
+    let nm = nth(f, 1) in
+    let v = if fun_selfabi(f) then 1 else 2 in
+    let _ = if fmap_get(m, nm) != 0 then 0 else fmap_put(m, nm, v) in
+    tcall_tab_go(funs, i - 1, m)
 
-/* Build the table in the SAME order the old cons-list lookup saw (last fun
- * first) so duplicate names resolve identically, but as a buffer so both
- * lookup (nth) and len are O(1) instead of O(n) -- the funs loop called the
- * lookup per tcall, making it the dominant O(n^2) cost of the whole emit. */
 let tcall_tab_set(funs) =
-  box_set(tcall_tab_box, tcall_tab_go(funs, len(funs) - 1, list_new()))
-
-let tcall_tab_lookup(t, nm, i) =
-  if i >= len(t) then 0 - 1
-  else if nth(nth(t, i), 0) == nm then nth(nth(t, i), 1)
-  else tcall_tab_lookup(t, nm, i + 1)
+  let m = fmap_new(0) in
+  let _ = fmap_init_n(m, 4096) in
+  box_set(tcall_tab_box, tcall_tab_go(funs, len(funs) - 1, m))
 
 /* traw for a tail call: true = the target's frame is unmarked. A target that
  * is not in this image (external / another image) falls back to the yac_
  * convention -- which is what arm64/riscv64 applied to every target before. */
 let tcall_raw_of(nm) =
-  let v = tcall_tab_lookup(box_get(tcall_tab_box), nm, 0) in
-  if v < 0 then is_yac_proc_name(nm)
-  else v != 0
+  let v = fmap_get(box_get(tcall_tab_box), nm) in
+  if v == 0 then is_yac_proc_name(nm)
+  else v != 1
 
 /* ---- profiler hooks (FLAT_ABI.md 8.2 #8) --------------------------------
  * The kernel calls the hooks by bare name (rt_prof_enter_ins /
@@ -1402,8 +1423,9 @@ let emit_funs_loop(funs, entry, T, op_insn, op_resolve, op_skip) =
          * 132 forced sweeps alone took 862s of the 1080s emit (2026-10-30).
          * The first 8192 procs are deliberately skipped: nothing has been
          * freed yet, so those collections can only re-mark the full LIR.
-         * 4096 after that bounds the un-swept garbage to ~12% of the LIR. */
-        let _ = if i >= 8192 and band(i, 4095) == 0 then
+         * 8192 after that bounds the un-swept garbage to ~24% of the LIR;
+         * 4096 traded ~25s more marking for a lower peak. */
+        let _ = if i >= 8192 and band(i, 8191) == 0 then
             (let g0 = time_ms() in
              (let _ = gc_collect() in
               (let _ = box_set(emit_gc_ms, box_get(emit_gc_ms) + (time_ms() - g0)) in

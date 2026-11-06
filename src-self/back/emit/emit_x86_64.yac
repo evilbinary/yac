@@ -11,7 +11,7 @@ import back.pack.elf {elf_dynexp_set, elf_int, elf_pic, funsym_set}
 import back.pack.pe {pe_iat_off}
 import back.pack.target {JIT_VADDR}
 import lib.log {log, log_i}
-import lib.map {intern, fmap_new64, fmap_put, fmap_get}
+import lib.map {intern, fmap_new, fmap_init_n, fmap_new64, fmap_put, fmap_get}
 
 /* emit_x86_64.yac — x86-64 emit of LIR.
  *
@@ -609,12 +609,13 @@ let x86_cop_fcall(st, insn) =
   let nargs = len(args) in
   let nstack = if nargs > 6 then nargs - 6 else 0 in
   let _ = emit_x86_push_stack_args(b, args, nargs) in
-  let hid = host_id(intern(fn), 0) in
-  let xid = extsym_find(intern(fn), 0) in
+  let ifn = intern(fn) in
+  let hid = host_id(ifn, 0) in
+  let xid = extsym_find(ifn, 0) in
   let via_slot0 = hid >= 0 or xid >= 0 in
   let local =
     if via_slot0 then false
-    else emit_map_get(nth(st, 4), intern(fn)) != 0 in
+    else emit_map_get(nth(st, 4), fn) != 0 in
   let via_slot = via_slot0 and local == false in
   let _ =
     if hid >= 0 then
@@ -2051,20 +2052,51 @@ let x86_skipat(name, tag) =
 /* Per-proc patches are a cons list (emit_patch_* conses newest first). Walking
  * it by index is O(n^2): the JS translator's giant proc produces >100k patches
  * and the profile put 33% of the whole compile in this loop alone. Walk with
- * tail() instead -- same front-to-back order, O(n) total. */
+ * tail() instead -- same front-to-back order, O(n) total.
+ *
+ * The label side was still O(patches x labels): label_has + lookup_name each
+ * scanned the whole labels list for every patch (176M+177M steps on main.js).
+ * For large procs build name -> pos+1 in an fmap once; pos 0 is a valid label,
+ * so store pos+1 and treat 0 as a miss. First occurrence wins, matching the
+ * old head-first scan (label_put conses newest first). Small procs keep the
+ * linear path: building a map would cost more than the scan. */
 let resolve_local_labels(b, labels, patches) =
   let keep = list_new() in
-  let step(xs) =
-    if xs == [] then keep
-    else
-      let p = nth(xs, 0) in
-      let _ =
-        if len(p) >= 3 then list_push(keep, p)
-        else if label_has(labels, nth(p, 1)) then
-          apply_patch(b, nth(p, 0), lookup_name(labels, nth(p, 1)))
-        else list_push(keep, p) in
-      step(tail(xs)) in
-  step(patches)
+  if len(patches) >= 64 and len(labels) >= 64 then
+    let lm = fmap_new(0) in
+    let _ = fmap_init_n(lm, 256) in
+    let build(xs) =
+      if xs == [] then 0
+      else
+        let e = nth(xs, 0) in
+        let nm = nth(e, 0) in
+        let _ = if fmap_get(lm, nm) != 0 then 0 else fmap_put(lm, nm, nth(e, 1) + 1) in
+        build(tail(xs)) in
+    let _ = build(labels) in
+    let step(xs) =
+      if xs == [] then keep
+      else
+        let p = nth(xs, 0) in
+        let _ =
+          if len(p) >= 3 then list_push(keep, p)
+          else
+            let v = fmap_get(lm, nth(p, 1)) in
+            if v != 0 then apply_patch(b, nth(p, 0), v - 1)
+            else list_push(keep, p) in
+        step(tail(xs)) in
+    step(patches)
+  else
+    let step(xs) =
+      if xs == [] then keep
+      else
+        let p = nth(xs, 0) in
+        let _ =
+          if len(p) >= 3 then list_push(keep, p)
+          else if label_has(labels, nth(p, 1)) then
+            apply_patch(b, nth(p, 0), lookup_name(labels, nth(p, 1)))
+          else list_push(keep, p) in
+        step(tail(xs)) in
+    step(patches)
 
 let emit_program_x86_64(prog, load_vaddr, text_off, fmt) =
   let js = emit_jsess(0) in
