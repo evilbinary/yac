@@ -56,7 +56,8 @@ let lir_perf(_) = box_get(lir_perf_box)
 
 let lir_perf_add(i, v) =
   let a = box_get(lir_perf_box) in
-  list_set(a, i, nth(a, i) + v)
+  if is_int(a) then 0
+  else list_set(a, i, nth(a, i) + v)
 
 let pkg_is_rt(p) =
   if str_len(p) < 3 then false
@@ -1002,6 +1003,308 @@ let fv_free_decide(nm, h, funs, env) =
     else if nth(se, 1) == 0 then 0
     else 1
 
+/* ---- one-pass capture pre-pass ----------------------------------------
+ * free_vars is called once per letfun and re-walks its whole subtree: on
+ * main.js that is 5.9M shadow puts for ~0.5M real ANF binds (a nested body is
+ * visited once per enclosing lambda). This pass walks the unit's ANF ONCE
+ * with a scope stack and records each letfun's capture list, keyed by its
+ * bind object; lir_letfun_prep then looks it up instead of calling free_vars.
+ *
+ * A ref is a capture of every active lambda from the innermost one out to
+ * (but excluding) the lambda whose own body binds the name -- the caps chain.
+ * The scope stack maps a name to [collector depth, kind, previous], kinds:
+ *   0 local value/param -> inner lambdas always capture it (Gamma slot)
+ *   1 static top-level  -> never captured (tlv: gval / by-name ycall)
+ *   2 enclosing letfun  -> captured; the binder's own lambda also records the
+ *                          ref so lir_letfun_prep keeps is_rec (SELF sentinel)
+ * A top-level item's LAST bind is its static definition (toplevel_seed); every
+ * other ANF bind is a real local. Names not bound in the live scope consult
+ * fv_free_decide once (cached): the enclosing-Gamma test there only matters
+ * when a local shadows a Sigma name, and a live-scope miss means no such
+ * local is in scope.
+ *
+ * Anything this pass does not understand (an anonymous `fun` atom, an unknown
+ * ANF bind) sets fv_pre_bad, and lir_letfun_prep falls back to free_vars for
+ * the whole unit -- correctness first, speed second. */
+let fv_pre_map_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let fv_pre_env_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let fv_pre_cols_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let fv_pre_depth_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let fv_pre_funs_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let fv_pre_dec_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let fv_pre_bad_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+
+let fv_pre_add_level(nm, from) =
+  let cols = box_get(fv_pre_cols_box) in
+  let d = box_get(fv_pre_depth_box) in
+  let go(i) =
+    if i >= d then 0
+    else
+      let col = nth(cols, i) in
+      let seen = nth(col, 0) in
+      let _ =
+        if fmap_get(seen, nm) != 0 then 0
+        else
+          let _ = fmap_put(seen, nm, 1) in
+          list_push(nth(col, 1), nm) in
+      go(i + 1) in
+  go(from)
+
+let fv_pre_decide(nm, h) =
+  let m0 = box_get(fv_pre_dec_box) in
+  let m =
+    if m0 != 0 then m0
+    else
+      let x = fmap_new(0) in
+      let _ = fmap_init_n(x, 1024) in
+      let _ = box_set(fv_pre_dec_box, x) in
+      x in
+  let v = fmap_get_h(m, nm, h) in
+  if v != 0 then v - 1
+  else
+    let d = fv_free_decide(nm, h, box_get(fv_pre_funs_box), 0) in
+    let _ = fmap_put_h(m, nm, d + 1, h) in
+    d
+
+let fv_pre_ref(nm) =
+  let l = fmap_get(box_get(fv_pre_env_box), nm) in
+  if l != 0 then
+    let kd = nth(l, 1) in
+    let lv = nth(l, 0) in
+    if kd == 1 then 0
+    else if kd == 2 then fv_pre_add_level(nm, lv - 1)
+    else fv_pre_add_level(nm, lv)
+  else
+    let h = hash_str(nm) in
+    if fv_pre_decide(nm, h) == 1 then fv_pre_add_level(nm, 0) else 0
+
+let fv_pre_bind(nm, kd) =
+  let env = box_get(fv_pre_env_box) in
+  let p = fmap_get(env, nm) in
+  fmap_put(env, nm, [box_get(fv_pre_depth_box), kd, p])
+
+let fv_pre_unbind(nm) =
+  let env = box_get(fv_pre_env_box) in
+  fmap_put(env, nm, nth(fmap_get(env, nm), 2))
+
+let fv_pre_atom(a) =
+  let k = nth(a, 0) in
+  if k == "var" then fv_pre_ref(nth(a, 1))
+  else if k == "fun" then box_set(fv_pre_bad_box, 1)
+  else 0
+
+let fv_pre_push(_) =
+  let cols = box_get(fv_pre_cols_box) in
+  let d = box_get(fv_pre_depth_box) in
+  let col = [fmap_new64(0), list_new()] in
+  let _ = if d >= len(cols) then list_push(cols, col) else list_set(cols, d, col) in
+  box_set(fv_pre_depth_box, d + 1)
+
+let fv_pre_pop(b) =
+  let d = box_get(fv_pre_depth_box) - 1 in
+  let _ = box_set(fv_pre_depth_box, d) in
+  let out = nth(nth(box_get(fv_pre_cols_box), d), 1) in
+  let caps = list_rev(list_rev(out)) in
+  fmap_put_h(box_get(fv_pre_map_box), b, caps, ident_hash(b))
+
+let fv_pre_unbind_list(xs, i) =
+  if i <= 0 then 0
+  else
+    let _ = fv_pre_unbind(nth(xs, i - 1)) in
+    fv_pre_unbind_list(xs, i - 1)
+
+let fv_pre_bind_list(xs, i, n, kd) =
+  if i >= n then 0
+  else
+    let _ = fv_pre_bind(nth(xs, i), kd) in
+    fv_pre_bind_list(xs, i + 1, n, kd)
+
+let fv_pre_args(args, i, n) =
+  if i >= n then 0
+  else
+    let _ = fv_pre_atom(nth(args, i)) in
+    fv_pre_args(args, i + 1, n)
+
+/* Mutual recursion (letfun <-> body <-> bind) needs late binding: yac has no
+ * mutual `let rec`, so each entry resolves its implementation from a box. */
+let fv_pre_anf_box = box_new()
+let fv_pre_bind_box = box_new()
+let fv_pre_letfun_box = box_new()
+
+let fv_pre_anf(a, top) = (box_get(fv_pre_anf_box))(a, top)
+let fv_pre_bind_one(b, lastb) = (box_get(fv_pre_bind_box))(b, lastb)
+let fv_pre_letfun(b, kd) = (box_get(fv_pre_letfun_box))(b, kd)
+
+let fv_pre_letfun_impl(b, kd) =
+  let nm = nth(b, 1) in
+  let ps = nth(b, 2) in
+  let np = len(ps) in
+  /* A top-level (static) proc has no object: refs to its own name inside its
+   * body resolve through Sigma (ycall / gvar), exactly like any other static
+   * top-level name. A nested proc binds its name as kind 2 so recursive refs
+   * keep is_rec (the SELF sentinel) and nested lambdas capture the object. */
+  let selfkd = if kd == 1 then 1 else 2 in
+  let _ = fv_pre_push(0) in
+  let _ = fv_pre_bind(nm, selfkd) in
+  let _ = fv_pre_bind_list(ps, 0, np, 0) in
+  let _ = fv_pre_anf(nth(b, 3), 0) in
+  let _ = fv_pre_unbind_list(ps, np) in
+  let _ = fv_pre_unbind(nm) in
+  let _ = fv_pre_pop(b) in
+  fv_pre_bind(nm, kd)
+
+/* The last bind of a top-level item is the unit definition toplevel_seed
+ * registered in Sigma's tlv map. Everything else (and every bind of a nested
+ * body) is a real local and is captured normally. */
+let fv_pre_static(b, lastb, k) =
+  if b != lastb then 0
+  else if k != "let" and k != "letfun" then 0
+  else
+    let nm = nth(b, 1) in
+    if sigma_kind_h(box_get(fv_pre_funs_box), nm, hash_str(nm)) != 0 then 1 else 0
+
+let fv_pre_bind_impl(b, lastb) =
+  let k = nth(b, 0) in
+  let kd = fv_pre_static(b, lastb, k) in
+  if k == "let" then
+    let atm = nth(b, 2) in
+    let _ = if nth(atm, 0) == "var" then 0 else fv_pre_atom(atm) in
+    fv_pre_bind(nth(b, 1), kd)
+  else if k == "letbin" then
+    let _ = fv_pre_atom(nth(b, 3)) in
+    let _ = fv_pre_atom(nth(b, 4)) in
+    fv_pre_bind(nth(b, 1), kd)
+  else if k == "letcall" then
+    let fn = nth(b, 2) in
+    let _ =
+      if nth(fn, 0) == "qvar" then 0
+      else if nth(fn, 0) == "var" then
+        (if is_prim_name(nth(fn, 1)) then 0 else fv_pre_atom(fn))
+      else fv_pre_atom(fn) in
+    let args = nth(b, 3) in
+    let _ = fv_pre_args(args, 0, len(args)) in
+    fv_pre_bind(nth(b, 1), kd)
+  else if k == "letif" then
+    let _ = fv_pre_atom(nth(b, 2)) in
+    let _ = fv_pre_anf(nth(b, 3), 0) in
+    let _ = fv_pre_anf(nth(b, 4), 0) in
+    fv_pre_bind(nth(b, 1), kd)
+  else if k == "letfun" then fv_pre_letfun(b, kd)
+  else if k == "letthrow" then
+    let _ = fv_pre_atom(nth(b, 2)) in
+    let _ = fv_pre_atom(nth(b, 3)) in
+    fv_pre_bind(nth(b, 1), kd)
+  else if k == "letcallcc" then
+    let _ = fv_pre_atom(nth(b, 3)) in
+    let _ = fv_pre_bind(nth(b, 1), kd) in
+    let _ = fv_pre_anf(nth(b, 4), 0) in
+    let _ = fv_pre_bind(nth(b, 2), 0) in
+    let _ = fv_pre_unbind(nth(b, 2)) in
+    fv_pre_unbind(nth(b, 1))
+  else box_set(fv_pre_bad_box, 1)
+
+let fv_pre_last_cons(xs) =
+  if xs == [] or xs == 0 then 0
+  else
+    let t = tail(xs) in
+    if t == [] then nth(xs, 0)
+    else fv_pre_last_cons(t)
+
+let fv_pre_last_bind(binds) =
+  if kind(binds) == 5 then
+    let n = len(binds) in
+    if n == 0 then 0 else nth(binds, n - 1)
+  else fv_pre_last_cons(binds)
+
+let fv_pre_anf_impl(anf, top) =
+  let binds = nth(anf, 0) in
+  let lastb = if top == 1 then fv_pre_last_bind(binds) else 0 in
+  let done = list_new() in
+  let put(b) =
+    let _ = fv_pre_bind_one(b, lastb) in
+    list_push(done, nth(b, 1)) in
+  let _ =
+    if kind(binds) == 5 then
+      let n = len(binds) in
+      let go(i) =
+        if i >= n then 0
+        else (let _ = put(nth(binds, i)) in go(i + 1)) in
+      go(0)
+    else
+      let go(xs) =
+        if xs == [] or xs == 0 then 0
+        else (let _ = put(nth(xs, 0)) in go(tail(xs))) in
+      go(binds) in
+  let _ = fv_pre_atom(nth(anf, 1)) in
+  fv_pre_unbind_list(done, len(done))
+
+let _ = box_set(fv_pre_anf_box, fv_pre_anf_impl)
+let _ = box_set(fv_pre_bind_box, fv_pre_bind_impl)
+let _ = box_set(fv_pre_letfun_box, fv_pre_letfun_impl)
+
+let fv_pre_scan(items, funs) =
+  let _ =
+    let m = fmap_new(0) in
+    let _ = fmap_init_n(m, 4096) in
+    box_set(fv_pre_map_box, m) in
+  let _ =
+    let e = fmap_new(0) in
+    let _ = fmap_init_n(e, 4096) in
+    box_set(fv_pre_env_box, e) in
+  let _ = box_set(fv_pre_cols_box, list_new()) in
+  let _ = box_set(fv_pre_depth_box, 0) in
+  let _ = box_set(fv_pre_funs_box, funs) in
+  let _ = box_set(fv_pre_dec_box, 0) in
+  let _ = box_set(fv_pre_bad_box, 0) in
+  let n = len(items) in
+  let go(i) =
+    if i >= n then 0
+    else
+      let it = nth(items, i) in
+      let _ = if it == 0 then 0 else fv_pre_anf(it, 1) in
+      go(i + 1) in
+  go(0)
+
+let fv_pre_caps(b) =
+  if box_get(fv_pre_bad_box) != 0 then 0
+  else
+    let m = box_get(fv_pre_map_box) in
+    if m == 0 then 0 else fmap_get_h(m, b, ident_hash(b))
+
+/* Drop every pre-pass table when the unit is lowered: the cache keeps the ANF
+ * bind objects (and the captured names) alive, so a global map would make all
+ * later collections re-mark the whole unit (pack's collect went 0.05s -> 7.8s
+ * on main.js). */
+let fv_pre_release(_) =
+  let _ = box_set(fv_pre_map_box, 0) in
+  let _ = box_set(fv_pre_env_box, 0) in
+  let _ = box_set(fv_pre_cols_box, 0) in
+  let _ = box_set(fv_pre_depth_box, 0) in
+  let _ = box_set(fv_pre_funs_box, 0) in
+  let _ = box_set(fv_pre_dec_box, 0) in
+  box_set(fv_pre_bad_box, 0)
+
 let free_vars(fnbody, params, funs, env) =
   let fv(anf, acc, shdw) =
     let atom_vars(atom, a, sh) =
@@ -1849,7 +2152,10 @@ let lir_letfun_prep(b, s) =
     else base in
   let gname = intern(gname0) in
   let tf = time_ns() in
-  let fvs_raw = free_vars(body, params, nth(s, 3), env) in
+  let fvs_cached = fv_pre_caps(b) in
+  let fvs_raw =
+    if fvs_cached != 0 then fvs_cached
+    else free_vars(body, params, nth(s, 3), env) in
   let _ = lir_perf_add(0, time_ns() - tf) in
   let _ = lir_perf_add(1, 1) in
   let is_rec = in_list(name, fvs_raw) in
@@ -2095,8 +2401,12 @@ let lir_expr(ast, st) = lir_expr_i(ast, pack_i(st, 0))
 
 /* st = [env, ctr, Σ, uid, insns, slot] */
 let lir_all(i, items, st, n) =
-  if i >= n then st
+  if i >= n then
+    (let _ = fv_pre_release(0) in st)
   else
+    /* One bottom-up capture scan for the whole unit; lir_letfun_prep then
+     * reads its result instead of re-walking each lambda's subtree. */
+    let _ = if i == 0 then fv_pre_scan(items, nth(st, 2)) else 0 in
     let r = lir_expr(nth(items, i),
               st_no([nth(st, 4), nth(st, 0), nth(st, 1), nth(st, 2), nth(st, 3)])) in
     /* items is a listbuf (anf_all fills it with list_push). Drop this item's

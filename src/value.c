@@ -459,16 +459,20 @@ static Value prim_strlen(Value *args, int nargs, PrimCtx *ctx) {
 
 /* str_hash(s) -> int; same polyhash as former hash_str_loop (131, mask 24 bits). */
 static Value prim_str_hash(Value *args, int nargs, PrimCtx *ctx) {
-    (void)nargs;
-    if (args[0].tag != V_STR) { ctx->errored = true; strcpy(ctx->errmsg, "str_hash: expected a string"); return VALUE_NULL; }
+    (void)nargs; (void)ctx;
+    /* Native yac_str_hash is total: non-strings hash to 0. The L4 bootstrap
+     * relies on that (content maps get int keys via degraded memo tables). */
+    if (args[0].tag != V_STR) return v_int(0);
     return v_int(str_hash_of(args[0].u.s));
 }
 
 /* ident_hash(s) -> int; identity of interned string object (not content). */
 static Value prim_ident_hash(Value *args, int nargs, PrimCtx *ctx) {
-    (void)nargs;
-    if (args[0].tag != V_STR) { ctx->errored = true; strcpy(ctx->errmsg, "ident_hash: expected a string"); return VALUE_NULL; }
-    uintptr_t p = (uintptr_t)args[0].u.s;
+    (void)nargs; (void)ctx;
+    /* Native shifts the tagged value for ANY input; the capture pre-pass keys
+     * its cache by ANF bind objects (lists), so mirror the totality. */
+    uintptr_t p = args[0].tag == V_STR ? (uintptr_t)args[0].u.s
+                                        : (uintptr_t)args[0].u.l;
     return v_int((int64_t)((p >> 3) & 16777215));
 }
 
@@ -564,29 +568,17 @@ static Value prim_list_push(Value *args, int nargs, PrimCtx *ctx) {
 /* list_set(lst, i, x) -> unit. Mutates slot i (open-addressing tables). */
 static Value prim_list_set(Value *args, int nargs, PrimCtx *ctx) {
     (void)nargs;
-    if (args[0].tag != V_LIST) {
-        ctx->errored = true;
-        strcpy(ctx->errmsg, "list_set: expected a list");
-        return VALUE_NULL;
-    }
+    /* Native yac_list_set is total: a bad receiver / immutable list / bad
+     * index returns 0 without touching memory. The ANF interpreter is also
+     * the L4 bootstrap, and compiler code relies on that totality (e.g.
+     * free_vars' memo table degrades to 0 after a capture rebuild). Mirror it
+     * instead of aborting the compile. */
+    if (args[0].tag != V_LIST) return v_unit();
     List *l = args[0].u.l;
-    if (l->cap < 0) {
-        ctx->errored = true;
-        strcpy(ctx->errmsg, "list_set: list is immutable");
-        return VALUE_NULL;
-    }
-    if (args[1].tag != V_INT) {
-        ctx->errored = true;
-        strcpy(ctx->errmsg, "list_set: index must be an integer");
-        return VALUE_NULL;
-    }
+    if (l->cap < 0) return v_unit();
+    if (args[1].tag != V_INT) return v_unit();
     long long i = args[1].u.i;
-    if (i < 0 || i >= l->len) {
-        ctx->errored = true;
-        snprintf(ctx->errmsg, sizeof(ctx->errmsg),
-                 "list_set: index %lld out of range (len=%d)", i, l->len);
-        return VALUE_NULL;
-    }
+    if (i < 0 || i >= l->len) return v_unit();
     l->items[i] = args[2];
     return v_unit();
 }
