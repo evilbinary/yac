@@ -39,7 +39,44 @@
 
 package lang.js
 import data.fmap { fmap_new, fmap_get, fmap_put }
-export js_to_yac, js_dump_src, js_stub_register
+export js_to_yac, js_dump_src, js_stub_register, js_src_set, js_exports_get, js_mod_alias_set, js_exp_ident
+
+/* Per-file module context: the embedding app calls js_src_set(path) before
+ * translating a file, so relative imports ("../maths/Matrix.mjs") resolve to
+ * the same yac package path the generated .yac is stored at. */
+let js_src_box =
+  let b = box_new() in
+  let _ = box_set(b, "") in
+  b
+let js_src_set(p) = box_set(js_src_box, p)
+
+/* Exports of the file being translated: cons list of [local, exportedName].
+ * Re-exports (`export { a } from "pkg"`) also add the matching import.
+ * A plain list (not a listbuf) so resetting it per translation allocates
+ * nothing. */
+let js_exp_box =
+  let b = box_new() in
+  let _ = box_set(b, []) in
+  b
+let js_exports_get(_) = box_get(js_exp_box)
+let js_exp_reset(_) = box_set(js_exp_box, [])
+let js_exp_add(local, exported) =
+  box_set(js_exp_box, cons([local, exported], box_get(js_exp_box)))
+
+/* Optional module aliases: raw specifier -> yac package. Empty by default;
+ * the embedding app supplies pairs via --alias / js_mod_alias_set. */
+let js_mod_alias_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let js_mod_alias_set(pairs) =
+  let m = fmap_new(0) in
+  let n = len(pairs) in
+  let go(i) =
+    if i >= n then 0
+    else (let _ = fmap_put(m, nth(nth(pairs, i), 0), nth(nth(pairs, i), 1)) in go(i + 1)) in
+  let _ = go(0) in
+  box_set(js_mod_alias_box, m)
 
 /* Browser-host stub lookup is INJECTED (js_stub_register) by the app that
  * embeds lang.js — the transpiler itself carries no dependency on any host
@@ -357,19 +394,72 @@ let js_re_kw(t) =
     or t == "void" or t == "delete" or t == "yield" or t == "await" or t == "new" or t == "in"
     or t == "of" or t == "instanceof" or t == "void"
 
-/* `spec` is a JS module specifier. `./a/b.js` becomes the yac package `a.b`. */
-let js_mod_name(s) =
+/* ---- module specifier -> yac package --------------------------------
+ * `./a/b.js` / `../x.mjs` resolve against the CURRENT file's directory (set by
+ * js_src_set), then `/` becomes `.` and the extension is dropped. A bare
+ * `@scope/pkg/sub` drops the `@`; a plain name (eventemitter3) is kept. */
+let js_path_dir(s) =
   let n = str_len(s) in
-  let a = if n >= 2 and str_slice(s, 0, 2) == "./" then 2 else 0 in
-  let b = if n >= a + 3 and str_slice(s, n - 3, 3) == ".js" then n - 3 else n in
-  let buf = bytes_new() in
-  let rec(i) =
-    if i >= b then bytes_to_str(buf)
+  let rec(i, last) =
+    if i >= n then last
+    else if str_ref(s, i) == 47 then rec(i + 1, i)
+    else rec(i + 1, last) in
+  let k = rec(0, 0 - 1) in
+  if k < 0 then "" else str_slice(s, 0, k)
+
+let js_strip_suffix(s, suf) =
+  let n = str_len(s) in
+  let m = str_len(suf) in
+  if n >= m and str_slice(s, n - m, m) == suf then str_slice(s, 0, n - m) else s
+
+/* Apply one path segment to a REVERSED segment list (cons stack). */
+let js_seg_apply(rev, seg) =
+  if seg == "" or seg == "." then rev
+  else if seg == ".." then (if rev == [] then rev else tail(rev))
+  else cons(seg, rev)
+
+let js_seg_rev(s, i, start, rev) =
+  if i >= str_len(s) then
+    (if i > start then js_seg_apply(rev, str_slice(s, start, i - start)) else rev)
+  else if str_ref(s, i) == 47 then
+    js_seg_rev(s, i + 1, i + 1,
+      (if i > start then js_seg_apply(rev, str_slice(s, start, i - start)) else rev))
+  else js_seg_rev(s, i + 1, start, rev)
+
+/* Join a reversed segment list into a dotted package name. */
+let js_seg_join(rev, b, first) =
+  if rev == [] then bytes_to_str(b)
+  else
+    (let _ = if first == 0 then bytes_append(b, 46) else 0 in
+     (let _ = bytes_cat_str(b, nth(rev, 0)) in
+      js_seg_join(tail(rev), b, 0)))
+
+let js_spec_resolve(spec) =
+  let base = js_path_dir(box_get(js_src_box)) in
+  let rel = (str_len(spec) >= 2 and str_slice(spec, 0, 2) == "./")
+            or (str_len(spec) >= 3 and str_slice(spec, 0, 3) == "../") in
+  let rev =
+    if rel then
+      js_seg_rev(spec, 0, 0, js_seg_rev(base, 0, 0, []))
+    else if str_len(spec) > 0 and str_ref(spec, 0) == 47 then
+      js_seg_rev(str_slice(spec, 1, str_len(spec) - 1), 0, 0, [])
     else
-      let c = str_ref(s, i) in
-      let _ = bytes_append(buf, if c == 47 then 46 else c) in
-      rec(i + 1) in
-  rec(a)
+      /* Bare specifier: resolve next to the importing file, like a sibling
+       * module (`main.js` + `pixi.js`). Explicit overrides go through
+       * `js_mod_alias_set` (CLI `--alias`). */
+      js_seg_rev(spec, 0, 0, js_seg_rev(base, 0, 0, [])) in
+  js_seg_join(list_rev(rev), bytes_new(), 1)
+
+let js_mod_name(s) =
+  let a0 = box_get(js_mod_alias_box) in
+  let hit = if a0 == 0 then 0 else fmap_get(a0, s) in
+  if hit != 0 then hit
+  else
+    let p = js_spec_resolve(s) in
+    let p2 = js_strip_suffix(js_strip_suffix(p, ".mjs"), ".js") in
+    if str_len(p2) > 0 and str_ref(p2, 0) == 64 then
+      str_slice(p2, 1, str_len(p2) - 1)
+    else p2
 
 /* Tokenize into a listbuf of [kind, text]; kind ∈ str/num/id/p/re/eof/unk.
  * A `re` token is [re, pattern, flags]. `/` is a regex when the previous
@@ -1349,6 +1439,42 @@ let js_parse_classexpr(toks, i, st) =
 
 let _js_class_set = box_set(js_class_box, js_parse_classexpr)
 
+/* Exported / imported names become yac identifiers: `default` -> `_js_default`,
+ * and `$` (or any other non-identifier byte) -> `_`. */
+let js_exp_ident(nm) =
+  if nm == "default" then "_js_default"
+  else
+    let n = str_len(nm) in
+    let buf = bytes_new() in
+    let go(i) =
+      if i >= n then bytes_to_str(buf)
+      else
+        let c = str_ref(nm, i) in
+        let _ = bytes_append(buf,
+          if c >= 48 and c <= 57 then c
+          else if c >= 65 and c <= 90 then c
+          else if c >= 97 and c <= 122 then c
+          else if c == 95 then c else 95) in
+        go(i + 1) in
+    let r = go(0) in
+    if r == "" then "_"
+    else if str_ref(r, 0) >= 48 and str_ref(r, 0) <= 57 then str_cat("_", r)
+    else r
+
+/* `export function f` / `export class C` / `export const a = ...` (first
+ * declarator only). `export { ... }` handles the rest. */
+let js_exp_decl(toks, j) =
+  let k = j + 1 in
+  let k1 = if js_is(toks, k, "async") then k + 1 else k in
+  if js_is(toks, k1, "function") or js_is(toks, k1, "class") then
+    let k2 = if js_is(toks, k1 + 1, "*") then k1 + 2 else k1 + 1 in
+    let nm = js_t(js_at(toks, k2)) in
+    if nm == "" or nm == "(" then 0 else js_exp_add(nm, nm)
+  else if js_is(toks, k1, "const") or js_is(toks, k1, "let") or js_is(toks, k1, "var") then
+    let nm = js_t(js_at(toks, k1 + 1)) in
+    if nm == "" or nm == "{" or nm == "[" then 0 else js_exp_add(nm, nm)
+  else 0
+
 let js_parse_stmts(toks, i, mode, st) =
   let one(j) =
     let got = (
@@ -1496,6 +1622,9 @@ let js_parse_stmts(toks, i, mode, st) =
       let j1 = j + 1 in
       if js_k(js_at(toks, j1)) == "str" then
         let j2 = if js_is(toks, j1 + 1, ";") then j1 + 2 else j1 + 1 in
+        /* Side-effect import: still link the package so its init runs. */
+        let pkg = js_mod_name(js_t(js_at(toks, j1))) in
+        let _ = list_push(box_get(st_imp(st)), [pkg, "", ""]) in
         [["block", []], j2]
       else
         let named = js_is(toks, j1, "{") in
@@ -1511,7 +1640,12 @@ let js_parse_stmts(toks, i, mode, st) =
                 let k4 = if js_is(toks, k3, ",") then k3 + 1 else k3 in
                 go(k4, cons([nth(pr, 0), nth(pr, 1)], acc)) in
             go(j1 + 1, [])
-          else [cons([js_t(js_at(toks, j1)), js_t(js_at(toks, j1))], []), j1 + 1] in
+          else if js_is(toks, j1, "*") then
+            /* `import * as NS from "pkg"`: no namespace object in yac. */
+            [cons([js_t(js_at(toks, j1 + 2)), ""], []), j1 + 3]
+          else
+            /* Default import: the module's `_js_default` export. */
+            [cons([js_t(js_at(toks, j1)), "_js_default"], []), j1 + 1] in
         let jn = nth(pairs, 1) in
         let jf = if js_is(toks, jn, "from") then jn + 1 else jn in
         let spec = if js_k(js_at(toks, jf)) == "str" then js_t(js_at(toks, jf)) else "" in
@@ -1534,12 +1668,39 @@ let js_parse_stmts(toks, i, mode, st) =
         let j2 = if js_is(toks, nth(r, 1), ";") then nth(r, 1) + 1 else nth(r, 1) in
         [["expr", nth(r, 0)], j2]
       else if js_is(toks, j + 1, "{") then
-        let skip(k) =
-          if js_k(js_at(toks, k)) == "eof" then k
-          else if js_is(toks, k, ";") then k + 1
-          else skip(k + 1) in
-        [["block", []], skip(j + 2)]
-      else one(j + 1)
+        let go(k, acc) =
+          if js_is(toks, k, "}") then [list_rev(acc), k + 1]
+          else
+            let a = js_t(js_at(toks, k)) in
+            let k2 = k + 1 in
+            let pr = if js_is(toks, k2, "as") then [a, js_t(js_at(toks, k2 + 1)), k2 + 2] else [a, a, k2] in
+            let k3 = nth(pr, 2) in
+            let k4 = if js_is(toks, k3, ",") then k3 + 1 else k3 in
+            go(k4, cons([nth(pr, 0), nth(pr, 1)], acc)) in
+        let pr = go(j + 2, []) in
+        let pairs = nth(pr, 0) in
+        let jn = nth(pr, 1) in
+        let hasfrom = js_is(toks, jn, "from") in
+        let jf = if hasfrom then jn + 1 else jn in
+        let spec = if hasfrom and js_k(js_at(toks, jf)) == "str" then js_t(js_at(toks, jf)) else "" in
+        let jend = if hasfrom then (if spec == "" then jf else jf + 1) else jn in
+        let jend2 = if js_is(toks, jend, ";") then jend + 1 else jend in
+        let np = len(pairs) in
+        let pkg = if hasfrom and spec != "" then js_mod_name(spec) else "" in
+        let add(i) =
+          if i >= np then 0
+          else
+            let src = nth(nth(pairs, i), 0) in
+            let out = nth(nth(pairs, i), 1) in
+            let _ =
+              if pkg == "" then 0
+              else list_push(box_get(st_imp(st)), [pkg, src, src]) in
+            let _ = js_exp_add(src, out) in
+            add(i + 1) in
+        let _ = add(0) in
+        [["block", []], jend2]
+      else
+        (let _ = js_exp_decl(toks, j) in one(j + 1))
     else if tx == "function" or (tx == "async" and js_is(toks, j + 1, "function")) then
       /* function name(params) { … } — body is the braces' interior.
        * `async function` and `function*` set the kind the emitter lowers. */
@@ -4091,6 +4252,34 @@ let js_gen_compile(stmts, ctx, st) =
 /* Translate a whole JS program. Allocates the per-translation state, lexes /
  * parses / emits, and prepends only the imports and helpers the program
  * actually needs. Returns "error: …" if the front end recorded a problem. */
+/* Build/fold the export materialisation statement (see js_to_yac). */
+let js_exp_text(_) =
+  let xs = box_get(js_exp_box) in
+  let n = len(xs) in
+  let go(i, acc) =
+    if i >= n then acc
+    else
+      let e = nth(xs, i) in
+      let sep = if acc == "" then "" else ", " in
+      go(i + 1, str_cat(acc, str_cat(sep,
+        str_cat("\"", str_cat(nth(e, 1), str_cat("\": ", nth(e, 0))))))) in
+  let body = go(0, "") in
+  str_cat("globalThis.__JS_EXPORTS__ = { ", str_cat(body, " };"))
+
+let js_stmt_list(xs) =
+  let n = len(xs) in
+  let go(i, acc) = if i >= n then list_rev(acc) else go(i + 1, cons(nth(xs, i), acc)) in
+  go(0, [])
+
+/* Append `globalThis.__JS_EXPORTS__ = {...}` as the last top-level statement,
+ * so a module package can turn the JS exports into yac `export`s. */
+let js_exp_append(stmts0, st) =
+  let exps = box_get(js_exp_box) in
+  if len(exps) == 0 then stmts0
+  else
+    let exr = js_parse_stmts(js_lex(js_exp_text(0)), 0, ["list", 0], st) in
+    append(js_stmt_list(stmts0), js_stmt_list(nth(exr, 0)))
+
 let js_to_yac(src) =
   let err = box_new() in
   let _ = box_set(err, "") in
@@ -4139,6 +4328,7 @@ let js_to_yac(src) =
   let _ = box_set(js_lab_here, 0) in
   let _ = box_set(js_globals, list_new()) in
   let _ = box_set(js_mc, fmap_new(0)) in
+  let _ = js_exp_reset(0) in
   let toks = js_lex(src) in
   let r = js_parse_stmts(toks, 0, ["list", 0], st) in
   let _ = box_set(uexc, (if js_has_exc(nth(r, 0)) then 1 else 0)) in
@@ -4148,15 +4338,21 @@ let js_to_yac(src) =
     if i >= ni then list_rev(acc)
     else
       let it = nth(imps, i) in
-      let m = js_fresh(st, js_mangle(nth(it, 1))) in
-      ibind(i + 1, cons([nth(it, 1), nth(it, 2), m], acc)) in
+      if nth(it, 1) == "" then ibind(i + 1, acc)
+      else
+        let m = js_fresh(st, js_mangle(nth(it, 1))) in
+        ibind(i + 1, cons([nth(it, 0), nth(it, 1), nth(it, 2), js_fresh(st, js_exp_ident(nth(it, 2))), m], acc)) in
   let binds = ibind(0, []) in
   let ivars =
     let nb = len(binds) in
-    let go(i, acc) = if i >= nb then acc else go(i + 1, cons([nth(nth(binds, i), 0), nth(nth(binds, i), 2)], acc)) in
+    let go(i, acc) = if i >= nb then acc else go(i + 1, cons([nth(nth(binds, i), 1), nth(nth(binds, i), 4)], acc)) in
     go(0, []) in
   /* Top-level function decls: boxes + bind before any statement (JS hoist). */
   let stmts0 = nth(r, 0) in
+  /* Export materialisation: one assignment at the END of the program puts every
+   * exported binding into `globalThis.__JS_EXPORTS__`, which the embedding app
+   * turns into yac `export` statements when a module package is requested. */
+  let stmts0 = js_exp_append(stmts0, st) in
   let fnames0 = js_collect_funcs(stmts0) in
   let fbinds = map(fun(nm) -> [nm, js_fresh(st, js_mangle(nm))], fnames0) in
   let ctx0 = [append(fbinds, ivars), fnames0, 0, 0, [], 0] in
@@ -4212,7 +4408,7 @@ let js_to_yac(src) =
       if i < 0 then acc
       else
         let b = nth(binds, i) in
-        go(i - 1, js_cat(["(let ", nth(b, 2), " = box_new() in (let _ = box_set(", nth(b, 2), ", ", nth(b, 1), ") in ", acc, "))"])) in
+        go(i - 1, js_cat(["(let ", nth(b, 4), " = box_new() in (let _ = box_set(", nth(b, 4), ", ", nth(b, 3), ") in ", acc, "))"])) in
     go(nb - 1, body0) in
   let e = box_get(err) in
   if e != "" then js_flat(js_cat(["error: ", e]), 64)
@@ -4302,15 +4498,30 @@ let _js_fn_getp(f, k) =\n  let pm = _js_fnprops_find(f) in\n  let pv = if pm == 
           if js_in(seen, p) then rec(i + 1, acc)
           else
             let _ = list_push(seen, p) in
+            /* Import the EXPORTED names (aliases bind locally), deduped;
+             * a package with no names is a side-effect import. */
+            let nseen = list_new() in
+            let nb = len(binds) in
             let names =
               let rec2(j, a) =
-                if j >= ni then a
-                else if nth(nth(imps, j), 0) == p then
-                  let rm = nth(nth(imps, j), 2) in
-                  rec2(j + 1, if a == "" then rm else js_cat([a, ", ", rm]))
-                else rec2(j + 1, a) in
+                if j >= nb then a
+                else
+                  let b2 = nth(binds, j) in
+                  if not (nth(b2, 0) == p) then rec2(j + 1, a)
+                  else
+                    let rm = js_exp_ident(nth(b2, 2)) in
+                    let al = nth(b2, 3) in
+                    if rm == "" or js_in(nseen, rm) then rec2(j + 1, a)
+                    else
+                      (let _ = list_push(nseen, rm) in
+                       let one = if rm == al then rm else js_cat([rm, " as ", al]) in
+                       rec2(j + 1, if a == "" then one else js_cat([a, ", ", one])))
+                in
               rec2(0, "") in
-            rec(i + 1, js_cat([acc, "import ", p, " { ", names, " }\n"])) in
+            let line =
+              if names == "" then js_cat(["import ", p, "\n"])
+              else js_cat(["import ", p, " { ", names, " }\n"]) in
+            rec(i + 1, js_cat([acc, line])) in
       rec(0, "") in
     let hjsrt =
       if box_get(ustr) == 1 or box_get(ubool) == 1 or box_get(utype) == 1 or box_get(ulib) == 1 or box_get(utruth) == 1 then

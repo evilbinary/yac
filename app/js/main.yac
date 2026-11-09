@@ -21,6 +21,10 @@
  *   --run FILE                 翻译并就地运行
  *   --compile FILE [--out OUT] 翻译并编成本机可执行文件
  *   --dump FILE                只打印翻译出的 yac 源码
+ *   --dump-yac FILE [-o OUT]   打印完整 yac 源码
+ *   --mod PKG                  --dump-yac 输出为 yac 包（JS export → yac export）
+ *   --alias SPEC=PKG           模块解析覆盖（可重复）
+ *   --pkg DIR[,DIR]            包根（默认 app）
  *   --eval JS                  执行一段内联 JS
  *   --help / -h               帮助
  *   --version / -V            版本
@@ -30,17 +34,78 @@
  */
 
 import yc.compiler
-import lang.js { js_to_yac, js_dump_src, js_stub_register }
+import lang.js { js_to_yac, js_dump_src, js_stub_register, js_src_set, js_exports_get, js_mod_alias_set, js_exp_ident }
 import js.browser { js_browser_stub }
 import back.backend { pkg_set }
 import fs.io
 import lib.log {log_i, log_set_hush}
-import text.str {trim, starts_with, ends_with}
+import text.str {trim, starts_with, ends_with, find}
 import os.env {get}
 
 /* 浏览器 stub 的名字表在本包（js.browser），注入给 lang.js 查询；
  * lang.js 自身不依赖任何宿主包。 */
 let _ = js_stub_register(js_browser_stub)
+
+/* `--alias SPEC=PKG` overrides module resolution (repeatable). Parsed at the
+ * CLI boundary so lang.js stays free of any built-in package names. */
+let js_alias_box =
+  let b = box_new() in
+  let _ = box_set(b, list_new()) in
+  b
+
+/* Module-mode output package (--mod PKG): the dumped file becomes a yac
+ * package with its JS `export`s turned into yac `export`s. */
+let js_mod_pkg_box =
+  let b = box_new() in
+  let _ = box_set(b, 0) in
+  b
+let js_mod_pkg(_) = box_get(js_mod_pkg_box)
+
+/* Module imports are resolved against the file's path under the package root
+ * (`app`), so a leading app/ must be dropped. */
+let js_rel_app(p) =
+  let n = str_len(p) in
+  if n >= 4 and str_slice(p, 0, 4) == "app/" then str_slice(p, 4, n - 4)
+  else if n >= 5 and str_slice(p, 0, 5) == "app\\" then str_slice(p, 5, n - 5)
+  else p
+
+let js_dup_go(xs, x) =
+  if xs == [] then false
+  else if nth(xs, 0) == x then true
+  else js_dup_go(tail(xs), x)
+
+/* y -> a yac package body: package header, the program, then bindings for the
+ * JS exports (read back from globalThis.__JS_EXPORTS__) and one export line. */
+let js_pkg_wrap(pkg, y) =
+  let exps = js_exports_get(0) in
+  let n = len(exps) in
+  let seen = list_new() in
+  let names = list_new() in
+  let lets = bytes_new() in
+  let go(i) =
+    if i >= n then 0
+    else
+      let e = nth(exps, i) in
+      let out = nth(e, 1) in
+      let id = js_exp_ident(out) in
+      let _ =
+        if js_dup_go(seen, id) then 0
+        else
+          (let _ = list_push(seen, id) in
+           (let _ = bytes_cat_str(lets,
+              str_cat("let ", str_cat(id, str_cat(" = _js_get(_jx, \"",
+                str_cat(out, "\")\n"))))) in
+            list_push(names, id))) in
+      go(i + 1) in
+  let _ = go(0) in
+  let nnames = len(names) in
+  let join(i, a) =
+    if i >= nnames then a
+    else join(i + 1, if a == "" then nth(names, i) else str_cat(a, str_cat(", ", nth(names, i)))) in
+  let exl = if nnames == 0 then "" else str_cat("export ", str_cat(join(0, ""), "\n")) in
+  str_cat("package ", str_cat(pkg, str_cat("\n", str_cat(y,
+    str_cat("\nlet _jx = _js_get(_js_st_win0, \"__JS_EXPORTS__\")\n",
+      str_cat(bytes_to_str(lets), exl))))))
 
 /* ---- 小工具 ---------------------------------------------------------- */
 
@@ -183,17 +248,21 @@ let js_dump_yac_file(path, out0) =
   let src = read_or_0(path) in
   if src == 0 then print(str_cat("error: cannot read ", path))
   else
+    let _ = js_src_set(js_rel_app(path)) in
     let y = js_to_yac(src) in
     if js_is_error(y) then print(y)
     else
+      let mp = js_mod_pkg(0) in
+      let y2 = if mp == 0 then y else js_pkg_wrap(mp, y) in
       let out = if out0 == 0 then str_cat(path, ".full.yac") else out0 in
-      let _ = write(out, y) in
+      let _ = write(out, y2) in
       print(str_cat("wrote ", out))
 
 let js_compile_file(path, out0) =
   let src = read_or_0(path) in
   if src == 0 then print(str_cat("error: cannot read ", path))
   else
+    let _ = js_src_set(js_rel_app(path)) in
     let _ = log_set_hush(false) in
     let t0 = time_ms() in
     let y = js_to_yac(src) in
@@ -221,6 +290,9 @@ let js_help(_) =
   let _ = print("  --dump FILE                按语句打印翻译出的 yac") in
   let _ = print("  --eval JS                  执行内联 JS") in
   let _ = print("  --repl                     进入 REPL（无参数时默认）") in
+  let _ = print("  --dump-yac FILE [-o OUT]   打印完整 yac 源码") in
+  let _ = print("  --mod PKG                  --dump-yac 输出为 yac 包（含 export）") in
+  let _ = print("  --alias SPEC=PKG           import 解析覆盖（可重复）") in
   let _ = print("  --pkg DIR[,DIR]            包根（内嵌编译解析 import 用；默认 app）") in
   let _ = print("  --help, -h                 本帮助") in
   let _ = print("  --version, -V              版本") in
@@ -326,6 +398,17 @@ let js_scan(i, mode, file, out, ev, pkged) =
       js_scan(i + 2, if mode == "" then "dump" else mode, argv(i + 1), out, ev, pkged)
     else if a == "--dump-yac" then
       js_scan(i + 2, if mode == "" then "dump-yac" else mode, argv(i + 1), out, ev, pkged)
+    else if a == "--mod" then
+      (let _ = box_set(js_mod_pkg_box, argv(i + 1)) in
+       js_scan(i + 2, mode, file, out, ev, pkged))
+    else if a == "--alias" then
+      (let s = argv(i + 1) in
+       let k = find(s, "=") in
+       let _ =
+         if k <= 0 then print("error: --alias needs SPEC=PKG")
+         else list_push(box_get(js_alias_box),
+                [str_slice(s, 0, k), str_slice(s, k + 1, str_len(s) - k - 1)]) in
+       js_scan(i + 2, mode, file, out, ev, pkged))
     else if a == "--eval" then
       js_scan(argc(), if mode == "" then "eval" else mode, file, out, js_join_from(i + 1, ""), pkged)
     else if a == "--out" or a == "-o" then
@@ -338,6 +421,7 @@ let js_cli(_) =
   let file = nth(p, 1) in
   let out = nth(p, 2) in
   let ev = nth(p, 3) in
+  let _ = js_mod_alias_set(box_get(js_alias_box)) in
   let _ = if nth(p, 4) == 0 then pkg_set("app") else 0 in
   if mode == "help" then js_help(0)
   else if mode == "version" then js_version(0)
