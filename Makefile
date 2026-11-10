@@ -133,10 +133,12 @@ test-compiler: $(TEST_HARNESS)
 # pkg:  make test-pkg    |  make test-pkg lang_js  |  CASE=lang_js
 CASE ?=
 test-cps: $(TEST_HARNESS)
-	./$(TEST_HARNESS) cps "$(if $(CASE),$(CASE),$(word 2,$(MAKECMDGOALS)))"
+	@c="$(if $(CASE),$(CASE),$(word 2,$(MAKECMDGOALS)))"; \
+	if [ -n "$$c" ]; then ./$(TEST_HARNESS) cps "$$c"; else ./$(TEST_HARNESS) cps; fi
 
 test-repl: $(TEST_HARNESS)
-	./$(TEST_HARNESS) repl "$(if $(CASE),$(CASE),$(word 2,$(MAKECMDGOALS)))"
+	@c="$(if $(CASE),$(CASE),$(word 2,$(MAKECMDGOALS)))"; \
+	if [ -n "$$c" ]; then ./$(TEST_HARNESS) repl "$$c"; else ./$(TEST_HARNESS) repl; fi
 
 SUITE_CASE_TGTS := test-cps test-repl test-pkg
 ifneq ($(filter $(SUITE_CASE_TGTS),$(MAKECMDGOALS)),)
