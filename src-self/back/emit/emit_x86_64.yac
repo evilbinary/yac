@@ -1118,8 +1118,6 @@ let x86_cop_gset(st, insn) =
       else emit_load_rax_slot(b, src) in
     let _ = mov_mem_rbx_disp32_rax(b, 0) in
     let st1 = emit_st4(st, b, cur, labels, ps1) in
-    if emit_jit_blob(0) then st1
-    else
       let b1 = nth(st1, 0) in
       let _ = mov_rax_imm64(b1, 0) in
       let spos = bytes_len(b1) - 8 in

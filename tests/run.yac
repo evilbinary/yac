@@ -539,8 +539,10 @@ let unbound_bads(_) = [
 let repl_feed(yc, src) =
   run_stdin(append(yc, ["--repl"]), src)
 
-let repl_check(st, yc, name, src, needle, wantrc) =
-  let r = repl_feed(yc, src) in
+let repl_feed_file(yc, file, src) =
+  run_stdin(append(yc, ["--repl", file]), src)
+
+let repl_judge(st, name, r, needle, wantrc) =
   let blob = str_cat(nth(r, 1), nth(r, 2)) in
   if wantrc >= 0 then
     /* Negative case: the run MUST end with this status (a front / LIR error
@@ -556,7 +558,11 @@ let repl_check(st, yc, name, src, needle, wantrc) =
   else if contains(blob, needle) then check(st, name, "1", "1")
   else check(st, name, needle, blob)
 
-/* [name, stdin, needle]. () is unit (prints 0 natively); (exit) is grouping / quit. */
+let repl_check(st, yc, name, src, needle, wantrc) =
+  repl_judge(st, name, repl_feed(yc, src), needle, wantrc)
+
+/* [name, stdin, needle, wantrc?, extra pkg root?, preload file?].
+ * () is unit (prints 0 natively); (exit) is grouping / quit. */
 let repl_cases(_) = [
   ["let a = 1", "let a = 1\n", "a = 1"],
   ["import text.fmt", "import text.fmt\n:q\n", "fmt"],
@@ -644,7 +650,15 @@ let repl_cases(_) = [
    * pressure real, then bytes_len proves the first value is still intact. */
   ["session value survives gc",
    "import yc.compiler\nlet ff = compile(\"1 + 2\")\nlet g = compile(\"1 + 2 + 3\")\nif bytes_len(ff) > 1000 then print(\"SURVIVED\") else print(\"LOST\")\n:q\n",
-   "SURVIVED"]]
+   "SURVIVED"],
+  /* A package-level box must be a GC root in a JIT image too. `gset` publishes
+   * top-level values to G+440 (yac_gval_pub) on AOT; the JIT blob skipped it,
+   * so a box reachable only from the image's G cell was freed by a later
+   * collection and `getb` read recycled memory (found as "not a function: 1"
+   * + SIGSEGV in a longer lang.js session). The preload program checks the
+   * per-image value list and the box value after import. */
+  ["box global is gc root",
+   ":q\n", "BOXROOT", 0, "tests/pkg", "tests/pkg/gcbox_repl.yac"]]
 let repl_all(st, yc, stem) =
   let _ = banner("repl", nth(yc, 0)) in
   let xs = cases_pick(repl_cases(0), stem) in
@@ -654,8 +668,17 @@ let repl_all(st, yc, stem) =
     exit(2)
   else
     foldl(fun(s, c) ->
-      repl_check(s, yc, str_cat("repl ", nth(c, 0)), nth(c, 1), nth(c, 2),
-                 if len(c) > 3 then nth(c, 3) else 0 - 1),
+      let extra = if len(c) > 4 then nth(c, 4) else "" in
+      let yc2 =
+        if extra == "" then yc
+        else [nth(yc, 0), "--pkg", str_cat("src-self,", extra)] in
+      let want = if len(c) > 3 then nth(c, 3) else 0 - 1 in
+      let pre = if len(c) > 5 then nth(c, 5) else "" in
+      let name = str_cat("repl ", nth(c, 0)) in
+      if pre == "" then
+        repl_judge(s, name, repl_feed(yc2, nth(c, 1)), nth(c, 2), want)
+      else
+        repl_judge(s, name, repl_feed_file(yc2, pre, nth(c, 1)), nth(c, 2), want),
       st, xs)
 
 let cps_all(st, yc, stem) =

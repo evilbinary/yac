@@ -1,0 +1,14 @@
+/* gcbox_repl.yac — preload program for the JIT GC-root regression.
+ *
+ * `gcbox` has a package-level box (`bb`). A JIT `gset` must publish it to the
+ * image's G+440 top-level value list, which yac_gc_collect marks; before that
+ * fix the list stayed empty and the box was freed by a later compilation
+ * (found as "not a function: 1" + SIGSEGV in a lang.js session). The list is
+ * per-image, so query it from this preload unit instead of a REPL line. */
+
+import gcbox
+
+if len(yac_gval_list(0)) > 0 and getb(0) == 4242 then
+  print("BOXROOT")
+else
+  print("BOXBAD")

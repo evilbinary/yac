@@ -1,0 +1,14 @@
+/* gcbox.yac — regression package for JIT GC roots.
+ *
+ * `bb` is a package-level box: after `import gcbox` returns, its only
+ * reference lives in this image's G cell. A JIT `gset` must publish it to
+ * the G+440 value list (GC root); when it did not, a later REPL line's
+ * compilation freed the box and `getb` read recycled memory. */
+
+package gcbox
+
+let bb = box_new()
+let _ = box_set(bb, 4242)
+let getb(_) = box_get(bb)
+
+export getb
