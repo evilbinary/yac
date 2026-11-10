@@ -457,7 +457,7 @@ let _ = check("obj_hascall", "let o = {a: 1}; console.log(Object.prototype.hasOw
 /* calling a non-function reports the callee and keeps going (yac_not_fn prints
  * its parameter register -- fixed 2026-10-23; it used to print stale rdi junk,
  * which made every site report a different heap pointer) */
-let _ = check("notfn_msg", "let n = 5; console.log(n()); console.log('after');", "error: not a function: 5\n0\nafter")
+let _ = check("notfn_msg", "let n = 5; console.log(n()); console.log('after');", "error: not a function: 5 in _start\n0\nafter")
 let _ = check("closure", "function make(){ let c = 0; return function(){ c = c + 1; return c; }; } let n = make(); console.log(n()); console.log(n());", "1\n2")
 let _ = check("adder", "function adder(x){ return function(y){ return x + y; }; } console.log(adder(5)(3));", "8")
 let _ = check("mapcb", "console.log([1,2,3].map(function(x){ return x * 2; })[1]);", "4")

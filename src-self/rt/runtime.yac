@@ -3256,12 +3256,25 @@ let rt_host_unimpl_ins(_) =
  * (reg1 = the bad callee); reg0 maps to rdi and holds stale junk from the last
  * call -- printing it made every site report a different heap pointer. */
 let rt_not_fn_ins(_) =
-  [["local", 12, 1],
+  [["local", 12, 2],
    ["strlit", 8, "error: not a function: "],
    ["mov_imm", 9, 0],
    ["fcall", 10, "print", [8, 9]],
-   ["mov_imm", 9, 2],
+   ["mov_imm", 9, 0],
    ["fcall", 10, "print", [1, 9]],
+   /* Arg1 is the proc containing the call site (x86_64 guard). Older / other
+    * callers pass nothing, so only print it when it is a string. */
+   ["kind", 10, 2],
+   ["mov_imm", 11, 3 + 3],
+   ["icmp", "==", 12, 10, 11],
+   ["cmpjmp", 12, "nf_name", "nf_done"],
+   ["label", "nf_name"],
+   ["strlit", 8, " in "],
+   ["mov_imm", 9, 0],
+   ["fcall", 10, "print", [8, 9]],
+   ["mov_imm", 9, 2],
+   ["fcall", 10, "print", [2, 9]],
+   ["label", "nf_done"],
    ["mov_imm", 8, 0],
    ["ret", 8]]
 
