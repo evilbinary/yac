@@ -2095,7 +2095,13 @@ let lir_letcall(b, pack) =
         if k == 0 then nth(fn, 1) else k
       else nth(fn, 1) in
     let named = nth(fn, 0) == "var" or nth(fn, 0) == "qvar" in
-    let nfixed = if named then rest_nfixed(nth(s, 3), g0) else 0 - 1 in
+    /* Rest packing needs the CALLEE's known arity. A Gamma-bound local is a
+     * dynamic value: its name may collide with another unit's proc, and
+     * packing the args into a list then handed that list to the closure as its
+     * only argument (a stored `fun(tag) -> ...` saw ["canvas"]). Only static
+     * names may use the Σ rest table. */
+    let is_local = named and env_rec_h(nth(s, 1), g0, hash_str(g0)) != 0 in
+    let nfixed = if named and not is_local then rest_nfixed(nth(s, 3), g0) else 0 - 1 in
     let lr = lir_loadargs(nth(b, 3),
               [0, nth(s, 0), nth(s, 1), nth(s, 2), nth(s, 3)], []) in
     let slots = nth(lr, 1) in
