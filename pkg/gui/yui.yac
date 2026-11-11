@@ -5,11 +5,15 @@ package gui.yui
 import data.fmap { fmap_new, fmap_get, fmap_put }
 export yui_open, yui_init, yui_tick, yui_set_text, yui_click_is, yui_shutdown, yui_game_boot, yui_key, yui_game_vel, yui_game_get, yui_game_pos, yui_game_spawn, yui_game_box, yui_game_hit, yui_game_cull, yui_game_burst, yui_rand,
   yui_sym2, yui_bridge_open, yui_bridge_boot, yui_bridge_create, yui_bridge_del,
-  yui_bridge_put_text, yui_bridge_put_bg, yui_bridge_pump, yui_bridge_should_quit,
+  yui_bridge_put_text, yui_bridge_put_bg, yui_bridge_pump, yui_bridge_tick_quit, yui_bridge_should_quit,
   yui_render_from_json, yui_set_bg, yui_get_text, yui_hide, yui_show, yui_update,
   yui_resize, yui_inspect_enable, yui_inspect_disable, yui_inspect_bounds,
   yui_inspect_info, yui_inspect_layer, yui_log, yui_theme_load,
   yui_theme_set_current, yui_theme_unload, yui_theme_apply_to_tree, yui_should_quit,
+  yui_canvas_new, yui_canvas_resize, yui_canvas_free, yui_canvas_clear,
+  yui_canvas_clear_rect, yui_ticks,
+  yui_canvas_fill_rect, yui_canvas_line, yui_canvas_text, yui_canvas_measure,
+  yui_canvas_draw_canvas, yui_canvas_present, yui_canvas_snapshot,
   yui_exit, yui_key_code, yui_focus, yui_focus_move, yui_focus_clear, yui_focus_get,
   yui_get_property, yui_render_json, yui_window_size, yui_spawn, yui_screenshot,
   yui_perf_enable, yui_perf_disable, yui_perf_reset, yui_perf_overlay,
@@ -131,6 +135,42 @@ let yui_c4(name, a, b, c, d) =
 let yui_c5(name, a, b, c, d, e) =
   let p = yui_sym2(name) in
   if p == 0 then yui_missing(name) else ccall(p, a, b, c, d, e)
+let yui_c6(name, a, b, c, d, e, f) =
+  let p = yui_sym2(name) in
+  if p == 0 then yui_missing(name) else ccall(p, a, b, c, d, e, f)
+let yui_c7(name, a, b, c, d, e, f, g) =
+  let p = yui_sym2(name) in
+  if p == 0 then yui_missing(name) else ccall(p, a, b, c, d, e, f, g)
+let yui_c8(name, a, b, c, d, e, f, g, h) =
+  let p = yui_sym2(name) in
+  if p == 0 then yui_missing(name) else ccall(p, a, b, c, d, e, f, g, h)
+let yui_c9(name, a, b, c, d, e, f, g, h, i) =
+  let p = yui_sym2(name) in
+  if p == 0 then yui_missing(name) else ccall(p, a, b, c, d, e, f, g, h, i)
+let yui_c10(name, a, b, c, d, e, f, g, h, i, j) =
+  let p = yui_sym2(name) in
+  if p == 0 then yui_missing(name) else ccall(p, a, b, c, d, e, f, g, h, i, j)
+
+/* Canvas2D framebuffer bridge (native/yui_yac.c). Colors are 0xAARRGGBB. */
+let yui_canvas_new(w, h) = yui_c2("yui_yac_canvas_new", w, h)
+let yui_canvas_resize(id, w, h) = yui_c3("yui_yac_canvas_resize", id, w, h)
+let yui_canvas_free(id) = yui_c1("yui_yac_canvas_free", id)
+let yui_canvas_clear(id, color) = yui_c2("yui_yac_canvas_clear", id, color)
+let yui_canvas_clear_rect(id, x, y, w, h) =
+  yui_c5("yui_yac_canvas_clear_rect", id, x, y, w, h)
+let yui_ticks(_) = yui_c0("backend_get_ticks")
+let yui_canvas_fill_rect(id, x, y, w, h, color) =
+  yui_c6("yui_yac_canvas_fill_rect", id, x, y, w, h, color)
+let yui_canvas_line(id, x1, y1, x2, y2, width, color) =
+  yui_c7("yui_yac_canvas_line", id, x1, y1, x2, y2, width, color)
+let yui_canvas_text(id, s, x, y, size, color, align, baseline) =
+  yui_c8("yui_yac_canvas_text", id, s, x, y, size, color, align, baseline)
+let yui_canvas_measure(s, size) = yui_c2("yui_yac_canvas_measure", s, size)
+let yui_canvas_draw_canvas(dst, src, sx, sy, sw, sh, dx, dy, dw, dh) =
+  yui_c10("yui_yac_canvas_draw_canvas", dst, src, sx, sy, sw, sh, dx, dy, dw, dh)
+let yui_canvas_present(id, x, y, w, h) =
+  yui_c5("yui_yac_canvas_present", id, x, y, w, h)
+let yui_canvas_snapshot(id, path) = yui_c2("yui_yac_canvas_snapshot", id, path)
 
 /* yui_init(json_path, assets): boot the window, 0 = ok. */
 let yui_init(json, assets) = yui_c2("yui_yac_init", json, assets)
@@ -282,4 +322,5 @@ let yui_bridge_del(parent_id, child_id) = yui_c2("yui_dom_remove", parent_id, ch
 let yui_bridge_put_text(id, text) = yui_set_text(id, text)
 let yui_bridge_put_bg(id, hex) = yui_set_bg(id, hex)
 let yui_bridge_pump(_) = yui_tick(0)
+let yui_bridge_tick_quit(_) = yui_c0("yui_yac_tick")
 let yui_bridge_should_quit(_) = yui_should_quit(0)

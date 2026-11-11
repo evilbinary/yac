@@ -1,0 +1,11 @@
+/* A local binding that shadows an imported proc must be called dynamically.
+ * The LIR used to resolve the callee name through Sigma even when Gamma had a
+ * local binding, so `abs` here called num.math/abs and returned 1 (or, for a
+ * compiler temp colliding with another unit's proc, ran that proc's body). */
+import num.math { abs }
+
+let test(_) =
+  let abs = fun(n) -> n + 10 in
+  abs(1)
+
+print(test(0))

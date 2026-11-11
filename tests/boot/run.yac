@@ -271,8 +271,10 @@ let lir_suite(st) =
      "[[mov_imm, 1, 10], [mov_imm, 2, 2], [fcall, 3, yac_num_add, [1, 2]]]"],
     /* A user proc is reached by ycall (object ABI), not fcall -- fcall is for
      * runtime yac_* procs and host leaves. */
+    /* A non-flat letfun allocates a closure, so calling it must be dynamic
+     * (the proc uses the object ABI and would shift args under a ycall). */
     ["letfun call", "let f(x) = x + 1 in f(2)",
-     "[[closure, 1, f, []], [mov_imm, 2, 4], [ycall, 3, f, [2]]]"],
+     "[[closure, 1, f, []], [mov_imm, 2, 4], [icall, 3, 1, [2]]]"],
     ["unary minus", "-5", "[[mov_imm, 1, 0], [mov_imm, 2, 10], [fcall, 3, yac_num_sub, [1, 2]]]"],
     /* f is not defined anywhere and the xcall fallback is gone, so this is now
      * a compile error rather than a call to a name assumed to exist. */

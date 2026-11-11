@@ -1518,6 +1518,12 @@ let lir_clos_prim(st, nm) =
                  sigma_cons(nth(st, 3), w), nth(st, 4)] in
       lir_gvar_atom(st2, wn)
 
+let lir_anon_name(nm, i, n) =
+  if i >= n then false
+  else
+    let c = str_ref(nm, i) in
+    if c == 35 or c == 36 then true else lir_anon_name(nm, i + 1, n)
+
 let lir_var(atom, st) =
   let nm = nth(atom, 1) in
   let h = hash_str(nm) in
@@ -1559,7 +1565,13 @@ let lir_var(atom, st) =
        * name. */
       let code = sigma_code(nth(st, 3), g) in
       let se2 = sigma_ent_h(nth(st, 3), code, hash_str(code)) in
-      if se2 != 0 and nth(se2, 1) == 0 then lir_gvar_atom(st, code)
+      /* A gvar cell is only a valid 0-cap closure for NAMED top-level
+       * functions (their stub is baked for the flat ABI). An anonymous
+       * letfun must allocate a real closure object: calling its cell as a
+       * closure read the wrong `nenv` and packed the arguments (a stored
+       * `fun(tag) -> ...` then received ["tag"] as its first parameter). */
+      if se2 != 0 and nth(se2, 1) == 0
+         and not lir_anon_name(code, 0, str_len(code)) then lir_gvar_atom(st, code)
       else lir_clos_atom(st, code)
     else if se != 0 and len(se) > 3 and nth(se, 3) == "$proc" then
       lir_clos_prim(st, nth(se, 0))
@@ -1813,18 +1825,13 @@ let calli(g0, dst, ss, env, funs, self, tail, inl) =
       let clo = if cs < 0 then ["cap", 0 - cs - 1] else cs in
       ["icall", dst, clo, ss]
     else
-      let se = sigma_ent_h(funs, g, h) in
-      if se != 0 then
-        let ci = if len(se) > 3 and nth(se, 3) == "proc" then ["ycall", dst, nth(se, 0), ss]
-                 else ["fcall", dst, nth(se, 0), ss] in
-        ci
-      else
-        /* Same negative-marker conversion as the ncap>0 branch above: a
-         * captured callee's Gamma slot must become ["cap", j], or the emit
-         * treats -2 as a bare slot and reads [rbp+8] (the saved r13). */
-        let cs = nth(e, 0) in
-        let clo = if cs < 0 then ["cap", 0 - cs - 1] else cs in
-        ["icall", dst, clo, ss]
+      /* A Gamma-bound LOCAL value: always a dynamic call. A non-flat letfun
+       * is a real closure using the object ABI, so a ycall would shift its
+       * arguments; and resolving a plain local by NAME used to pick another
+       * unit's same-named proc (compiler temps $tN/#kN collide). */
+      let cs = nth(e, 0) in
+      let clo = if cs < 0 then ["cap", 0 - cs - 1] else cs in
+      ["icall", dst, clo, ss]
   else
     /* A top-level `let`-bound VALUE used as a function: it is in neither Γ nor
      * Σ (lir_var's `kind == 2` is the reference side of the same fact), so it
@@ -2429,3 +2436,5 @@ let start_proc(nslots, result_slot, body) =
         insn_extend(head, body),
         ["untag", nslots, result_slot]),
       ["syscall", 0, 60, [nslots]]), "_start"]
+
+

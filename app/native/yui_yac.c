@@ -7,6 +7,7 @@
 #include "yui_boot.h"
 #include "event.h"
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
 #include "layer.h"
 #include "backend.h"
 #include "game/game.h"
@@ -674,4 +675,287 @@ int yui_dom_set_bg(const char* id, const char* hex) {
     }
     yui_set_bg_color(l, hex ? hex : "#000000");
     return 0;
+}
+
+/* ---- Yac canvas bridge (Canvas2D framebuffer + present) -----------------
+ * A canvas is a CPU ARGB8888 buffer; present uploads it to an SDL texture and
+ * draws that on top of the current YUI window frame. The browser layer
+ * (app/js/browser.yac) owns the JS-visible Canvas2D API and calls these. */
+
+extern SDL_Window* window;
+extern SDL_Renderer* renderer;
+
+#define YAC_CANVAS_MAX 8
+
+typedef struct {
+    int used;
+    int w, h;
+    Uint32* px;
+    SDL_Texture* tex;
+} YacCanvas;
+
+static YacCanvas g_yac_cv[YAC_CANVAS_MAX];
+
+static Uint32 yac_cv_blend(Uint32 dst, Uint32 src) {
+    unsigned sa = (src >> 24) & 255u;
+    if (sa == 255u) return src;
+    if (sa == 0u) return dst;
+    unsigned sr = (src >> 16) & 255u, sg = (src >> 8) & 255u, sb = src & 255u;
+    unsigned dr = (dst >> 16) & 255u, dg = (dst >> 8) & 255u, db = dst & 255u;
+    unsigned ia = 255u - sa;
+    unsigned r = (sr * sa + dr * ia) / 255u;
+    unsigned g = (sg * sa + dg * ia) / 255u;
+    unsigned b = (sb * sa + db * ia) / 255u;
+    return (255u << 24) | (r << 16) | (g << 8) | b;
+}
+
+static YacCanvas* yac_cv(int id) {
+    if (id < 1 || id > YAC_CANVAS_MAX) return NULL;
+    if (!g_yac_cv[id - 1].used) return NULL;
+    return &g_yac_cv[id - 1];
+}
+
+int yui_yac_canvas_new(int w, int h) {
+    int i;
+    if (w <= 0 || h <= 0) return 0;
+    for (i = 0; i < YAC_CANVAS_MAX; i++) {
+        if (!g_yac_cv[i].used) {
+            YacCanvas* c = &g_yac_cv[i];
+            c->px = (Uint32*)calloc((size_t)w * (size_t)h, sizeof(Uint32));
+            if (!c->px) return 0;
+            c->used = 1;
+            c->w = w;
+            c->h = h;
+            c->tex = NULL;
+            return i + 1;
+        }
+    }
+    return 0;
+}
+
+int yui_yac_canvas_resize(int id, int w, int h) {
+    YacCanvas* c = yac_cv(id);
+    Uint32* np;
+    if (!c || w <= 0 || h <= 0) return -1;
+    np = (Uint32*)calloc((size_t)w * (size_t)h, sizeof(Uint32));
+    if (!np) return -1;
+    free(c->px);
+    c->px = np;
+    c->w = w;
+    c->h = h;
+    if (c->tex) {
+        SDL_DestroyTexture(c->tex);
+        c->tex = NULL;
+    }
+    return 0;
+}
+
+int yui_yac_canvas_free(int id) {
+    YacCanvas* c = yac_cv(id);
+    if (!c) return -1;
+    free(c->px);
+    if (c->tex) SDL_DestroyTexture(c->tex);
+    memset(c, 0, sizeof(*c));
+    return 0;
+}
+
+void yui_yac_canvas_clear(int id, unsigned color) {
+    YacCanvas* c = yac_cv(id);
+    long i, n;
+    if (!c) return;
+    n = (long)c->w * (long)c->h;
+    for (i = 0; i < n; i++) c->px[i] = color;
+}
+
+void yui_yac_canvas_clear_rect(int id, int x, int y, int w, int h) {
+    YacCanvas* c = yac_cv(id);
+    int x0, y0, x1, y1, j;
+    if (!c || w <= 0 || h <= 0) return;
+    x0 = x < 0 ? 0 : x;
+    y0 = y < 0 ? 0 : y;
+    x1 = x + w > c->w ? c->w : x + w;
+    y1 = y + h > c->h ? c->h : y + h;
+    for (j = y0; j < y1; j++) {
+        int i;
+        Uint32* row = c->px + (size_t)j * (size_t)c->w;
+        for (i = x0; i < x1; i++) row[i] = 0;
+    }
+}
+
+void yui_yac_canvas_fill_rect(int id, int x, int y, int w, int h, unsigned color) {
+    YacCanvas* c = yac_cv(id);
+    int x0, y0, x1, y1, j;
+    if (!c || w <= 0 || h <= 0) return;
+    x0 = x < 0 ? 0 : x;
+    y0 = y < 0 ? 0 : y;
+    x1 = x + w > c->w ? c->w : x + w;
+    y1 = y + h > c->h ? c->h : y + h;
+    for (j = y0; j < y1; j++) {
+        int i;
+        Uint32* row = c->px + (size_t)j * (size_t)c->w;
+        for (i = x0; i < x1; i++) row[i] = yac_cv_blend(row[i], color);
+    }
+}
+
+void yui_yac_canvas_line(int id, int x1, int y1, int x2, int y2, int width, unsigned color) {
+    YacCanvas* c = yac_cv(id);
+    int dx, dy, sx, sy, err, e2, half;
+    if (!c) return;
+    if (width < 1) width = 1;
+    half = width / 2;
+    dx = x2 > x1 ? x2 - x1 : x1 - x2;
+    dy = y2 > y1 ? y2 - y1 : y1 - y2;
+    sx = x1 < x2 ? 1 : -1;
+    sy = y1 < y2 ? 1 : -1;
+    err = dx - dy;
+    for (;;) {
+        yui_yac_canvas_fill_rect(id, x1 - half, y1 - half, width, width, color);
+        if (x1 == x2 && y1 == y2) break;
+        e2 = err << 1;
+        if (e2 > -dy) { err -= dy; x1 += sx; }
+        if (e2 < dx) { err += dx; y1 += sy; }
+    }
+}
+
+static TTF_Font* g_yac_fonts[160];
+static int g_yac_ttf_init = 0;
+
+static const char* yac_font_path(void) {
+    static char path[1024];
+    const char* env = getenv("YUI_FONT");
+    if (env && env[0]) return env;
+    env = getenv("YUI_ASSETS");
+    if (!env || !env[0]) env = "../yui/app/assets";
+    snprintf(path, sizeof(path), "%s/Roboto-Regular.ttf", env);
+    return path;
+}
+
+static TTF_Font* yac_font(int size) {
+    TTF_Font* f;
+    if (size < 1) size = 1;
+    if (size > 159) size = 159;
+    if (!g_yac_ttf_init) {
+        if (TTF_Init() != 0) return NULL;
+        g_yac_ttf_init = 1;
+    }
+    if (g_yac_fonts[size]) return g_yac_fonts[size];
+    f = TTF_OpenFont(yac_font_path(), size);
+    g_yac_fonts[size] = f;
+    return f;
+}
+
+int yui_yac_canvas_measure(const char* s, int size) {
+    TTF_Font* f = yac_font(size);
+    int w = 0, h = 0;
+    if (!s) return 0;
+    if (f && TTF_SizeUTF8(f, s, &w, &h) == 0) return w;
+    return (int)(strlen(s) * (size * 0.55));
+}
+
+void yui_yac_canvas_text(int id, const char* s, int x, int y, int size,
+                         unsigned color, int align, int baseline) {
+    YacCanvas* c = yac_cv(id);
+    TTF_Font* f;
+    SDL_Color fg;
+    SDL_Surface* surf;
+    SDL_Surface* conv;
+    int w = 0, h = 0, px, py, i, j;
+    if (!c || !s || !s[0]) return;
+    f = yac_font(size);
+    if (!f) return;
+    fg.r = (color >> 16) & 255u;
+    fg.g = (color >> 8) & 255u;
+    fg.b = color & 255u;
+    fg.a = (color >> 24) & 255u;
+    if (fg.a == 0) fg.a = 255;
+    surf = TTF_RenderUTF8_Blended(f, s, fg);
+    if (!surf) return;
+    conv = SDL_ConvertSurfaceFormat(surf, SDL_PIXELFORMAT_ARGB8888, 0);
+    SDL_FreeSurface(surf);
+    if (!conv) return;
+    w = conv->w;
+    h = conv->h;
+    px = x;
+    py = y;
+    if (align == 1) px = x - w / 2;
+    else if (align == 2) px = x - w;
+    if (baseline == 1) py = y - h / 2;
+    else if (baseline == 2) py = y - h;
+    for (j = 0; j < h; j++) {
+        int cy = py + j;
+        Uint32* orow;
+        Uint32* irow;
+        if (cy < 0 || cy >= c->h) continue;
+        orow = c->px + (size_t)cy * (size_t)c->w;
+        irow = (Uint32*)((Uint8*)conv->pixels + (size_t)j * (size_t)conv->pitch);
+        for (i = 0; i < w; i++) {
+            int cx = px + i;
+            Uint32 sp;
+            if (cx < 0 || cx >= c->w) continue;
+            sp = irow[i];
+            /* SDL_ttf blended pixels are already 0xAARRGGBB. */
+            orow[cx] = yac_cv_blend(orow[cx], sp);
+        }
+    }
+    SDL_FreeSurface(conv);
+}
+
+void yui_yac_canvas_draw_canvas(int dst, int src, int sx, int sy, int sw, int sh,
+                                int dx, int dy, int dw, int dh) {
+    YacCanvas* d = yac_cv(dst);
+    YacCanvas* s = yac_cv(src);
+    int i, j;
+    if (!d || !s || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+    for (j = 0; j < dh; j++) {
+        int cy = dy + j;
+        int yy;
+        Uint32* orow;
+        if (cy < 0 || cy >= d->h) continue;
+        yy = sy + (int)((long)j * (long)sh / (long)dh);
+        if (yy < 0 || yy >= s->h) continue;
+        orow = d->px + (size_t)cy * (size_t)d->w;
+        for (i = 0; i < dw; i++) {
+            int cx = dx + i;
+            int xx;
+            Uint32 sp;
+            if (cx < 0 || cx >= d->w) continue;
+            xx = sx + (int)((long)i * (long)sw / (long)dw);
+            if (xx < 0 || xx >= s->w) continue;
+            sp = s->px[(size_t)yy * (size_t)s->w + (size_t)xx];
+            orow[cx] = yac_cv_blend(orow[cx], sp);
+        }
+    }
+}
+
+void yui_yac_canvas_present(int id, int x, int y, int w, int h) {
+    YacCanvas* c = yac_cv(id);
+    SDL_Rect dst;
+    if (!c || !renderer) return;
+    if (!c->tex) {
+        c->tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                   SDL_TEXTUREACCESS_STREAMING, c->w, c->h);
+        if (!c->tex) return;
+        SDL_SetTextureBlendMode(c->tex, SDL_BLENDMODE_BLEND);
+    }
+    if (SDL_UpdateTexture(c->tex, NULL, c->px, c->w * 4) != 0) return;
+    dst.x = x;
+    dst.y = y;
+    dst.w = w > 0 ? w : c->w;
+    dst.h = h > 0 ? h : c->h;
+    SDL_SetRenderTarget(renderer, NULL);
+    SDL_RenderCopy(renderer, c->tex, NULL, &dst);
+    SDL_RenderPresent(renderer);
+}
+
+int yui_yac_canvas_snapshot(int id, const char* path) {
+    YacCanvas* c = yac_cv(id);
+    SDL_Surface* surf;
+    int rc;
+    if (!c || !path) return -1;
+    surf = SDL_CreateRGBSurfaceWithFormatFrom(c->px, c->w, c->h, 32, c->w * 4,
+                                              SDL_PIXELFORMAT_ARGB8888);
+    if (!surf) return -2;
+    rc = SDL_SaveBMP(surf, path);
+    SDL_FreeSurface(surf);
+    return rc == 0 ? 0 : -3;
 }

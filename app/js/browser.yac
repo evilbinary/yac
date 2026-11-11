@@ -20,10 +20,14 @@
 package js.browser
 export _js_st_win0, _js_st_doc0, _js_st_nav0, _js_st_loc0, _js_st_perf0,
   _js_st_store0, _js_st_xhrC, _js_st_ctxC, _js_st_audioC, _js_st_noop,
-  _js_st_false, _js_st_empty, _js_st_id, _js_st_spin, js_browser_stub
+  _js_st_false, _js_st_empty, _js_st_id, _js_st_spin,
+  _js_st_raf, _js_st_caf, _js_st_canvasC, _js_st_ctx2dC, _js_st_imageC,
+  _js_st_imagedataC, _js_st_parserC, _js_st_cib, js_browser_stub, js_browser_boot,
+  js_browser_canvas
 import data.fmap { fmap_new, fmap_get, fmap_put }
-import gui.yui { yui_bridge_open, yui_bridge_boot, yui_bridge_create, yui_bridge_del, yui_bridge_put_text, yui_bridge_pump , yui_sym2 }
+import gui.yui { yui_bridge_open, yui_bridge_boot, yui_bridge_create, yui_bridge_del, yui_bridge_put_text, yui_bridge_pump, yui_bridge_tick_quit, yui_sym2, yui_ticks, yui_canvas_new, yui_canvas_resize, yui_canvas_free, yui_canvas_clear, yui_canvas_clear_rect, yui_canvas_fill_rect, yui_canvas_line, yui_canvas_text, yui_canvas_measure, yui_canvas_draw_canvas, yui_canvas_present, yui_canvas_snapshot }
 import os.env { get as env_get }
+import num.math { ftoi, sin, cos, pi, abs, min, max }
 
 /* TEMP diagnostics: name the callee before the runtime rejects it. */
 let _jb_ck(f, t) =
@@ -46,8 +50,16 @@ let js_browser_stub(nm) =
   else if nm == "AudioContext" or nm == "webkitAudioContext" then "_js_st_ctxC"
   else if nm == "Audio" or nm == "HTMLAudioElement" then "_js_st_audioC"
   else if nm == "setTimeout" or nm == "setInterval" or nm == "clearTimeout" or nm == "clearInterval"
-    or nm == "requestAnimationFrame" or nm == "cancelAnimationFrame" or nm == "fetch"
+    or nm == "fetch"
     or nm == "alert" or nm == "getComputedStyle" or nm == "matchMedia" then "_js_st_noop"
+  else if nm == "requestAnimationFrame" then "_js_st_raf"
+  else if nm == "cancelAnimationFrame" then "_js_st_caf"
+  else if nm == "HTMLCanvasElement" or nm == "OffscreenCanvas" then "_js_st_canvasC"
+  else if nm == "CanvasRenderingContext2D" then "_js_st_ctx2dC"
+  else if nm == "Image" then "_js_st_imageC"
+  else if nm == "ImageData" then "_js_st_imagedataC"
+  else if nm == "DOMParser" then "_js_st_parserC"
+  else if nm == "createImageBitmap" then "_js_st_cib"
   else if nm == "confirm" then "_js_st_false"
   else if nm == "prompt" then "_js_st_empty"
   else if nm == "yuiSpinFrames" then "_js_st_spin"
@@ -66,6 +78,32 @@ let _js_st_false(...a) = false
 let _js_st_empty(...a) = ""
 let _js_st_id(x) = x
 let _js_st_spin(n) = (let f = _dom_hook("spin") in f(n))
+
+/* Scheduler / canvas constructors: the real implementations live at the end
+ * of this file; these small shims only reach them through the hook table so
+ * no top-level forward reference is needed. */
+let _js_st_raf(cb) =
+  let f = _dom_hook("raf") in
+  if f == 0 then 0 else f(cb)
+let _js_st_caf(id) = 0
+let _js_st_canvasC(...a) =
+  let f = _dom_hook("canvas") in
+  if f == 0 then 0 else f(300, 150)
+let _js_st_ctx2dC = ["$o", fmap_new(0)]
+let _js_st_imageC(...a) =
+  let f = _dom_hook("image") in
+  if f == 0 then 0 else f()
+let _js_st_imagedataC(...a) =
+  let o = ["$o", fmap_new(0)] in
+  let _ = fmap_put(nth(o, 1), "width", 0) in
+  let _ = fmap_put(nth(o, 1), "height", 0) in
+  let _ = fmap_put(nth(o, 1), "data", bytes_new()) in
+  o
+let _js_st_parserC(...a) =
+  let o = ["$o", fmap_new(0)] in
+  let _ = fmap_put(nth(o, 1), "parseFromString", fun(x, t) -> ["$o", fmap_new(0)]) in
+  o
+let _js_st_cib(...a) = 0
 
 /* Universal AudioNode: chainable members point back at itself. */
 let _js_st_node0 = ["$o", fmap_new(0)]
@@ -125,8 +163,6 @@ let _ = fmap_put(nth(_js_st_elem0, 1), "head", _js_st_elem0)
 let _ = fmap_put(nth(_js_st_elem0, 1), "sheet", _js_st_elem0)
 
 let _js_st_doc0 = ["$o", fmap_new(0)]
-let _ = fmap_put(nth(_js_st_doc0, 1), "createElement", fun(tag) -> (let f = _dom_hook("createElement") in f(tag)))
-let _ = fmap_put(nth(_js_st_doc0, 1), "createElementNS", fun(tag) -> (let f = _dom_hook("createElement") in f(tag)))
 let _ = fmap_put(nth(_js_st_doc0, 1), "appendChild", _js_st_noop)
 let _ = fmap_put(nth(_js_st_doc0, 1), "createTextNode", fun(txt) -> (let f = _dom_hook("createText") in f(txt)))
 let _ = fmap_put(nth(_js_st_doc0, 1), "createEvent", fun(...a) -> (let f = _dom_hook("createElement") in f("#event")))
@@ -329,16 +365,16 @@ let _dom_pump(_) =
   let _ = _dom_ensure(0) in
   if _dom_ok(0) then yui_bridge_pump(0) else 0
 
-/* Attach/detach a child in yui (ids come from the node objects). */
-let _dom_attach(p, c) =
-  let pid = fmap_get(nth(p, 1), "$id") in
-  let cid = fmap_get(nth(c, 1), "$id") in
+/* Attach/detach a child in yui (ids come from the node objects).
+ * A canvas is not a YUI layer: the attach hook marks it visible and the render
+ * loop presents its framebuffer on top of the YUI frame. */
+let _dom_attach_yui(pid, cid, c) =
   if not _dom_ok(0) then 0
   else if pid == 0 or cid == 0 then 0
   else
     (let q = str_chr(34) in
      (let txt = _dom_json_esc(_dom_strval(fmap_get(nth(c, 1), "$text"))) in
-      /* A layer with rect 0x0 is culled, so text nodes carry an explicit
+      /* A layer with rect 0 is culled, so text nodes carry an explicit
        * "size": yui does not measure a Label on create. Width is estimated
        * from the character count (~0.6em per glyph). */
       (let wpx = str_len(txt) * 11 + 16 in
@@ -355,6 +391,12 @@ let _dom_attach(p, c) =
           (let j = rec(0, "") in
            (let r = yui_bridge_create(pid, j) in
             (let _ = _dom_pump(0) in r)))))))))
+
+let _dom_attach(p, c) =
+  let af = _dom_hook("attachcv") in
+  let pid = fmap_get(nth(p, 1), "$id") in
+  let cid = fmap_get(nth(c, 1), "$id") in
+  if af != 0 then (if af(c) != 0 then c else _dom_attach_yui(pid, cid, c)) else _dom_attach_yui(pid, cid, c)
 
 let _dom_detach(p, c) =
   let pid = fmap_get(nth(p, 1), "$id") in
@@ -435,3 +477,500 @@ let _ = fmap_put(nth(_dom_hooks, 1), "document", fun(_) -> _dom_document(0))
 let _ = fmap_put(nth(_js_st_doc0, 1), "documentElement", ["$acc", fun(_) -> _dom_document(0), _js_st_noop])
 let _ = fmap_put(nth(_js_st_doc0, 1), "body", ["$acc", fun(_) -> _dom_document(0), _js_st_noop])
 let _ = fmap_put(nth(_js_st_doc0, 1), "head", ["$acc", fun(_) -> _dom_document(0), _js_st_noop])
+
+/* ---- Canvas2D / browser scheduler ---------------------------------------
+ * Canvas pixels live in the native bridge (SDL ARGB framebuffer); this package
+ * exposes the JS-visible canvas/context objects, an event queue and the frame
+ * loop appended by the embedding compiler. Colors are 170RRGGBB. */
+
+let _browser_cvlist = list_new()
+let _browser_loadq = box_new()
+let _ = box_set(_browser_loadq, list_new())
+let _browser_rafq = box_new()
+let _ = box_set(_browser_rafq, list_new())
+let _browser_booted = box_new()
+let _ = box_set(_browser_booted, 0)
+
+let _browser_hv(c) =
+  if c >= 48 and c <= 57 then c - 48
+  else if c >= 97 and c <= 102 then c - 87
+  else if c >= 65 and c <= 70 then c - 55
+  else 0
+
+let _browser_hex2(s, i) = _browser_hv(str_ref(s, i)) * 16 + _browser_hv(str_ref(s, i + 1))
+
+let _browser_digv(s, i, n, acc) =
+  if i >= n then acc
+  else
+    let c = str_ref(s, i) in
+    if c >= 48 and c <= 57 then _browser_digv(s, i + 1, n, acc * 10 + (c - 48)) else acc
+
+let _browser_skipnos(s, i, n) =
+  if i >= n then i
+  else
+    let c = str_ref(s, i) in
+    if c >= 48 and c <= 57 then i else _browser_skipnos(s, i + 1, n)
+
+let _browser_firstnum(s, i, n) = _browser_digv(s, _browser_skipnos(s, i, n), n, 0)
+
+let _browser_afternum(s, i, n) =
+  if i >= n then i
+  else
+    let c = str_ref(s, i) in
+    if c >= 48 and c <= 57 then _browser_afternum(s, i + 1, n) else i
+
+let _browser_rgbnum(s, i, n, k) =
+  let a = _browser_firstnum(s, i, n) in
+  let j = _browser_afternum(s, _browser_skipnos(s, i, n), n) in
+  let b = _browser_firstnum(s, j, n) in
+  let j2 = _browser_afternum(s, _browser_skipnos(s, j, n), n) in
+  let c = _browser_firstnum(s, j2, n) in
+  let j3 = _browser_afternum(s, _browser_skipnos(s, j2, n), n) in
+  let j4 = _browser_skipnos(s, j3, n) in
+  let alpha =
+    if j4 >= n then 255
+    else
+      let av = _browser_firstnum(s, j4, n) in
+      if av > 1 then av
+      else if av == 1 then 255
+      else
+        /* one decimal digit is enough for 0.5-style CSS alphas */
+        let k = _browser_afternum(s, j4, n) in
+        if k < n and str_ref(s, k) == 46 then
+          let d = _browser_firstnum(s, k + 1, n) in
+          av * 255 + d * 25
+        else av in
+  let b8 = if band(b, 255) == 0 then 0 else b in
+  bor(bshl(if alpha > 255 then 255 else alpha, 24),
+      bor(bshl(band(a, 255), 16), bor(bshl(band(b8, 255), 8), band(c, 255))))
+
+let _browser_color(s) =
+  if is_int(s) then s
+  else if kind(s) != 3 then 4278190080
+  else
+    let n = str_len(s) in
+    if n == 0 then 4278190080
+    else if str_ref(s, 0) == 35 then
+      if n == 4 then
+        bor(4278190080, bor(bshl(_browser_hv(str_ref(s, 1)) * 17, 16),
+          bor(bshl(_browser_hv(str_ref(s, 2)) * 17, 8), _browser_hv(str_ref(s, 3)) * 17)))
+      else if n >= 7 then
+        bor(4278190080, bor(bshl(_browser_hex2(s, 1), 16),
+          bor(bshl(_browser_hex2(s, 3), 8), _browser_hex2(s, 5))))
+      else 4278190080
+    else if str_len(s) >= 3 and str_slice(s, 0, 1) == "r" then _browser_rgbnum(s, 0, n, 0)
+    else if s == "transparent" then 0
+    else if s == "white" then 4294967295
+    else if s == "black" then 4278190080
+    else if s == "red" then 4294901760
+    else if s == "green" then 4278255360
+    else if s == "blue" then 4278190335
+    else if s == "yellow" then 4294967040
+    else if s == "cyan" then 4278255615
+    else if s == "magenta" then 4294902015
+    else 4278190080
+
+let _browser_i(v) = if is_int(v) then v else ftoi(v)
+
+let _browser_arga(c, ga) =
+  let a0 = band(bshr(c, 24), 255) in
+  let a1 =
+    if is_int(ga) then (if ga >= 1 then 255 else 0)
+    else _browser_i(ga * 255.0) in
+  let aa = (a0 * a1) / 255 in
+  bor(bshl(aa, 24), band(c, 16777215))
+
+let _browser_fs_back(s, i, acc, mul) =
+  if i < 0 then acc
+  else
+    let c = str_ref(s, i) in
+    if c >= 48 and c <= 57 then _browser_fs_back(s, i - 1, acc + (c - 48) * mul, mul * 10)
+    else acc
+
+let _browser_findpx(s, i, n) =
+  if i + 1 >= n then 0
+  else if str_ref(s, i) == 112 and str_ref(s, i + 1) == 120 then i
+  else _browser_findpx(s, i + 1, n)
+
+let _browser_font_size(s) =
+  if kind(s) != 3 then 16
+  else
+    let i = _browser_findpx(s, 0, str_len(s)) in
+    if i <= 0 then 16 else
+      let v = _browser_fs_back(s, i - 1, 0, 1) in
+      if v <= 0 then 16 else v
+
+let _browser_mat(_) = [1, 0, 0, 1, 0, 0]
+
+let _browser_mx(m, x, y) = nth(m, 0) * x + nth(m, 2) * y + nth(m, 4)
+let _browser_my(m, x, y) = nth(m, 1) * x + nth(m, 3) * y + nth(m, 5)
+
+let _browser_bbox(m, x, y, w, h) =
+  let x0 = _browser_mx(m, x, y) in
+  let y0 = _browser_my(m, x, y) in
+  let x1 = _browser_mx(m, x + w, y) in
+  let y1 = _browser_my(m, x + w, y) in
+  let x2 = _browser_mx(m, x, y + h) in
+  let y2 = _browser_my(m, x, y + h) in
+  let x3 = _browser_mx(m, x + w, y + h) in
+  let y3 = _browser_my(m, x + w, y + h) in
+  [min(min(x0, x1), min(x2, x3)), min(min(y0, y1), min(y2, y3)),
+   max(max(x0, x1), max(x2, x3)), max(max(y0, y1), max(y2, y3))]
+
+let _browser_fill_rect_cid(cid, m, x, y, w, h, color) =
+  let b = _browser_bbox(m, x, y, w, h) in
+  let x0 = _browser_i(nth(b, 0)) in
+  let y0 = _browser_i(nth(b, 1)) in
+  let x1 = _browser_i(nth(b, 2)) in
+  let y1 = _browser_i(nth(b, 3)) in
+  yui_canvas_fill_rect(cid, x0, y0, x1 - x0, y1 - y0, color)
+
+let _browser_clear_rect_cid(cid, m, x, y, w, h) =
+  let b = _browser_bbox(m, x, y, w, h) in
+  let x0 = _browser_i(nth(b, 0)) in
+  let y0 = _browser_i(nth(b, 1)) in
+  let x1 = _browser_i(nth(b, 2)) in
+  let y1 = _browser_i(nth(b, 3)) in
+  yui_canvas_clear_rect(cid, x0, y0, x1 - x0, y1 - y0)
+
+let _browser_fill_text_cid(cid, m, t, x, y, fs, color, ali, bli) =
+  let sc = abs(nth(m, 3)) in
+  let sz = _browser_i(fs * sc) in
+  let px = _browser_i(_browser_mx(m, x, y)) in
+  let py = _browser_i(_browser_my(m, x, y)) in
+  yui_canvas_text(cid, t, px, py, (if sz < 1 then 1 else sz), color, ali, bli)
+
+let _browser_measure_obj(fs, sc, t) =
+  let w = _browser_i(yui_canvas_measure(t, fs) * sc) + 1 in
+  let r = ["$o", fmap_new(0)] in
+  let _ = fmap_put(nth(r, 1), "width", w) in
+  let _ = fmap_put(nth(r, 1), "actualBoundingBoxLeft", 0) in
+  let _ = fmap_put(nth(r, 1), "actualBoundingBoxRight", w) in
+  let _ = fmap_put(nth(r, 1), "actualBoundingBoxAscent", fs) in
+  let _ = fmap_put(nth(r, 1), "actualBoundingBoxDescent", 0) in
+  r
+
+let _browser_stroke_rect_cid(cid, m, x, y, w, h, lw0, color) =
+  let b = _browser_bbox(m, x, y, w, h) in
+  let x0 = _browser_i(nth(b, 0)) in
+  let y0 = _browser_i(nth(b, 1)) in
+  let x1 = _browser_i(nth(b, 2)) in
+  let y1 = _browser_i(nth(b, 3)) in
+  let lw = if lw0 < 1 then 1 else lw0 in
+  let _ = yui_canvas_fill_rect(cid, x0, y0, x1 - x0, lw, color) in
+  let _ = yui_canvas_fill_rect(cid, x0, y1 - lw, x1 - x0, lw, color) in
+  let _ = yui_canvas_fill_rect(cid, x0, y0, lw, y1 - y0, color) in
+  yui_canvas_fill_rect(cid, x1 - lw, y0, lw, y1 - y0, color)
+
+let _browser_save(o, mb, sb) =
+  let s = [box_get(mb), fmap_get(nth(o, 1), "fillStyle"), fmap_get(nth(o, 1), "strokeStyle"),
+           fmap_get(nth(o, 1), "globalAlpha"), fmap_get(nth(o, 1), "lineWidth"),
+           fmap_get(nth(o, 1), "font"), fmap_get(nth(o, 1), "textAlign"),
+           fmap_get(nth(o, 1), "textBaseline")] in
+  box_set(sb, cons(s, box_get(sb)))
+
+let _browser_restore(o, mb, sb) =
+  let st = box_get(sb) in
+  if st == [] then 0
+  else
+    let s = nth(st, 0) in
+    let _ = box_set(sb, tail(st)) in
+    let _ = box_set(mb, nth(s, 0)) in
+    let _ = fmap_put(nth(o, 1), "fillStyle", nth(s, 1)) in
+    let _ = fmap_put(nth(o, 1), "strokeStyle", nth(s, 2)) in
+    let _ = fmap_put(nth(o, 1), "globalAlpha", nth(s, 3)) in
+    let _ = fmap_put(nth(o, 1), "lineWidth", nth(s, 4)) in
+    let _ = fmap_put(nth(o, 1), "font", nth(s, 5)) in
+    let _ = fmap_put(nth(o, 1), "textAlign", nth(s, 6)) in
+    fmap_put(nth(o, 1), "textBaseline", nth(s, 7))
+
+let _browser_fill_obj(cid, m, p, color) =
+  if p == 0 then 0
+  else _browser_fill_rect_cid(cid, m, nth(p, 0), nth(p, 1), nth(p, 2), nth(p, 3), color)
+
+let _browser_stroke_pts(cid, m, pts, lw, color) =
+  let n = len(pts) in
+  let go(i) =
+    if i + 1 >= n then 0
+    else
+      (let a = nth(pts, i) in
+       (let b = nth(pts, i + 1) in
+        (let _ = yui_canvas_line(cid, _browser_i(_browser_mx(m, nth(a, 0), nth(a, 1))),
+           _browser_i(_browser_my(m, nth(a, 0), nth(a, 1))),
+           _browser_i(_browser_mx(m, nth(b, 0), nth(b, 1))),
+           _browser_i(_browser_my(m, nth(b, 0), nth(b, 1))), lw, color) in
+         go(i + 1)))) in
+  go(0)
+
+let _browser_draw_image(cid, m, img, dx, dy, dw, dh) =
+  let sid = fmap_get(nth(img, 1), "$cvid") in
+  if sid == 0 then 0
+  else
+    (let sw = fmap_get(nth(img, 1), "$cw") in
+     (let sh = fmap_get(nth(img, 1), "$ch") in
+      (let dw2 = if dw == 0 then sw else dw in
+       (let dh2 = if dh == 0 then sh else dh in
+        (let b = _browser_bbox(m, dx, dy, dw2, dh2) in
+         (let x0 = _browser_i(nth(b, 0)) in
+          (let y0 = _browser_i(nth(b, 1)) in
+           (let x1 = _browser_i(nth(b, 2)) in
+            (let y1 = _browser_i(nth(b, 3)) in
+             yui_canvas_draw_canvas(cid, sid, 0, 0, sw, sh, x0, y0, x1 - x0, y1 - y0))))))))))
+
+let _browser_grad_obj(_) =
+  let r = ["$o", fmap_new(0)] in
+  let _ = fmap_put(nth(r, 1), "addColorStop", fun(p, col) -> 0) in
+  r
+
+let _browser_ctx(cv) =
+  let o = ["$o", fmap_new(0)] in
+  let cid = fmap_get(nth(cv, 1), "$cvid") in
+  let mb = box_new() in
+  let _ = box_set(mb, _browser_mat(0)) in
+  let pb = box_new() in
+  let _ = box_set(pb, 0) in
+  let pp = box_new() in
+  let _ = box_set(pp, []) in
+  let sb = box_new() in
+  let _ = box_set(sb, []) in
+  let _ = fmap_put(nth(o, 1), "$mb", mb) in
+  let _ = fmap_put(nth(o, 1), "$pb", pb) in
+  let _ = fmap_put(nth(o, 1), "$pp", pp) in
+  let _ = fmap_put(nth(o, 1), "$sb", sb) in
+  let _ = fmap_put(nth(o, 1), "canvas", cv) in
+  let _ = fmap_put(nth(o, 1), "fillStyle", "#000000") in
+  let _ = fmap_put(nth(o, 1), "strokeStyle", "#000000") in
+  let _ = fmap_put(nth(o, 1), "globalAlpha", 1) in
+  let _ = fmap_put(nth(o, 1), "globalCompositeOperation", "source-over") in
+  let _ = fmap_put(nth(o, 1), "lineWidth", 1) in
+  let _ = fmap_put(nth(o, 1), "font", "10px sans-serif") in
+  let _ = fmap_put(nth(o, 1), "textAlign", "start") in
+  let _ = fmap_put(nth(o, 1), "textBaseline", "alphabetic") in
+  let _ = fmap_put(nth(o, 1), "imageSmoothingEnabled", true) in
+  let _ = fmap_put(nth(o, 1), "fillRect", fun(x, y, w, h) ->
+    _browser_fill_rect_cid(cid, box_get(mb), x, y, w, h,
+      _browser_arga(_browser_color(fmap_get(nth(o, 1), "fillStyle")), fmap_get(nth(o, 1), "globalAlpha")))) in
+  let _ = fmap_put(nth(o, 1), "clearRect", fun(x, y, w, h) ->
+    _browser_clear_rect_cid(cid, box_get(mb), x, y, w, h)) in
+  let _ = fmap_put(nth(o, 1), "strokeRect", fun(x, y, w, h) ->
+    _browser_stroke_rect_cid(cid, box_get(mb), x, y, w, h,
+      _browser_i(fmap_get(nth(o, 1), "lineWidth")),
+      _browser_arga(_browser_color(fmap_get(nth(o, 1), "strokeStyle")), fmap_get(nth(o, 1), "globalAlpha")))) in
+  let _ = fmap_put(nth(o, 1), "fillText", fun(t, x, y) ->
+    (let fs = _browser_font_size(fmap_get(nth(o, 1), "font")) in
+    let al = fmap_get(nth(o, 1), "textAlign") in
+    let ali = if al == "center" then 1 else if al == "right" or al == "end" then 2 else 0 in
+    let bl = fmap_get(nth(o, 1), "textBaseline") in
+    let bli = if bl == "middle" then 1 else 2 in
+    _browser_fill_text_cid(cid, box_get(mb), t, x, y, fs,
+      _browser_arga(_browser_color(fmap_get(nth(o, 1), "fillStyle")), fmap_get(nth(o, 1), "globalAlpha")),
+      ali, bli))) in
+  let _ = fmap_put(nth(o, 1), "strokeText", fun(t, x, y) -> 0) in
+  let _ = fmap_put(nth(o, 1), "measureText", fun(t) ->
+    _browser_measure_obj(_browser_font_size(fmap_get(nth(o, 1), "font")), abs(nth(box_get(mb), 3)), t)) in
+  let _ = fmap_put(nth(o, 1), "save", fun(_) -> _browser_save(o, mb, sb)) in
+  let _ = fmap_put(nth(o, 1), "restore", fun(_) -> _browser_restore(o, mb, sb)) in
+  let _ = fmap_put(nth(o, 1), "translate", fun(x, y) ->
+    (let m = box_get(mb) in
+     box_set(mb, [nth(m, 0), nth(m, 1), nth(m, 2), nth(m, 3),
+                  nth(m, 4) + nth(m, 0) * x + nth(m, 2) * y,
+                  nth(m, 5) + nth(m, 1) * x + nth(m, 3) * y]))) in
+  let _ = fmap_put(nth(o, 1), "scale", fun(x, y) ->
+    (let m = box_get(mb) in
+     box_set(mb, [nth(m, 0) * x, nth(m, 1) * x, nth(m, 2) * y, nth(m, 3) * y, nth(m, 4), nth(m, 5)]))) in
+  let _ = fmap_put(nth(o, 1), "rotate", fun(a) ->
+    (let m = box_get(mb) in
+     (let c = cos(a) in
+      (let s = sin(a) in
+       box_set(mb, [nth(m, 0) * c + nth(m, 2) * s, nth(m, 1) * c + nth(m, 3) * s,
+                    nth(m, 0) * (0 - s) + nth(m, 2) * c, nth(m, 1) * (0 - s) + nth(m, 3) * c,
+                    nth(m, 4), nth(m, 5)]))))) in
+  let _ = fmap_put(nth(o, 1), "transform", fun(a, b, c, d, e, f) ->
+    (let m = box_get(mb) in
+     box_set(mb, [nth(m, 0) * a + nth(m, 2) * b, nth(m, 1) * a + nth(m, 3) * b,
+                  nth(m, 0) * c + nth(m, 2) * d, nth(m, 1) * c + nth(m, 3) * d,
+                  nth(m, 0) * e + nth(m, 2) * f + nth(m, 4),
+                  nth(m, 1) * e + nth(m, 3) * f + nth(m, 5)]))) in
+  let _ = fmap_put(nth(o, 1), "setTransform", fun(a, b, c, d, e, f) -> box_set(mb, [a, b, c, d, e, f])) in
+  let _ = fmap_put(nth(o, 1), "resetTransform", fun(_) -> box_set(mb, _browser_mat(0))) in
+  let _ = fmap_put(nth(o, 1), "beginPath", fun(_) -> (let _ = box_set(pb, 0) in box_set(pp, []))) in
+  let _ = fmap_put(nth(o, 1), "closePath", fun(_) -> 0) in
+  let _ = fmap_put(nth(o, 1), "moveTo", fun(x, y) -> (let _ = box_set(pb, 0) in box_set(pp, [[x, y]]))) in
+  let _ = fmap_put(nth(o, 1), "lineTo", fun(x, y) -> box_set(pp, append(box_get(pp), [[x, y]]))) in
+  let _ = fmap_put(nth(o, 1), "rect", fun(x, y, w, h) -> box_set(pb, [x, y, w, h])) in
+  let _ = fmap_put(nth(o, 1), "roundRect", fun(x, y, w, h, r) -> box_set(pb, [x, y, w, h])) in
+  let _ = fmap_put(nth(o, 1), "arc", fun(x, y, r, a0, a1) -> 0) in
+  let _ = fmap_put(nth(o, 1), "arcTo", fun(x1, y1, x2, y2, r) -> 0) in
+  let _ = fmap_put(nth(o, 1), "quadraticCurveTo", fun(cx, cy, x, y) -> box_set(pp, append(box_get(pp), [[x, y]]))) in
+  let _ = fmap_put(nth(o, 1), "bezierCurveTo", fun(c1x, c1y, c2x, c2y, x, y) -> box_set(pp, append(box_get(pp), [[x, y]]))) in
+  let _ = fmap_put(nth(o, 1), "fill", fun(_) ->
+    _browser_fill_obj(cid, box_get(mb), box_get(pb),
+      _browser_arga(_browser_color(fmap_get(nth(o, 1), "fillStyle")), fmap_get(nth(o, 1), "globalAlpha")))) in
+  let _ = fmap_put(nth(o, 1), "stroke", fun(_) ->
+    (let lw = _browser_i(fmap_get(nth(o, 1), "lineWidth")) in
+     _browser_stroke_pts(cid, box_get(mb), box_get(pp), (if lw < 1 then 1 else lw),
+       _browser_arga(_browser_color(fmap_get(nth(o, 1), "strokeStyle")), fmap_get(nth(o, 1), "globalAlpha"))))) in
+  let _ = fmap_put(nth(o, 1), "clip", fun(_) -> 0) in
+  let _ = fmap_put(nth(o, 1), "drawImage", fun(img, dx, dy, dw, dh) ->
+    _browser_draw_image(cid, box_get(mb), img, dx, dy, dw, dh)) in
+  let _ = fmap_put(nth(o, 1), "getImageData", fun(x, y, w, h) ->
+    (let r = ["$o", fmap_new(0)] in
+     (let _ = fmap_put(nth(r, 1), "width", w) in
+      (let _ = fmap_put(nth(r, 1), "height", h) in
+       fmap_put(nth(r, 1), "data", bytes_new()))))) in
+  let _ = fmap_put(nth(o, 1), "putImageData", fun(img, dx, dy) -> 0) in
+  let _ = fmap_put(nth(o, 1), "createImageData", fun(w, h) ->
+    (let r = ["$o", fmap_new(0)] in
+     (let _ = fmap_put(nth(r, 1), "width", w) in
+      (let _ = fmap_put(nth(r, 1), "height", h) in
+       fmap_put(nth(r, 1), "data", bytes_new()))))) in
+  let _ = fmap_put(nth(o, 1), "createLinearGradient", fun(a, b, c, d) -> _browser_grad_obj(0)) in
+  let _ = fmap_put(nth(o, 1), "createRadialGradient", fun(a, b, c, d, e, f) -> _browser_grad_obj(0)) in
+  let _ = fmap_put(nth(o, 1), "createPattern", fun(a, b) -> 0) in
+  o
+
+let _browser_canvas(w0, h0) =
+  let id = yui_canvas_new(w0, h0) in
+  let o = ["$o", fmap_new(0)] in
+  let _ = fmap_put(nth(o, 1), "$cvid", id) in
+  let _ = fmap_put(nth(o, 1), "$cw", w0) in
+  let _ = fmap_put(nth(o, 1), "$ch", h0) in
+  let _ = fmap_put(nth(o, 1), "$attached", 0) in
+  let _ = fmap_put(nth(o, 1), "$ctx", 0) in
+  let _ = fmap_put(nth(o, 1), "$tag", "canvas") in
+  let _ = fmap_put(nth(o, 1), "style", ["$o", fmap_new(0)]) in
+  let _ = fmap_put(nth(o, 1), "width", ["$acc",
+    fun(_) -> fmap_get(nth(o, 1), "$cw"),
+    fun(v) -> (let _ = fmap_put(nth(o, 1), "$cw", v) in
+      (let _ = yui_canvas_resize(id, v, fmap_get(nth(o, 1), "$ch")) in 0))]) in
+  let _ = fmap_put(nth(o, 1), "height", ["$acc",
+    fun(_) -> fmap_get(nth(o, 1), "$ch"),
+    fun(v) -> (let _ = fmap_put(nth(o, 1), "$ch", v) in
+      (let _ = yui_canvas_resize(id, fmap_get(nth(o, 1), "$cw"), v) in 0))]) in
+  let _ = fmap_put(nth(o, 1), "getContext", fun(kind) ->
+    if kind == "2d" then
+      (let c = fmap_get(nth(o, 1), "$ctx") in
+       if c != 0 then c
+       else (let c2 = _browser_ctx(o) in (let _ = fmap_put(nth(o, 1), "$ctx", c2) in c2)))
+    else 0) in
+  let _ = fmap_put(nth(o, 1), "getBoundingClientRect", fun(_) ->
+    (let r = ["$o", fmap_new(0)] in
+    let _ = fmap_put(nth(r, 1), "left", 0) in
+    let _ = fmap_put(nth(r, 1), "top", 0) in
+    let _ = fmap_put(nth(r, 1), "width", fmap_get(nth(o, 1), "$cw")) in
+    let _ = fmap_put(nth(r, 1), "height", fmap_get(nth(o, 1), "$ch")) in
+    let _ = fmap_put(nth(r, 1), "right", fmap_get(nth(o, 1), "$cw")) in
+    fmap_put(nth(r, 1), "bottom", fmap_get(nth(o, 1), "$ch")))) in
+  let _ = fmap_put(nth(o, 1), "appendChild", fun(c) -> c) in
+  let _ = fmap_put(nth(o, 1), "removeChild", fun(c) -> 0) in
+  let _ = fmap_put(nth(o, 1), "setAttribute", fun(k, v) -> 0) in
+  let _ = fmap_put(nth(o, 1), "getAttribute", fun(k) -> 0) in
+  let _ = fmap_put(nth(o, 1), "addEventListener", _js_st_noop) in
+  let _ = fmap_put(nth(o, 1), "removeEventListener", _js_st_noop) in
+  let _ = fmap_put(nth(o, 1), "toDataURL", fun(...a) -> "") in
+  let _ = fmap_put(nth(o, 1), "focus", _js_st_noop) in
+  let _ = list_push(_browser_cvlist, o) in
+  o
+
+let _browser_image(_) =
+  let o = ["$o", fmap_new(0)] in
+  let _ = fmap_put(nth(o, 1), "src", "") in
+  let _ = fmap_put(nth(o, 1), "width", 0) in
+  let _ = fmap_put(nth(o, 1), "height", 0) in
+  let _ = fmap_put(nth(o, 1), "complete", true) in
+  let _ = fmap_put(nth(o, 1), "onload", 0) in
+  let _ = fmap_put(nth(o, 1), "onerror", 0) in
+  let _ = fmap_put(nth(o, 1), "addEventListener", _js_st_noop) in
+  let _ = fmap_put(nth(o, 1), "removeEventListener", _js_st_noop) in
+  o
+
+let _browser_create_element(tag) =
+  if tag == "canvas" then _browser_canvas(300, 150)
+  else _dom_node(tag, _dom_seqnext(0))
+
+let _browser_listen(t, cb) =
+  if t == "load" or t == "DOMContentLoaded" then
+    (let _ = list_push(box_get(_browser_loadq), cb) in 0)
+  else 0
+
+let _browser_raf(cb) = (let _ = list_push(box_get(_browser_rafq), cb) in 0)
+
+let _browser_run_raf(_) =
+  let q = box_get(_browser_rafq) in
+  let _ = box_set(_browser_rafq, list_new()) in
+  let n = len(q) in
+  let go(i) =
+    if i >= n then 0
+    else (let f = nth(q, i) in (let _ = if kind(f) == 6 then f(0) else 0 in go(i + 1))) in
+  go(0)
+
+let _browser_run_load(_) =
+  if box_get(_browser_booted) != 0 then 0
+  else
+    (let _ = box_set(_browser_booted, 1) in
+     (let q = box_get(_browser_loadq) in
+      (let _ = box_set(_browser_loadq, list_new()) in
+       (let n = len(q) in
+        (let go(i) =
+           if i >= n then 0
+           else (let f = nth(q, i) in (let _ = if kind(f) == 6 then f(0) else 0 in go(i + 1))) in
+         go(0))))))
+
+let _browser_present(_) =
+  let n = len(_browser_cvlist) in
+  let go(i) =
+    if i >= n then 0
+    else
+      (let c = nth(_browser_cvlist, i) in
+       (let _ =
+          if fmap_get(nth(c, 1), "$attached") != 0 then
+            yui_canvas_present(fmap_get(nth(c, 1), "$cvid"), 0, 0,
+              fmap_get(nth(c, 1), "$cw"), fmap_get(nth(c, 1), "$ch"))
+          else 0 in
+        go(i + 1))) in
+  go(0)
+
+let _browser_frame(_) =
+  let _ = _browser_run_load(0) in
+  let _ = _browser_run_raf(0) in
+  let quit = yui_bridge_tick_quit(0) in
+  let _ = _browser_present(0) in
+  if quit != 0 then 0 else _browser_frame(0)
+
+let js_browser_canvas(w, h) = _browser_canvas(w, h)
+
+let js_browser_boot(_) =
+  let _ = _dom_ensure(0) in
+  if not _dom_ok(0) then 0 else _browser_frame(0)
+
+/* Hooks: installed after every implementation exists. The doc entries are
+ * overwritten too: reaching the implementation through a stored closure in the
+ * hook table lost the `tag` argument (the same stored-closure capture bug the
+ * DOM bridge hit before), so createElement returned an empty object. */
+let _ = fmap_put(nth(_dom_hooks, 1), "createElement", fun(tag) -> _browser_create_element(tag))
+let _ = fmap_put(nth(_dom_hooks, 1), "canvas", fun(w, h) -> _browser_canvas(w, h))
+let _ = fmap_put(nth(_dom_hooks, 1), "image", fun(_) -> _browser_image(0))
+let _ = fmap_put(nth(_dom_hooks, 1), "raf", fun(cb) -> _browser_raf(cb))
+let _ = fmap_put(nth(_dom_hooks, 1), "attachcv", fun(c) ->
+  let cid = fmap_get(nth(c, 1), "$cvid") in
+  if cid == 0 then 0 else (let _ = fmap_put(nth(c, 1), "$attached", 1) in 1))
+let _ = fmap_put(nth(_js_st_win0, 1), "addEventListener", fun(t, cb) -> _browser_listen(t, cb))
+let _ = fmap_put(nth(_js_st_doc0, 1), "addEventListener", fun(t, cb) -> _browser_listen(t, cb))
+let _ = fmap_put(nth(_js_st_perf0, 1), "now", fun(_) -> yui_ticks(0))
+let _ = fmap_put(nth(_js_st_win0, 1), "requestAnimationFrame", _js_st_raf)
+
+
+
+
+
+
+
+
+
+
+
+
+
+let _ = fmap_put(nth(_js_st_doc0, 1), "createElement", fun(tag) -> _browser_create_element(tag))
+let _ = fmap_put(nth(_js_st_doc0, 1), "createElementNS", fun(tag) -> _browser_create_element(tag))
+
