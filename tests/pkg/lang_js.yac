@@ -556,3 +556,4 @@ let _ = check("promise_then", "Promise.resolve(6).then(function(v){ console.log(
 let _ = check("async_await", "async function f(){ return await Promise.resolve(41) + 1; } f().then(function(v){ console.log(v); });", "42")
 let _ = check("proxy_get", "let p = new Proxy({a: 1}, { get: function(o, k){ return 9; } }); console.log(p.a);", "9")
 let _ = check("reflect_get", "let o = {a: 4}; console.log(Reflect.get(o, 'a'));", "4")
+

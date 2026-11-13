@@ -1,0 +1,143 @@
+package lang.object
+
+import data.fmap { fmap_new, fmap_get, fmap_put }
+
+export obj_tag, obj_acc_tag, obj_proto_key, obj_unk_key,
+  obj_gone, obj_new, obj_noop, obj_unknown, obj_acc,
+  obj_acc_get, obj_acc_set, obj_acc_put, obj_getp, obj_get, obj_setp, obj_set,
+  obj_del, obj_has, obj_keys, obj_proto, obj_proto_put
+
+let obj_tag = "$o"
+let obj_acc_tag = "$acc"
+let obj_proto_key = "__proto__"
+let obj_unk_key = "$unk"
+
+let obj_gone = box_new()
+let obj_init_gone = box_set(obj_gone, 0)
+
+let obj_new(proto) =
+  let m = fmap_new(0) in
+  let _ = fmap_put(m, obj_proto_key, proto) in
+  [obj_tag, m]
+
+let obj_noop(...a) = 0
+
+let obj_unknown(o) =
+  if is_int(o) then false
+  else if kind(o) == 2 then
+    if len(o) > 0 then
+      if nth(o, 0) == obj_tag then fmap_get(nth(o, 1), obj_unk_key) != 0 else false
+    else false
+  else false
+
+let obj_acc(v) =
+  if is_int(v) then false
+  else if kind(v) == 2 then (if len(v) > 0 then nth(v, 0) == obj_acc_tag else false)
+  else false
+
+let obj_acc_get(v, o, th) =
+  if th == 0 then 0
+  else
+    let g = nth(v, 1) in
+    if g == 0 then 0
+    else
+      let s = box_get(th) in
+      let _ = box_set(th, o) in
+      let r = g(0) in
+      let _ = box_set(th, s) in
+      r
+  
+let obj_acc_set(v, o, x, th) =
+  if th == 0 then x
+  else
+    let s = nth(v, 2) in
+    if s == 0 then x
+    else
+      let old = box_get(th) in
+      let _ = box_set(th, o) in
+      let _ = s(x) in
+      let _ = box_set(th, old) in
+      x
+  
+let obj_acc_put(m, k, isget, f) =
+  let cur = fmap_get(m, k) in
+  let g = if isget then f else (if obj_acc(cur) then nth(cur, 1) else 0) in
+  let s = if isget then (if obj_acc(cur) then nth(cur, 2) else 0) else f in
+  let _ = fmap_put(m, k, [obj_acc_tag, g, s]) in 0
+
+let obj_getp(o, self, k, th) =
+  let m = nth(o, 1) in
+  let v = fmap_get(m, k) in
+  if v == obj_gone then
+    let p = fmap_get(m, obj_proto_key) in
+    if p == 0 then 0 else obj_getp(p, self, k, th)
+  else if v != 0 then
+    if obj_acc(v) then obj_acc_get(v, self, th) else v
+  else
+    let p = fmap_get(m, obj_proto_key) in
+    if p == 0 then 0 else obj_getp(p, self, k, th)
+
+let obj_get(o, k) = obj_getp(o, o, k, 0)
+
+let obj_setp(o, self, k, x, th) =
+  if o == 0 then x
+  else
+    let m = nth(o, 1) in
+    let cur = fmap_get(m, k) in
+    if obj_acc(cur) then obj_acc_set(cur, self, x, th)
+    else
+      let p = fmap_get(m, obj_proto_key) in
+      if p == 0 then
+        let _ = fmap_put(nth(self, 1), k, x) in x
+      else obj_setp(p, self, k, x, th)
+
+let obj_set(o, k, x) = obj_setp(o, o, k, x, 0)
+
+let obj_del(o, k) = (let _ = fmap_put(nth(o, 1), k, obj_gone) in true)
+
+let obj_has(o, k) =
+  if is_int(o) then false
+  else
+    let rec(w) =
+      let m = nth(w, 1) in
+      let v = fmap_get(m, k) in
+      if v == obj_gone then (let p = fmap_get(m, obj_proto_key) in if p == 0 then false else rec(p))
+      else if v != 0 then true
+      else (let p = fmap_get(m, obj_proto_key) in if p == 0 then false else rec(p)) in
+    rec(o)
+
+let obj_keys(o) =
+  if is_int(o) then list_new()
+  else
+  let m = nth(o, 1) in
+  let vec = nth(m, 0) in
+  let cap = nth(m, 2) in
+  let r = list_new() in
+  let rec(i) =
+    if i >= cap then r
+    else
+      let e = nth(vec, i) in
+      let _ =
+        if e == 0 then 0
+        else
+          let kk = nth(e, 0) in
+          if kk == obj_proto_key then 0
+          else if fmap_get(m, kk) == obj_gone then 0
+          else list_push(r, kk) in
+      rec(i + 1) in
+  rec(0)
+
+let obj_protos = box_new()
+let obj_init_protos = box_set(obj_protos, 0)
+
+let obj_proto(nm) =
+  let m = box_get(obj_protos) in
+  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(obj_protos, x) in x)) else m in
+  let p = fmap_get(m2, nm) in
+  if p == 0 then (let x = obj_new(0) in (let _ = fmap_put(m2, nm, x) in x)) else p
+
+let obj_proto_put(nm, p) =
+  let m = box_get(obj_protos) in
+  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(obj_protos, x) in x)) else m in
+  let _ = fmap_put(m2, nm, p) in
+  p
