@@ -8,7 +8,8 @@ package lang.jslib
 export js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_date_now, js_from_char_code,
   js_native, js_json_stringify, js_json_parse, js_str_pad, js_str_trim_start, js_str_trim_end,
   js_install, js_re_test, js_re_exec, js_promise_new, js_promise_of, js_promise_then,
-  js_promise_all, js_await
+  js_promise_all, js_await, js_obj_defprop, js_obj_defprops, js_obj_gopds,
+  js_obj_values, js_obj_assign2, js_keys_of
 import data.fmap { fmap_new, fmap_get, fmap_put }
 import num.math { ftoi, log, exp, powf, abs, pow, sqrt, sin, cos, log2, sign }
 import lang.jsrt { _js_iter, _js_str }
@@ -279,6 +280,37 @@ let js_obj_assign(tgt, srcs) =
       rec(i + 1) in
   rec(0)
 
+/* Object statics used as VALUES (`var dp = Object.defineProperties`). The
+ * call-only path goes through js_native; bundlers (esbuild __defProps helpers)
+ * keep a reference and call it later. */
+let js_obj_defprops(o, ds) =
+  let ks = js_keys_of(ds) in
+  let n = len(ks) in
+  let go(i) =
+    if i >= n then o
+    else
+      (let _ = js_obj_defprop(o, nth(ks, i), fmap_get(nth(ds, 1), nth(ks, i))) in
+       go(i + 1)) in
+  go(0)
+
+
+let js_obj_gopds(o) =
+  let ks = js_keys_of(o) in
+  let n = len(ks) in
+  let r = ["$o", fmap_new(0)] in
+  let go(i) =
+    if i >= n then r
+    else
+      (let k = nth(ks, i) in
+       (let d = ["$o", fmap_new(0)] in
+        (let _ = fmap_put(nth(d, 1), "value", fmap_get(nth(o, 1), k)) in
+         (let _ = fmap_put(nth(d, 1), "enumerable", true) in
+          (let _ = fmap_put(nth(d, 1), "configurable", true) in
+           (let _ = fmap_put(nth(d, 1), "writable", true) in
+            (let _ = fmap_put(nth(r, 1), k, d) in go(i + 1)))))))) in
+  go(0)
+
+let js_obj_assign2(t, s) = js_obj_assign(t, [s])
 let js_obj_values(o) =
   let ks = js_keys_of(o) in
   let n = len(ks) in
@@ -864,6 +896,7 @@ let js_install(this, proto) =
   let sp = proto("Set") in
   /* Methods take POSITIONAL arguments (the ABI every closure uses now);
  * the two-slot list keeps js_map/js_set on their single-list interface. */
+  let _ = fmap_put(nth(mp, 1), "clear", fun(a0, a1) -> (let o = box_get(this) in (let _ = fmap_put(nth(o, 1), "$data", list_new()) in (let _ = fmap_put(nth(o, 1), "size", 0) in 0)))) in
   let _ = fmap_put(nth(mp, 1), "set", fun(a0, a1) -> js_map(box_get(this), "set", [a0, a1])) in
   let _ = fmap_put(nth(mp, 1), "get", fun(a0, a1) -> js_map(box_get(this), "get", [a0, a1])) in
   let _ = fmap_put(nth(mp, 1), "has", fun(a0, a1) -> js_map(box_get(this), "has", [a0, a1])) in
@@ -872,8 +905,12 @@ let js_install(this, proto) =
   let _ = fmap_put(nth(mp, 1), "values", fun(a0, a1) -> js_map(box_get(this), "values", [a0, a1])) in
   let _ = fmap_put(nth(mp, 1), "entries", fun(a0, a1) -> js_map(box_get(this), "entries", [a0, a1])) in
   let _ = fmap_put(nth(mp, 1), "forEach", fun(a0, a1) -> js_map(box_get(this), "forEach", [a0, a1])) in
+  let _ = fmap_put(nth(sp, 1), "clear", fun(a0, a1) -> (let o = box_get(this) in (let _ = fmap_put(nth(o, 1), "$data", list_new()) in (let _ = fmap_put(nth(o, 1), "size", 0) in 0)))) in
   let _ = fmap_put(nth(sp, 1), "add", fun(a0, a1) -> js_set(box_get(this), "add", [a0, a1])) in
   let _ = fmap_put(nth(sp, 1), "has", fun(a0, a1) -> js_set(box_get(this), "has", [a0, a1])) in
   let _ = fmap_put(nth(sp, 1), "delete", fun(a0, a1) -> js_set(box_get(this), "delete", [a0, a1])) in
   let _ = fmap_put(nth(sp, 1), "forEach", fun(a0, a1) -> js_set(box_get(this), "forEach", [a0, a1])) in
   0
+
+
+

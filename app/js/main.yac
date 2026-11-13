@@ -136,6 +136,14 @@ let js_suppress(y) = str_cat(y, "print(\"\", false)\n")
 
 let js_is_error(y) = starts_with(y, "error:")
 
+/* Browser programs end with the frame loop (load callbacks + rAF + canvas
+ * present). Only emitted programs that actually import the browser stubs get
+ * it; console-only or module (--mod) output stays a plain program. */
+let js_with_boot(y) =
+  if js_is_error(y) then y
+  else if find(y, "import js.browser") >= 0 then str_cat(y, "\njs_browser_boot(0)\n")
+  else y
+
 /* 去掉结尾分号（把表达式包进 console.log 之前用）。 */
 let js_strip_semi(s) =
   let n = str_len(s) in
@@ -218,7 +226,7 @@ let js_exec(src) =
   if js_is_decl(t) then
     let src2 = js_with_acc(t) in
     js_repl_commit(src2, js_to_yac(src2))
-  else if starts_with(t, "console") then
+  else if starts_with(t, "console") or starts_with(t, "print") then
     js_exec_y(js_to_yac(js_with_acc(t)))
   else if js_is_stmt(t) then
     let src2 = js_with_acc(t) in
@@ -234,7 +242,7 @@ let js_exec(src) =
 let js_run_file(path) =
   let src = read_or_0(path) in
   if src == 0 then print(str_cat("error: cannot read ", path))
-  else js_exec_y(js_to_yac(src))
+  else js_exec_y(js_with_boot(js_to_yac(src)))
 
 let js_dump_file(path) =
   let src = read_or_0(path) in
@@ -253,7 +261,7 @@ let js_dump_yac_file(path, out0) =
     if js_is_error(y) then print(y)
     else
       let mp = js_mod_pkg(0) in
-      let y2 = if mp == 0 then y else js_pkg_wrap(mp, y) in
+      let y2 = if mp == 0 then js_with_boot(y) else js_pkg_wrap(mp, y) in
       let out = if out0 == 0 then str_cat(path, ".full.yac") else out0 in
       let _ = write(out, y2) in
       print(str_cat("wrote ", out))
@@ -271,7 +279,7 @@ let js_compile_file(path, out0) =
     else
       let out = if out0 == 0 then js_default_out(path) else out0 in
       let _ = print(str_cat("js: translated ", str_cat(int_to_str(str_len(y)), " bytes"))) in
-      let bin = compile(y) in
+      let bin = compile(js_with_boot(y)) in
       if bin == 0 then
         let _ = write(str_cat(out, ".fail.yac"), y) in
         print("error: native compilation failed")
@@ -450,3 +458,4 @@ let main =
   let _ = js_cli(0) in
   exit(0)
 in main
+

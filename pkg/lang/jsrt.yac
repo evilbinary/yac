@@ -97,6 +97,7 @@ let _js_typeof(x) =
   if k == 3 then "string"
   else if k == 7 then "number"
   else if k == 0 then "number"
+  else if k == 6 then "function"
   else "object"
 
 /* JavaScript truthiness: 0, "", NaN, null/undefined are falsy; everything else

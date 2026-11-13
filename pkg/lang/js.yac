@@ -2072,7 +2072,7 @@ let js_rw_super_val(x, sp) =
   else
     let h = nth(x, 0) in
     if h == "id" and len(x) > 1 and nth(x, 1) == "super" then
-      ["raw", js_cat(["_js_ctor_fn(", sp, ")"])]
+      ["raw", js_cat(["_js_ctorfn2(", sp, ")"])]
     else if h == "mem" and len(x) > 2 and kind(nth(x, 1)) == 2 and nth(nth(x, 1), 0) == "id" and nth(nth(x, 1), 1) == "super" then
       ["supermemv", sp, nth(x, 2)]
     else
@@ -2167,11 +2167,21 @@ let js_globals =
   let _ = box_set(b, list_new()) in
   b
 
+/* 1 while the TOP-LEVEL statement list is emitted: its `let/const/var` are
+ * script globals, not locals of the top-level body (passed as ctx field 6). */
+
+let js_userdefs = box_new()
+let js_boolvars = box_new()
+let _ = box_set(js_boolvars, list_new())
+let _ = box_set(js_userdefs, list_new())
+
+let js_note_def(nm) =
+  let xs = box_get(js_userdefs) in
+  if js_in(xs, nm) then 0 else list_push(xs, nm)
+
 let js_note_global(nm) =
   let xs = box_get(js_globals) in
   if js_in(xs, nm) then 0 else list_push(xs, nm)
-
-/* Box name for a variable reference, or a noted global mangled name. */
 let js_var(vars, nm) =
   let b = js_lookup(vars, nm) in
   if b != "" then b
@@ -2744,7 +2754,19 @@ let js_func_body(ps0, body, ctx, st, mode) =
         let _ = if bx == "" then 0 else js_arity_pop(st) in
         pop_i(i - 1) in
     let _ = push_i(0) in
+    let oldbv = box_get(js_boolvars) in
+    let bps =
+      let n = len(ps) in
+      let go(i, acc) =
+        if i >= n then acc
+        else
+          let p = nth(ps, i) in
+          if nth(p, 0) == "pdef" and nth(nth(p, 2), 0) == "bool" then go(i + 1, cons(nth(p, 1), acc))
+          else go(i + 1, acc) in
+      go(0, []) in
+    let _ = box_set(js_boolvars, append(bps, oldbv)) in
     let inner = emit_body(0) in
+    let _ = box_set(js_boolvars, oldbv) in
     let rec(i, acc) =
       if i < 0 then acc
       else
@@ -2913,13 +2935,10 @@ let js_emit_classexpr(e, ctx, st) =
     let hasSup = if nth(sup, 0) == "null" then 0 else 1 in
     let supId = if hasSup == 1 and nth(sup, 0) == "id" then nth(sup, 1) else "" in
     let supNamed = if supId == "" then 0 else if js_in(funcs, supId) then 1 else 0 in
-    let sp = if hasSup == 1 and supNamed == 0 then js_fresh(st, "sp") else "" in
+    let sp = if hasSup == 1 then js_fresh(st, "sp") else "" in
     let varsM = if nm == "" then vars0 else cons([nm, wb], vars0) in
     let ctxM = [varsM, funcs, nth(ctx, 2), nth(ctx, 3), nth(ctx, 4), nth(ctx, 5)] in
-    let rw(x) =
-      if supNamed == 1 then js_rw_super(x, supId)
-      else if sp == "" then x
-      else js_rw_super_val(x, sp) in
+    let rw(x) = if sp == "" then x else js_rw_super_val(x, sp) in
     let findctor(i) =
       if i >= len(methods) then 0
       else if nth(nth(methods, i), 0) == "ctor" then nth(methods, i)
@@ -2959,8 +2978,8 @@ let js_emit_classexpr(e, ctx, st) =
           let put = js_cat(["fmap_put(nth(_js_proto(\"", js_esc(key), "\"), 1), \"", js_esc(nth(md, 1)), "\", ", fe, ")"]) in
           js_cat(["(let _ = ", put, " in ", go2(i + 1), ")"]) in
     let link =
-      if supNamed == 1 then
-        js_cat(["fmap_put(nth(_js_proto(\"", js_esc(key), "\"), 1), \"__proto__\", _js_proto(\"", js_esc(supId), "\"))"])
+      if hasSup == 1 and supId != "" then
+        js_cat(["fmap_put(nth(_js_proto(\"", js_esc(key), "\"), 1), \"__proto__\", (let _pp = _js_ctor_proto(", sp, ") in (if _pp != 0 then _pp else _js_proto(\"", js_esc(supId), "\"))))"])
       else if hasSup == 1 then
         js_cat(["fmap_put(nth(_js_proto(\"", js_esc(key), "\"), 1), \"__proto__\", _js_ctor_proto(", sp, "))"])
       else "0" in
@@ -3128,6 +3147,24 @@ let js_emit_expr(e, ctx, st) =
       if is_math and (nm == "PI" or nm == "E") then
         let _ = box_set(st_math(st), 1) in
         (if nm == "PI" then "pi" else "e")
+      else if is_math and js_math_known(nm) then
+        /* `const s = Math.sign; s(x)` — the memof becomes a first-class
+         * value, so bind it to the num.math function of the same name. */
+        let _ = box_set(st_math(st), 1) in
+        nm
+      else if nth(obj, 0) == "id" and nth(obj, 1) == "Object"
+           and (nm == "defineProperty" or nm == "defineProperties" or nm == "getOwnPropertyDescriptors"
+                or nm == "getOwnPropertyNames" or nm == "keys" or nm == "values" or nm == "assign") then
+        /* `var d = Object.defineProperties` — esbuild's __defProps helper
+         * keeps the static as a value, so emit a jslib-backed closure. */
+        let _ = box_set(st_jslib(st), 1) in
+        (if nm == "defineProperty" then "fun(a, b, c) -> js_obj_defprop(a, b, c)"
+         else if nm == "defineProperties" then "fun(a, b) -> js_obj_defprops(a, b)"
+         else if nm == "getOwnPropertyDescriptors" then "fun(a) -> js_obj_gopds(a)"
+         else if nm == "getOwnPropertyNames" then "fun(a) -> js_keys_of(a)"
+         else if nm == "keys" then "fun(a) -> js_keys_of(a)"
+         else if nm == "values" then "fun(a) -> js_obj_values(a)"
+         else "fun(a, b) -> js_obj_assign2(a, b)")
       else
         let isfn = if nth(obj, 0) == "id" then (js_in(nth(ctx, 1), nth(obj, 1)) or js_arity_find(st, nth(obj, 1)) != 0) and js_local_q(nth(ctx, 0), nth(obj, 1)) == 0 else false in
         if isfn then
@@ -3173,7 +3210,7 @@ let js_emit_expr(e, ctx, st) =
         let t = js_fresh(st, "nil") in
         js_cat(["(let ", t, " = ", ls, " in if ", t, " == 0 then ", rs, " else ", t, ")"])
       else if op == "===" then js_cat(["(", ls, " == ", rs, ")"])
-      else if op == "!==" then js_cat(["(", ls, " != ", rs, ")"])
+      else if op == "!==" then js_cat(["(not (", ls, " == ", rs, "))"])
       else if op == "**" then (let _ = box_set(st_math(st), 1) in js_cat(["powf(", ls, ", ", rs, ")"]))
       else if op == "&" then js_cat(["band(", ls, ", ", rs, ")"])
       else if op == "|" then js_cat(["bor(", ls, ", ", rs, ")"])
@@ -3181,10 +3218,12 @@ let js_emit_expr(e, ctx, st) =
       else if op == "<<" then js_cat(["bshl(", ls, ", ", rs, ")"])
       else if op == ">>" then js_cat(["bshr(", ls, ", ", rs, ")"])
       else if op == ">>>" then js_cat(["bshr(", ls, ", ", rs, ")"])
+      else if op == "!=" then js_cat(["(not (", ls, " == ", rs, "))"])
       else if op == "in" then
         let _ = box_set(st_obj(st), 1) in
         js_cat(["_js_get(", rs, ", ", ls, ") != 0"])
       else if op == "instanceof" then "0"
+      else if op == "/" then js_cat(["(1.0 * ", ls, " / ", rs, ")"])
       else js_cat(["(", ls, " ", op, " ", rs, ")"])
   else
   /* Destructure / call helpers only for the remaining tags. */
@@ -3275,7 +3314,11 @@ let js_emit_expr(e, ctx, st) =
     if nm == "" then ""
     else
       let c = str_ref(nm, 0) in
-      if c >= 65 and c <= 90 then nm else ""
+      if c >= 65 and c <= 90
+         and js_lookup(nth(ctx, 0), nm) == ""
+         and (not js_in(nth(ctx, 1), nm))
+         and (not (js_in(box_get(js_userdefs), nm)))
+      then nm else ""
   in
   /* `[a, b, …]` for js_native's argument list. Spread packs into one list. */
   let args_arr(args) =
@@ -3320,7 +3363,10 @@ let js_emit_expr(e, ctx, st) =
       let vf = js_fresh(st, "f") in
       let vs = js_fresh(st, "s") in
       let vr = js_fresh(st, "r") in
-      js_cat(["(let ", vo, " = ", o, " in (let ", vf, " = _js_get(", vo, ", \"", js_esc(m), "\") in (let ", vs, " = box_get(_js_this) in (let _ = box_set(_js_this, ", vo, ") in (let ", vr, " = ", js_method_invoke(js_cat(["_js_chk(", vf, ", \"obj.", js_esc(m), "\")"]), args, ctx, st), " in (let _ = box_set(_js_this, ", vs, ") in ", vr, "))))))"]) in
+      let va = js_fresh(st, "va") in
+      let cm = js_fresh(st, "cm") in
+      let clabel = if m == "clear" then js_cat(["str_cat(\"obj.clear keys=\", _js_str(_js_keys(", vo, ")))"]) else js_cat(["\"obj.", js_esc(m), "\""]) in
+      js_cat(["(let ", vo, " = ", o, " in (let ", vf, " = _js_get(", vo, ", \"", js_esc(m), "\") in (let ", va, " = ", js_pack_list(args, ctx, st), " in (let ", vs, " = box_get(_js_this) in (let _ = box_set(_js_this, ", vo, ") in (let ", vr, " = (let ", cm, " = _js_chk(", vf, ", ", clabel, ") in _js_apply(", cm, ", ", va, ")) in (let _ = box_set(_js_this, ", vs, ") in ", vr, ")))))))"]) in
     if is_str then
       if m == "charAt" then (let _ = box_set(st_lib(st), 1) in js_cat(["_js_char_at(", o, ", ", a0, ")"]))
       else if m == "charCodeAt" then js_cat(["str_ref(", o, ", ", a0, ")"])
@@ -3474,6 +3520,7 @@ let js_emit_expr(e, ctx, st) =
     else if nth(t, 0) == "arr" or nth(t, 0) == "obj" then "\"object\""
     else if nth(t, 0) == "id" then
       if js_in(funcs, nth(t, 1)) then "\"function\""
+      else if js_in(box_get(js_boolvars), nth(t, 1)) then "\"boolean\""
       else if js_in(nth(ctx, 4), nth(t, 1)) then "\"string\""
       else
         let _ = box_set(st_typeof(st), 1) in
@@ -3561,11 +3608,13 @@ let js_emit_expr(e, ctx, st) =
       /* `new` of a value (class expression / `a.Ctor`). Emit the callee here —
        * going through js_expr_box re-enters this function and can segfault. */
       let cv = js_emit_expr(c, ctx, st) in
+      let _ = box_set(st_jslib(st), 1) in
       let cn = js_fresh(st, "nc") in
       let pn = js_fresh(st, "np") in
       let on = js_fresh(st, "no") in
+      let pv = if nth(c, 0) == "id" then js_cat(["(if ", pn, " != 0 then ", pn, " else _js_proto(\"", js_esc(nth(c, 1)), "\"))"]) else pn in
       let inv = js_emit_invoke(js_cat(["_js_ctorfn2(", cn, ")"]), ["raw", ""], args, ctx, st) in
-      js_cat(["(let ", cn, " = ", cv, " in (let ", pn, " = _js_ctor_proto(", cn, ") in (let ", on, " = _js_obj(", pn, ") in (let _s = box_get(_js_this) in (let _ = box_set(_js_this, ", on, ") in (let _r = ", inv, " in (let _ = box_set(_js_this, _s) in (if kind(_r) == 2 then (if len(_r) > 0 then (if nth(_r, 0) == \"$o\" then _r else ", on, ") else ", on, ") else ", on, "))))))))"])
+      js_cat(["(let ", cn, " = ", cv, " in (let ", pn, " = _js_ctor_proto(", cn, ") in (let ", on, " = _js_obj(", pv, ") in (let _s = box_get(_js_this) in (let _ = box_set(_js_this, ", on, ") in (let _r = ", inv, " in (let _ = box_set(_js_this, _s) in (if kind(_r) == 2 then (if len(_r) > 0 then (if nth(_r, 0) == \"$o\" then _r else ", on, ") else ", on, ") else ", on, "))))))))"])
   else if tag == "assign" then
     /* Target is a box (id), fmap slot (mem) or list slot (idx). Compound ops
      * read the target, apply the base operator, then store. */
@@ -3630,6 +3679,13 @@ let js_emit_expr(e, ctx, st) =
       let tp = nth(tgt, 2) in
       let isfnproto = tp == "prototype" and nth(tobj, 0) == "id" in
       let nmP = if isfnproto then nth(tobj, 1) else "" in
+      let pfn =
+        if nth(tobj, 0) == "mem" and nth(tobj, 2) == "prototype" then
+          let o2 = nth(tobj, 1) in
+          if nth(o2, 0) == "id" and js_in(nth(ctx, 1), nth(o2, 1)) then nth(o2, 1) else ""
+        else "" in
+      let regpre = if pfn == "" then "" else js_cat(["(let _ = _js_fn_proto_set(", js_emit_expr(["id", pfn], ctx, st), ", _js_proto(\"", js_esc(pfn), "\")) in "]) in
+      let regpost = if pfn == "" then "" else ")" in
       if isfnproto and js_in(nth(ctx, 1), nmP) then
         /* `Name.prototype = {...}`: `Name.prototype` reads go through
          * `_js_proto(name)`, so replace that entry instead of setting a
@@ -3644,7 +3700,7 @@ let js_emit_expr(e, ctx, st) =
          * `_js_statics` — the same place member reads and calls consult. */
         js_cat(["(let _v = ", rhs, " in (let _ = _js_static_set(\"", js_esc(nth(tobj, 1)), "\", \"", js_esc(tp), "\", _v) in _v))"])
       else
-        js_cat(["(let _v = ", rhs, " in (let _ = _js_set(", js_emit_expr(nth(tgt, 1), ctx, st), ", \"", js_esc(nth(tgt, 2)), "\", _v) in _v))"])
+        js_cat(["(let _v = ", rhs, " in ", regpre, "(let _ = _js_set(", js_emit_expr(nth(tgt, 1), ctx, st), ", \"", js_esc(nth(tgt, 2)), "\", _v) in _v))", regpost])
     else if t == "idx" then
       let ix2 = nth(tgt, 2) in
       if js_str_lit(ix2) or (nth(ix2, 0) == "id" and js_in(nth(ctx, 4), nth(ix2, 1))) then
@@ -3740,6 +3796,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
   let retf = nth(ctx, 2) in
   let retv = nth(ctx, 3) in
   let brk = nth(ctx, 5) in
+  let top0 = if len(ctx) > 6 then nth(ctx, 6) else 0 in
   /* ctx with a different innermost loop-status box (index 5). */
   let with_brk(c, b) = [nth(c, 0), nth(c, 1), nth(c, 2), nth(c, 3), nth(c, 4), b] in
   /* After a loop body: a fired return wins. Status 0 / 2 / this loop's
@@ -3777,6 +3834,8 @@ let js_emit_stmts(stmts, ctx, k, st) =
     if outer == 0 then js_cat(["(let ", sc, " = box_new() in ", core, ")"]) else core in
   /* One statement, with its own continuation k2 (only loops use k2). */
   let sstmt(s, ctx2, k2) =
+    let topflag = if len(ctx2) > 6 then nth(ctx2, 6) else 0 in
+    let ctx2 = if len(ctx2) > 6 then [nth(ctx2, 0), nth(ctx2, 1), nth(ctx2, 2), nth(ctx2, 3), nth(ctx2, 4), nth(ctx2, 5)] else ctx2 in
     let tag = nth(s, 0) in
     if tag == "expr" then js_emit_expr(nth(s, 1), ctx2, st)
     else if tag == "block" then js_emit_stmts(nth(s, 1), ctx2, "0", st)
@@ -3936,7 +3995,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
       else js_cat(["(let _ = box_set(", retf, ", true) in (let _ = box_set(", retv, ", ", v, ") in ", v, "))"])
     else "0" in
   /* Function declarations use the shared js_func_body. */
-  let go(xs, vars2, funcs2, strs2, brk2, k2) =
+  let go(xs, vars2, funcs2, strs2, brk2, k2, top) =
     /* Dump prints each statement as it is parsed. A long list here is a
      * function or switch body being emitted a second time. len is only read
      * when dumping; `and` would walk the list on every translate. */
@@ -3950,24 +4009,27 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let s = nth(xs, 0) in
       let rest = tail(xs) in
       let tag = nth(s, 0) in
-      if tag == "seq" then go(append(nth(s, 1), rest), vars2, funcs2, strs2, brk2, k2)
+      if tag == "seq" then go(append(nth(s, 1), rest), vars2, funcs2, strs2, brk2, k2, top)
       else if tag == "func" then
         let nm = nth(s, 1) in
         let body = nth(s, 3) in
         let ps = js_ps_args(nth(s, 2), body) in
         let bx = js_lookup(vars2, nm) in
-        let funcs3 = if js_in(funcs2, nm) then funcs2 else cons(nm, funcs2) in
+        let topf = top != 0 and bx == "" in
+        let funcs3 = if topf then funcs2 else if js_in(funcs2, nm) then funcs2 else cons(nm, funcs2) in
         /* Hoisted decls are bound at function entry; skip the source site. */
-        if bx != "" then go(rest, vars2, funcs3, strs2, brk2, k2)
+        if bx != "" then go(rest, vars2, funcs3, strs2, brk2, k2, top)
         else
           let fk = if len(s) > 4 then nth(s, 4) else "" in
           let sg = js_sig_of(ps) in
           let _ = js_arity_push(st, nm, nth(sg, 0), nth(sg, 1)) in
           let fb = js_func_body(ps, body, [vars2, funcs3, retf, retv, strs2, brk2], st, fk) in
-          let cont = go(rest, vars2, funcs3, strs2, brk2, k2) in
+          let vars3 = if topf then cons([nm, js_mangle(nm)], vars2) else vars2 in
+          let cont = go(rest, vars3, funcs3, strs2, brk2, k2, top) in
           let _ = js_arity_pop(st) in
-          let m = js_mangle(nm) in
-          js_cat(["(let ", m, "(", nth(fb, 0), ") = ", nth(fb, 1), " in\n", cont, ")"])
+          let m = if topf then js_fresh(st, js_mangle(nm)) else js_mangle(nm) in
+          let close = if topf then "))" else ")" in
+          js_cat(["(let ", m, "(", nth(fb, 0), ") = ", nth(fb, 1), " in ", (if topf then js_cat(["(let _ = box_set(", js_mangle(nm), ", ", m, ") in "]) else ""), cont, close])
       else if tag == "class" then
         /* Class declaration -> constructor function + `Prototype.m = fn`
          * assignments (static methods on the constructor itself). `extends`
@@ -3978,23 +4040,17 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let sup = nth(s, 3) in
         let hasSup = if nth(sup, 0) == "null" then 0 else 1 in
         let supId = if hasSup == 1 and nth(sup, 0) == "id" then nth(sup, 1) else "" in
-        let sp = if hasSup == 1 and supId == "" then js_fresh(st, "sp") else "" in
+        let sp = if hasSup == 1 then js_fresh(st, "sp") else "" in
         let _ = box_set(st_obj(st), 1) in
         let _ = box_set(st_fmap(st), 1) in
-        let mm = js_mangle(nm) in
-        let funcs3 = cons(nm, funcs2) in
-        /* A class name is bound as a plain function (`let v_A(...) = ...`),
-         * not as a box, so it must NOT enter the box table: the id emitter
-         * then resolves it through `funcs` to the function value. Keeping it
-         * in `vars` made every `new A()` emit `box_get(v_A)`, which reads a
-         * closure as if it were a box (0 or a stray pointer), so the ctor
-         * never ran ("error: not a function" on each instantiation). */
-        let vars3 = vars2 in
+        let topc = top != 0 and js_lookup(vars2, nm) == "" in
+        let _ = if topc then js_note_global(nm) else 0 in
+        let _ = if topc then js_note_def(nm) else 0 in
+        let mm = if topc then js_fresh(st, js_mangle(nm)) else js_mangle(nm) in
+        let funcs3 = if topc then funcs2 else cons(nm, funcs2) in
+        let vars3 = if topc then cons([nm, js_mangle(nm)], vars2) else vars2 in
         let ctxC = [vars3, funcs3, retf, retv, strs2, brk2] in
-        let rw(x) =
-          if supId != "" then js_rw_super(x, supId)
-          else if sp == "" then x
-          else js_rw_super_val(x, sp) in
+        let rw(x) = if sp == "" then x else js_rw_super_val(x, sp) in
         let findctor(i) =
           if i >= len(methods) then 0
           else if nth(nth(methods, i), 0) == "ctor" then nth(methods, i)
@@ -4010,7 +4066,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
           else if supId != "" then
             let _ = box_set(st_obj(st), 1) in
             let _ = box_set(st_fmap(st), 1) in
-            js_cat(["(let _ = fmap_put(nth(_js_proto(\"", js_esc(nm), "\"), 1), \"__proto__\", _js_proto(\"", js_esc(supId), "\")) in 0)"])
+            js_cat(["(let _ = fmap_put(nth(_js_proto(\"", js_esc(nm), "\"), 1), \"__proto__\", (let _sl = _js_ctor_proto(", sp, ") in (if _sl != 0 then _sl else _js_proto(\"", js_esc(supId), "\")))) in 0)"])
           else
             let _ = box_set(st_obj(st), 1) in
             let _ = box_set(st_fmap(st), 1) in
@@ -4047,9 +4103,10 @@ let js_emit_stmts(stmts, ctx, k, st) =
                 js_cat(["(let _ = ", e, " in ", go2(i + 1), ")"]) in
           go2(0) in
         let defs2 = if superlink == "" then defs else js_cat(["(let _ = ", superlink, " in ", defs, ")"]) in
-        let cont = go(rest, vars3, funcs3, strs2, brk2, k2) in
+        let cont = go(rest, vars3, funcs3, strs2, brk2, k2, top) in
         let _ = js_arity_pop(st) in
-        let core = js_cat(["(let ", mm, "(", nth(fb, 0), ") = ", nth(fb, 1), " in (let _ = _js_reg(", mm, ", _js_proto(\"", js_esc(nm), "\")) in (let _ = ", defs2, " in ", cont, ")))"]) in
+        let close = if topc then "))))" else ")))" in
+        let core = js_cat(["(let ", mm, "(", nth(fb, 0), ") = ", nth(fb, 1), " in (let _ = _js_reg(", mm, ", _js_proto(\"", js_esc(nm), "\")) in ", (if topc then js_cat(["(let _ = box_set(", js_mangle(nm), ", ", mm, ") in "]) else ""), "(let _ = ", defs2, " in ", cont, close]) in
         if sp == "" then core
         else
           let pv = js_emit_expr(sup, [vars2, funcs2, retf, retv, strs2, brk2], st) in
@@ -4068,7 +4125,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let extvars =
           let rec(i, acc) = if i >= n then acc else rec(i + 1, cons([nth(nth(flat, i), 0), nth(boxes, i)], acc)) in
           rec(0, vars2) in
-        let cont = go(rest, extvars, funcs2, strs2, brk2, k2) in
+        let cont = go(rest, extvars, funcs2, strs2, brk2, k2, top) in
         let wrap(i, inner) =
           if i < 0 then inner
           else
@@ -4082,10 +4139,16 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let prev = js_lookup(vars2, nm) in
         let reuse = box_get(js_stream_reuse) in
         let _ = if reuse == nm then box_set(js_stream_reuse, "") else 0 in
-        /* Hoisted `var` already has a box; just assign. */
-        let hoisted = kw == "var" and prev != "" in
+        /* Hoisted `var` already has a box; just assign. At the TOP LEVEL a
+         * declaration is a script global: inner functions read `v_name`, so
+         * fill that box instead of making a local that dies with the body. */
+        let topg = top != 0 and prev == "" in
+        let _ = if topg then js_note_global(nm) else 0 in
+        let _ = if topg then js_note_def(nm) else 0 in
+        let hoisted = (kw == "var" and prev != "") or topg in
         let m =
-          if hoisted then prev
+          if topg then js_mangle(nm)
+          else if hoisted then prev
           else if reuse == nm and prev != "" then prev
           else js_fresh(st, js_mangle(nm)) in
         let init = nth(s, 3) in
@@ -4094,7 +4157,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
         let _ = if sg == 0 then 0 else js_arity_push(st, nm, nth(sg, 0), nth(sg, 1)) in
         let vars3 = if hoisted then vars2 else cons([nm, m], vars2) in
         let strs3 = if js_is_str_expr(init, strs2) then cons(nm, strs2) else strs2 in
-        let cont = go(rest, vars3, funcs2, strs3, brk2, k2) in
+        let cont = go(rest, vars3, funcs2, strs3, brk2, k2, top) in
         let _ = if sg == 0 then 0 else js_arity_pop(st) in
         if hoisted then js_cat(["(let _ = box_set(", m, ", ", ie, ") in ", cont, ")"])
         else js_cat(["(let ", m, " = box_new() in (let _ = box_set(", m, ", ", ie, ") in ", cont, "))"])
@@ -4129,11 +4192,12 @@ let js_emit_stmts(stmts, ctx, k, st) =
          * box: both must stop the rest of the statement list, or the statement
          * after a throw/continue ran anyway. */
         let guard(cont) =
+          let gid = js_fresh(st, "g") in
           let core =
             if brk2 == 0 then cont
             else js_cat(["(if box_get(", brk2, ") != 0 then 0 else ", cont, ")"]) in
           let inner =
-            if box_get(st_uexc(st)) == 1 then js_cat(["(if box_get(_js_exc) != 0 then 0 else ", core, ")"]) else core in
+            if box_get(st_uexc(st)) == 1 then js_cat(["(if box_get(_js_exc) != 0 then print(\"js: G ", gid, "\", true) else ", core, ")"]) else core in
           if retf == 0 then inner
           else js_cat(["(if box_get(", retf, ") then box_get(", retv, ") else ", inner, ")"]) in
         /* ANY statement can throw (a call is an expression statement), so the
@@ -4149,19 +4213,19 @@ let js_emit_stmts(stmts, ctx, k, st) =
             else js_cat(["(let _ = ", se, " in\n", after(nth(s0, 0), emit_chunk(tail(cs))), ")"]) in
         if len(chunk) >= 32 then
           let body = emit_chunk(chunk) in
-          let cont = go(more, vars2, funcs2, strs2, brk2, k2) in
+          let cont = go(more, vars2, funcs2, strs2, brk2, k2, top) in
           let ck = js_fresh(st, "ck") in
           js_cat(["(let ", ck, "(_) = ", body, " in\n(let _ = ", ck, "(0) in\n", guard(cont), "))"])
         else
           let emit_onto(cs) =
-            if len(cs) == 0 then go(more, vars2, funcs2, strs2, brk2, k2)
+            if len(cs) == 0 then go(more, vars2, funcs2, strs2, brk2, k2, top)
             else
               let s0 = nth(cs, 0) in
               let se = sstmt(s0, [vars2, funcs2, retf, retv, strs2, brk2], k2) in
               if nth(s0, 0) == "ret" then se
               else js_cat(["(let _ = ", se, " in\n", after(nth(s0, 0), emit_onto(tail(cs))), ")"]) in
           emit_onto(chunk) in
-  go(stmts, nth(ctx, 0), nth(ctx, 1), nth(ctx, 4), nth(ctx, 5), k)
+  go(stmts, nth(ctx, 0), nth(ctx, 1), nth(ctx, 4), nth(ctx, 5), k, top0)
 
 /* True when an AST node contains a `yield` expression. */
 let js_has_yield(x) =
@@ -4327,6 +4391,8 @@ let js_to_yac(src) =
   let _ = box_set(js_lab_n, 3) in
   let _ = box_set(js_lab_here, 0) in
   let _ = box_set(js_globals, list_new()) in
+  let _ = box_set(js_boolvars, list_new()) in
+  let _ = box_set(js_userdefs, list_new()) in
   let _ = box_set(js_mc, fmap_new(0)) in
   let _ = js_exp_reset(0) in
   let toks = js_lex(src) in
@@ -4355,7 +4421,7 @@ let js_to_yac(src) =
   let stmts0 = js_exp_append(stmts0, st) in
   let fnames0 = js_collect_funcs(stmts0) in
   let fbinds = map(fun(nm) -> [nm, js_fresh(st, js_mangle(nm))], fnames0) in
-  let ctx0 = [append(fbinds, ivars), fnames0, 0, 0, [], 0] in
+  let ctx0 = [append(fbinds, ivars), fnames0, 0, 0, [], 0, 1] in
   let fs = js_collect_func_stmts(stmts0) in
   let nfs = len(fs) in
   let push_i(i) =
@@ -4432,15 +4498,15 @@ let js_to_yac(src) =
             let nm2 = nth(stub_names, i) in
             let acc2 = if i == 0 then nm2 else str_cat(acc, str_cat(", ", nm2)) in
             rec(i + 1, acc2) in
-        str_cat("import js.browser { ", str_cat(rec(0, ""), "}\n"))
+        str_cat("import js.browser { ", str_cat(rec(0, ""), ", js_browser_boot}\n"))
       else "" in
     let h0 = "let _js_exc = box_new()\nlet _js_pq = box_new()\nlet _js_pd = box_new()\nlet _ = box_set(_js_pq, list_new())\nlet _ = box_set(_js_pd, 0)\n/* `.length` on a value whose type is not known statically: a string needs
  * str_len (len() reports 0 for strings), everything else len(). */
 let _js_len(v) = if kind(v) == 3 then str_len(v) else len(v)
 /* Calling a non-function is reported by the runtime guard (yac_not_fn), which
- * prints `error: not a function: <callee>`; this shim stays a passthrough. */\nlet _js_chk(f, t) = f\nlet _js_apply(f0, xs) =\n  let f = _js_chk(f0, \"apply\") in\n  let n = len(xs) in\n  if n == 0 then f(0)\n  else if n == 1 then f(nth(xs, 0))\n  else if n == 2 then f(nth(xs, 0), nth(xs, 1))\n  else if n == 3 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2))\n  else if n == 4 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3))\n  else if n == 5 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4))\n  else if n == 6 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5))\n  else if n == 7 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), nth(xs, 6))\n  else f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), nth(xs, 6), nth(xs, 7))\n" in
+ * prints `error: not a function: <callee>`; this shim stays a passthrough. */\nlet _js_chk(f, t) =\n  if kind(f) == 6 then f\n  else (let _ = print(str_cat(\"js: missing function \", t)) in f)\nlet _js_apply(f0, xs) =\n  let f = _js_chk(f0, \"apply\") in\n  let n = len(xs) in\n  if n == 0 then f(0, 0, 0, 0, 0, 0, 0, 0)\n  else if n == 1 then f(nth(xs, 0), 0, 0, 0, 0, 0, 0, 0)\n  else if n == 2 then f(nth(xs, 0), nth(xs, 1), 0, 0, 0, 0, 0, 0)\n  else if n == 3 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), 0, 0, 0, 0, 0)\n  else if n == 4 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), 0, 0, 0, 0)\n  else if n == 5 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), 0, 0, 0)\n  else if n == 6 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), 0, 0)\n  else if n == 7 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), nth(xs, 6), 0)\n  else f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), nth(xs, 6), nth(xs, 7))\n" in
     let h1 = if box_get(ufmap) == 1 or box_get(uobj) == 1 or has_browser then "import data.fmap { fmap_new, fmap_get, fmap_put }\n" else "" in
-    let h2 = if box_get(umath) == 1 then "import num.math { abs, min, max, pow, sqrt, pi, e, sin, cos, exp, log, log2, powf }\n" else "" in
+    let h2 = if box_get(umath) == 1 then "import num.math { abs, min, max, pow, sqrt, pi, e, sin, cos, exp, log, log2, powf, sign, hypot }\n" else "" in
     let h6 = if box_get(ustrpkg) == 1 then "import text.str { split, starts_with, ends_with, join, trim, find, contains }\n" else "" in
     /* `Object` needs the core-constructor part of the header, and the header
      * text is decided here -- hglob (which binds it) is assembled later, so its
@@ -4483,12 +4549,13 @@ let _js_fn_apply2(f, t, xs) =
  * (React host refs), and `if (x.m) x.m(...)` must keep working; returning 0
  * made the call die in the runtime guard instead (main.js, 2026-10-27). */
 let _js_fn_noop(_) = 0
-let _js_fn_getp(f, k) =\n  let pm = _js_fnprops_find(f) in\n  let pv = if pm == 0 then 0 else fmap_get(pm, k) in\n  if pv != 0 then pv\n  else if k == \"call\" then fun(t, a0, a1, a2, a3) -> _js_fn_call2(f, t, a0, a1, a2, a3)\n  else if k == \"apply\" then fun(t, xs) -> _js_fn_apply2(f, t, xs)\n  /* bind avoids `...` on BOTH closures: a closure with a rest parameter that\n   * returns a closure miscompiles (2026-10-23: h(5) printed <fun> instead of\n   * calling the inner function). Fixed arity + the trailing-zero trim instead. */\n  else if k == \"bind\" then fun(t, p0, p1, p2, p3) -> (let pre = _js_pre4(p0, p1, p2, p3) in fun(b0, b1, b2, b3) -> _js_apply(f, _js_list_cat4(pre, b0, b1, b2, b3)))\n  else if k == \"toString\" then fun() -> \"function\"\n  else _js_fn_noop\nlet _js_str_getp(s, k) =\n  if k == \"toLowerCase\" or k == \"toLocaleLowerCase\" then fun() -> _js_str_lower(s)\n  else if k == \"toUpperCase\" or k == \"toLocaleUpperCase\" then fun() -> _js_str_upper(s)\n  else if k == \"toString\" or k == \"toLocaleString\" or k == \"valueOf\" then fun() -> s\n  else if k == \"charAt\" then fun(i) -> str_chr(str_ref(s, i))\n  else if k == \"length\" then str_len(s)\n  else _js_fn_noop\n/* JS array -> string (comma-joined). Builtins only so it can live in\n * the header before the jsrt import is decided. */\nlet _js_arr_tostr(a) =\n  let n = len(a) in\n  let el(v) = if is_int(v) then int_to_str(v) else if kind(v) == 3 then v else \"\" in\n  let rec(i, acc) = if i >= n then acc else rec(i + 1, if i == 0 then el(nth(a, i)) else str_cat(acc, str_cat(\",\", el(nth(a, i))))) in\n  rec(0, \"\")\nlet _js_getp(o, self, k) =\n  /* Reading a DOM method off a null/0 receiver (React commit paths touch
+let _js_fn_getp(f, k) =\n  let pm = _js_fnprops_find(f) in\n  let pv = if pm == 0 then 0 else fmap_get(pm, k) in\n  if pv != 0 then pv\n  else if k == \"call\" then fun(t, a0, a1, a2, a3) -> _js_fn_call2(f, t, a0, a1, a2, a3)\n  else if k == \"apply\" then fun(t, xs) -> _js_fn_apply2(f, t, xs)\n  /* bind avoids `...` on BOTH closures: a closure with a rest parameter that\n   * returns a closure miscompiles (2026-10-23: h(5) printed <fun> instead of\n   * calling the inner function). Fixed arity + the trailing-zero trim instead. */\n  else if k == \"bind\" then fun(t, p0, p1, p2, p3) -> (let pre = _js_pre4(p0, p1, p2, p3) in fun(b0, b1, b2, b3) -> _js_apply(f, _js_list_cat4(pre, b0, b1, b2, b3)))\n  else if k == \"toString\" then fun() -> \"function\"\n  else if k == \"name\" then \"\"\n  else 0\nlet _js_str_getp(s, k) =\n  if k == \"toLowerCase\" or k == \"toLocaleLowerCase\" then fun() -> _js_str_lower(s)\n  else if k == \"toUpperCase\" or k == \"toLocaleUpperCase\" then fun() -> _js_str_upper(s)\n  else if k == \"toString\" or k == \"toLocaleString\" or k == \"valueOf\" then fun() -> s\n  else if k == \"replace\" then fun(a, b) -> (let n = str_len(s) in (let m = str_len(a) in (let find(i) = if i + m > n then 0 - 1 else if str_slice(s, i, m) == a then i else find(i + 1) in (let j = find(0) in (if j < 0 then s else str_cat(str_slice(s, 0, j), str_cat(b, str_slice(s, j + m, n - j - m))))))))
+  else if k == \"charAt\" then fun(i) -> str_chr(str_ref(s, i))\n  else if k == \"length\" then str_len(s)\n  else _js_fn_noop\n/* JS array -> string (comma-joined). Builtins only so it can live in\n * the header before the jsrt import is decided. */\nlet _js_arr_tostr(a) =\n  let n = len(a) in\n  let el(v) = if is_int(v) then int_to_str(v) else if kind(v) == 3 then v else \"\" in\n  let rec(i, acc) = if i >= n then acc else rec(i + 1, if i == 0 then el(nth(a, i)) else str_cat(acc, str_cat(\",\", el(nth(a, i))))) in\n  rec(0, \"\")\nlet _js_getp(o, self, k) =\n  /* Reading a DOM method off a null/0 receiver (React commit paths touch
     * host nodes the stub DOM does not model): a no-op keeps the guard from
     * firing for calls the browser would silently absorb. */
-  if o == 0 then (if k == \"appendChild\" or k == \"insertBefore\" or k == \"removeChild\" or k == \"replaceChild\" then _js_fn_noop else 0)\n  else if kind(o) == 3 then _js_str_getp(o, k)\n  else if kind(o) == 6 then _js_fn_getp(o, k)\n  else if nth(o, 0) == \"$proxy\" then (let h = nth(o, 2) in (let g = fmap_get(nth(h, 1), \"get\") in (if g == 0 then _js_getp(nth(o, 1), self, k) else _js_apply(_js_chk(g, \"proxy.get\"), [nth(o, 1), k]))))\n  else if kind(o) == 5 then (if k == \"length\" then len(o) else (if k == \"toString\" or k == \"join\" then fun(sep) -> _js_arr_tostr(o) else 0))\n  /* A bare cons list is a JS array: without this it fell into the $o path\n   * below, which read element 1 as an fmap -- the same `obj.j` lookup then\n   * returned a function and 0 on two consecutive evaluations. */\n  else if kind(o) == 2 and nth(o, 0) != \"$o\" and nth(o, 0) != \"$acc\" then (if k == \"length\" then len(o) else (if k == \"toString\" or k == \"join\" then fun(sep) -> _js_arr_tostr(o) else 0))\n  else\n    let m = nth(o, 1) in\n    let v = fmap_get(m, k) in\n    if v == _js_gone then (let p = fmap_get(m, \"__proto__\") in if p == 0 then 0 else _js_getp(p, self, k)) else if v != 0 then (if _js_acc(v) then _js_acc_get(v, self) else v)\n    else\n      let p = fmap_get(m, \"__proto__\") in\n      if p == 0 then (if k == \"toString\" or k == \"toLocaleString\" then fun() -> \"[object Object]\" else if fmap_get(m, \"$unk\") == 0 then 0 else _js_noop) else _js_getp(p, self, k)\nlet _js_get(o, k) = _js_getp(o, o, k)let _js_setp(o, self, k, x) =\n  if o == 0 then x\n  else if kind(o) == 6 then (let _ = fmap_put(_js_fnprops_m(o), k, x) in x)\n  else if nth(o, 0) == \"$proxy\" then (let h = nth(o, 2) in (let sfn = fmap_get(nth(h, 1), \"set\") in (if sfn == 0 then _js_setp(nth(o, 1), nth(o, 1), k, x) else _js_apply(_js_chk(sfn, \"proxy.set\"), [nth(o, 1), k, x]))))\n  else\n    let m = nth(o, 1) in\n    let cur = fmap_get(m, k) in\n    if _js_acc(cur) then _js_acc_set(cur, self, x)\n    else\n      let p = fmap_get(m, \"__proto__\") in\n      if p == 0 then (let _ = fmap_put(nth(self, 1), k, x) in x)\n      else _js_setp(p, self, k, x)\nlet _js_set(o, k, x) = _js_setp(o, o, k, x)\nlet _js_del(o, k) =\n  if is_int(o) then true\n  else if kind(o) == 5 then (let _ = list_set(o, k, 0) in true)\n  else (let _ = fmap_put(nth(o, 1), k, _js_gone) in true)\nlet _js_acc_put(m, k, isget, f) =\n  let cur = fmap_get(m, k) in\n  let g = if isget then f else (if _js_acc(cur) then nth(cur, 1) else 0) in\n  let s = if isget then (if _js_acc(cur) then nth(cur, 2) else 0) else f in\n  let _ = fmap_put(m, k, [\"$acc\", g, s]) in 0\nlet _js_keys(o) =\n  if is_int(o) then list_new()\n  else\n    let m = nth(o, 1) in\n    let vec = nth(m, 0) in\n    let cap = nth(m, 2) in\n    let r = list_new() in\n    let rec(i) =\n      if i >= cap then r\n      else\n        let e = nth(vec, i) in\n        let _ =\n          if e == 0 then 0\n          else\n            let kk = nth(e, 0) in\n            if kk == \"__proto__\" then 0 else if fmap_get(m, kk) == _js_gone then 0 else list_push(r, kk) in\n        rec(i + 1) in\n    rec(0)\nlet _js_omit(o, keys) =\n  if is_int(o) then _js_obj(0)\n  else\n    let r = _js_obj(0) in\n    let ks = _js_keys(o) in\n    let skip(k, i) =\n      if i >= len(keys) then false\n      else if nth(keys, i) == k then true\n      else skip(k, i + 1) in\n    let rec(i) =\n      if i >= len(ks) then r\n      else\n        let k = nth(ks, i) in\n        let _ = if skip(k, 0) then 0 else fmap_put(nth(r, 1), k, _js_get(o, k)) in\n        rec(i + 1) in\n    rec(0)\nlet _js_proto(nm) =\n  let m = box_get(_js_protos) in\n  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_protos, x) in x)) else m in\n  let p = fmap_get(m2, nm) in\n  if p == 0 then (let x = _js_obj(0) in (let _ = fmap_put(m2, nm, x) in x)) else p\nlet _js_statics = box_new()\nlet _js_ctors = box_new()\nlet _ = box_set(_js_ctors, 0)\nlet _js_statics_m(_) =\n  let m = box_get(_js_statics) in\n  if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_statics, x) in x)) else m\nlet _js_static_set(nm, k, v) =\n  let m = _js_statics_m(0) in\n  let _ = fmap_put(m, str_cat(nm, str_cat(\":\", k)), v) in v\nlet _js_static_acc(nm, k, isget, f) =\n  let key = str_cat(nm, str_cat(\":\", k)) in\n  let m = _js_statics_m(0) in\n  let cur = fmap_get(m, key) in\n  let g = if isget then f else (if _js_acc(cur) then nth(cur, 1) else 0) in\n  let s = if isget then (if _js_acc(cur) then nth(cur, 2) else 0) else f in\n  let _ = fmap_put(m, key, [\"$acc\", g, s]) in\n  0\nlet _js_static_get(nm, k) =\n  let m = box_get(_js_statics) in\n  if m == 0 then 0\n  else\n    let v = fmap_get(m, str_cat(nm, str_cat(\":\", k))) in\n    if _js_acc(v) then _js_acc_get(v, 0) else v\nlet _js_ctor(fn, proto) =\n  let o = _js_obj(0) in\n  let _ = fmap_put(nth(o, 1), \"$ctor\", fn) in\n  let _ = fmap_put(nth(o, 1), \"prototype\", proto) in\n  o\nlet _js_reg(fn, proto) =\n  let m = box_get(_js_ctors) in\n  let m2 = if m == 0 then list_new() else m in\n  let _ = box_set(_js_ctors, m2) in\n  let _ = list_push(m2, [fn, proto]) in\n  0\nlet _js_find_proto(xs, c, i) =\n  if i >= len(xs) then 0\n  else\n    let e = nth(xs, i) in\n    if nth(e, 0) == c then nth(e, 1) else _js_find_proto(xs, c, i + 1)\nlet _js_ctor_fn(c) =\n  if is_int(c) then c\n  else if kind(c) != 2 then c\n  else if nth(c, 0) != \"$o\" then c\n  else\n    let f = fmap_get(nth(c, 1), \"$ctor\") in\n    if f == 0 then c else f\n/* `new C()` where C is an API this runtime does not provide: construct an empty stub instance instead of calling 0. */\nlet _js_unkfn(...a) = _js_unkobj(0)\nlet _js_ctorfn2(c) =\n  let f = _js_ctor_fn(c) in\n  if f == 0 then _js_unkfn else f\nlet _js_ctor_proto(c) =\n  if is_int(c) then 0\n  else if kind(c) != 2 then (let m = box_get(_js_ctors) in if m == 0 then 0 else _js_find_proto(m, c, 0))\n  else if nth(c, 0) != \"$o\" then (let m = box_get(_js_ctors) in if m == 0 then 0 else _js_find_proto(m, c, 0))\n  else fmap_get(nth(c, 1), \"prototype\")\n/* Prototype of a function held in a variable: a yac closure has no properties, so `X.prototype = {...}` used to be written into the closure's own words (fnptr@16 and captures), losing every method; `new X` then built an instance with no prototype. Keep the mapping in the same `_js_ctors` registry `new` already consults. */\nlet _js_fn_proto(v) =\n  let m = box_get(_js_ctors) in\n  let m2 = if m == 0 then (let x = list_new() in (let _ = box_set(_js_ctors, x) in x)) else m in\n  let p = _js_find_proto(m2, v, 0) in\n  if p != 0 then p\n  else (let x = _js_obj(0) in (let _ = list_push(m2, [v, x]) in x))\nlet _js_fn_proto_set(v, p) =\n  let m = box_get(_js_ctors) in\n  let m2 = if m == 0 then (let x = list_new() in (let _ = box_set(_js_ctors, x) in x)) else m in\n  let rec(i) =\n    if i >= len(m2) then 0\n    else if nth(nth(m2, i), 0) == v then (let _ = list_set(m2, i, [v, p]) in 1)\n    else rec(i + 1) in\n  let _ = if rec(0) == 1 then 0 else list_push(m2, [v, p]) in\n  p\n/* `Name.prototype = {...}` for a declared function: `Name.prototype` reads go\n * through `_js_proto(name)`, so the new object must replace that entry. */\nlet _js_proto_put(nm, p) =\n  let m = box_get(_js_protos) in\n  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_protos, x) in x)) else m in\n  let _ = fmap_put(m2, nm, p) in\n  p\nlet _js_ires(v, d) =\n  let o = _js_obj(0) in\n  let _ = fmap_put(nth(o, 1), \"value\", v) in\n  let _ = fmap_put(nth(o, 1), \"done\", d) in\n  o\nlet _js_gen(start) =\n  let k = box_new() in\n  let _ = box_set(k, start) in\n  let o = _js_obj(0) in\n  let nxt = fun(_a) ->\n    let r = _js_apply(_js_chk(box_get(k), \"gen\"), [_a]) in\n    if nth(r, 0) == \"$sus\" then (let _ = box_set(k, nth(r, 2)) in _js_ires(nth(r, 1), false)) else _js_ires(nth(r, 1), true) in\n  let _ = fmap_put(nth(o, 1), \"next\", nxt) in\n  o\n"
+  if o == 0 then (if k == \"appendChild\" or k == \"insertBefore\" or k == \"removeChild\" or k == \"replaceChild\" then _js_fn_noop else 0)\n  else if kind(o) == 3 then _js_str_getp(o, k)\n  else if kind(o) == 6 then _js_fn_getp(o, k)\n  else if nth(o, 0) == \"$proxy\" then (let h = nth(o, 2) in (let g = fmap_get(nth(h, 1), \"get\") in (if g == 0 then _js_getp(nth(o, 1), self, k) else _js_apply(_js_chk(g, \"proxy.get\"), [nth(o, 1), k]))))\n  else if kind(o) == 5 then (if k == \"length\" then len(o) else (if k == \"toString\" or k == \"join\" then fun(sep) -> _js_arr_tostr(o) else 0))\n  /* A bare cons list is a JS array: without this it fell into the $o path\n   * below, which read element 1 as an fmap -- the same `obj.j` lookup then\n   * returned a function and 0 on two consecutive evaluations. */\n  else if kind(o) == 2 and nth(o, 0) != \"$o\" and nth(o, 0) != \"$acc\" then (if k == \"length\" then len(o) else (if k == \"toString\" or k == \"join\" then fun(sep) -> _js_arr_tostr(o) else 0))\n  else\n    let m = nth(o, 1) in\n    let v = fmap_get(m, k) in\n    if v == _js_gone then (let p = fmap_get(m, \"__proto__\") in if p == 0 then 0 else _js_getp(p, self, k)) else if v != 0 then (if _js_acc(v) then _js_acc_get(v, self) else v)\n    else\n      let p = fmap_get(m, \"__proto__\") in\n      if p == 0 then (if k == \"toString\" or k == \"toLocaleString\" then fun() -> \"[object Object]\" else if fmap_get(m, \"$unk\") == 0 then 0 else _js_noop) else _js_getp(p, self, k)\nlet _js_get(o, k) = _js_getp(o, o, k)let _js_setp(o, self, k, x) =\n  if o == 0 then x\n  else if kind(o) == 6 then (let _ = fmap_put(_js_fnprops_m(o), k, x) in x)\n  else if nth(o, 0) == \"$proxy\" then (let h = nth(o, 2) in (let sfn = fmap_get(nth(h, 1), \"set\") in (if sfn == 0 then _js_setp(nth(o, 1), nth(o, 1), k, x) else _js_apply(_js_chk(sfn, \"proxy.set\"), [nth(o, 1), k, x]))))\n  else\n    let m = nth(o, 1) in\n    let cur = fmap_get(m, k) in\n    if _js_acc(cur) then _js_acc_set(cur, self, x)\n    else\n      let p = fmap_get(m, \"__proto__\") in\n      if p == 0 then (let _ = fmap_put(nth(self, 1), k, x) in x)\n      else _js_setp(p, self, k, x)\nlet _js_set(o, k, x) = _js_setp(o, o, k, x)\nlet _js_del(o, k) =\n  if is_int(o) then true\n  else if kind(o) == 5 then (let _ = list_set(o, k, 0) in true)\n  else (let _ = fmap_put(nth(o, 1), k, _js_gone) in true)\nlet _js_acc_put(m, k, isget, f) =\n  let cur = fmap_get(m, k) in\n  let g = if isget then f else (if _js_acc(cur) then nth(cur, 1) else 0) in\n  let s = if isget then (if _js_acc(cur) then nth(cur, 2) else 0) else f in\n  let _ = fmap_put(m, k, [\"$acc\", g, s]) in 0\nlet _js_keys(o) =\n  if is_int(o) then list_new()\n  else\n    let m = nth(o, 1) in\n    let vec = nth(m, 0) in\n    let cap = nth(m, 2) in\n    let r = list_new() in\n    let rec(i) =\n      if i >= cap then r\n      else\n        let e = nth(vec, i) in\n        let _ =\n          if e == 0 then 0\n          else\n            let kk = nth(e, 0) in\n            if kk == \"__proto__\" then 0 else if fmap_get(m, kk) == _js_gone then 0 else list_push(r, kk) in\n        rec(i + 1) in\n    rec(0)\nlet _js_omit(o, keys) =\n  if is_int(o) then _js_obj(0)\n  else\n    let r = _js_obj(0) in\n    let ks = _js_keys(o) in\n    let skip(k, i) =\n      if i >= len(keys) then false\n      else if nth(keys, i) == k then true\n      else skip(k, i + 1) in\n    let rec(i) =\n      if i >= len(ks) then r\n      else\n        let k = nth(ks, i) in\n        let _ = if skip(k, 0) then 0 else fmap_put(nth(r, 1), k, _js_get(o, k)) in\n        rec(i + 1) in\n    rec(0)\nlet _js_proto(nm) =\n  let m = box_get(_js_protos) in\n  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_protos, x) in x)) else m in\n  let p = fmap_get(m2, nm) in\n  if p == 0 then (let x = _js_obj(0) in (let _ = fmap_put(m2, nm, x) in x)) else p\nlet _js_statics = box_new()\nlet _js_ctors = box_new()\nlet _ = box_set(_js_ctors, 0)\nlet _js_statics_m(_) =\n  let m = box_get(_js_statics) in\n  if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_statics, x) in x)) else m\nlet _js_static_set(nm, k, v) =\n  let m = _js_statics_m(0) in\n  let _ = fmap_put(m, str_cat(nm, str_cat(\":\", k)), v) in v\nlet _js_static_acc(nm, k, isget, f) =\n  let key = str_cat(nm, str_cat(\":\", k)) in\n  let m = _js_statics_m(0) in\n  let cur = fmap_get(m, key) in\n  let g = if isget then f else (if _js_acc(cur) then nth(cur, 1) else 0) in\n  let s = if isget then (if _js_acc(cur) then nth(cur, 2) else 0) else f in\n  let _ = fmap_put(m, key, [\"$acc\", g, s]) in\n  0\nlet _js_static_get(nm, k) =\n  let m = box_get(_js_statics) in\n  if m == 0 then 0\n  else\n    let v = fmap_get(m, str_cat(nm, str_cat(\":\", k))) in\n    if _js_acc(v) then _js_acc_get(v, 0) else v\nlet _js_ctor(fn, proto) =\n  let o = _js_obj(0) in\n  let _ = fmap_put(nth(o, 1), \"$ctor\", fn) in\n  let _ = fmap_put(nth(o, 1), \"prototype\", proto) in\n  o\nlet _js_reg(fn, proto) =\n  let m = box_get(_js_ctors) in\n  let m2 = if m == 0 then list_new() else m in\n  let _ = box_set(_js_ctors, m2) in\n  let _ = list_push(m2, [fn, proto]) in\n  0\nlet _js_find_proto(xs, c, i) =\n  if i >= len(xs) then 0\n  else\n    let e = nth(xs, i) in\n    if nth(e, 0) == c then nth(e, 1) else _js_find_proto(xs, c, i + 1)\nlet _js_ctor_fn(c) =\n  if is_int(c) then c\n  else if kind(c) != 2 then c\n  else if nth(c, 0) != \"$o\" then c\n  else fmap_get(nth(c, 1), \"$ctor\")\n/* `new C()` where C is an API this runtime does not provide: construct an empty stub instance instead of calling 0. */\nlet _js_unkfn(...a) = _js_unkobj(0)\nlet _js_ctorfn2(c) =\n  let f = _js_ctor_fn(c) in\n  if f == 0 then _js_unkfn else f\nlet _js_ctor_proto(c) =\n  if is_int(c) then 0\n  else if kind(c) != 2 then (let m = box_get(_js_ctors) in if m == 0 then 0 else _js_find_proto(m, c, 0))\n  else if nth(c, 0) != \"$o\" then (let m = box_get(_js_ctors) in if m == 0 then 0 else _js_find_proto(m, c, 0))\n  else fmap_get(nth(c, 1), \"prototype\")\n/* Prototype of a function held in a variable: a yac closure has no properties, so `X.prototype = {...}` used to be written into the closure's own words (fnptr@16 and captures), losing every method; `new X` then built an instance with no prototype. Keep the mapping in the same `_js_ctors` registry `new` already consults. */\nlet _js_fn_proto(v) =\n  let m = box_get(_js_ctors) in\n  let m2 = if m == 0 then (let x = list_new() in (let _ = box_set(_js_ctors, x) in x)) else m in\n  let p = _js_find_proto(m2, v, 0) in\n  if p != 0 then p\n  else (let x = _js_obj(0) in (let _ = list_push(m2, [v, x]) in x))\nlet _js_fn_proto_set(v, p) =\n  let m = box_get(_js_ctors) in\n  let m2 = if m == 0 then (let x = list_new() in (let _ = box_set(_js_ctors, x) in x)) else m in\n  let rec(i) =\n    if i >= len(m2) then 0\n    else if nth(nth(m2, i), 0) == v then (let _ = list_set(m2, i, [v, p]) in 1)\n    else rec(i + 1) in\n  let _ = if rec(0) == 1 then 0 else list_push(m2, [v, p]) in\n  p\n/* `Name.prototype = {...}` for a declared function: `Name.prototype` reads go\n * through `_js_proto(name)`, so the new object must replace that entry. */\nlet _js_proto_put(nm, p) =\n  let m = box_get(_js_protos) in\n  let m2 = if m == 0 then (let x = fmap_new(0) in (let _ = box_set(_js_protos, x) in x)) else m in\n  let _ = fmap_put(m2, nm, p) in\n  p\nlet _js_ires(v, d) =\n  let o = _js_obj(0) in\n  let _ = fmap_put(nth(o, 1), \"value\", v) in\n  let _ = fmap_put(nth(o, 1), \"done\", d) in\n  o\nlet _js_gen(start) =\n  let k = box_new() in\n  let _ = box_set(k, start) in\n  let o = _js_obj(0) in\n  let nxt = fun(_a) ->\n    let r = _js_apply(_js_chk(box_get(k), \"gen\"), [_a]) in\n    if nth(r, 0) == \"$sus\" then (let _ = box_set(k, nth(r, 2)) in _js_ires(nth(r, 1), false)) else _js_ires(nth(r, 1), true) in\n  let _ = fmap_put(nth(o, 1), \"next\", nxt) in\n  o\n"
       else "" in
-    let h10 = if box_get(ujslib) == 1 then "import lang.jslib { js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_native, js_str_pad, js_str_trim_start, js_str_trim_end, js_install, js_re_test, js_re_exec, js_promise_new, js_promise_of, js_promise_then, js_promise_all, js_await }\n" else "" in
+    let h10 = if box_get(ujslib) == 1 then "import lang.jslib { js_parse_int, js_parse_float, js_is_nan, js_is_finite, js_native, js_str_pad, js_str_trim_start, js_str_trim_end, js_install, js_re_test, js_re_exec, js_promise_new, js_promise_of, js_promise_then, js_promise_all, js_await, js_obj_defprop, js_obj_defprops, js_obj_gopds, js_obj_values, js_obj_assign2, js_keys_of }\n" else "" in
     let himp =
       let seen = list_new() in
       let rec(i, acc) =
@@ -4649,9 +4716,28 @@ let js_dump_src(src) =
   let _ = box_set(js_lab_n, 3) in
   let _ = box_set(js_lab_here, 0) in
   let _ = box_set(js_globals, list_new()) in
+  let _ = box_set(js_boolvars, list_new()) in
+  let _ = box_set(js_userdefs, list_new()) in
   let _ = box_set(js_mc, fmap_new(0)) in
   let toks = js_lex(src) in
   let _ = js_parse_stmts(toks, 0, ["list", 0], st) in
   let _ = box_set(js_stream_box, 0) in
   let e = box_get(err) in
   if e != "" then print(str_cat("error: ", e)) else 0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

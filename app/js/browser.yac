@@ -930,12 +930,31 @@ let _browser_present(_) =
         go(i + 1))) in
   go(0)
 
+/* Debug/CI: YAC_CANVAS_SHOT=<path> saves the first canvas when the frame loop
+ * ends (the YUI screenshot re-renders the layer tree and does not include the
+ * native canvas overlay). */
+let _browser_shot(_) =
+  let p = env_get("YAC_CANVAS_SHOT") in
+  if p == 0 then 0
+  else
+    (let n = len(_browser_cvlist) in
+     (let go(i) =
+        if i >= n then 0
+        else
+          (let c = nth(_browser_cvlist, i) in
+           (let cid = fmap_get(nth(c, 1), "$cvid") in
+            if cid != 0 then yui_canvas_snapshot(cid, p)
+            else go(i + 1))) in
+      go(0)))
+
 let _browser_frame(_) =
   let _ = _browser_run_load(0) in
   let _ = _browser_run_raf(0) in
   let quit = yui_bridge_tick_quit(0) in
   let _ = _browser_present(0) in
-  if quit != 0 then 0 else _browser_frame(0)
+  if quit != 0 then
+    (let _ = _browser_shot(0) in 0)
+  else _browser_frame(0)
 
 let js_browser_canvas(w, h) = _browser_canvas(w, h)
 
