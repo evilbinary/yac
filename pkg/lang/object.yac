@@ -3,6 +3,7 @@ package lang.object
 import data.fmap { fmap_new, fmap_get, fmap_put }
 
 export obj_tag, obj_acc_tag, obj_proto_key, obj_unk_key,
+  obj_this, obj_exc, obj_fnprops, obj_statics, obj_ctors,
   obj_gone, obj_new, obj_noop, obj_unknown, obj_acc,
   obj_acc_get, obj_acc_set, obj_acc_put, obj_getp, obj_get, obj_setp, obj_set,
   obj_del, obj_has, obj_keys, obj_proto, obj_proto_put
@@ -12,7 +13,17 @@ let obj_acc_tag = "$acc"
 let obj_proto_key = "__proto__"
 let obj_unk_key = "$unk"
 
+let obj_this = box_new()
+let obj_exc = box_new()
+let obj_fnprops = box_new()
+let obj_statics = box_new()
+let obj_ctors = box_new()
 let obj_gone = box_new()
+let _ = box_set(obj_this, 0)
+let _ = box_set(obj_exc, 0)
+let _ = box_set(obj_fnprops, 0)
+let _ = box_set(obj_statics, 0)
+let _ = box_set(obj_ctors, 0)
 let obj_init_gone = box_set(obj_gone, 0)
 
 let obj_new(proto) =
