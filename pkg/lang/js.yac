@@ -3136,7 +3136,7 @@ let js_emit_expr(e, ctx, st) =
       if isstr then js_cat(["str_len(", js_emit_expr(obj, ctx, st), ")"])
       else js_cat(["_js_len(", js_emit_expr(obj, ctx, st), ")"])
     else if nm == "prototype" then
-      let isfn = if nth(obj, 0) == "id" then js_in(nth(ctx, 1), nth(obj, 1)) else false in
+      let isfn = if nth(obj, 0) == "id" then (js_in(nth(ctx, 1), nth(obj, 1)) or fmap_get(box_get(js_classnames), nth(obj, 1)) != 0) else false in
       let isfnexpr = if nth(obj, 0) == "id" then js_arity_find(st, nth(obj, 1)) != 0 else false in
       if isfn then
         let _ = box_set(st_obj(st), 1) in
