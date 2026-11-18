@@ -930,22 +930,25 @@ let _browser_present(_) =
         go(i + 1))) in
   go(0)
 
-/* Debug/CI: YAC_CANVAS_SHOT=<path> saves the first canvas when the frame loop
- * ends (the YUI screenshot re-renders the layer tree and does not include the
- * native canvas overlay). */
+/* Debug/CI: YAC_CANVAS_SHOT=<path> saves the LARGEST canvas when the frame
+ * loop ends. Pixi's CanvasPool allocates small scratch canvases (6x1) before
+ * the display canvas, so "first" captured those instead. The YUI screenshot
+ * re-renders the layer tree and does not include the native canvas overlay. */
 let _browser_shot(_) =
   let p = env_get("YAC_CANVAS_SHOT") in
   if p == 0 then 0
   else
     (let n = len(_browser_cvlist) in
-     (let go(i) =
-        if i >= n then 0
+     (let go(i, best, area) =
+        if i >= n then (if best != 0 then yui_canvas_snapshot(best, p) else 0)
         else
           (let c = nth(_browser_cvlist, i) in
            (let cid = fmap_get(nth(c, 1), "$cvid") in
-            if cid != 0 then yui_canvas_snapshot(cid, p)
-            else go(i + 1))) in
-      go(0)))
+            if cid == 0 then go(i + 1, best, area)
+            else
+              (let a = fmap_get(nth(c, 1), "$cw") * fmap_get(nth(c, 1), "$ch") in
+               if a > area then go(i + 1, cid, a) else go(i + 1, best, area)))) in
+      go(0, 0, 0)))
 
 let _browser_frame(_) =
   let _ = _browser_run_load(0) in

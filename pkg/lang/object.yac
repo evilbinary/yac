@@ -119,6 +119,10 @@ let obj_has(o, k) =
 
 let obj_keys(o) =
   if is_int(o) then list_new()
+  else if kind(o) == 5 or (kind(o) == 2 and (len(o) == 0 or (nth(o, 0) != obj_tag and nth(o, 0) != obj_acc_tag))) then
+    (let r = list_new() in
+     let rec(i) = if i >= len(o) then r else (let _ = list_push(r, int_to_str(i)) in rec(i + 1)) in
+     rec(0))
   else
   let m = nth(o, 1) in
   let vec = nth(m, 0) in
