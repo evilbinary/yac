@@ -1177,7 +1177,12 @@ let js_parse_expr(toks, i, min, st) =
     else if k2 == "p" and (x2 == "?") and (min <= 2) then
       let a = js_parse_expr(toks, j + 1, 1, st) in
       if js_is(toks, nth(a, 1), ":") then
-        let b = js_parse_expr(toks, nth(a, 1) + 1, 2, st) in
+        /* The alternative is an AssignmentExpression in JS:
+         * `cond ? x : o[k] = v` parses as `cond ? x : (o[k] = v)`.
+         * Parsing it with min=2 stopped before `=`, so the assignment was
+         * silently dropped (and `extensions.add` lost extension.type through
+         * the bundler's `key in obj ? defineProp : obj[key] = value` helper). */
+        let b = js_parse_expr(toks, nth(a, 1) + 1, 1, st) in
         again(["cond", lhs, nth(a, 0), nth(b, 0)], nth(b, 1))
       else [js_bad(st, "expected ':' in conditional"), nth(a, 1)]
     else if k2 == "p" and x2 == "," and (min <= 0) then
@@ -2893,7 +2898,17 @@ let js_obj_take(ys, ctx, st, acc) =
   else if nth(nth(nth(ys, 0), 1), 0) == "acc" then [list_rev(acc), ys]
   else
     let p = nth(ys, 0) in
-    js_obj_take(tail(ys), ctx, st, cons([js_obj_key(nth(p, 0), ctx, st), js_ex(nth(p, 1), ctx, st)], acc))
+    let v = nth(p, 1) in
+    /* A function value stored as an object property is invoked as a method
+     * (`o.f(...)`), so a `...rest` must collect positional extras. Function
+     * expressions parsed in value position lack the `"method"` mode tag;
+     * without it `(...xs) { o.f(1,2) }` bound the first argument as the whole
+     * rest list (extensions.add saw zero extensions). */
+    let v2 =
+      if kind(v) == 2 and nth(v, 0) == "funexpr" and (len(v) < 5 or nth(v, 4) == "") then
+        ["funexpr", "", nth(v, 2), nth(v, 3), "method"]
+      else v in
+    js_obj_take(tail(ys), ctx, st, cons([js_obj_key(nth(p, 0), ctx, st), js_ex(v2, ctx, st)], acc))
 
 let js_obj_segs(ys, o, ctx, st) =
   if js_empty(ys) then "0"
@@ -3789,6 +3804,8 @@ let js_emit_expr(e, ctx, st) =
        * wrapper (`this.instructions` was missing, clone/rect failed).
        * Cache object/key, bind `_js_this` around the call, then restore. */
       let _ = box_set(st_lib(st), 1) in
+      let _ = box_set(st_obj(st), 1) in
+      let _ = box_set(st_fmap(st), 1) in
       let ob = js_fresh(st, "ib") in
       let kb = js_fresh(st, "kb") in
       let ss = js_fresh(st, "is") in
@@ -4561,9 +4578,9 @@ let js_to_yac(src) =
  * str_len (len() reports 0 for strings), everything else len(). */
 let _js_len(v) = if kind(v) == 3 then str_len(v) else len(v)
 /* Calling a non-function is reported by the runtime guard (yac_not_fn), which
- * prints `error: not a function: <callee>`; this shim stays a passthrough. */\nlet _js_chk(f, t) =\n  if kind(f) == 6 then f\n  else (let _ = print(str_cat(\"js: missing function \", t)) in f)\nlet _js_apply(f0, xs) =\n  let f = _js_chk(f0, \"apply\") in\n  let n = len(xs) in\n  if n == 0 then f(0, 0, 0, 0, 0, 0, 0, 0)\n  else if n == 1 then f(nth(xs, 0), 0, 0, 0, 0, 0, 0, 0)\n  else if n == 2 then f(nth(xs, 0), nth(xs, 1), 0, 0, 0, 0, 0, 0)\n  else if n == 3 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), 0, 0, 0, 0, 0)\n  else if n == 4 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), 0, 0, 0, 0)\n  else if n == 5 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), 0, 0, 0)\n  else if n == 6 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), 0, 0)\n  else if n == 7 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), nth(xs, 6), 0)\n  else f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), nth(xs, 6), nth(xs, 7))\n" in
+ * prints `error: not a function: <callee>`; this shim stays a passthrough. */\nlet _js_chk(f, t) = f\nlet _js_apply(f0, xs) =\n  let f = _js_chk(f0, \"apply\") in\n  let n = len(xs) in\n  if n == 0 then f(0, 0, 0, 0, 0, 0, 0, 0)\n  else if n == 1 then f(nth(xs, 0), 0, 0, 0, 0, 0, 0, 0)\n  else if n == 2 then f(nth(xs, 0), nth(xs, 1), 0, 0, 0, 0, 0, 0)\n  else if n == 3 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), 0, 0, 0, 0, 0)\n  else if n == 4 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), 0, 0, 0, 0)\n  else if n == 5 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), 0, 0, 0)\n  else if n == 6 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), 0, 0)\n  else if n == 7 then f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), nth(xs, 6), 0)\n  else f(nth(xs, 0), nth(xs, 1), nth(xs, 2), nth(xs, 3), nth(xs, 4), nth(xs, 5), nth(xs, 6), nth(xs, 7))\n" in
     let h1 = if box_get(ufmap) == 1 or box_get(uobj) == 1 or has_browser then "import data.fmap { fmap_new, fmap_get, fmap_put }\n" else "" in
-    let hobj = if box_get(uobj) == 1 or box_get(ufmap) == 1 or box_get(st_obj(st)) == 1 then "import lang.object { obj_new as _js_obj, obj_this as _js_this, obj_exc as _js_exc, obj_fnprops as _js_fnprops, obj_statics as _js_statics, obj_ctors as _js_ctors, obj_gone as _js_gone, obj_acc as _js_acc, obj_acc_put as _js_acc_put, obj_acc_get as _js_acc_get0, obj_acc_set as _js_acc_set0, obj_keys as _js_keys, obj_proto as _js_proto, obj_proto_put as _js_proto_put, obj_getp as _js_obj_getp0, obj_setp as _js_obj_setp0, obj_unknown }\n" else "" in
+    let hobj = "import lang.object { obj_new as _js_obj, obj_this as _js_this, obj_exc as _js_exc, obj_fnprops as _js_fnprops, obj_statics as _js_statics, obj_ctors as _js_ctors, obj_gone as _js_gone, obj_acc as _js_acc, obj_acc_put as _js_acc_put, obj_acc_get as _js_acc_get0, obj_acc_set as _js_acc_set0, obj_keys as _js_keys, obj_proto as _js_proto, obj_proto_put as _js_proto_put, obj_getp as _js_obj_getp0, obj_setp as _js_obj_setp0, obj_unknown }\n" in
     let h2 = if box_get(umath) == 1 then "import num.math { abs, min, max, pow, sqrt, pi, e, sin, cos, exp, log, log2, powf, sign, hypot }\n" else "" in
     let h6 = if box_get(ustrpkg) == 1 then "import text.str { split, starts_with, ends_with, join, trim, find, contains }\n" else "" in
     /* `Object` needs the core-constructor part of the header, and the header

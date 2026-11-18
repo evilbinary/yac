@@ -556,4 +556,24 @@ let _ = check("promise_then", "Promise.resolve(6).then(function(v){ console.log(
 let _ = check("async_await", "async function f(){ return await Promise.resolve(41) + 1; } f().then(function(v){ console.log(v); });", "42")
 let _ = check("proxy_get", "let p = new Proxy({a: 1}, { get: function(o, k){ return 9; } }); console.log(p.a);", "9")
 let _ = check("reflect_get", "let o = {a: 4}; console.log(Reflect.get(o, 'a'));", "4")
+/* Regression: conditional alternative is an AssignmentExpression.
+ * `cond ? a : o[k] = v` must perform the assignment (bundler __defNormalProp). */
+let _ = check("ternary_assign_alt", "let o={}; let c=false; let r = c ? 1 : o.x = 5; console.log(o.x);", "5")
+let _ = check("ternary_assign_nested", "let o={}; let c=1; c ? (o.a=2) : o.b=3; console.log(o.a);", "2")
 
+/* Regression: function-valued object properties with rest are methods. */
+let _ = check("obj_rest_prop", "let o={ add: function(...xs){ return xs.length; } }; console.log(o.add(1,2,3));", "3")
+let _ = check("obj_rest_prop0", "let o={ f: function(a, ...xs){ return a + xs.length; } }; console.log(o.f(10,1,2));", "12")
+
+/* Regression: for...in over arrays exposes numeric string keys and indexes. */
+let _ = check("forin_arr_idx", "let a=[10,20,30]; let s=0; for (let k in a){ s = s + a[k]; } console.log(s);", "60")
+let _ = check("forin_arr_key", "let a=[7,8]; let r=''; for (let k in a){ r = r + k; } console.log(r);", "01")
+
+/* Regression: dynamic string/array keys and o[k](...) receiver. */
+let _ = check("idx_dyn_get", "let o={x:4}; let k='x'; console.log(o[k]);", "4")
+let _ = check("idx_dyn_set", "let o={}; let k='z'; o[k]=9; console.log(o.z);", "9")
+let _ = check("idx_dyn_call", "let o={v:7, m:function(){ return this.v; }}; let k='m'; console.log(o[k]());", "7")
+let _ = check("idx_dyn_call_rest", "let o={m:function(a,...xs){ return a + xs.length; }}; let k='m'; console.log(o[k](10,1,2));", "12")
+
+/* Regression: spread-style copy helper keeps own enumerable properties. */
+let _ = check("spread_helper", "function sp(a,b){ for (var p in b || (b={})){ if (Object.prototype.hasOwnProperty.call(b,p)){ a[p]=b[p]; } } return a; } let x=sp({},{type:['t'],name:'n'}); console.log(x.type.length); console.log(x.name);", "1\nn")
