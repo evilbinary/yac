@@ -577,3 +577,7 @@ let _ = check("idx_dyn_call_rest", "let o={m:function(a,...xs){ return a + xs.le
 
 /* Regression: spread-style copy helper keeps own enumerable properties. */
 let _ = check("spread_helper", "function sp(a,b){ for (var p in b || (b={})){ if (Object.prototype.hasOwnProperty.call(b,p)){ a[p]=b[p]; } } return a; } let x=sp({},{type:['t'],name:'n'}); console.log(x.type.length); console.log(x.name);", "1\nn")
+/* Regression: function/class .prototype read through a variable, mixin-style. */
+let _ = check("fn_prototype_param", "function mix(T, source){ T.prototype.m = source.m; } function mk(){ return 5; } class C { } mix(C, {m: mk}); console.log(new C().m());", "5")
+let _ = check("mixin_define", "function mix(T, ...srcs){ for (const s of srcs){ Object.defineProperties(T.prototype, Object.getOwnPropertyDescriptors(s)); } } class C { } mix(C, {v: function(){ return 9; }}); console.log(new C().v());", "9")
+let _ = check("gopd", "let o={a:1}; let d=Object.getOwnPropertyDescriptors(o); console.log(Object.keys(d).length); console.log(d.a.value);", "1\n1")
