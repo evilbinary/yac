@@ -3999,7 +3999,7 @@ let js_emit_stmts(stmts, ctx, k, st) =
       let _ = box_set(st_jslib(st), 1) in
       let te = js_emit_expr(nth(s, 1), ctx2, st) in
       let tid = js_fresh(st, "thr") in
-      js_cat(["(let _ = box_set(_js_exc, ", te, ") in 0)"])
+      js_cat(["(let _ = print(str_cat(\"JS_THROW \", _js_str(", te, "))) in (let _ = box_set(_js_exc, ", te, ") in 0))"])
     else if tag == "try" then
       let tryXs = nth(s, 1) in
       let cn = nth(s, 2) in
