@@ -581,3 +581,6 @@ let _ = check("spread_helper", "function sp(a,b){ for (var p in b || (b={})){ if
 let _ = check("fn_prototype_param", "function mix(T, source){ T.prototype.m = source.m; } function mk(){ return 5; } class C { } mix(C, {m: mk}); console.log(new C().m());", "5")
 let _ = check("mixin_define", "function mix(T, ...srcs){ for (const s of srcs){ Object.defineProperties(T.prototype, Object.getOwnPropertyDescriptors(s)); } } class C { } mix(C, {v: function(){ return 9; }}); console.log(new C().v());", "9")
 let _ = check("gopd", "let o={a:1}; let d=Object.getOwnPropertyDescriptors(o); console.log(Object.keys(d).length); console.log(d.a.value);", "1\n1")
+/* Regression: rest parameters are not capped at four positional extras. */
+let _ = check("rest_many", "function f(a,b,c,d,...xs){ return a+b+c+d+xs.length; } console.log(f(1,2,3,4,5,6,7,8,9,10));", "16")
+let _ = check("rest_many_method", "let o={m:function(a,...xs){return a+xs.length;}}; console.log(o.m(1,2,3,4,5,6,7,8,9,10,11));", "17")
